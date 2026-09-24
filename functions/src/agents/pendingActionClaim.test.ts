@@ -46,7 +46,7 @@ beforeEach(() => { h.reset(); h.logAgentAction.mockClear(); });
 describe("claimPendingAction — exactly-once (H-U5)", () => {
   it("claims an awaiting action once; a second claim is not claimable", async () => {
     const action = await proposePendingAction({
-      phone: "+1requester", userId: "u1", toolName: "remove_family_member", toolInput: { memberPhone: "a1" },
+      phone: "+1requester", userId: "u1", toolName: "cancel_job_post", toolInput: { jobId: "a1" },
     });
     expect(await claimPendingAction(action.id)).toBe("claimed");
     expect(h.docs.get(action.id)?.status).toBe("executing");

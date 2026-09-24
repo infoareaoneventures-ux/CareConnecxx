@@ -57,16 +57,6 @@ export function useAccessGates() {
     }
     if (!membershipActiveGated) {
       setPending({ action, caregiverName, onPass });
-      // Record a paywall-view signal so the daily win-back job can nudge this
-      // family (referencing the caregiver they tried to reach) if they don't convert.
-      const uid = auth?.currentUser?.uid;
-      const fdb = db;
-      if (uid && fdb) {
-        fdb.collection('users').doc(uid).set({
-          lastPaywallViewedAt: new Date().toISOString(),
-          paywallContext: { caregiverName: caregiverName ?? null, action },
-        }, { merge: true }).catch(() => {});
-      }
       return;
     }
     onPass();

@@ -110,13 +110,6 @@ describe("U11 — routeClientStateMachines shift-hours approval", () => {
     expect(hoisted.updates.some(u => u.path === `agent_sessions/${PHONE}` && "pendingShiftApproval" in u.data)).toBe(true);
   });
 
-  it("blocks a secondary member from approving/disputing payment", async () => {
-    const outcome = await routeClientStateMachines(ctx("APPROVE", { isSecondaryMember: true }));
-    expect(outcome).toBe("handled");
-    expect(hoisted.approveShiftHoursForClient).not.toHaveBeenCalled();
-    expect(hoisted.sendMessage).toHaveBeenCalledWith("chat1", expect.stringContaining("primary account holder"));
-  });
-
   it("clears a stale (>72h) pending approval instead of acting on it", async () => {
     const stale = new Date(Date.now() - 80 * 60 * 60 * 1000).toISOString();
     const outcome = await routeClientStateMachines(ctx("APPROVE", { pendingShiftApprovalSetAt: stale }));

@@ -9,7 +9,6 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingJobResponse",
   "awaitingAvailabilityConfirmation",
   "pendingShiftApproval",
-  "pendingAddFamilyMember",
   "collectingCredential",
   "collectingCredentialSetAt",
   "stateExpiresAt",
@@ -207,7 +206,6 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["availabilityStep",        "updating your availability"],
   ["profileUpdateStep",       "updating your profile"],
   ["collectingCredential",    "your credential upload"],
-  ["pendingAddFamilyMember",  "adding your family member"],
 ];
 
 /**
@@ -341,7 +339,6 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["awaitingAvailabilityConfirmation", "invite"],
   // Set by approvalNoticeDispatcher.ts alongside pendingShiftApprovalSetAt.
   ["pendingShiftApproval", { setAtField: "pendingShiftApprovalSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
-  ["pendingAddFamilyMember", "generic"],
   // SMS router parity: credentialCollector.ts clears this flow after
   // CREDENTIAL_FLOW_TTL_MS (30 min), not the 24h multi-step TTL.
   ["collectingCredential", { setAtField: "collectingCredentialSetAt", ttlMs: CREDENTIAL_FLOW_TTL_MS }],

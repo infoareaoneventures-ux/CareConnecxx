@@ -43,11 +43,10 @@ interface CaregiverStateContext {
 interface ClientStateContext {
   nextAppointment?: string;
   latestCareUpdate?: string;
-  familyGroupStatus?: string;
   pendingInvoiceOrPayment?: string;
 }
 
-export type OperationalRecipeLeadRole = "client" | "caregiver" | "family-secondary";
+export type OperationalRecipeLeadRole = "client" | "caregiver";
 
 export interface CaraOperationalContext {
   pendingActions: PendingActionContext[];
@@ -56,8 +55,6 @@ export interface CaraOperationalContext {
   caregiverState?: CaregiverStateContext;
   clientState?: ClientStateContext;
 }
-
-const PAYMENT_CONTEXT_RE = /\b(approve|payment|invoice|billing|refund|timesheet|payout|charge|hours?)\b/i;
 
 function asString(value: unknown): string | undefined {
   return sanitizePromptContextValue(value);
@@ -116,7 +113,6 @@ export async function loadCaraOperationalContext(params: {
     caregiverPayoutDocs,
     clientAppointmentDocs,
     clientCareDocs,
-    familyGroupDocs,
     invoiceDocs,
   ] = await Promise.all([
     safeDocs(db.collection("pending_actions")
@@ -179,12 +175,6 @@ export async function loadCaraOperationalContext(params: {
         .where("clientId", "==", userId)
         .orderBy("timestamp", "desc")
         .limit(2)
-        .get())
-      : Promise.resolve([]),
-    phone
-      ? safeDocs(db.collection("family_groups")
-        .where("phones", "array-contains", phone)
-        .limit(1)
         .get())
       : Promise.resolve([]),
     userId
@@ -259,9 +249,6 @@ export async function loadCaraOperationalContext(params: {
     latestCareUpdate: latestCare
       ? truncate(asString(latestCare.summary) ?? asString(latestCare.notes) ?? asString(latestCare.wellness), 220)
       : undefined,
-    familyGroupStatus: familyGroupDocs.length
-      ? `family group active with ${Array.isArray(familyGroupDocs[0].data().phones) ? familyGroupDocs[0].data().phones.length : "some"} phone(s)`
-      : undefined,
     pendingInvoiceOrPayment: pendingInvoice
       ? `${String(pendingInvoice.id)} ${String(pendingInvoice.status ?? "unknown")}`
       : undefined,
@@ -330,7 +317,6 @@ export function formatCaraOperationalContext(ctx: CaraOperationalContext): strin
     const c = ctx.clientState;
     if (c.nextAppointment) lines.push(`- Client next visit: ${safe(c.nextAppointment, 180)}.`);
     if (c.latestCareUpdate) lines.push(`- Latest care update: ${safe(c.latestCareUpdate, 240)}.`);
-    if (c.familyGroupStatus) lines.push(`- Family group: ${safe(c.familyGroupStatus, 120)}.`);
     if (c.pendingInvoiceOrPayment) lines.push(`- Pending invoice/payment: ${safe(c.pendingInvoiceOrPayment, 120)}.`);
   }
 
@@ -351,10 +337,7 @@ export function buildOperationalRecipeLead(
   ctx: CaraOperationalContext,
   role: OperationalRecipeLeadRole,
 ): string | undefined {
-  const pending = ctx.pendingActions.find((action) => {
-    const preview = action.preview ?? action.toolName ?? "";
-    return role !== "family-secondary" || !PAYMENT_CONTEXT_RE.test(preview);
-  });
+  const pending = ctx.pendingActions[0];
   if (pending?.preview || pending?.toolName) {
     return `You've got something waiting on your reply: ${pending.preview ?? pending.toolName}.`;
   }
@@ -391,9 +374,6 @@ export function buildOperationalRecipeLead(
   }
   if (ctx.clientState?.latestCareUpdate) {
     return "I can catch you up on the latest care update.";
-  }
-  if (ctx.clientState?.familyGroupStatus) {
-    return "Your family update group is active; I can share the latest care note.";
   }
 
   return undefined;

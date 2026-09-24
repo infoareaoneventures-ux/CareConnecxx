@@ -1,6 +1,6 @@
-// U2 — anti-invention clause + output guard on morningBriefing's two direct
-// messages.create paths, tested via the extracted helpers
-// (generateCaregiverBriefingContent / generateFamilyBriefingText). Module-level
+// U2 — anti-invention clause + output guard on morningBriefing's direct
+// messages.create path, tested via the extracted helper
+// (generateCaregiverBriefingContent). Module-level
 // firebase mocks follow triggerCancellation.test.ts. NOTE the vitest gotcha:
 // beforeEach callbacks use braces — never implicitly return a value.
 
@@ -25,11 +25,8 @@ vi.mock("../../utils/claudeClient", () => ({
 // Imported by the module but not exercised by the extracted helpers.
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn() }));
 vi.mock("../../mcp/server", () => ({ handlePromptGet: vi.fn(() => "") }));
-vi.mock("../../memory/learnedFacts", () => ({ getRelevantFacts: vi.fn(async () => []) }));
-vi.mock("../../memory/memoryFiles", () => ({ getMemoryContext: vi.fn(async () => "") }));
-vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn(async () => null), isInDND: vi.fn(() => false) }));
 
-import { generateCaregiverBriefingContent, generateFamilyBriefingText } from "../morningBriefing";
+import { generateCaregiverBriefingContent } from "../morningBriefing";
 import { ANTI_INVENTION_CLAUSE } from "../../utils/caraMessage";
 
 // The exact leaked-incident shape: the model replies to the briefing author.
@@ -116,31 +113,5 @@ describe("generateCaregiverBriefingContent (U2)", () => {
       await expect(generateCaregiverBriefingContent("briefing prompt", FALLBACK, [MAPS_URL]))
         .resolves.toBe(out);
     });
-  });
-});
-
-describe("generateFamilyBriefingText (U2)", () => {
-  it("carries ANTI_INVENTION_CLAUSE in its system prompt", async () => {
-    modelReturns("Maria arrives at 9am for Rosie's visit today.");
-    await generateFamilyBriefingText("Senior: Rosie\nCaregiver: Maria arriving at 9am");
-    const params = claudeHoisted.messagesCreate.mock.calls[0][0] as { system: string };
-    expect(params.system).toContain(ANTI_INVENTION_CLAUSE);
-  });
-
-  it("returns valid model text unchanged", async () => {
-    modelReturns("Maria arrives at 9am for Rosie's visit today.");
-    await expect(generateFamilyBriefingText("Senior: Rosie"))
-      .resolves.toBe("Maria arrives at 9am for Rosie's visit today.");
-  });
-
-  it("guard-rejected meta-response → '' so the call site's catch/fallback path runs", async () => {
-    modelReturns(META_OUTPUT);
-    await expect(generateFamilyBriefingText("Senior: Rosie")).resolves.toBe("");
-  });
-
-  it("kill switch CARA_OUTPUT_GUARD_ENABLED='false' bypasses the guard", async () => {
-    process.env.CARA_OUTPUT_GUARD_ENABLED = "false";
-    modelReturns(META_OUTPUT);
-    await expect(generateFamilyBriefingText("Senior: Rosie")).resolves.toBe(META_OUTPUT);
   });
 });

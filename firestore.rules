@@ -155,12 +155,6 @@ service cloud.firestore {
         allow delete: if isAdmin();
       }
 
-      // Subcollection: match_history (AI feedback loop signals)
-      match /match_history/{caregiverId} {
-        allow read: if isOwner(userId) || isAdmin();
-        allow create, update: if isOwner(userId);
-        allow delete: if isAdmin();
-      }
     }
     
     // ==========================================
@@ -474,26 +468,6 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
     
-    // ==========================================
-    // SUPPORT TICKETS COLLECTION
-    // ==========================================
-    match /support_tickets/{ticketId} {
-      // User can read their own tickets
-      // Admins can read all
-      allow read: if isAuthenticated() && (
-        resource.data.userId == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Users can create tickets for themselves
-      allow create: if isAuthenticated() && 
-        request.resource.data.userId == request.auth.uid;
-      
-      // Only admin can update
-      allow update: if isAdmin();
-      
-      allow delete: if isAdmin();
-    }
     
     // ==========================================
     // NOTIFICATIONS COLLECTION
@@ -1065,24 +1039,6 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Family groups — members can read; writes via Cloud Functions only.
-    // `phones` holds E.164 numbers, so match the caller's verified phone number
-    // (not their uid) against it.
-    match /family_groups/{groupId} {
-      allow read: if isAuthenticated() && request.auth.token.phone_number in resource.data.phones;
-      allow write: if false;
-    }
-
-    // Family group member index — server-maintained membership lookup.
-    // Owner-scoped read: the primary client (stamped as userId by the
-    // add_family_member MCP tool and the /join callable) can read their own
-    // group members so the FamilyManager roster updates live. Writes stay
-    // server-only (Admin SDK).
-    match /family_group_members/{memberId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow write: if false;
-    }
-
     // Care journal — caregiver and client can read their entries; writes via Cloud Functions only
     match /care_journal/{entryId} {
       allow read: if isAuthenticated() && (
@@ -1102,13 +1058,6 @@ service cloud.firestore {
         resource.data.clientId == request.auth.uid
       );
       allow write: if false;
-    }
-
-    // Proactive reflection drafts — Evia's pending/approved SMS suggestions for human review.
-    // Admin-only UI surface (ProactiveReflectionDashboard). Cloud Functions use the Admin
-    // SDK and bypass rules entirely, so the sender + reflection cron are unaffected.
-    match /proactive_drafts/{draftId} {
-      allow read, write: if isAdmin();
     }
 
     // Admin alerts — safety escalations, signup/booking/background-check events.

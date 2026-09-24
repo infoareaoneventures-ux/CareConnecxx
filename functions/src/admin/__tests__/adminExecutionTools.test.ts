@@ -134,7 +134,7 @@ import { logAudit } from "../../observability/auditLog";
 // runtime. Cast to any so TypeScript doesn’t check the Request/Response overload.
 import { admin_review_caregiver_exception as _arc, admin_review_document as _ard } from "../adminCaregiverActions";
 import { admin_suspend_user as _asu, admin_restore_user as _aru } from "../adminUserActions";
-import { admin_respond_support_ticket as _arst, admin_resolve_dispute as _ardp } from "../adminSupportActions";
+import { admin_resolve_dispute as _ardp } from "../adminSupportActions";
 import { admin_retry_agent_action as _araa } from "../adminLedgerActions";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const admin_review_caregiver_exception = _arc as any;
@@ -144,8 +144,6 @@ const admin_review_document = _ard as any;
 const admin_suspend_user = _asu as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const admin_restore_user = _aru as any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const admin_respond_support_ticket = _arst as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const admin_resolve_dispute = _ardp as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -239,24 +237,6 @@ describe("admin_suspend_user / admin_restore_user", () => {
 
     await admin_restore_user({ userId: "target" }, adminCtx);
     expect(hoisted.docs.get("users/target").accountStatus).toBe("active");
-  });
-});
-
-describe("admin_respond_support_ticket — user can read the response", () => {
-  it("writes a response the user reads + notifies", async () => {
-    hoisted.docs.set("support_tickets/t-1", { userId: "user-1", status: "open" });
-    const res: any = await admin_respond_support_ticket(
-      { ticketId: "t-1", message: "We refunded you." },
-      adminCtx,
-    );
-    expect(res.success).toBe(true);
-    // user-visible response written into the responses subcollection
-    const responseWrite = hoisted.added.find((a) => a.path === "support_tickets/t-1/responses");
-    expect(responseWrite).toBeTruthy();
-    expect(responseWrite!.data.isAdmin).toBe(true);
-    expect(responseWrite!.data.message).toBe("We refunded you.");
-    // ticket moved to in-progress
-    expect(hoisted.docs.get("support_tickets/t-1").status).toBe("in-progress");
   });
 });
 

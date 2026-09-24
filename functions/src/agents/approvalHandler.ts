@@ -13,7 +13,6 @@
 
 import { quickComplete } from "../utils/openaiClient";
 import { sendMessage } from "../linq/client";
-import { generateCaraMessage } from "../utils/caraMessage";
 import {
   type PendingAction,
   resolvePendingAction,
@@ -114,8 +113,6 @@ async function executeConfirmedAction(params: {
     targetDocId:      pending.id,
     metadata: {
       preview:          pending.preview,
-      triggeredByPhone: pending.triggeredByPhone ?? "",
-      approverPhone:    pending.approverPhone ?? "",
     },
   }).catch((err) => console.warn("approvalHandler: logAgentAction (confirmed) ledger write failed", { actionId: pending.id, err }));
 
@@ -170,8 +167,6 @@ async function executeConfirmedAction(params: {
     ...(succeeded ? {} : { errorReason: executionPreview.slice(0, 200) }),
     metadata: {
       preview:          pending.preview,
-      triggeredByPhone: pending.triggeredByPhone ?? "",
-      approverPhone:    pending.approverPhone ?? "",
     },
   }).catch((err) => console.warn("approvalHandler: logAgentAction (executed/failed) ledger write failed", { actionId: pending.id, err }));
 
@@ -192,18 +187,8 @@ async function executeConfirmedAction(params: {
       reason:           executionPreview,
       context: {
         preview:          pending.preview,
-        triggeredByPhone: pending.triggeredByPhone ?? "",
-        approverPhone:    pending.approverPhone ?? "",
       },
     });
-  }
-
-  // H-U4: tell the requester (if a secondary member triggered it) the outcome.
-  if (pending.triggeredByPhone && pending.triggeredByPhone !== phone) {
-    await sendMessage(pending.triggeredByPhone, succeeded
-      ? `Update: the account holder approved "${pending.preview}" and it's done.`
-      : `Update: "${pending.preview}" couldn't be completed. The account holder has been notified.`,
-    ).catch(() => {});
   }
 
   return { succeeded, alertFlagged, skipped: false };
@@ -220,25 +205,6 @@ export async function handlePendingApproval(params: {
   pending:     PendingAction;
 }): Promise<ApprovalResult> {
   const { phone, chatId, text, userId, userType = "client", pending } = params;
-
-  // H-U4: only the account holder can approve a healthcare write action. The
-  // approver-keyed pending doc means a non-approver's reply usually won't even
-  // match this doc, but guard explicitly: a YES from a non-approver does NOT
-  // execute and the action stays awaiting the account holder.
-  if (pending.approverPhone && phone !== pending.approverPhone) {
-    const decisionForApprover = await classifyApproval(text, pending.preview);
-    if (decisionForApprover === "YES") {
-      await sendMessage(chatId, await generateCaraMessage({
-        audience: userType === "caregiver" ? "caregiver" : "family",
-        language: "en",
-        context: "Someone who isn't the primary account holder tried to approve an action that needs the account holder's sign-off. Warmly explain only the primary account holder can approve this, and that you've asked them to confirm.",
-        fallback: "Only the primary account holder can approve this — I've asked them to confirm.",
-        maxTokens: 70,
-      })).catch(() => {});
-      return { outcome: "handled" };
-    }
-    return { outcome: "fallthrough", reason: "question" };
-  }
 
   const decision = await classifyApproval(text, pending.preview);
 

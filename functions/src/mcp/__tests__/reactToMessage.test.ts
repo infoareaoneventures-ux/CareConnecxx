@@ -59,7 +59,6 @@ vi.mock("../../agents/caregiverSearch", () => ({
   presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
   searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
 }));
-vi.mock("../../agents/familyGroupManager", () => ({ buildOrUpdateFamilyGroup: vi.fn().mockResolvedValue(undefined), removeMemberFromGroup: vi.fn().mockResolvedValue({ removed: true }) }));
 vi.mock("../../utils/toolNotify", () => ({ trySend: vi.fn().mockResolvedValue({ sent: true }), trySendViaCara: vi.fn().mockResolvedValue({ sent: true }) }));
 
 // The unit under test: stub only addReaction — the handler imports it dynamically.

@@ -31,7 +31,7 @@ describe("activity feed allow-list (security-critical)", () => {
   it("EXCLUDES internal/system/bookkeeping events", () => {
     expect(describeForFeed("message_received")).toBeNull();
     expect(describeForFeed("session_created")).toBeNull();
-    expect(describeForFeed("family_member_welcome_failed")).toBeNull();
+    expect(describeForFeed("email_change_requested")).toBeNull();
     expect(describeForFeed("invoice_created")).toBeNull();
   });
 

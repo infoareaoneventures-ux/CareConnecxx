@@ -101,14 +101,6 @@ async function resolveCaregiverRate(
   return { ok: false, code, message: result.message };
 }
 
-// Short referral code (mirrors the frontend dbService.generateReferralCode shape:
-// 6 uppercase alphanumerics). Used by send_referral / get_referral_status.
-function generateReferralCode(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I
-  let code = "";
-  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
-}
 
 // ── Tool definitions (Anthropic tool_use format) ──────────────────────────────
 
@@ -482,20 +474,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "send_referral",
-    description: "Send a referral invite to a friend/family member by email, sharing the user's referral code. userId is injected automatically.",
-    input_schema: {
-      type: "object",
-      properties: { email: { type: "string", description: "Email address to invite" } },
-      required: ["email"],
-    },
-  },
-  {
-    name: "get_referral_status",
-    description: "Get the user's referral code and how many people they've referred (and their statuses). Read-only. userId is injected automatically.",
-    input_schema: { type: "object", properties: {}, required: [] },
-  },
-  {
     name: "update_preferences",
     description: "Update Evia's notification preferences for the user (DND, active hours, etc.).",
     input_schema: {
@@ -511,12 +489,12 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "read_memory_file",
-    description: "Read one of Evia's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_pending_timesheets_...\").",
+    description: "Read one of Evia's long-term memory files for a user. Canonical files: profile, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_pending_timesheets_...\").",
     input_schema: {
       type: "object",
       properties: {
         userId: { type: "string", description: "The user's ID" },
-        file:   { type: "string", description: "One of: profile, health, family, recent_episodes, procedural" },
+        file:   { type: "string", description: "One of: profile, family, recent_episodes, procedural" },
       },
       required: ["userId", "file"],
     },
@@ -528,7 +506,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         userId:  { type: "string", description: "The user's ID" },
-        file:    { type: "string", description: "One of: profile, health, family, recent_episodes, procedural" },
+        file:    { type: "string", description: "One of: profile, family, recent_episodes, procedural" },
         content: { type: "string", description: "Markdown content to append to the file" },
       },
       required: ["userId", "file", "content"],
@@ -543,7 +521,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         userId:  { type: "string", description: "The user's ID" },
-        file:    { type: "string", description: "Memory file slug (e.g. profile, health, family, recent_episodes, procedural)" },
+        file:    { type: "string", description: "Memory file slug (e.g. profile, family, recent_episodes, procedural)" },
         find:    { type: "string", description: "Exact text currently in the file to replace" },
         replace: { type: "string", description: "Replacement text" },
       },
@@ -787,29 +765,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "set_visit_update_frequency",
-    description:
-      "Set how often the family gets mid-visit updates while a caregiver is with their loved one. " +
-      "Use when they say things like 'update me every hour', 'fewer updates please', 'stop the visit updates', " +
-      "or 'go back to normal updates'. Default is every 2 hours during a visit. " +
-      "Session context (phone) is injected automatically.",
-    input_schema: {
-      type: "object",
-      properties: {
-        frequencyMinutes: {
-          type: "number",
-          description: "Minutes between mid-visit updates (30–480). E.g. 60 for hourly. Omit when using mode.",
-        },
-        mode: {
-          type: "string",
-          enum: ["default", "off"],
-          description: "'default' resets to the standard cadence (every 2 hours); 'off' stops mid-visit updates entirely (arrival and end-of-visit summaries still send).",
-        },
-      },
-      required: [],
-    },
-  },
-  {
     name: "get_active_bookings",
     description:
       "The website's My Bookings > Active Bookings tab, exactly: one card per active booking — caregiver, Ongoing or " +
@@ -828,17 +783,6 @@ export const MCP_TOOLS: McpTool[] = [
         clientId: { type: "string", description: "The client's user ID" },
       },
       required: ["clientId"],
-    },
-  },
-  {
-    name: "get_family_group",
-    description: "Get all family members who are part of this care group and receive updates.",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone: { type: "string", description: "The primary family member's phone number" },
-      },
-      required: ["phone"],
     },
   },
   {
@@ -901,31 +845,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "delete_review",
-    description: "Delete a review the family previously left for a caregiver. Permanent — confirm before calling.",
-    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, reviewId: { type: "string", description: "The review document id." } }, required: ["clientId", "reviewId"] },
-  },
-  {
-    name: "get_support_ticket",
-    description: "Get the status and details of one of the family's support tickets by id.",
-    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, ticketId: { type: "string" } }, required: ["userId", "ticketId"] },
-  },
-  {
-    name: "list_support_tickets",
-    description: "List the family's support tickets (most recent first) so Evia can give status updates instead of opening duplicates.",
-    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
-  },
-  {
-    name: "update_support_ticket",
-    description: "Update one of the family's OWN support tickets: add a follow-up note ('add_response') or reopen a resolved ticket ('reopen'). Cannot set admin-only triage states.",
-    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, ticketId: { type: "string" }, action: { type: "string", description: "'add_response' or 'reopen'" }, message: { type: "string", description: "Follow-up note (required for add_response)." } }, required: ["userId", "ticketId", "action"] },
-  },
-  {
-    name: "log_match_feedback",
-    description: "Record the family's qualitative feedback about a caregiver match (e.g. 'great with mom but often late'). Feeds future matching. Distinct from start_review_flow (the public star review).",
-    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, caregiverId: { type: "string" }, sentiment: { type: "string", description: "'positive', 'neutral', or 'negative'" }, note: { type: "string" } }, required: ["clientId", "caregiverId", "note"] },
-  },
-  {
     name: "create_job_post",
     description:
       "Post a new caregiver job for the family so nearby caregivers can apply — matches the website's own 6-step " +
@@ -972,16 +891,6 @@ export const MCP_TOOLS: McpTool[] = [
       },
       required: ["clientId", "title", "notes", "careTypes", "zipCode"],
     },
-  },
-  {
-    name: "list_proactive_drafts",
-    description: "List Evia's pending proactive message drafts queued for this family that haven't sent yet.",
-    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
-  },
-  {
-    name: "cancel_proactive_draft",
-    description: "Cancel a pending proactive message draft so Evia doesn't send it. Only works on drafts that haven't already sent.",
-    input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, draftId: { type: "string" } }, required: ["userId", "draftId"] },
   },
   {
     name: "schedule_followup",
@@ -1044,21 +953,6 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-      },
-      required: ["clientId"],
-    },
-  },
-  {
-    name: "suggest_upcoming_care",
-    description:
-      "Check if the client has upcoming care coverage and whether a preferred caregiver has availability. " +
-      "Call this when the family is chatting casually and you want to proactively surface a relevant booking opportunity. " +
-      "Returns: hasVisitNextWeek (boolean), preferredCaregiverAvailable (boolean), caregiverName, suggestedDate.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId: { type: "string", description: "The client's user ID" },
-        phone:    { type: "string", description: "The client's phone number" },
       },
       required: ["clientId"],
     },
@@ -1238,39 +1132,6 @@ export const MCP_TOOLS: McpTool[] = [
         role: { type: "string", enum: ["client", "caregiver"], description: "Which onboarding flow this is" },
       },
       required: ["role"],
-    },
-  },
-  {
-    name: "add_family_member",
-    description:
-      "Add a new family member to this care group. They receive a welcome SMS and start getting updates. " +
-      "Only the primary client can add members.",
-    input_schema: {
-      type: "object",
-      properties: {
-        seniorId:    { type: "string", description: "The senior's profile document ID" },
-        name:        { type: "string", description: "The new member's name" },
-        memberPhone: { type: "string", description: "Phone number (E.164) of the family member being added" },
-        phone:       { type: "string", description: "The acting user's phone — auto-injected; this is NOT the member being added" },
-        clientId:    { type: "string", description: "The primary client's user ID" },
-      },
-      required: ["seniorId", "name", "memberPhone", "clientId"],
-    },
-  },
-  {
-    name: "remove_family_member",
-    description:
-      "Remove a family member from this care group. They stop receiving updates. " +
-      "IMPORTANT: Only call after the primary client has explicitly confirmed.",
-    input_schema: {
-      type: "object",
-      properties: {
-        seniorId: { type: "string", description: "The senior's profile document ID" },
-        memberPhone: { type: "string", description: "Phone number (E.164) of the family member to remove" },
-        phone:    { type: "string", description: "The acting user's phone — auto-injected for SMS confirmation; this is NOT the member being removed" },
-        clientId: { type: "string", description: "The primary client's user ID" },
-      },
-      required: ["seniorId", "memberPhone", "clientId"],
     },
   },
   {
@@ -1603,22 +1464,6 @@ export const MCP_TOOLS: McpTool[] = [
         referredPhone:  { type: "string", description: "Phone number to text the application link to" },
       },
       required: ["caregiverId", "phone", "referredName", "referredPhone"],
-    },
-  },
-  {
-    name: "create_support_ticket",
-    description:
-      "Create a support ticket for an issue that needs admin review.",
-    input_schema: {
-      type: "object",
-      properties: {
-        userId:      { type: "string", description: "Your user ID" },
-        userType:    { type: "string", enum: ["client","caregiver"], description: "client or caregiver" },
-        subject:     { type: "string", description: "Short subject line" },
-        description: { type: "string", description: "Full description of the issue" },
-        category:    { type: "string", enum: ["billing","booking","caregiver","technical","other"], description: "Issue category" },
-      },
-      required: ["userId", "userType", "subject", "description"],
     },
   },
 
@@ -2300,20 +2145,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "edit_review",
-    description: "Update a review the family already submitted for a caregiver — change the rating and/or comment. Use when they say 'change my review to 5 stars' or 'update what I wrote'. Only the review's author can edit it.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId: { type: "string", description: "The client who wrote the review" },
-        reviewId: { type: "string", description: "The review ID to edit" },
-        rating:   { type: "number", description: "New rating 1-5 (optional)" },
-        comment:  { type: "string", description: "New comment text (optional)" },
-      },
-      required: ["clientId", "reviewId"],
-    },
-  },
-  {
     name: "cancel_followup",
     description: "Cancel a previously scheduled follow-up (from schedule_followup) before it fires. Use when the family says 'never mind that follow-up' or 'cancel the check-in you set'. Pass the triggerId returned by schedule_followup.",
     input_schema: {
@@ -2323,21 +2154,6 @@ export const MCP_TOOLS: McpTool[] = [
         userId:    { type: "string", description: "The owning user — auto-injected; used to verify you own this follow-up" },
       },
       required: ["triggerId", "userId"],
-    },
-  },
-  {
-    name: "get_support_tickets",
-    description:
-      "List the support tickets a user has opened (via create_support_ticket or the web app). " +
-      "Use when the user asks 'what's the status of my ticket?' or 'did anyone get back to me?'. " +
-      "By default only open tickets are returned; pass includeResolved to also show closed ones.",
-    input_schema: {
-      type: "object",
-      properties: {
-        userId:          { type: "string",  description: "The user's Firestore document ID" },
-        includeResolved: { type: "boolean", description: "Include resolved/closed tickets (default false)" },
-      },
-      required: ["userId"],
     },
   },
   {
@@ -2464,41 +2280,6 @@ export const MCP_TOOLS: McpTool[] = [
   },
   // ── CRUD/parity gap closures (agent-native audit 2026-07) ─────────────────
   {
-    name: "archive_senior_profile",
-    description:
-      "Archive a senior's profile when care ends (soft-delete). The profile stops appearing in active care flows " +
-      "but the care record is RETAINED — nothing is hard-deleted. " +
-      "MANDATORY: read back whose profile you're archiving and wait for explicit confirmation before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        seniorId: { type: "string", description: "The senior's profile document ID" },
-        clientId: { type: "string", description: "The client's user ID" },
-        reason:   { type: "string", description: "Optional reason (e.g. care ended, moved to facility)" },
-      },
-      required: ["seniorId", "clientId"],
-    },
-  },
-  {
-    name: "update_family_member",
-    description:
-      "Edit an existing family group member's details — display name, role, relationship to the senior, or whether " +
-      "they receive care update notifications. Use remove_family_member to remove them entirely. " +
-      "Confirm the specific change before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId:    { type: "string", description: "The primary client's user ID" },
-        memberPhone: { type: "string", description: "Phone number (E.164) of the family member to update" },
-        memberName:  { type: "string", description: "Corrected display name (optional)" },
-        role:        { type: "string", enum: ["primary", "family", "emergency_contact"], description: "Member's role in the care group (optional)" },
-        relationship:{ type: "string", description: "Relationship to the senior, e.g. daughter, son, neighbor (optional)" },
-        notificationsEnabled: { type: "boolean", description: "Whether this member receives care update messages (optional)" },
-      },
-      required: ["clientId", "memberPhone"],
-    },
-  },
-  {
     name: "list_interviews",
     description:
       "List scheduled/pending video or phone interviews for the caller. Pass clientId for a family's interviews or " +
@@ -2603,7 +2384,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         userId: { type: "string", description: "The user's ID" },
-        file:   { type: "string", description: "Memory file slug (e.g. profile, health, family, recent_episodes, procedural, or an ad-hoc slug)" },
+        file:   { type: "string", description: "Memory file slug (e.g. profile, family, recent_episodes, procedural, or an ad-hoc slug)" },
       },
       required: ["userId", "file"],
     },
@@ -2661,7 +2442,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "apply_to_job",
   "request_instant_payout",
   "submit_shift_hours",
-  "create_support_ticket",
   "get_caregiver_earnings",
   "update_caregiver_availability",
   "browse_job_board",
@@ -2691,8 +2471,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "submit_media_update",
   "respond_to_shift_hour_correction",
   "create_caregiver_referral",
-  // Missing CRUD tools — reads + in-place updates
-  "get_support_tickets",
   "get_shifts",
   "get_caregiver_availability",
   "update_care_journal_entry",
@@ -2814,7 +2592,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResource[] = [
   {
     uri: "cara://user/{userId}/memory/{file}",
     name: "Memory File",
-    description: "Evia's long-term memory file: profile, health, family, recent_episodes, or procedural.",
+    description: "Evia's long-term memory file: profile, family, recent_episodes, or procedural.",
     mimeType: "application/json",
   },
 ];
@@ -3131,7 +2909,7 @@ async function recordMcpToolStatus(params: {
 // mutating tool must never be added here.
 const READ_ONLY_TOOLS = new Set<string>([
   "get_senior_profile", "list_household_seniors", "get_pending_tasks",
-  "suggest_upcoming_care", "get_care_team", "cara_knows",
+  "get_care_team", "cara_knows",
   "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
   "get_pending_booking_requests",
   "get_pending_schedule_amendments", "get_past_visits", "get_calendar", "get_resendable_booking_requests",
@@ -3144,7 +2922,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_membership_page", "contact_support",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
   "get_care_journal_client", "get_care_plan",
-  "get_recent_messages", "get_family_group",
+  "get_recent_messages",
   "read_memory_file", "search_memory",
   "list_client_jobs", "list_job_applicants", "browse_job_board",
   "get_job_recommendations", "get_my_applications", "get_background_check_status",
@@ -3327,8 +3105,8 @@ export async function handleToolCall(
   if (shadowMode && !READ_ONLY_TOOLS.has(name)) {
     return { _shadow: true, simulated: name, wouldRun: true, input };
   }
-  // Runtime-enforced confirmation gate. High-risk tool calls (remove_family_member,
-  // cancel_subscription, etc.) are intercepted on the
+  // Runtime-enforced confirmation gate. High-risk tool calls (cancel_job_post,
+  // delete_account, etc.) are intercepted on the
   // first call and turned into a pending-action stub for Claude to read.
   // The re-run from approvalHandler sets _confirmedActionId to bypass the gate.
   // See pendingActions.ts for the full design.
@@ -3381,38 +3159,6 @@ export async function handleToolCall(
       toolName: name,
       preview:  action.preview,
     });
-    // H-U4: a healthcare action triggered by a secondary member routes its
-    // approval to the ACCOUNT HOLDER. Send the proposal to them; tell the
-    // requester it was routed (they cannot approve it themselves).
-    if (action.approverPhone && action.triggeredByPhone && action.approverPhone !== action.triggeredByPhone) {
-      try {
-        const { sendViaInteractionAgent } = await import("../agents/caraAgent");
-        await sendViaInteractionAgent(action.approverPhone, {
-          content:     `${action.preview}? A family member asked me to handle this. Reply YES to approve or NO to decline.`,
-          urgency:     "immediate",
-          sourceAgent: "healthcare_approval",
-          canDrop:     false,
-        });
-      } catch (e) {
-        // The approval prompt never reached the account holder, so this action
-        // is NOT actually routed. Surface the failure instead of returning a
-        // misleading routed_to_account_holder:true — otherwise the requester is
-        // told it's pending approval when nobody was ever asked.
-        console.error("MCP gate: failed to send proposal to account holder", sanitizeErrorReason(e instanceof Error ? e.message : String(e)));
-        return toolError(
-          "UNAVAILABLE",
-          "I couldn't reach the primary account holder to request approval just now. Please try again in a moment.",
-        );
-      }
-      return {
-        _pending_action: true,
-        actionId: action.id,
-        routed_to_account_holder: true,
-        guidance:
-          "Tell the family member you've sent this to the primary account holder to approve and you'll " +
-          "let them know once it's confirmed. Do NOT ask them to confirm — only the account holder can.",
-      };
-    }
     return buildPendingActionStub(action);
   }
 
@@ -4064,39 +3810,6 @@ async function executeToolCall(
         return { success: true, shiftId, bookingRequestId: created.bookingRequestId, caregiverId: backupCaregiverId, caregiverName: created.caregiverName, status: "pending" };
       }
 
-      case "send_referral": {
-        const { userId, email } = input;
-        if (!userId) return toolError("INVALID_INPUT", "userId is required (auto-injected from session)");
-        if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email))) return toolError("INVALID_INPUT", "a valid email is required");
-        const userSnap = await db.collection("users").doc(userId as string).get();
-        const userData = userSnap.data() || {};
-        let referralCode = userData.referralCode as string | undefined;
-        if (!referralCode) {
-          referralCode = generateReferralCode();
-          await db.collection("users").doc(userId as string).set({ referralCode }, { merge: true });
-        }
-        const userType = (userData.userType === "caregiver" ? "caregiver" : "client");
-        await db.collection("referrals").add({
-          referrerId: userId, referrerUserId: userId, referredEmail: String(email), status: "pending", referralCode, userType, createdAt: nowIso, source: "cara",
-        });
-        logAudit({ eventType: "referral_sent", userId: userId as string, data: { source: "mcp:send_referral" } }).catch(() => {});
-        return { success: true, referralCode, invited: String(email) };
-      }
-
-      case "get_referral_status": {
-        const { userId } = input;
-        if (!userId) return toolError("INVALID_INPUT", "userId is required (auto-injected from session)");
-        const userSnap = await db.collection("users").doc(userId as string).get();
-        let referralCode = (userSnap.data()?.referralCode as string | undefined);
-        if (!referralCode) {
-          referralCode = generateReferralCode();
-          await db.collection("users").doc(userId as string).set({ referralCode }, { merge: true });
-        }
-        const refSnap = await db.collection("referrals").where("referrerId", "==", userId).get();
-        const referrals = refSnap.docs.map((d) => ({ email: d.data().referredEmail, status: d.data().status }));
-        return { success: true, referralCode, totalReferred: referrals.length, referrals };
-      }
-
       case "update_preferences": {
         const { userId, ...patch } = input;
         if (!userId) return toolError("INVALID_INPUT", "userId is required");
@@ -4723,69 +4436,12 @@ async function executeToolCall(
         };
       }
 
-      case "set_visit_update_frequency": {
-        const { phone, frequencyMinutes, mode } = input;
-        if (!phone) return toolError("INVALID_INPUT", "phone is required");
-        if (mode === undefined && frequencyMinutes === undefined) {
-          return toolError("INVALID_INPUT", "Provide frequencyMinutes (30–480) or mode ('default' | 'off')");
-        }
-
-        const sessionRef = db.collection("agent_sessions").doc(phone as string);
-        const sessionSnap = await sessionRef.get();
-        if (!sessionSnap.exists) return toolError("NOT_FOUND", "No session found for this phone");
-
-        if (mode === "off") {
-          await sessionRef.update({
-            inShiftUpdatesPaused:  true,
-            inShiftUpdateCadence:  admin.firestore.FieldValue.delete(),
-          });
-          return {
-            success: true,
-            setting: "off",
-            message: "Mid-visit updates are off. Arrival notices and the end-of-visit summary still send. They can turn updates back on anytime.",
-          };
-        }
-        if (mode === "default") {
-          await sessionRef.update({
-            inShiftUpdatesPaused: admin.firestore.FieldValue.delete(),
-            inShiftUpdateCadence: admin.firestore.FieldValue.delete(),
-          });
-          return {
-            success: true,
-            setting: "default",
-            message: "Mid-visit updates reset to the standard cadence — roughly every 2 hours during a visit.",
-          };
-        }
-
-        const minutes = Number(frequencyMinutes);
-        if (!Number.isFinite(minutes) || minutes < 30 || minutes > 480) {
-          return toolError("INVALID_INPUT", "frequencyMinutes must be between 30 and 480");
-        }
-        await sessionRef.update({
-          inShiftUpdatesPaused: admin.firestore.FieldValue.delete(),
-          inShiftUpdateCadence: Math.round(minutes),
-        });
-        return {
-          success: true,
-          setting: `${Math.round(minutes)}m`,
-          message: `Mid-visit updates will now come about every ${Math.round(minutes)} minutes during a visit.`,
-        };
-      }
-
       case "get_active_bookings": {
         if (!input.clientId) return toolError("INVALID_INPUT", "clientId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.clientId as string, data: { source: "mcp:get_active_bookings" } }).catch(() => {});
         const bookings = await listActiveBookings(input.clientId as string);
         if (bookings.length === 0) return { success: true, bookings: [], total: 0, message: "No active bookings — the Active Bookings tab is empty" };
         return { success: true, bookings, total: bookings.length };
-      }
-
-      case "get_family_group": {
-        if (!input.phone) return toolError("INVALID_INPUT", "phone is required");
-        const snap = await db.collection("family_group_members")
-          .where("primaryPhone", "==", input.phone)
-          .get();
-        return { success: true, members: snap.docs.map(d => d.data()), count: snap.size };
       }
 
       case "schedule_followup": {
@@ -4904,52 +4560,6 @@ async function executeToolCall(
         break;
     }
 
-    if (name === "suggest_upcoming_care") {
-      const { clientId } = input as { clientId: string; phone?: string };
-      const nextWeekStart = new Date();
-      nextWeekStart.setDate(nextWeekStart.getDate() + 1);
-      const nextWeekEnd = new Date();
-      nextWeekEnd.setDate(nextWeekEnd.getDate() + 8);
-      const startStr = nextWeekStart.toISOString().slice(0, 10);
-      const endStr   = nextWeekEnd.toISOString().slice(0, 10);
-
-      const apptSnap = await db.collection("appointments")
-        .where("clientId", "==", clientId)
-        .where("status",   "in", ["confirmed", "pending_caregiver_confirmation"])
-        .where("date",     ">=", startStr)
-        .where("date",     "<=", endStr)
-        .limit(1)
-        .get();
-
-      const hasVisitNextWeek = !apptSnap.empty;
-
-      // Check preferred caregiver availability (most recently booked)
-      const recentAppt = await db.collection("appointments")
-        .where("clientId", "==", clientId)
-        .where("status",   "==", "completed")
-        .orderBy("date",   "desc")
-        .limit(1)
-        .get();
-
-      let preferredCaregiverAvailable = false;
-      let caregiverName = "";
-      let suggestedDate = startStr;
-
-      if (!recentAppt.empty) {
-        const lastAppt = recentAppt.docs[0].data();
-        caregiverName  = lastAppt.caregiverName ?? "";
-        const cgId     = lastAppt.caregiverId ?? "";
-        if (cgId) {
-          const cgSnap = await db.collection("caregivers").doc(cgId).get();
-          const cgData = cgSnap.data();
-          if (cgData && cgData.isAvailable !== false && cgData.status === "approved") {
-            preferredCaregiverAvailable = true;
-          }
-        }
-      }
-
-      return { hasVisitNextWeek, preferredCaregiverAvailable, caregiverName, suggestedDate };
-    }
 
     if (name === "get_care_plan") {
       const { clientId } = input as { clientId: string };
@@ -5205,172 +4815,7 @@ async function executeToolCall(
       });
     }
 
-    if (name === "add_family_member") {
-      return runActionNativeMcpWrite(name, input, async () => {
-      const { seniorId, name: memberName, memberPhone, clientId } = input as Record<string, unknown>;
-      if (!seniorId || !memberName || !memberPhone || !clientId) return toolError("INVALID_INPUT", "seniorId, name, memberPhone, and clientId are required");
-      const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
-      if (!seniorSnap.exists) return toolError("NOT_FOUND", "Senior profile not found");
-      const seniorData = seniorSnap.data()!;
-      if (seniorData.userId && seniorData.userId !== clientId) return toolError("PERMISSION_DENIED", "Not authorized to modify this senior's profile");
-      const existing: Array<{ phone: string }> = seniorData.familyMembers ?? [];
-      if (existing.some(m => m.phone === memberPhone)) return toolError("INVALID_INPUT", "This phone number is already a family member");
-      await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayUnion({ name: memberName, phone: memberPhone, addedAt: nowIso, addedBy: clientId }) });
 
-      // Also register the member in the SAME records the inbound new-user router reads,
-      // so when this member first texts in they're recognized as a secondary member
-      // instead of creating a DUPLICATE account. The router checks both the primary
-      // session's `groupMembers` array and the `family_group_members` collection.
-      // Resolve the primary's phone by clientId lookup (authoritative). The
-      // member being added is `memberPhone`; the acting user's `phone` is
-      // auto-injected separately and is intentionally not used for the member.
-      let primaryPhone: string | undefined;
-      let memberDocId: string | undefined;
-      {
-        const primarySnap = await db.collection("agent_sessions")
-          .where("userId", "==", clientId as string).limit(1).get();
-        if (!primarySnap.empty) primaryPhone = primarySnap.docs[0].id;
-        if (primaryPhone === memberPhone) primaryPhone = undefined; // never self-link
-        if (primaryPhone) {
-          await db.collection("agent_sessions").doc(primaryPhone).update({
-            groupMembers: admin.firestore.FieldValue.arrayUnion(memberPhone),
-          }).catch(() => {});
-          const { familyMemberDocId } = await import("../agents/familyGroupManager");
-          memberDocId = familyMemberDocId(primaryPhone, memberPhone as string);
-          const memberRef = db.collection("family_group_members").doc(memberDocId);
-          const memberSnap = await memberRef.get().catch(() => null);
-          if (!memberSnap?.exists) {
-            // Do NOT swallow silently: a failed index write means the inbound
-            // router won't recognize this member and may spawn a duplicate
-            // account, so surface it loudly for admin follow-up. Kept non-fatal
-            // because senior_profiles.familyMembers (written above) is the
-            // source of truth buildOrUpdateFamilyGroup reads, and the dup-guard
-            // earlier in this handler would block a clean retry of the add.
-            await memberRef.set({
-              primaryPhone,
-              memberPhone,
-              memberName:  memberName ?? "Family member",
-              userId:      clientId,
-              seniorId,
-              seniorName:  seniorData.name ?? seniorData.seniorName ?? null,
-              addedAt:     nowIso,
-              joinedAt:    null,
-              source:      "mcp:add_family_member",
-            }).catch((err) => {
-              // Log only non-PII correlation IDs — phone numbers (and memberDocId,
-              // which is derived from them) are PII and must not hit logs.
-              console.error("add_family_member: family_group_members index write failed", { seniorId, clientId, error: err instanceof Error ? err.message : String(err) });
-            });
-          }
-        }
-      }
-
-      const { buildOrUpdateFamilyGroup } = await import("../agents/familyGroupManager");
-      let groupSync: { success: boolean; errorReason?: string } = { success: true };
-      await buildOrUpdateFamilyGroup(seniorId as string).catch(async (err) => {
-        const errorReason = err instanceof Error ? err.message : String(err);
-        groupSync = { success: false, errorReason };
-        const { logAgentAction } = await import("../observability/actionLedger");
-        await logAgentAction({
-          actionType: "family_group_sync",
-          status: "failed",
-          userId: clientId as string,
-          role: "client",
-          toolName: "add_family_member",
-          targetCollection: "family_groups",
-          targetDocId: seniorId as string,
-          errorReason,
-          metadata: {
-            seniorId,
-            memberName,
-            memberPhone,
-            source: "mcp:add_family_member",
-            recipeId: "share_latest_update",
-          },
-        }).catch(() => {});
-        await db.collection("admin_alerts").add({
-          type: "family_group_sync_failed",
-          severity: "high",
-          priority: "high",
-          resolved: false,
-          clientId,
-          seniorId,
-          memberPhone,
-          recipeId: "share_latest_update",
-          sourceAgent: "mcp:add_family_member",
-          errorReason,
-          createdAt: nowIso,
-        }).catch(() => {});
-      });
-      const { trySend } = await import("../utils/toolNotify");
-      const notification = await trySend(
-        memberPhone as string,
-        `Hi - you've been added to ${seniorData.name ?? seniorData.seniorName ?? "your loved one's"} Evia care group. I'm Evia, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
-        "mcp:add_family_member",
-      );
-      const { logAgentAction } = await import("../observability/actionLedger");
-      logAudit({ eventType: "family_member_added", userId: clientId as string, data: { source: "mcp:add_family_member", seniorId, newMemberPhone: memberPhone, notificationSent: notification.sent } }).catch(() => {});
-      logAudit({
-        eventType: notification.sent ? "family_member_welcome_sent" : "family_member_welcome_failed",
-        userId: clientId as string,
-        data: { source: "mcp:add_family_member", seniorId, newMemberPhone: memberPhone, notification },
-      }).catch(() => {});
-      logAgentAction({
-        actionType: "family_member_add",
-        status: notification.sent ? "executed" : "failed",
-        userId: clientId as string,
-        role: "client",
-        toolName: "add_family_member",
-        targetCollection: "family_group_members",
-        targetDocId: memberDocId ?? (typeof memberPhone === "string" ? String(memberPhone) : undefined),
-        errorReason: notification.sent ? undefined : notification.reason,
-        metadata: { seniorId, memberName, memberPhone, source: "mcp:add_family_member" },
-      }).catch(() => {});
-      return { success: true, added: true, name: memberName, phone: memberPhone, notification, groupSync };
-      });
-    }
-
-    if (name === "remove_family_member") {
-      return runActionNativeMcpWrite(name, input, async () => {
-      const { seniorId, clientId } = input as Record<string, unknown>;
-      // Target is memberPhone only. `input.phone` is the acting user's phone
-      // (auto-injected for the confirmation round-trip), so falling back to it
-      // here would remove the actor themselves when memberPhone is missing.
-      const targetPhone = input.memberPhone as unknown;
-      if (!seniorId || !targetPhone || !clientId) return toolError("INVALID_INPUT", "seniorId, memberPhone, and clientId are required");
-      const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
-      if (!seniorSnap.exists) return toolError("NOT_FOUND", "Senior profile not found");
-      const seniorData = seniorSnap.data()!;
-      if (seniorData.userId && seniorData.userId !== clientId) return toolError("PERMISSION_DENIED", "Not authorized to modify this senior's profile");
-      const { removeMemberFromGroup } = await import("../agents/familyGroupManager");
-      const result = await removeMemberFromGroup(seniorId as string, targetPhone as string);
-      const existingMembers: Array<Record<string, unknown>> = seniorData.familyMembers ?? [];
-      const memberObj = existingMembers.find(m => m.phone === targetPhone);
-      if (memberObj) await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayRemove(memberObj) });
-      // Tell the removed person they were removed — courtesy plus prevents
-      // confusion when their next inbound stops getting Evia replies.
-      const { trySend } = await import("../utils/toolNotify");
-      const notification = await trySend(
-        targetPhone as string,
-        "You've been removed from an Evia care group. You won't get further updates here. Text STOP anytime to unsubscribe completely.",
-        "mcp:remove_family_member",
-      );
-      logAudit({ eventType: "family_member_removed", userId: clientId as string, data: { source: "mcp:remove_family_member", seniorId, removedPhone: targetPhone, notificationSent: notification.sent } }).catch(() => {});
-      const { logAgentAction } = await import("../observability/actionLedger");
-      logAgentAction({
-        actionType: "family_member_remove",
-        status: notification.sent ? "executed" : "failed",
-        userId: clientId as string,
-        role: "client",
-        toolName: "remove_family_member",
-        targetCollection: "family_group_members",
-        targetDocId: String(targetPhone),
-        errorReason: notification.sent ? undefined : notification.reason,
-        metadata: { seniorId, removedPhone: targetPhone, source: "mcp:remove_family_member" },
-      }).catch(() => {});
-      return { success: true, ...result, notification };
-      });
-    }
 
     if (name === "start_review_flow") {
       // The site's Leave a Review modal in text (agents/reviewFlow.ts). Replaced
@@ -5540,73 +4985,10 @@ async function executeToolCall(
       return { success: true, recipient: r.recipient.name, photoURL: r.photoURL, instruction: "Tell the family the photo is saved on the Care Plan for that recipient — one short line." };
     }
 
-    if (name === "delete_review") {
-      const { clientId, reviewId } = input as Record<string, unknown>;
-      if (!clientId || !reviewId) return toolError("INVALID_INPUT", "clientId and reviewId are required");
-      const rSnap = await db.collection("reviews").doc(reviewId as string).get();
-      if (!rSnap.exists) return toolError("NOT_FOUND", "Review not found");
-      const review = rSnap.data()!;
-      if (review.clientId !== clientId) return toolError("PERMISSION_DENIED", "Review does not belong to this client");
-      await rSnap.ref.delete();
-      if (review.appointmentId) {
-        await db.collection("appointments").doc(review.appointmentId as string)
-          .update({ hasReview: false, reviewId: admin.firestore.FieldValue.delete() }).catch(() => {});
-      }
-      logAudit({ eventType: "review_deleted", userId: clientId as string, data: { source: "mcp:delete_review", reviewId, caregiverId: review.caregiverId } }).catch(() => {});
-      return { success: true, reviewId };
-    }
 
-    if (name === "get_support_ticket") {
-      const { userId, ticketId } = input as Record<string, unknown>;
-      if (!userId || !ticketId) return toolError("INVALID_INPUT", "userId and ticketId are required");
-      const tSnap = await db.collection("support_tickets").doc(ticketId as string).get();
-      if (!tSnap.exists) return toolError("NOT_FOUND", "Support ticket not found");
-      const ticket = tSnap.data()!;
-      if (ticket.userId !== userId) return toolError("PERMISSION_DENIED", "Ticket does not belong to this user");
-      return { success: true, ticket: { id: tSnap.id, subject: ticket.subject, status: ticket.status, category: ticket.category, createdAt: ticket.createdAt, resolved: ticket.resolved ?? false } };
-    }
 
-    if (name === "list_support_tickets") {
-      const { userId } = input as Record<string, unknown>;
-      if (!userId) return toolError("INVALID_INPUT", "userId is required");
-      // where(userId) only + in-memory sort to avoid a composite index requirement.
-      const tSnap = await db.collection("support_tickets").where("userId", "==", userId).limit(25).get().catch(() => null);
-      if (!tSnap) return { success: true, tickets: [] };
-      const tickets = tSnap.docs
-        .map(d => { const t = d.data(); return { id: d.id, subject: t.subject, status: t.status, category: t.category, createdAt: t.createdAt as string, resolved: t.resolved ?? false }; })
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-        .slice(0, 10);
-      return { success: true, tickets, total: tickets.length };
-    }
 
-    if (name === "update_support_ticket") {
-      const { userId, ticketId, action, message } = input as Record<string, unknown>;
-      if (!userId || !ticketId || !action) return toolError("INVALID_INPUT", "userId, ticketId, and action are required");
-      const tSnap = await db.collection("support_tickets").doc(ticketId as string).get();
-      if (!tSnap.exists) return toolError("NOT_FOUND", "Support ticket not found");
-      const ticket = tSnap.data()!;
-      if (ticket.userId !== userId) return toolError("PERMISSION_DENIED", "Ticket does not belong to this user");
-      if (action === "reopen") {
-        await tSnap.ref.update({ status: "open", resolved: false, reopenedAt: nowIso });
-      } else if (action === "add_response") {
-        if (!message) return toolError("INVALID_INPUT", "message is required for add_response");
-        await tSnap.ref.update({ userResponses: admin.firestore.FieldValue.arrayUnion({ text: message, at: nowIso }) });
-      } else {
-        return toolError("INVALID_INPUT", "action must be 'reopen' or 'add_response' (admin-only states cannot be set here)");
-      }
-      logAudit({ eventType: "support_ticket_updated", userId: userId as string, data: { source: "mcp:update_support_ticket", ticketId, action } }).catch(() => {});
-      return { success: true, ticketId, action };
-    }
 
-    if (name === "log_match_feedback") {
-      const { clientId, caregiverId, sentiment, note } = input as Record<string, unknown>;
-      if (!clientId || !caregiverId || !note) return toolError("INVALID_INPUT", "clientId, caregiverId, and note are required");
-      await db.collection("users").doc(clientId as string).collection("match_history").add({
-        caregiverId, sentiment: sentiment ?? "neutral", note, source: "cara_sms", createdAt: nowIso,
-      });
-      logAudit({ eventType: "match_feedback_logged", userId: clientId as string, data: { source: "mcp:log_match_feedback", caregiverId, sentiment: sentiment ?? "neutral" } }).catch(() => {});
-      return { success: true };
-    }
 
     if (name === "create_job_post") {
       const {
@@ -5695,30 +5077,7 @@ async function executeToolCall(
       return { success: true, jobId: ref.id, message: "Your job is posted — caregivers nearby will see it." };
     }
 
-    if (name === "list_proactive_drafts") {
-      const { userId } = input as Record<string, unknown>;
-      if (!userId) return toolError("INVALID_INPUT", "userId is required");
-      const dSnap = await db.collection("proactive_drafts").where("userId", "==", userId).limit(50).get().catch(() => null);
-      if (!dSnap) return { success: true, drafts: [] };
-      const PENDING = new Set(["pending", "scheduled", "queued", "draft"]);
-      const drafts = dSnap.docs
-        .map(d => { const x = d.data(); return { id: d.id, summary: x.summary ?? x.content ?? x.message ?? "(draft)", status: x.status as string, scheduledFor: x.scheduledFor ?? x.sendAt ?? null }; })
-        .filter(d => PENDING.has(String(d.status)));
-      return { success: true, drafts, total: drafts.length };
-    }
 
-    if (name === "cancel_proactive_draft") {
-      const { userId, draftId } = input as Record<string, unknown>;
-      if (!userId || !draftId) return toolError("INVALID_INPUT", "userId and draftId are required");
-      const dSnap = await db.collection("proactive_drafts").doc(draftId as string).get();
-      if (!dSnap.exists) return toolError("NOT_FOUND", "Draft not found");
-      const draft = dSnap.data()!;
-      if (draft.userId !== userId) return toolError("PERMISSION_DENIED", "Draft does not belong to this user");
-      if (draft.status === "sent") return toolError("INVALID_INPUT", "That message already went out — it can't be cancelled");
-      await dSnap.ref.update({ status: "cancelled", cancelledAt: nowIso });
-      logAudit({ eventType: "proactive_draft_cancelled", userId: userId as string, data: { source: "mcp:cancel_proactive_draft", draftId } }).catch(() => {});
-      return { success: true, draftId };
-    }
 
     if (name === "apply_to_job") {
       const { caregiverId, jobId, proposedRate, coverNote } = input as Record<string, unknown>;
@@ -6322,16 +5681,6 @@ async function executeToolCall(
       return { success: true, reply };
     }
 
-    if (name === "create_support_ticket") {
-      return runActionNativeMcpWrite(name, input, async () => {
-      const { userId, userType, subject, description: ticketDesc, category } = input as Record<string, unknown>;
-      if (!userId || !userType || !subject || !ticketDesc) return toolError("INVALID_INPUT", "userId, userType, subject, and description are required");
-      const ticketRef = await db.collection("support_tickets").add({ userId, userType, subject, description: ticketDesc, category: category ?? "other", status: "open", source: "cara_sms", createdAt: nowIso, resolved: false });
-      await db.collection("admin_alerts").add({ type: "support_ticket_created", ticketId: ticketRef.id, userId, userType, subject, priority: "medium", resolved: false, createdAt: nowIso });
-      logAudit({ eventType: "support_ticket_created", userId: userId as string, data: { source: "mcp:create_support_ticket", ticketId: ticketRef.id, subject } }).catch(() => {});
-      return { success: true, ticketId: ticketRef.id };
-      });
-    }
 
     // ── schedule_interview ──────────────────────────────────────────────────
     if (name === "schedule_interview") {
@@ -6997,7 +6346,7 @@ async function executeToolCall(
           missing.push({
             item: "profile visibility",
             detail: "Their profile isn't marked complete yet, so families can't find them in search. This usually resolves when the steps above are finished.",
-            fix: "finish the remaining signup steps; if everything else is done, create_support_ticket so the team can activate them",
+            fix: "finish the remaining signup steps; if everything else is done, contact_support so the team can activate them",
           });
         }
 
@@ -8157,31 +7506,6 @@ async function executeToolCall(
       return { success: true, messagesMarkedRead };
     }
 
-    // ── edit_review ─────────────────────────────────────────────────────────
-    // Updates the family's own review. The caregiver's aggregate rating is kept
-    // fresh by the `onReviewWritten` onWrite trigger (functions/src/index.ts),
-    // which recomputes rating/reviewCount/star-counts from all reviews on every
-    // write to `reviews/{id}` — including this update — so no inline recompute is
-    // needed here.
-    if (name === "edit_review") {
-      const { clientId, reviewId, rating, comment } = input as Record<string, unknown>;
-      if (!clientId || !reviewId) return toolError("INVALID_INPUT", "clientId and reviewId are required");
-      if (rating === undefined && comment === undefined) return toolError("INVALID_INPUT", "Provide a new rating and/or comment.");
-      const ref = db.collection("reviews").doc(reviewId as string);
-      const snap = await ref.get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Review not found.");
-      if (snap.data()?.clientId !== clientId) return toolError("PERMISSION_DENIED", "You can only edit your own review.");
-      const update: Record<string, unknown> = { updatedAt: nowIso };
-      if (rating !== undefined) {
-        const r = Number(rating);
-        if (!Number.isInteger(r) || r < 1 || r > 5) return toolError("INVALID_INPUT", "rating must be an integer from 1 to 5");
-        update.rating = r;
-      }
-      if (comment !== undefined) update.comment = String(comment).slice(0, 2000);
-      await ref.update(update);
-      logAudit({ eventType: "review_edited", userId: clientId as string, data: { source: "mcp:edit_review", reviewId } }).catch(() => {});
-      return { success: true, updated: true };
-    }
 
     // ── cancel_followup ─────────────────────────────────────────────────────
     if (name === "cancel_followup") {
@@ -8201,20 +7525,6 @@ async function executeToolCall(
       return { success: true, cancelled: true };
     }
 
-    // ── get_support_tickets ─────────────────────────────────────────────────
-    if (name === "get_support_tickets") {
-      const { userId: stUserId, includeResolved } = input as Record<string, unknown>;
-      if (!stUserId) return toolError("INVALID_INPUT", "userId is required");
-      const stSnap = await db.collection("support_tickets").where("userId", "==", stUserId).get();
-      let tickets: Record<string, unknown>[] = stSnap.docs.map(d => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
-      if (!includeResolved) {
-        tickets = tickets.filter(t => t.resolved !== true && t.status !== "closed" && t.status !== "resolved");
-      }
-      tickets = tickets
-        .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
-        .slice(0, 20);
-      return { success: true, tickets, count: tickets.length };
-    }
 
     // ── get_refund_requests ─────────────────────────────────────────────────
     if (name === "get_shifts") {
@@ -8431,61 +7741,7 @@ async function executeToolCall(
 
     // ── CRUD/parity gap closures (agent-native audit 2026-07) ───────────────
 
-    // ── archive_senior_profile ──────────────────────────────────────────────
-    // Soft-delete only: a status flag, never a document delete — care records
-    // are retained (see AGENT_NATIVE_EXCLUSIONS.md "senior profile hard-delete").
-    if (name === "archive_senior_profile") {
-      const { seniorId, clientId, reason } = input as Record<string, unknown>;
-      if (!seniorId || !clientId) return toolError("INVALID_INPUT", "seniorId and clientId are required");
-      const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
-      if (!seniorSnap.exists) return toolError("NOT_FOUND", "Senior profile not found");
-      const sd = seniorSnap.data()!;
-      // Same owner resolution as assertSeniorAccess: userId (direct onboarding)
-      // OR clientId (household back-reference docs, which carry no userId).
-      const ownerId = sd.userId ?? sd.clientId;
-      if (ownerId && ownerId !== clientId) return toolError("PERMISSION_DENIED", "Not authorized to archive this senior's profile");
-      if (!ownerId && seniorId !== clientId) return toolError("PERMISSION_DENIED", "Not authorized to archive this senior's profile");
-      if (sd.status === "archived") return { success: true, alreadyArchived: true, seniorId };
-      await seniorSnap.ref.set({
-        status:        "archived",
-        archivedAt:    nowIso,
-        archivedBy:    clientId,
-        archiveReason: reason ?? null,
-        updatedAt:     nowIso,
-      }, { merge: true });
-      logAudit({ eventType: "senior_profile_archived", userId: clientId as string, data: { source: "mcp:archive_senior_profile", seniorId, reason: reason ?? null } }).catch(() => {});
-      return { success: true, archived: true, seniorId, retained: true };
-    }
 
-    // ── update_family_member ────────────────────────────────────────────────
-    if (name === "update_family_member") {
-      const { clientId, memberPhone, memberName, role, relationship, notificationsEnabled } =
-        input as Record<string, unknown>;
-      if (!clientId || !memberPhone) return toolError("INVALID_INPUT", "clientId and memberPhone are required");
-      const patch: Record<string, unknown> = {};
-      if (memberName   !== undefined) patch.memberName = memberName;
-      if (role         !== undefined) patch.role = role;
-      if (relationship !== undefined) patch.relationship = relationship;
-      if (notificationsEnabled !== undefined) patch.notificationsEnabled = notificationsEnabled;
-      if (Object.keys(patch).length === 0) {
-        return toolError("INVALID_INPUT", "Provide at least one field to update (memberName, role, relationship, or notificationsEnabled).");
-      }
-      if (role !== undefined && !["primary", "family", "emergency_contact"].includes(String(role))) {
-        return toolError("INVALID_INPUT", "role must be one of: primary, family, emergency_contact");
-      }
-      // Ownership is the query scope itself: only membership docs recorded under
-      // THIS client's userId are reachable, so another family's member can never
-      // be edited even with a guessed phone number.
-      const memberSnap = await db.collection("family_group_members")
-        .where("userId", "==", clientId)
-        .where("memberPhone", "==", memberPhone)
-        .limit(1)
-        .get();
-      if (memberSnap.empty) return toolError("NOT_FOUND", "No family group member with that phone number in this care group");
-      await memberSnap.docs[0].ref.update({ ...patch, updatedAt: nowIso });
-      logAudit({ eventType: "family_member_updated", userId: clientId as string, data: { source: "mcp:update_family_member", memberPhone, fields: Object.keys(patch) } }).catch(() => {});
-      return { success: true, updated: true, memberPhone, fields: Object.keys(patch) };
-    }
 
     // ── list_interviews ─────────────────────────────────────────────────────
     if (name === "list_interviews") {

@@ -392,16 +392,6 @@ describe("handleWebChatTurn", () => {
       expect(hoisted.helpMock).toHaveBeenCalledWith("caregiver", undefined, "en");
     });
 
-    it("is role-aware: secondary family members get the family-secondary reply", async () => {
-      seedUser();
-      seedSession({ isSecondaryMember: true });
-
-      const res = await handleWebChatTurn({ uid: UID, message: "CAPABILITIES" });
-
-      expect(res.reply).toBe("capability help for family-secondary");
-      expect(hoisted.helpMock).toHaveBeenCalledWith("family-secondary", undefined, "en");
-    });
-
     it("only an exact command triggers - 'help me find a caregiver' still goes to the agent", async () => {
       seedUser();
       seedSession();

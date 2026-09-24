@@ -3,12 +3,8 @@ import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { handlePromptGet } from "../mcp/server";
-import { getRelevantFacts } from "../memory/learnedFacts";
-import { getMemoryContext } from "../memory/memoryFiles";
-import { getPreferences, isInDND } from "../memory/preferences";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { describeWhoIsWho } from "../agents/careRecipients";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { gateOptionalSend } from "./engineGate";
@@ -59,26 +55,6 @@ export async function generateCaregiverBriefingContent(
   } catch {
     return fallback;
   }
-}
-
-// Family briefing: returns "" when the model output is empty or guard-rejected
-// so the call site's existing catch → generateCaraMessage fallback takes over
-// (raw rejected output is never delivered).
-export async function generateFamilyBriefingText(briefingContent: string): Promise<string> {
-  const resp = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 180,
-    system:
-      "You write a brief morning text for a family member whose loved one has a caregiver visit today.\n" +
-      "Tone: warm, direct, practical — like a trusted care coordinator texting. No bullet points, no emoji.\n" +
-      "Format: 2-3 sentences max. Start with caregiver arrival info. Add one specific care note if available.\n" +
-      "Output only the message text.\n" +
-      ANTI_INVENTION_CLAUSE,
-    messages: [{ role: "user", content: briefingContent }],
-  });
-  const text = ((resp.content[0] as { text: string }).text ?? "").trim();
-  if (text && caraOutputGuardEnabled() && !guardModelOutput(text).ok) return "";
-  return text;
 }
 
 // Runs every day at 7am Pacific. With .timeZone() set, the cron string is
@@ -211,11 +187,6 @@ export const sendMorningBriefings = functions.pubsub
       }
     }
 
-    // ── Family morning briefings — send to clients with visits today ──────────
-    await sendFamilyMorningBriefings(today, docs).catch(err =>
-      console.error("[morningBriefing] sendFamilyMorningBriefings error:", err)
-    );
-
     // Check caregiver workloads (run Monday mornings to catch the week ahead)
     const dayOfWeek = new Date().getDay();
     if (dayOfWeek === 1) { // Monday
@@ -318,148 +289,6 @@ export async function checkCaregiverWorkloads(): Promise<void> {
       });
     } catch (err) {
       console.error(`[checkCaregiverWorkloads] Error for caregiver ${cgId}:`, err);
-    }
-  }
-}
-
-// ── Family morning briefings ─────────────────────────────────────────────────
-
-async function sendFamilyMorningBriefings(
-  today: string,
-  apptDocs: FirebaseFirestore.QueryDocumentSnapshot[]
-): Promise<void> {
-  // Deduplicate by clientId — one briefing per family even with multiple visits
-  const seenClients = new Set<string>();
-
-  for (const doc of apptDocs) {
-    const appt       = doc.data();
-    const clientId   = appt.clientId as string;
-    if (!clientId || seenClients.has(clientId)) continue;
-    seenClients.add(clientId);
-
-    try {
-      const [clientSnap, cgSnap] = await Promise.all([
-        db.collection("users").doc(clientId).get(),
-        appt.caregiverId ? db.collection("caregivers").doc(appt.caregiverId as string).get() : Promise.resolve(null),
-      ]);
-
-      const clientData = clientSnap.data();
-      if (!clientData) continue;
-
-      const phone: string | undefined = clientData.phone;
-      if (!phone) continue;
-
-      const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-      if (!sessionSnap.exists) continue;
-      const session = sessionSnap.data()!;
-      if (session.optedOut) continue;
-
-      // Respect DND from preferences. preferredSummaryTime is NOT checked
-      // here: this cron runs once (7am PT) and can only suppress, never
-      // reschedule — and getPreferences fills a default of "18:00", so gating
-      // on it would silently drop the briefing for every default client. (The
-      // old check also compared the server's UTC hour to the user's local
-      // preference, which is how it appeared to work at the noon-PT run.)
-      const prefs = await getPreferences(phone).catch(() => null);
-      if (prefs && isInDND(prefs)) continue;
-
-      // Avoid duplicate sends — check if we sent a family briefing today already
-      const lastBriefingSnap = await db.collection("agent_alerts_log")
-        .where("type",     "==", "family_morning_briefing")
-        .where("clientId", "==", clientId)
-        .where("sentAt",   ">=", today)
-        .limit(1)
-        .get();
-      if (!lastBriefingSnap.empty) continue;
-
-      const caregiverName = (cgSnap?.data()?.name ?? appt.caregiverName ?? "Your caregiver") as string;
-      const seniorName    = (clientData.seniorName as string | undefined) ?? visitSeniorName(appt);
-      const startTime     = (appt.startTime ?? "") as string;
-      const schedule      = startTime ? `at ${startTime}` : "today";
-      // R11 (hallucination hardening 2026-07-17): the reader is the account
-      // holder; the visit is for the care recipient — ground who's who in BOTH
-      // model calls (primary briefing + generateCaraMessage fallback).
-      const whoIsWho = describeWhoIsWho({
-        ...((session.onboardingData ?? {}) as Record<string, unknown>),
-        seniorName: (session.onboardingData as any)?.seniorName ?? clientData.seniorName,
-      });
-
-      // Load memory context for care priorities
-      const [facts, memCtx] = await Promise.all([
-        getRelevantFacts(clientId).catch(() => [] as { fact: string; category: string }[]),
-        getMemoryContext(clientId).catch(() => ""),
-      ]);
-
-      const topFacts = facts
-        .filter(f => f.category === "medical" || f.category === "routine")
-        .slice(0, 3)
-        .map(f => f.fact);
-
-      // Generate briefing via Claude Haiku
-      let content: string;
-      try {
-        const factsLine = topFacts.length > 0
-          ? `Care priorities on file: ${topFacts.join("; ")}.`
-          : "";
-        const memLine = memCtx ? memCtx.slice(0, 300) : "";
-
-        content = await generateFamilyBriefingText(
-          (whoIsWho ? whoIsWho + "\n" : "") +
-          `Senior: ${seniorName}\n` +
-          `Caregiver: ${caregiverName} arriving ${schedule}\n` +
-          factsLine + "\n" +
-          memLine
-        );
-        if (!content) throw new Error("empty");
-      } catch {
-        // Fallback via generateCaraMessage
-        const noteLine = topFacts.length > 0
-          ? ` Keep in mind: ${topFacts[0].toLowerCase()}.`
-          : "";
-        content = await generateCaraMessage({
-          audience: "family",
-          context:
-            (whoIsWho ? whoIsWho + " " : "") +
-            `Write a brief morning text to a family member letting them know their caregiver is coming today. ` +
-            `Caregiver: ${caregiverName}, arriving ${schedule}. Senior: ${seniorName}.` +
-            (noteLine ? ` Care note: ${noteLine.trim()}` : ""),
-          fallback: `Good morning! ${caregiverName} is scheduled to arrive ${schedule} for ${seniorName}.${noteLine}`,
-          maxTokens: 80,
-        });
-      }
-
-      // U8 engine gate (KTD15): family half of the briefing — distinct dedupe
-      // prefix from the caregiver half. A lost pass re-enters on tomorrow's run.
-      const g = await gateOptionalSend({
-        phone,
-        candidate: {
-          source: "morningBriefing",
-          category: "re_engagement",
-          urgency: 1,
-          evidenceCount: 1,
-          dedupeKey: `mbrief-fam:${clientId}:${today}`,
-        },
-      });
-      if (!g.allowed) {
-        console.info("morningBriefing.policy", { clientId, disposition: g.disposition, reason: g.reason });
-        continue;
-      }
-
-      await sendViaInteractionAgent(phone, {
-        content,
-        urgency:     "standard",
-        sourceAgent: "family_morning_briefing",
-        canDrop:     true,
-      });
-
-      await db.collection("agent_alerts_log").add({
-        type:     "family_morning_briefing",
-        clientId,
-        phone,
-        sentAt:   today,
-      });
-    } catch (err) {
-      console.error("[sendFamilyMorningBriefings] error for client", clientId, err);
     }
   }
 }

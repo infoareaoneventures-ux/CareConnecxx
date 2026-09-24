@@ -21,7 +21,6 @@ const NEVER_INVENT = "never infer or invent";
 
 const nightlySrc = readFileSync(resolve(__dirname, "../../scheduled/nightlyMemory.ts"), "utf8");
 const memoryFilesSrc = readFileSync(resolve(__dirname, "../memoryFiles.ts"), "utf8");
-const careMemorySrc = readFileSync(resolve(__dirname, "../../agents/careMemory.ts"), "utf8");
 
 const countOccurrences = (haystack: string, needle: string): number =>
   haystack.split(needle).length - 1;
@@ -80,11 +79,3 @@ describe("memoryFiles summary prompts", () => {
   });
 });
 
-describe("careMemory keepsake prompt", () => {
-  it("uses only care-history facts and preserves people's names", () => {
-    expect(careMemorySrc).toContain(
-      "Use ONLY facts present in the care history and journal highlights — never infer or invent details."
-    );
-    expect(careMemorySrc).toContain("Preserve people's names verbatim");
-  });
-});

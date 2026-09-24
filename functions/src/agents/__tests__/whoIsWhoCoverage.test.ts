@@ -26,16 +26,12 @@ const read  = (rel: string) => readFileSync(resolve(__dirname, rel), "utf8");
 const count = (src: string, needle: string) => src.split(needle).length - 1;
 
 // Every helper-wired context is prefixed with `(whoIsWho ? whoIsWho + " " : "")`
-// (morningBriefing's primary briefing uses "\n") — count the stable prefix.
+// — count the stable prefix.
 const HELPER_PREFIX = "whoIsWho ? whoIsWho + ";
 
 // file (relative to this __tests__ dir) → number of family-facing briefing
 // sites wired via describeWhoIsWho.
 const HELPER_WIRED: Array<[string, number]> = [
-  ["../../scheduled/firstVisitActivation.ts",   1],
-  ["../../scheduled/familySilenceCheckin.ts",   1],
-  ["../../scheduled/upcomingVisitReminder.ts",  1],
-  ["../../scheduled/morningBriefing.ts",        2], // primary briefing + generateCaraMessage fallback
   ["../../linq/webhooks.ts",                    1], // awaiting-supply hold reply
   // jobPostingFlow.ts deliberately dropped 2026-09-08: unlike every other file
   // here, a job post's recipient is CHOSEN mid-conversation and can differ
@@ -48,7 +44,6 @@ const HELPER_WIRED: Array<[string, number]> = [
   // recipientsDisplayName, which resolve the job's ACTUAL in-progress
   // recipient dynamically per call — strictly more correct for this file's
   // multi-recipient nature than the static helper the other files use.
-  ["../permissionsConversation.ts",             1],
   ["../onboardingConversation.ts",              2], // pre-checkout msg7 + link-sent reassurance
 ];
 
@@ -58,7 +53,6 @@ const HELPER_WIRED: Array<[string, number]> = [
 const INLINE_WIRED: Array<[string, string, number]> = [
   ["../../linq/routeCaregiver.ts", "the care recipient is ${", 1], // family confirm (the cancel alert went with the removed emergency-replacement path, 2026-09-16)
   ["../issueEscalator.ts",         "the care recipient is ${", 2], // issue notice + next-day follow-up
-  ["../bereavement.ts",            "the care recipient was ${", 3], // condolence + keepsake promise/delivery
 ];
 
 describe("R11 — who-is-who grounding present at every audited family-facing briefing", () => {

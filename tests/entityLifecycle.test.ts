@@ -30,7 +30,6 @@ const PROTECTED_ENTITIES = [
     'agent_action_ledger',
     'agent_audit_log',
     'disputes',
-    'support_tickets',
 ] as const;
 
 // Extract the body of the FIRST top-level `match /<collection>/{...} { ... }`

@@ -13,31 +13,6 @@ const writeActionConfigs = {
     auditType: "emergency_alert_raised",
     targetCollection: "emergency_alerts",
   },
-  add_family_member: {
-    role: "client",
-    inputSchema: z.object({
-      seniorId: stringValue,
-      clientId: stringValue,
-      name: stringValue,
-      memberPhone: stringValue,
-    }).passthrough(),
-    auditType: "family_member_add",
-    targetCollection: "family_group_members",
-    idempotencyKey: (input: Record<string, unknown>) =>
-      `add_family_member:${input.clientId}:${input.seniorId}:${input.memberPhone}`,
-  },
-  remove_family_member: {
-    role: "client",
-    inputSchema: z.object({
-      seniorId: stringValue,
-      clientId: stringValue,
-      memberPhone: stringValue,
-    }).passthrough(),
-    auditType: "family_member_remove",
-    targetCollection: "family_group_members",
-    idempotencyKey: (input: Record<string, unknown>) =>
-      `remove_family_member:${input.clientId}:${input.seniorId}:${input.memberPhone}`,
-  },
   accept_shift: {
     role: "caregiver",
     inputSchema: z.object({ phone: stringValue, chatId: stringValue }).passthrough(),
@@ -159,17 +134,6 @@ const writeActionConfigs = {
     idempotencyKey: (input: Record<string, unknown>) =>
       `create_caregiver_referral:${input.caregiverId}:${input.referredPhone}`,
   },
-  create_support_ticket: {
-    role: (input: Record<string, unknown>) => roleFromUserType(input.userType),
-    inputSchema: z.object({
-      userId: stringValue,
-      userType: stringValue,
-      subject: stringValue,
-      description: stringValue,
-    }).passthrough(),
-    auditType: "support_ticket_created",
-    targetCollection: "support_tickets",
-  },
 } as const;
 
 type SupportedMcpWriteAction = keyof typeof writeActionConfigs;
@@ -184,7 +148,7 @@ export async function runMcpWriteCaraAction(
   execute: () => Promise<unknown>,
 ): Promise<unknown> {
   const config = writeActionConfigs[name];
-  const role = typeof config.role === "function" ? config.role(input) : config.role;
+  const role: CaraActionRole = config.role;
   const action = defineCaraAction({
     name,
     description: `Execute the ${name} MCP write through Evia's action contract.`,
@@ -231,26 +195,8 @@ export async function runMcpWriteCaraAction(
 
   const result = await runCaraAction(action, input, contextForMcpAction(role, input));
 
-  // State-toggling pairs must not outlive the inverse action inside the done
-  // TTL: after a successful add, clear remove's settled claim (and vice versa)
-  // so add → remove → re-add cycles execute instead of replaying cached success.
-  const inverse = INVERSE_ACTION[name];
-  if (inverse) {
-    const inverseConfig = writeActionConfigs[inverse];
-    if ("idempotencyKey" in inverseConfig) {
-      const inverseKey = inverseConfig.idempotencyKey(input);
-      const { clearCaraActionExecution } = await import("../actionNative/actionExecutionLedger");
-      await clearCaraActionExecution(inverseKey).catch(() => {});
-    }
-  }
-
   return result;
 }
-
-const INVERSE_ACTION: Partial<Record<SupportedMcpWriteAction, SupportedMcpWriteAction>> = {
-  add_family_member: "remove_family_member",
-  remove_family_member: "add_family_member",
-};
 
 function contextForMcpAction(role: CaraActionRole, input: Record<string, unknown>): CaraActionContext {
   return {
@@ -267,10 +213,6 @@ function stringFromInput(input: Record<string, unknown>, key: string): string | 
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-function roleFromUserType(userType: unknown): CaraActionRole {
-  if (userType === "caregiver" || userType === "family" || userType === "admin") return userType;
-  return "client";
-}
 
 function targetDocIdFromResult(output: unknown): string | undefined {
   if (!output || typeof output !== "object") return undefined;

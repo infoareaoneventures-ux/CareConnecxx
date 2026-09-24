@@ -99,35 +99,6 @@ import { handleToolCall } from "../server";
 describe("missing CRUD tools", () => {
   beforeEach(() => { hoisted.reset(); });
 
-  describe("get_support_tickets", () => {
-    it("requires userId", async () => {
-      const r = await handleToolCall("get_support_tickets", {}) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("INVALID_INPUT");
-    });
-
-    it("returns only open tickets by default, newest first", async () => {
-      hoisted.collState.set("support_tickets", [
-        { id: "old", userId: "u1", subject: "A", status: "open", resolved: false, createdAt: "2026-01-01" },
-        { id: "new", userId: "u1", subject: "B", status: "open", resolved: false, createdAt: "2026-03-01" },
-        { id: "done", userId: "u1", subject: "C", status: "resolved", resolved: true, createdAt: "2026-02-01" },
-      ]);
-      const r = await handleToolCall("get_support_tickets", { userId: "u1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.count).toBe(2);
-      expect(r.tickets.map((t: any) => t.id)).toEqual(["new", "old"]);
-    });
-
-    it("includes resolved tickets when includeResolved is set", async () => {
-      hoisted.collState.set("support_tickets", [
-        { id: "open1", userId: "u1", status: "open", resolved: false, createdAt: "2026-01-01" },
-        { id: "done1", userId: "u1", status: "resolved", resolved: true, createdAt: "2026-02-01" },
-      ]);
-      const r = await handleToolCall("get_support_tickets", { userId: "u1", includeResolved: true }) as any;
-      expect(r.count).toBe(2);
-    });
-  });
-
   describe("get_shifts", () => {
     it("requires caregiverId or clientId", async () => {
       const r = await handleToolCall("get_shifts", {}) as any;

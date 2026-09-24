@@ -4,18 +4,14 @@
 // generic chatbot feature list. The examples here come from careRecipes.ts, and
 // those recipes are validated against LAUNCH_ACTION_PARITY.
 
-import { getCareRecipeExamples, hasPaymentAuthorityLeak } from "./careRecipes";
+import { getCareRecipeExamples } from "./careRecipes";
 import { buildCapabilityMenu } from "./caraCapabilities";
 
-export type DiscoveryRole = "client" | "caregiver" | "family-secondary";
+export type DiscoveryRole = "client" | "caregiver";
 
 export function getCapabilityExamples(role: DiscoveryRole, limit = 4): string[] {
   const max = Math.max(2, Math.min(5, limit));
-  const examples = getCareRecipeExamples(role, max);
-  const guarded = role === "family-secondary"
-    ? examples.filter((phrase) => !hasPaymentAuthorityLeak(phrase))
-    : examples;
-  return guarded.slice(0, max);
+  return getCareRecipeExamples(role, max).slice(0, max);
 }
 
 export function buildHelpSmsReply(role: DiscoveryRole, leadWith?: string, lang: string = "en"): string {
@@ -39,8 +35,6 @@ export function buildHelpSmsReply(role: DiscoveryRole, leadWith?: string, lang: 
   switch (role) {
     case "caregiver":
       return `I'm Evia - text me and I'll handle it. I can ${list}. What do you need?`;
-    case "family-secondary":
-      return `I'm Evia, here for the family. I can ${list}. Ask me what changed or who needs to be looped in.`;
     case "client":
     default:
       return `I'm Evia - your care coordinator. I can ${list}. Just tell me what needs to happen.`;
@@ -51,12 +45,7 @@ export function buildCapabilityHint(role: DiscoveryRole, hasContext: boolean): s
   const examples = getCapabilityExamples(role, 4);
   const list = joinExamples(examples);
 
-  const roleLabel =
-    role === "caregiver"
-      ? "a caregiver"
-      : role === "family-secondary"
-        ? "a family member following along"
-        : "the family's care coordinator-holder";
+  const roleLabel = role === "caregiver" ? "a caregiver" : "the family's care coordinator-holder";
 
   const lines: string[] = [
     "CAPABILITY DISCOVERY (use silently):",
@@ -67,12 +56,6 @@ export function buildCapabilityHint(role: DiscoveryRole, hasContext: boolean): s
   if (hasContext) {
     lines.push(
       "Because there is live context for this user (see the operations context above), LEAD with ONE relevant care recipe drawn from that context instead of listing capabilities - e.g. next visit briefing, review hours, care update summary, caregiver pay status, failed-action recovery, or memory correction.",
-    );
-  }
-
-  if (role === "family-secondary") {
-    lines.push(
-      "AUTHORITY BOUNDARY: this is a SECONDARY family member. You can share care updates and help route family-add requests, but you must NOT imply they can approve payments, invoices, timesheets, refunds, or payouts - only the primary account holder approves payments. If they ask to approve a payment, explain that the primary account holder has to do that.",
     );
   }
 

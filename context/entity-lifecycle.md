@@ -31,11 +31,9 @@ terminal records drop out of user-active views but stay admin/audit-visible.
 | `booking_requests` | Client (own) | Participants + Admin | Participants + Admin | Terminal status (accept/decline) | Web booking equivalent of Evia `agent_tasks` + `shift_offers`. |
 | `shiftHours` | Caregiver (self, `pending_client_review`) | Participants + Admin | Admin / Caregiver (cash-confirm only) | **Terminal status** approved/auto_approved/disputed/paid; admin hard-delete only | Protected. Payroll. `review_shift_hours`, `admin_resolve_dispute`. |
 | `threads` | Participants | Participants | Participants | Admin hard-delete only | Evia conversations mirror into `threads` (`cara_{uid}`). |
-| `support_tickets` | User (own) / Evia | Owner + Admin | Admin | **Terminal status** (resolved/closed) via `admin_respond_support_ticket`; admin hard-delete only | Protected. `responses` subcollection holds replies. |
 | `admin_alerts` | Server only | Admin | Admin (mark resolved) | **Soft**: resolved flag; create/delete denied | Server-written escalations. |
 | `care_journal` | Server (Evia/caregiver tools) | Participants + Admin | Server only | **No delete** (`allow delete: if false`) | Protected (health). Append-only visit journal. |
 | `referrals` | Referrer / Admin / Server | Participants + Admin | Referrer / referred-claim / Admin | **No delete** (`allow delete: if false`) | Ownership fields immutable. |
-| `family_groups` | Server | Members (by phone) | Server only | Server only (membership soft-managed) | `add_family_member` / `remove_family_member`. |
 | `agent_action_ledger` | Server only | Admin | Admin (restricted fields + status enum) | **No delete** (`create, delete: if false`) | Protected (audit). |
 | `agent_audit_log` | Server only | Admin | — | **No delete** (`allow write: if false`) | Protected (audit). Append-only. |
 | `pending_actions` | Server only | Admin | Admin (restricted fields + status enum) | **Terminal status** rejected/cancelled/executed/expired; create/delete denied | `admin_cancel_pending_action`, `admin_replay_pending_action`. |
@@ -67,6 +65,5 @@ terminal records drop out of user-active views but stay admin/audit-visible.
 any of the protected entities grants a client-destructive delete. Protected set:
 `caregivers`, `appointments`, `shiftHours`, `invoices`, `payments`, `payouts`,
 `care_journal`, `agent_action_ledger`, `agent_audit_log`, `disputes`,
-`support_tickets`. Each must have `allow delete: if false` or
 `allow delete: if isAdmin()` (audited hard-delete) — never a broader client
 condition.

@@ -135,7 +135,6 @@ describe("startBookingFlow", () => {
     expect(r).toEqual({ started: false, reason: "gated" });
     expect(sendMessage.mock.calls.map((c: any[]) => (typeof c[1] === "string" ? c[1] : JSON.stringify(c[1]))).join(" ")).toMatch(/Select a plan/);
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.bookingFlowStep).toBeUndefined();
-    expect(hoisted.docState.get(`users/${UID}`)?.paywallContext).toEqual({ caregiverName: null, action: "booking" });
   });
 
   it("identity comes first, like the site: an unverified family gets the identity-check text", async () => {

@@ -101,10 +101,6 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     }
   }
   if ((session as any).pendingShiftApproval && (norm === "APPROVE" || norm.startsWith("DISPUTE"))) {
-    if ((session as any).isSecondaryMember) {
-      await sendMessage(chatId, "I can keep you updated here, but the primary account holder has to approve or dispute payment.");
-      return "handled";
-    }
     const { appointmentId, amount, caregiverName } = (session as any).pendingShiftApproval;
     if (norm === "APPROVE") {
       const { approveShiftHoursForClient } = await import("../shiftHours");

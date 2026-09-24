@@ -150,11 +150,10 @@ function dedupePromise<T>(key: string, factory: () => Promise<T>): Promise<T> {
     pendingPromises.set(key, promise);
     return promise;
 }
-import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, SupportTicket, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, FamilyMember, Invoice, JobPost } from '../types';
+import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, Invoice, JobPost } from '../types';
 import { errorHandler } from './errorHandler';
 import { validators, isFirebaseError, getSafeErrorMessage, normalizePhoneNumber, sanitizeString } from '../utils/validation';
 import { sanitizeMessage, sanitizeName, sanitizeBio, sanitizePlainText } from '../utils/sanitize';
-import { notifyFamilyOfArrival } from './notificationService';
 import { storageService } from './storageService';
 
 // Email/password and Google auth were retired with the phone-only login
@@ -1002,7 +1001,6 @@ export const dbService = {
             clientId,
             personality: data.personality ?? 'Introvert',
             needs: data.needs ?? [],
-            familyMembers: data.familyMembers ?? [],
             createdAt: new Date().toISOString(),
         });
         batch.update(db.collection('users').doc(clientId), {
@@ -1364,33 +1362,6 @@ export const dbService = {
         return updatedPlan;
     },
 
-    createSupportTicket: async (ticket: Partial<SupportTicket>) => {
-        // Rate limit: Prevent ticket spam (1 per user per 5 seconds)
-        const cacheKey = `ticket_${ticket.userId}`;
-        return dedupePromise(cacheKey, async () => {
-            if (isConfigured && db) {
-                await db.collection('support_tickets').add({
-                    ...ticket,
-                    status: 'open',
-                    createdAt: new Date().toISOString()
-                });
-                return;
-            }
-            throw new Error("Database not connected");
-        });
-    },
-
-    subscribeToTickets: (onUpdate: (tickets: SupportTicket[]) => void) => {
-        if (isConfigured && db) {
-            return db.collection('support_tickets').orderBy('createdAt', 'desc').onSnapshot(snap => {
-                const tickets: SupportTicket[] = [];
-                snap.forEach(doc => tickets.push({ id: doc.id, ...doc.data() } as SupportTicket));
-                onUpdate(tickets);
-            }, (error) => { if (error.code === 'permission-denied') return; });
-        }
-        return () => { };
-    },
-
     subscribeToUserNotifications: (uid: string, onUpdate: (notifs: AppNotification[]) => void) => {
         if (isConfigured && db) {
             return db.collection('users').doc(uid).collection('notifications').orderBy('createdAt', 'desc').limit(20).onSnapshot(snap => {
@@ -1461,95 +1432,6 @@ export const dbService = {
                     .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
                 onUpdate(alerts);
             }, (error) => { if (error.code === 'permission-denied') onUpdate([]); });
-    },
-
-
-
-
-
-    inviteFamilyMember: async (seniorId: string, email: string, phone?: string) => {
-        const newMember: FamilyMember = {
-            id: `fam_${Date.now()}`,
-            name: email.split('@')[0],
-            email,
-            ...(phone && { phone }),
-            role: 'viewer',
-            status: 'pending'
-        };
-
-        if (isConfigured && db) {
-            await db.collection('senior_profiles').doc(seniorId).update({
-                familyMembers: firebase.firestore.FieldValue.arrayUnion(newMember)
-            });
-        }
-        return newMember;
-    },
-
-    getFamilyMembers: async (seniorId: string): Promise<FamilyMember[]> => {
-        if (isConfigured && db) {
-            const doc = await db.collection('senior_profiles').doc(seniorId).get();
-            if (doc.exists) {
-                return (doc.data()?.familyMembers as FamilyMember[]) || [];
-            }
-        }
-        return [];
-    },
-
-    // Live family roster. There are TWO sources of truth: the web invite flow
-    // (inviteFamilyMember above) writes senior_profiles.familyMembers, while the
-    // agent's add_family_member / remove_family_member MCP tools and the /join
-    // page also maintain the family_group_members index. Listening to both and
-    // merging (deduped by phone, then email) means agent-made changes show up
-    // in FamilyManager without a refresh. Profile entries are listed first so
-    // the richer web-invite record (email/role) wins on a phone collision.
-    subscribeToFamilyMembers: (seniorId: string, onUpdate: (members: FamilyMember[]) => void): (() => void) => {
-        if (!isConfigured || !db) { onUpdate([]); return () => {}; }
-
-        let profileMembers: FamilyMember[] = [];
-        let groupMembers: FamilyMember[] = [];
-        const dedupeKey = (m: FamilyMember): string => {
-            const phoneDigits = (m.phone || '').replace(/\D/g, '');
-            if (phoneDigits) return `p:${phoneDigits}`;
-            if (m.email) return `e:${m.email.toLowerCase()}`;
-            return `i:${m.id}`;
-        };
-        const emit = () => {
-            const seen = new Set<string>();
-            const merged: FamilyMember[] = [];
-            for (const m of [...profileMembers, ...groupMembers]) {
-                const key = dedupeKey(m);
-                if (seen.has(key)) continue;
-                seen.add(key);
-                merged.push(m);
-            }
-            onUpdate(merged);
-        };
-
-        const unsubProfile = db.collection('senior_profiles').doc(seniorId)
-            .onSnapshot(doc => {
-                profileMembers = (doc.exists ? (doc.data()?.familyMembers as FamilyMember[]) : []) || [];
-                emit();
-            }, (error) => { if (error.code === 'permission-denied') { profileMembers = []; emit(); } });
-
-        const unsubGroup = db.collection('family_group_members')
-            .where('userId', '==', seniorId)
-            .onSnapshot(snap => {
-                groupMembers = snap.docs.map(d => {
-                    const data = d.data();
-                    return {
-                        id: d.id,
-                        name: (data.memberName as string) || 'Family member',
-                        email: '',
-                        ...(data.memberPhone ? { phone: data.memberPhone as string } : {}),
-                        role: 'viewer',
-                        // joinedAt is stamped when the member first texts in
-                        status: data.joinedAt ? 'active' : 'pending',
-                    } as FamilyMember;
-                });
-                emit();
-            }, (error) => { if (error.code === 'permission-denied') { groupMembers = []; emit(); } });
-
-        return () => { unsubProfile(); unsubGroup(); };
     },
 
     // --- NOTIFICATION API ENDPOINTS ---
@@ -1708,67 +1590,15 @@ export const dbService = {
     },
 
     // --- TICKET MANAGEMENT API ---
-    getSupportTickets: async (filters?: { status?: string; priority?: string }): Promise<SupportTicket[]> => {
-        if (isConfigured && db) {
-            try {
-                let query: any = db.collection('support_tickets').orderBy('createdAt', 'desc');
-                if (filters?.status) {
-                    query = query.where('status', '==', filters.status);
-                }
-                const snap = await query.get();
-                const tickets: SupportTicket[] = [];
-                snap.forEach((doc: any) => tickets.push({ id: doc.id, ...doc.data() } as SupportTicket));
-                return tickets;
-            } catch (e: any) {
-                if (e.code === 'permission-denied') return [];
-                return [];
-            }
-        }
-        return [];
-    },
-
-    updateTicketStatus: async (ticketId: string, status: string, assignedTo?: string) => {
-        if (isConfigured && db) {
-            const updateData: { status: string; updatedAt: string; assignedTo?: string } = { status, updatedAt: new Date().toISOString() };
-            if (assignedTo) updateData.assignedTo = assignedTo;
-            await db.collection('support_tickets').doc(ticketId).update(updateData);
-            return true;
-        }
-        throw new Error("Database not connected");
-    },
-
-    addTicketResponse: async (ticketId: string, response: {
-        message: string;
-        isAdmin: boolean;
-        adminName?: string;
-    }) => {
-        if (isConfigured && db) {
-            await db.collection('support_tickets').doc(ticketId).collection('responses').add({
-                ...response,
-                createdAt: new Date().toISOString()
-            });
-            
-            // Update ticket status if it was open
-            await db.collection('support_tickets').doc(ticketId).update({
-                status: 'in-progress',
-                updatedAt: new Date().toISOString()
-            });
-            
-            return true;
-        }
-        throw new Error("Database not connected");
-    },
-
     // --- SYSTEM STATS API ---
     getDashboardStats: async () => {
         if (isConfigured && db) {
             try {
-                const [users, caregivers, appointments, jobs, tickets] = await Promise.all([
+                const [users, caregivers, appointments, jobs] = await Promise.all([
                     db.collection('users').get(),
                     db.collection('caregivers').get(),
                     db.collection('appointments').get(),
                     db.collection('job_posts').get(),
-                    db.collection('support_tickets').where('status', 'in', ['open', 'in-progress']).get()
                 ]);
 
                 // Calculate revenue from completed appointments
@@ -1786,14 +1616,13 @@ export const dbService = {
                     caregivers: caregivers.size,
                     appointments: appointments.size,
                     openJobs: jobs.size,
-                    pendingTickets: tickets.size,
                     revenue: totalRevenue
                 };
             } catch (e) {
-                return { users: 0, caregivers: 0, appointments: 0, openJobs: 0, pendingTickets: 0, revenue: 0 };
+                return { users: 0, caregivers: 0, appointments: 0, openJobs: 0, revenue: 0 };
             }
         }
-        return { users: 0, caregivers: 0, appointments: 0, openJobs: 0, pendingTickets: 0, revenue: 0 };
+        return { users: 0, caregivers: 0, appointments: 0, openJobs: 0, revenue: 0 };
     },
 
     /**
@@ -1803,30 +1632,6 @@ export const dbService = {
      * admins to read. Single-field query + client-side sort — no composite
      * index needed.
      */
-
-    notifyFamilyOfArrival: async (seniorId: string, caregiverId: string, appointmentTime: string) => {
-        // Get senior's profile
-        const seniorDoc = await db?.collection('senior_profiles').doc(seniorId).get();
-        if (!seniorDoc?.exists) return;
-
-        const seniorData = seniorDoc.data() as { 
-            name?: string; 
-            familyMembers?: { email: string; name: string; phone?: string; userId?: string }[] 
-        };
-        const seniorName = seniorData?.name || 'Your Loved One';
-        const familyMembers = seniorData?.familyMembers || [];
-
-        if (familyMembers.length === 0) return;
-
-        // Get caregiver info
-        const caregiverDoc = await db?.collection('publicCaregiverProfiles').doc(caregiverId).get();
-        const caregiverName = caregiverDoc?.exists 
-            ? (caregiverDoc.data() as { name?: string })?.name || 'Caregiver'
-            : 'Caregiver';
-
-        // Send arrival notifications
-        await notifyFamilyOfArrival(familyMembers, seniorName, caregiverName, appointmentTime);
-    },
 
     sendWeeklyDigest: async (_seniorId: string, _email: string) => {
         // Care journal removed — weekly digest no longer supported
@@ -1907,93 +1712,6 @@ export const dbService = {
             console.error('Failed to fetch caregivers for verification:', error);
             return [];
         }
-    },
-
-    // ==================== PROACTIVE REFLECTION DRAFTS ====================
-
-    /**
-     * Subscribe to proactive_drafts filtered by status, ordered newest-first.
-     * Returns the unsubscribe function. Empty status array = "all statuses".
-     */
-    subscribeProactiveDrafts: (
-        statuses: string[],
-        cb: (drafts: Array<Record<string, any>>) => void
-    ): (() => void) => {
-        if (!isConfigured || !db) {
-            cb([]);
-            return () => {};
-        }
-        let q: firebase.firestore.Query = db.collection('proactive_drafts');
-        if (statuses.length === 1) {
-            q = q.where('status', '==', statuses[0]);
-        } else if (statuses.length > 1) {
-            // Firestore 'in' supports up to 30 values — well above our 6-status union.
-            q = q.where('status', 'in', statuses);
-        }
-        return q.orderBy('createdAt', 'desc')
-            .limit(200)
-            .onSnapshot(
-                (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-                (err) => {
-                    console.error('subscribeProactiveDrafts:', err);
-                    cb([]);
-                }
-            );
-    },
-
-    /**
-     * Approve via the audited v1-reviewProactiveDraft callable (U8/AE23). The
-     * server verifies live admin role, transitions transactionally, and stamps
-     * the immutable reviewed-content hash the sender re-verifies at send time.
-     * Inline edits ride along as `editedText` so the hash covers the FINAL
-     * text (server enforces 1-320 chars). The optional review note is metadata
-     * only — written after the decision, never part of the hashed content.
-     */
-    approveProactiveDraft: async (
-        draftId: string,
-        _adminUid: string,
-        reviewNote?: string,
-        editedText?: string
-    ): Promise<void> => {
-        if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('v1-reviewProactiveDraft');
-        const payload: Record<string, any> = { draftId, decision: 'approve' };
-        if (editedText !== undefined && editedText.trim()) payload.editedText = editedText.trim();
-        await fn(payload);
-        if (reviewNote && reviewNote.trim() && db) {
-            await db.collection('proactive_drafts').doc(draftId)
-                .update({ approvalNote: reviewNote.trim() })
-                .catch((err) => console.warn('approvalNote write failed (non-fatal):', err));
-        }
-    },
-
-    /** Reject via the audited callable; the reason is metadata written after. */
-    rejectProactiveDraft: async (
-        draftId: string,
-        _adminUid: string,
-        reason: string
-    ): Promise<void> => {
-        if (!isConfigured || !functions) throw new Error('Not connected');
-        if (!reason || !reason.trim()) throw new Error('Rejection requires a reason');
-        const fn = functions.httpsCallable('v1-reviewProactiveDraft');
-        await fn({ draftId, decision: 'reject' });
-        if (db) {
-            await db.collection('proactive_drafts').doc(draftId)
-                .update({ rejectionReason: reason.trim() })
-                .catch((err) => console.warn('rejectionReason write failed (non-fatal):', err));
-        }
-    },
-
-    /**
-     * Calls the sendApprovedDraftNow callable Cloud Function. Server validates
-     * admin auth + draft state and dispatches via the same path the scheduled
-     * sender uses, so behavior matches whether sent now or by the cron.
-     */
-    sendApprovedDraftNow: async (draftId: string): Promise<{ success: boolean; error?: string }> => {
-        if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('v1-sendApprovedDraftNow');
-        const result = await fn({ draftId });
-        return (result.data as { success: boolean; error?: string }) ?? { success: false, error: 'no response' };
     },
 
     // ==================== ADMIN ALERTS ====================
@@ -2080,17 +1798,6 @@ export const dbService = {
         if (!isConfigured || !functions) throw new Error('Not connected');
         const fn = functions.httpsCallable('v1-admin_restore_user');
         const result = await fn({ userId, note });
-        return result.data as any;
-    },
-
-    adminRespondSupportTicket: async (
-        ticketId: string,
-        message: string,
-        resolve?: boolean
-    ): Promise<{ success: boolean; status: string }> => {
-        if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('v1-admin_respond_support_ticket');
-        const result = await fn({ ticketId, message, resolve: !!resolve });
         return result.data as any;
     },
 
@@ -2422,41 +2129,12 @@ export const dbService = {
     // ==================== REFERRAL SYSTEM ====================
     // U4 (2026-07-20): dead web referral readers getReferralStats/getReferrals
     // removed — zero callers; referrals are SMS/server-owned by product decision.
-    // The backend referral flow (processReferral + v1-resolveReferrerByCode) and
-    // sendReferralInvite are preserved.
+    // The backend referral flow (processReferral + v1-resolveReferrerByCode) is
+    // preserved for caregiver referral links; the family email invite was removed 2026-09-23.
 
     /**
      * Send referral invite via email
      */
-    sendReferralInvite: async (userId: string, email: string, userType: 'client' | 'caregiver') => {
-        if (!isConfigured || !db) {
-            return;
-        }
-
-        try {
-            // Get user's referral code
-            const userDoc = await db.collection('users').doc(userId).get();
-            const referralCode = userDoc.data()?.referralCode || generateReferralCode();
-
-            // Create referral record
-            await db.collection('referrals').add({
-                referrerId: userId,
-                referrerUserId: userId,
-                referredEmail: email,
-                status: 'pending',
-                referralCode,
-                userType,
-                createdAt: new Date().toISOString()
-            });
-
-            // Send email (would integrate with SendGrid/Email service)
-            console.log(`Referral invite sent to ${email} with code ${referralCode}`);
-        } catch (error) {
-            console.error('Failed to send referral invite:', error);
-            throw new Error('Failed to send referral invite. Please try again.');
-        }
-    },
-
     /**
      * Process referral on new user signup
      */

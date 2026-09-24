@@ -30,18 +30,13 @@ import {
   collectionStepsForRole,
   type OnboardingRole,
 } from "../agents/onboardingContract";
-import {
-  handleClientPermissionsReply,
-  handleCaregiverPermissionsReply,
-} from "../agents/permissionsConversation";
+import { handleCaregiverPermissionsReply } from "../agents/permissionsConversation";
 import { detectCrisis, isLikelyRealCrisis, classifyCrisisMultilingual } from "../safety/crisisDetector";
 import { isPhoneAllowed } from "../config/phoneAllowlist";
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
-import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
 import { describeWhoIsWho } from "../agents/careRecipients";
-import { sendViaInteractionAgent } from "../agents/caraAgent";
 import {
   classifyCompleteness,
   classifyOfferReply,
@@ -61,13 +56,10 @@ import {
 import { sessionActivityFields } from "../memory/conversationMemory";
 import { MEMORY_FINGERPRINT_KEY_NAME, MEMORY_FINGERPRINT_KEY_SECRET } from "../memory/fingerprintKey";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
-import { quickComplete } from "../utils/openaiClient";
 import { extractVoiceMemoPart, transcribeVoiceMemo } from "../utils/voiceTranscription";
 import { extractLocationPart, reverseGeocode, SharedLocation } from "../utils/locationShare";
 import { extractMediaPart, downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
 import { classifyMedia } from "../utils/visionVerify";
-import { detectPersonaShift } from "../utils/personaShiftDetector";
-import { collectKnownNames } from "../utils/knownNames";
 import { detectLanguage, languageFromSession, t as tr, flowLabel, type Language } from "../utils/language";
 import { recordApprovalNoticeProviderStatus } from "../billing/approvalNoticeDispatcher";
 
@@ -229,11 +221,11 @@ async function handleTypingStarted(event: unknown): Promise<void> {
   });
 }
 
-// User replied "NOTIFY" after a crisis message. Alert the care team:
-// a guaranteed critical admin alert, plus best-effort SMS to family-group members
-// and the senior's assigned caregiver(s). Copy is tailored by crisis `kind`:
-// medical emergencies say "call 911"; emotional crises use supportive,
-// non-clinical wording (the person opted in to this escalation).
+// User replied "NOTIFY" after a crisis message. Page our support team with a
+// guaranteed critical admin alert (the Control Room surface), then confirm to
+// the user. Nothing else is texted: the family-group fan-out and the legacy
+// `appointments`-based caregiver alert were removed with the family-group
+// feature (2026-09-23), so the copy promises only what actually happens.
 async function handleCrisisNotify(
   phone:   string,
   chatId:  string,
@@ -252,14 +244,7 @@ async function handleCrisisNotify(
     ?? (session as any).onboardingData?.seniorName
     ?? "your loved one";
 
-  const familyMsg = kind === "emotional"
-    ? `💙 Someone in your care circle reached out for emotional support and asked me to let you know. Please check in with them when you can. If you believe they're in immediate danger, call 988 or 911.`
-    : `⚠️ A medical emergency was just reported for ${seniorName}. If you can help, please reach out now. Call 911 if it's life-threatening.`;
-  const caregiverMsg = kind === "emotional"
-    ? `💙 Your care client reached out for emotional support and asked us to notify their care circle. A gentle check-in would mean a lot. Call 988 or 911 if there's immediate danger.`
-    : `⚠️ A medical emergency was just reported for ${seniorName}, your care client. Please check in if you're able. Call 911 if it's life-threatening.`;
-
-  // 1) GUARANTEED: critical admin alert so support staff is paged.
+  // GUARANTEED: critical admin alert so support staff is paged.
   await db.collection("admin_alerts").add({
     type:       "crisis_notify_requested",
     severity:   "critical",
@@ -271,60 +256,14 @@ async function handleCrisisNotify(
     createdAt:  new Date().toISOString(),
   }).catch((err) => console.error("[handleCrisisNotify] admin_alert write failed:", err));
 
-  // 2) BEST-EFFORT: alert family-group members.
-  try {
-    const membersSnap = await db.collection("family_group_members")
-      .where("primaryPhone", "==", phone).get();
-    await Promise.all(membersSnap.docs.map((d) => {
-      const mPhone = d.data().memberPhone as string | undefined;
-      if (!mPhone) return Promise.resolve();
-      return sendViaInteractionAgent(mPhone, {
-        content:     familyMsg,
-        urgency:     "immediate",
-        sourceAgent: "crisis_notify",
-        canDrop:     false,
-      }).catch(() => {});
-    }));
-  } catch (err) {
-    console.error("[handleCrisisNotify] family notify failed:", err);
-  }
-
-  // 3) BEST-EFFORT: alert the assigned caregiver(s) on the senior's active appointments.
-  try {
-    const apptSnap = await db.collection("appointments")
-      .where("clientId", "==", userId)
-      .where("status", "in", ["confirmed", "in-progress", "pending_caregiver_confirmation"])
-      .limit(5).get();
-    const caregiverPhones = new Set<string>();
-    for (const doc of apptSnap.docs) {
-      const cgId = doc.data().caregiverId as string | undefined;
-      if (!cgId) continue;
-      const cgSnap = await db.collection("caregivers").doc(cgId).get();
-      const cgPhone = cgSnap.data()?.phone as string | undefined;
-      if (cgPhone) caregiverPhones.add(cgPhone);
-    }
-    await Promise.all([...caregiverPhones].map((cgPhone) =>
-      sendViaInteractionAgent(cgPhone, {
-        content:     caregiverMsg,
-        urgency:     "immediate",
-        sourceAgent: "crisis_notify",
-        canDrop:     false,
-      }).catch(() => {})
-    ));
-  } catch (err) {
-    console.error("[handleCrisisNotify] caregiver notify failed:", err);
-  }
-
-  // 4) Confirm to the user.
-  await sendMessage(chatId, kind === "emotional"
-    ? tr.crisis_emotional_notify_sent(lang)
-    : tr.crisis_notify_sent(lang));
+  // Confirm to the user.
+  await sendMessage(chatId, tr.crisis_notify_sent(lang));
 }
 
-// Respond to a confirmed emotional crisis: send the 988 message, log it, then
-// OFFER (consent-aware) to notify the care circle and arm the NOTIFY follow-up
-// so a "NOTIFY" reply routes through handleCrisisNotify with emotional copy.
-// Unlike medical, we never auto-page anyone — escalation is opt-in.
+// Respond to a confirmed emotional crisis: send the 988 message and log it.
+// Unlike medical, we never page anyone on this path — there is no NOTIFY offer
+// (the care-circle fan-out it used to arm was removed with the family-group
+// feature, 2026-09-23).
 async function sendEmotionalCrisisResponse(
   phone:   string,
   chatId:  string,
@@ -332,11 +271,7 @@ async function sendEmotionalCrisisResponse(
   text:    string,
 ): Promise<void> {
   await sendMessage(chatId, tr.crisis_emotional(lang));
-  await sendMessage(chatId, tr.crisis_emotional_notify_offer(lang));
   logCrisisDetected(phone, "emotional", text).catch(() => {});
-  await db.collection("agent_sessions").doc(phone).update({
-    pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "emotional" },
-  }).catch(() => {});
 }
 
 // Raise an admin-visible safety alert for a confirmed MEDICAL emergency (R7).
@@ -354,68 +289,6 @@ function raiseMedicalCrisisAlert(phone: string, text: string): void {
     message:  "Possible medical emergency reported over SMS — Evia directed the user to call 911.",
     context:  { textPreview: text.slice(0, 200) },
   }).catch(() => {});
-}
-
-// ── Multi-care-group disambiguation (U8) ──────────────────────────────────────
-// A phone that matches 2+ care groups can't be auto-attached — we ask which
-// senior the message is about and persist the candidates so the ANSWER has
-// somewhere to land. Without this marker, the next inbound re-hits
-// `!sessionSnap.exists` (a disambiguation reply creates no session on its own)
-// and re-asks the same question forever.
-interface GroupDisambiguationCandidate {
-  primaryPhone: string;
-  seniorName:   string;
-}
-
-// Create the lightweight secondary-member session pointing at the primary
-// account, exactly as the single-match path does, then greet. Shared by both
-// the single-match fast path and the resolved-disambiguation path so the two
-// never drift.
-async function createSecondaryMemberSession(
-  phone:          string,
-  chatId:         string,
-  primarySession: AgentSession,
-  primaryPhone:   string,
-): Promise<void> {
-  const secondaryCap = await checkCapability(phone);
-  const secondaryService: LinqService = secondaryCap.iMessage ? "iMessage" : secondaryCap.RCS ? "RCS" : "SMS";
-
-  let groupChatId = (primarySession as any).groupChatId as string | undefined;
-  if (!groupChatId && primaryPhone) {
-    const groupForPrimary = await db.collection("family_groups")
-      .where("phones", "array-contains", primaryPhone)
-      .limit(1)
-      .get()
-      .catch(() => null);
-    groupChatId = groupForPrimary && !groupForPrimary.empty
-      ? (groupForPrimary.docs[0].data().chatId as string | undefined)
-      : undefined;
-  }
-
-  await db.collection("agent_sessions").doc(phone).set({
-    chatId,
-    phone,
-    service:        secondaryService,
-    userType:       "client",
-    onboardingStep: "complete",
-    optedIn:        true,
-    optedOut:       false,
-    userId:         primarySession.userId,
-    seniorId:       primarySession.seniorId,
-    primaryPhone,
-    isSecondaryMember: true,
-    createdAt:      new Date().toISOString(),
-    ...(groupChatId ? { groupChatId } : {}),
-  });
-
-  await initializeZepOnFirstContact(phone).catch((err) =>
-    console.error("Zep init failed (secondary member):", err)
-  );
-
-  await sendMessage(chatId,
-    `Hi, I'm Evia — the care coordinator for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
-    `I've added you to the care group. You'll get the same updates and can ask me anything.`
-  );
 }
 
 // ── Pending TCPA consent reply (session seeded by onUserCreated) ─────────────
@@ -661,128 +534,6 @@ async function handleColdConsentReply(
   await sendMessage(chatId, roleQuestion);
 }
 
-// Ask which senior the phone is texting about, naming the actual candidates.
-async function askGroupDisambiguation(
-  chatId:     string,
-  candidates: GroupDisambiguationCandidate[],
-): Promise<void> {
-  const names = candidates.map((c) => c.seniorName).join(" or ");
-  await sendMessage(
-    chatId,
-    `I see your number in more than one care group — for ${names}. Which one are you texting about?`,
-  );
-}
-
-// The reply to the disambiguation question. Resolves via parseWithClaude (per
-// CLAUDE.md — no keyword/regex intent parsing) against the candidate senior
-// names. Match → create that candidate's secondary session and clear the
-// marker. No match, first attempt → re-ask with names, increment attempts.
-// No match, second attempt → give up looping: fall back to the FIRST
-// candidate and raise an admin_alerts event so support can reconcile it.
-async function handleGroupDisambiguationReply(
-  phone:   string,
-  chatId:  string,
-  text:    string,
-  pending: { candidates: GroupDisambiguationCandidate[]; askedAt: string; attempts: number },
-): Promise<void> {
-  const { parseWithClaude } = await import("../utils/parseWithClaude");
-  const candidates = pending.candidates ?? [];
-
-  if (candidates.length === 0) {
-    // Nothing to resolve against — clear the marker so we don't loop forever.
-    await db.collection("agent_sessions").doc(phone).update({
-      pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
-    }).catch(() => {});
-    return;
-  }
-
-  // CLAUDE.md handler checklist: answer a mid-flow question first, then re-ask
-  // the current question — without burning one of the two match attempts.
-  const { isQuestionOrOther } = await import("../agents/stepHandler");
-  if (await isQuestionOrOther(text)) {
-    const { answerHumanQuestionOnly } = await import("../agents/humanReply");
-    const answer = await answerHumanQuestionOnly({
-      text,
-      situation:
-        "The user's phone number appears in more than one care group, and Evia just asked which senior they are texting about. Answer their question briefly.",
-    }).catch(() => "");
-    if (answer) await sendMessage(chatId, answer);
-    await askGroupDisambiguation(chatId, candidates);
-    return;
-  }
-
-  const namesList = candidates
-    .map((c, i) => `${i}: ${c.seniorName}`)
-    .join("; ");
-  const raw = await parseWithClaude(
-    `The user was asked which senior's care group they're texting about. Candidates (index: name): ${namesList}. ` +
-    `Reply with ONLY the matching index number if the user's message clearly names one of these seniors. ` +
-    `Reply "none" if it doesn't clearly match any of them.`,
-    text,
-  );
-
-  const matchedIndex = /^\d+$/.test(raw.trim()) ? parseInt(raw.trim(), 10) : -1;
-  const matched = matchedIndex >= 0 && matchedIndex < candidates.length
-    ? candidates[matchedIndex]
-    : null;
-
-  if (matched) {
-    await db.collection("agent_sessions").doc(phone).update({
-      pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
-    }).catch(() => {});
-    const primarySnap = await db.collection("agent_sessions").doc(matched.primaryPhone).get();
-    if (primarySnap.exists) {
-      await createSecondaryMemberSession(phone, chatId, primarySnap.data() as AgentSession, matched.primaryPhone);
-    } else {
-      // Primary session vanished between the ask and the answer — fail safe
-      // with an alert rather than crashing the turn.
-      await db.collection("admin_alerts").add({
-        type:      "group_disambiguation_primary_missing",
-        phone,
-        primaryPhone: matched.primaryPhone,
-        severity:  "medium",
-        createdAt: new Date().toISOString(),
-        resolved:  false,
-      }).catch(() => {});
-      await sendMessage(chatId, "Something went wrong linking that care group — I've flagged it for our team to fix.");
-    }
-    return;
-  }
-
-  if (pending.attempts < 2) {
-    await db.collection("agent_sessions").doc(phone).update({
-      pendingGroupDisambiguation: {
-        candidates,
-        askedAt:  new Date().toISOString(),
-        attempts: pending.attempts + 1,
-      },
-    }).catch(() => {});
-    await askGroupDisambiguation(chatId, candidates);
-    return;
-  }
-
-  // Two unresolved attempts — stop looping. Fall back to the first candidate
-  // and raise an alert so support can reconcile the account manually.
-  await db.collection("agent_sessions").doc(phone).update({
-    pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
-  }).catch(() => {});
-  const fallback = candidates[0];
-  await db.collection("admin_alerts").add({
-    type:      "group_disambiguation_unresolved",
-    phone,
-    candidates,
-    severity:  "medium",
-    createdAt: new Date().toISOString(),
-    resolved:  false,
-  }).catch(() => {});
-  const primarySnap = await db.collection("agent_sessions").doc(fallback.primaryPhone).get();
-  if (primarySnap.exists) {
-    await createSecondaryMemberSession(phone, chatId, primarySnap.data() as AgentSession, fallback.primaryPhone);
-  } else {
-    await sendMessage(chatId, "Something went wrong linking that care group — I've flagged it for our team to fix.");
-  }
-}
-
 // (2026-09-18) The post-visit feedback and satisfaction check-in reply
 // handlers that lived here were removed with their jobs: both were Evia-only
 // proactive questions with no site equivalent, and both treated the family's
@@ -996,102 +747,6 @@ const handleInboundInner = traceable(
 
   // ── New user — texted first (MO consent) ────────────────────────────────────
   if (!sessionSnap.exists) {
-    // Check if this phone belongs to a secondary family group member.
-    // Two sources must be reconciled: the SMS-keyword path writes the primary
-    // session's `groupMembers` array, while the MCP `add_family_member` tool path
-    // writes the `family_group_members` collection. Check BOTH or an MCP-added
-    // member ("add my sister") would fall through to fresh onboarding and create a
-    // DUPLICATE account.
-    let primarySession: AgentSession | null = null;
-    let primaryPhone = "";
-
-    const groupSnap = await db.collection("agent_sessions")
-      .where("groupMembers", "array-contains", phone)
-      .limit(2)
-      .get();
-    if (groupSnap.size > 1) {
-      const candidates: GroupDisambiguationCandidate[] = groupSnap.docs.map((d) => ({
-        primaryPhone: d.id,
-        seniorName:   ((d.data() as AgentSession as any).onboardingData?.seniorName as string | undefined)
-          ?? "your family member",
-      }));
-      await db.collection("agent_sessions").doc(phone).set({
-        chatId,
-        phone,
-        pendingGroupDisambiguation: {
-          candidates,
-          askedAt:  new Date().toISOString(),
-          attempts: 1,
-        },
-        createdAt: new Date().toISOString(),
-      });
-      await askGroupDisambiguation(chatId, candidates);
-      return;
-    }
-    if (!groupSnap.empty) {
-      primarySession = groupSnap.docs[0].data() as AgentSession;
-      primaryPhone   = groupSnap.docs[0].id;
-    } else {
-      // Fallback: look up the collection-based membership record (MCP-added members).
-      const memberSnap = await db.collection("family_group_members")
-        .where("memberPhone", "==", phone)
-        .limit(2)
-        .get();
-      if (memberSnap.size > 1) {
-        // Resolve each membership record to its primary session so we can name
-        // the actual seniors in the disambiguation question.
-        const candidatePairs = await Promise.all(memberSnap.docs.map(async (d) => {
-          const pPhone = d.data().primaryPhone as string | undefined;
-          if (!pPhone) return null;
-          const pSnap = await db.collection("agent_sessions").doc(pPhone).get().catch(() => null);
-          const seniorName = pSnap && pSnap.exists
-            ? (((pSnap.data() as AgentSession as any).onboardingData?.seniorName as string | undefined) ?? "your family member")
-            : "your family member";
-          return { primaryPhone: pPhone, seniorName } as GroupDisambiguationCandidate;
-        }));
-        const candidates = candidatePairs.filter((c): c is GroupDisambiguationCandidate => c !== null);
-        if (candidates.length > 0) {
-          await db.collection("agent_sessions").doc(phone).set({
-            chatId,
-            phone,
-            pendingGroupDisambiguation: {
-              candidates,
-              askedAt:  new Date().toISOString(),
-              attempts: 1,
-            },
-            createdAt: new Date().toISOString(),
-          });
-          await askGroupDisambiguation(chatId, candidates);
-          return;
-        }
-        // Every membership row was missing primaryPhone (data drift) — don't
-        // ask an unanswerable question. Alert and fall through to the
-        // single-member handling below, which tolerates a missing primary.
-        await db.collection("admin_alerts").add({
-          type:      "group_disambiguation_no_candidates",
-          phone,
-          severity:  "medium",
-          createdAt: new Date().toISOString(),
-          resolved:  false,
-        }).catch(() => {});
-      }
-      if (!memberSnap.empty) {
-        const pPhone = memberSnap.docs[0].data().primaryPhone as string | undefined;
-        if (pPhone) {
-          const pSnap = await db.collection("agent_sessions").doc(pPhone).get();
-          if (pSnap.exists) {
-            primarySession = pSnap.data() as AgentSession;
-            primaryPhone   = pPhone;
-          }
-        }
-      }
-    }
-
-    if (primarySession) {
-      await createSecondaryMemberSession(phone, chatId, primarySession, primaryPhone);
-      return;
-    }
-
     const capability = await checkCapability(phone);
     const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
 
@@ -1342,43 +997,6 @@ const handleInboundInner = traceable(
   const norm     = text.trim().toUpperCase();
   const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END", "OPTOUT"]);
 
-  // ── Multi-care-group disambiguation answer (U8) ─────────────────────────────
-  // Runs before every other guard: this session exists ONLY because we asked
-  // "which senior?" last turn and had to persist somewhere for the answer to
-  // land. Route the reply to the resolver before normal routing so it isn't
-  // swallowed by the opt-out/crisis/onboarding gates below (this session has
-  // no onboardingStep, userType, etc. yet — those guards would misbehave).
-  {
-    const pendingGroupDis = (session as any).pendingGroupDisambiguation as {
-      candidates: Array<{ primaryPhone: string; seniorName: string }>;
-      askedAt:    string;
-      attempts:   number;
-    } | undefined;
-    if (pendingGroupDis && text.trim() !== "") {
-      if (stopWords.has(norm)) {
-        // SMS carrier protocol: STOP must always work, even mid-disambiguation.
-        // Clear the marker and fall through to the standard opt-out handling.
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-      } else if (norm === "HELP" || norm === "AYUDA") {
-        // Carrier HELP keyword must also always work — fall through to the
-        // standard HELP handler below WITHOUT consuming the reply as a
-        // disambiguation answer. Keep the marker so the next reply can still
-        // resolve which care group they meant.
-      } else if (!pendingGroupDis.candidates?.length) {
-        // Malformed marker (no resolvable candidates) — clear it and let normal
-        // routing take over rather than dead-ending the user in silence.
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingGroupDisambiguation: admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-      } else {
-        await handleGroupDisambiguationReply(phone, chatId, text, pendingGroupDis);
-        return;
-      }
-    }
-  }
-
   // ── Chat health gate — honour OPTED_OUT; do NOT mute direct replies ───────────
   // We only hard-stop on OPTED_OUT (a real user opt-out we must respect). CRITICAL
   // health reflects line/deliverability risk that matters for PROACTIVE/bulk sends
@@ -1614,11 +1232,7 @@ const handleInboundInner = traceable(
   // U7 / R13: reply with a SHORT, warm, role-aware capability reply. When there's
   // live context worth leading with, surface ONE relevant action instead of a list.
   if (norm === "HELP" || norm === "AYUDA") {
-    const role: DiscoveryRole = session.userType === "caregiver"
-      ? "caregiver"
-      : (session as any).isSecondaryMember
-        ? "family-secondary"
-        : "client";
+    const role: DiscoveryRole = session.userType === "caregiver" ? "caregiver" : "client";
 
     // Pull one contextual lead from the live operations context (best-effort —
     // falls back to the no-context list reply if it fails or is empty).
@@ -1739,169 +1353,6 @@ const handleInboundInner = traceable(
         return;
       }
     }
-  }
-
-  // ── Persona-shift resolution ────────────────────────────────────────────────
-  // If we previously asked "is this still about [seniorName]?", interpret
-  // this inbound as the answer and either resume or block the original action.
-  // Tracks whether we resolved a pending persona check on THIS turn — without it,
-  // a confirmed "YES" restores the original text and falls straight back into the
-  // detector below, which re-flags the same name and re-asks forever (infinite loop).
-  let personaResolvedThisTurn = false;
-  {
-    const pending = (session as any).pendingPersonaResolve as {
-      originalText: string;
-      seniorName?:  string;
-      detectedAt:   string;
-    } | undefined;
-    if (pending) {
-      // Quick yes/no classify — was the user confirming the session person or not?
-      let isSame = false;
-      try {
-        const verdict = await quickComplete(
-          `Evia asked: "Is this still about ${pending.seniorName ?? "the person on file"}?" ` +
-          "Reply YES if the user confirms it is still about them. " +
-          "Reply NO if the user says it is a different person or family. " +
-          "Reply UNCLEAR if you cannot tell. Only reply one word.",
-          text,
-          { maxTokens: 5 },
-        );
-        const v = verdict.trim().toUpperCase();
-        isSame = v.startsWith("Y");
-        if (v.startsWith("U")) {
-          await sendMessage(chatId,
-            `Just to be sure — is this message about ${pending.seniorName ?? "the person on file"}? A quick yes or no helps me keep things straight.`,
-          );
-          return;
-        }
-      } catch {
-        await sendMessage(chatId,
-          `Just to be sure — is this message about ${pending.seniorName ?? "the person on file"}? A quick yes or no helps me keep things straight.`,
-        );
-        return;
-      }
-
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingPersonaResolve: admin.firestore.FieldValue.delete(),
-      }).catch(() => {});
-
-      if (!isSame) {
-        await sendMessage(chatId,
-          `Got it — different person. I keep one care plan per phone number, so I can't mix them up.\n\n` +
-          `If you want a separate setup, the person you're asking about needs to text me from their own phone. ` +
-          `Or ask whoever set this up for ${pending.seniorName ?? "the person on file"} to add you as a family member, ` +
-          `which lets you get care updates without overwriting their plan.`,
-        );
-        return;
-      }
-      // isSame === true → fall through and process the ORIGINAL text as if just received.
-      // Mark resolved so the detector below doesn't re-flag the same name this turn.
-      text = pending.originalText;
-      personaResolvedThisTurn = true;
-    }
-  }
-
-  // ── Persona shift detection — flag and pause when a different person seems to be texting ─
-  // Only relevant for complete client sessions; onboarding flows already self-reset via START OVER.
-  // Also skipped mid "post a new job" who/where collection (jp_ask_recipients /
-  // jp_ask_recipient_relationship) — naming a brand-new person there is the
-  // expected, desired action (the site itself supports multiple care
-  // recipients per account), and jobPostingFlow.ts's own numbered-list +
-  // explicit-relationship capture already handles it deliberately and safely.
-  // Without this, this check unconditionally blocked adding a second recipient
-  // over SMS at all (live-caught 2026-09-07) — a real feature gap relative to
-  // the website's own wizard, not a security fix for that specific case.
-  const JOB_POSTING_WHO_STEPS = new Set(["jp_ask_recipients", "jp_ask_recipient_relationship"]);
-  const inJobPostingWhoStep = JOB_POSTING_WHO_STEPS.has((session as any).jobPostingStep as string);
-  if (session.onboardingStep === "complete" && session.userType === "client" && !personaResolvedThisTurn && !inJobPostingWhoStep) {
-    const sessionSeniorName =
-      ((session as any).onboardingData?.seniorName as string | undefined) ??
-      ((session as any).seniorName as string | undefined);
-    const shift = await detectPersonaShift({
-      text,
-      sessionSenior: sessionSeniorName,
-      sessionRole:   session.userType,
-      // Names Evia already expects on this account (client, recipients, family,
-      // caregivers) so a known name or caregiver-logistics question never trips it.
-      knownNames:    collectKnownNames(session as unknown as Record<string, unknown>),
-    }).catch(() => null);
-
-    if (shift) {
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingPersonaResolve: {
-          originalText: text,
-          seniorName:   sessionSeniorName ?? "",
-          detectedAt:   new Date().toISOString(),
-        },
-      }).catch(() => {});
-      await sendMessage(chatId,
-        sessionSeniorName
-          ? `I see this phone is set up for ${sessionSeniorName}'s care plan, but your message sounds like it's about someone else. ` +
-            `Is this still about ${sessionSeniorName}, or a different family member?`
-          : `Quick check — your message sounds like it might be about someone other than the person I have on file for this phone. ` +
-            `Is this for the same person? A quick yes or no helps me keep things straight.`,
-      );
-      return;
-    }
-  }
-
-  // ── Bereavement detection — before intent classification ───────────────────
-  if (await isBereavementTrigger(text) && !(session as any).bereavementMode) {
-    const seniorName = (session as any).seniorName ?? "your loved one";
-    await activateBereavementMode(session.userId ?? phone, chatId, phone, seniorName as string);
-    return;
-  }
-  // If already in bereavement mode — allow explicit exit or send gentle acknowledgment
-  if ((session as any).bereavementMode) {
-    let isExit = false;
-    try {
-      const raw = await quickComplete(
-        "The user is in bereavement mode after losing a loved one. " +
-          "Reply YES if they are clearly expressing that they are ready to resume normal service " +
-          "(e.g. they need a caregiver, want to continue, are ready). " +
-          "Reply NO if they are still grieving or just checking in. " +
-          "Reply with only YES or NO.",
-        text,
-        { maxTokens: 5 },
-      );
-      isExit = raw.trim().toUpperCase().startsWith("Y");
-    } catch {
-      isExit = false;
-    }
-    if (isExit) {
-      await db.collection("agent_sessions").doc(phone).update({ bereavementMode: admin.firestore.FieldValue.delete() });
-      const bereavementExitMsg = await generateCaraMessage({
-        audience: "family",
-        context: "Family asked to exit bereavement support mode. Evia is gently transitioning back to normal and offering help.",
-        fallback: "Of course. I'm here whenever you need me. What can I help you with?",
-        maxTokens: 80,
-      });
-      await sendMessage(chatId, bereavementExitMsg);
-    } else {
-      // After 30 days, gently offer to resume — don't trap them forever
-      const activatedAt = (session as any).bereavementActivatedAt as string | undefined;
-      const daysSince = activatedAt
-        ? (Date.now() - new Date(activatedAt).getTime()) / (1000 * 60 * 60 * 24)
-        : 0;
-      if (daysSince > 30) {
-        const bereavementCheckinMsg = await generateCaraMessage({
-          audience: "family",
-          context: "30-day bereavement check-in — Evia is gently reaching out to see if the family is ready to think about care again. Tone should be warm and not pushy.",
-          fallback: "I'm here with you. 💙 Whenever you're ready to arrange care again, just let me know.",
-          maxTokens: 80,
-        });
-        await sendMessage(chatId, bereavementCheckinMsg);
-      } else {
-        const bereavementSupportMsg = await generateCaraMessage({
-          audience: "family",
-          context: "Family is in bereavement mode and has messaged. Evia is being supportive and not rushing them.",
-          fallback: "I'm here with you. 💙 Take all the time you need.",
-          maxTokens: 60,
-        });
-        await sendMessage(chatId, bereavementSupportMsg);
-      }
-    }
-    return;
   }
 
   // ── Zep lazy-init / self-heal — ANY session without a thread ──────────────
@@ -2096,8 +1547,6 @@ const handleInboundInner = traceable(
 
     // Permissions steps
     const atPermissionsStep =
-      step === "client_permissions_contact" || step === "client_permissions_booking" ||
-      step === "client_permissions_autobook" ||
       step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival";
 
     // Job-alert replies take precedence over a parked permissions question.
@@ -2130,11 +1579,6 @@ const handleInboundInner = traceable(
       return;
     }
 
-    if (step === "client_permissions_contact" || step === "client_permissions_booking" || step === "client_permissions_autobook") {
-      const userId = session.userId ?? phone;
-      await handleClientPermissionsReply(phone, chatId, text, session, userId);
-      return;
-    }
     if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
       const caregiverId = session.caregiverId ?? phone;
       await handleCaregiverPermissionsReply(phone, chatId, text, session, caregiverId);
@@ -2658,7 +2102,7 @@ const handleInboundInner = traceable(
 
   // ── Pending irreversible-action approval — runtime-enforced HITL gate ──────
   // When Evia proposed a high-risk action (cancel_appointment, cancel_subscription,
-  // remove_family_member, etc.) on a prior turn, the MCP gate stored a
+  // delete_memory_file, etc.) on a prior turn, the MCP gate stored a
   // pending_action doc and Evia texted the family for confirmation. This block
   // intercepts the family's reply BEFORE intent classification so we catch
   // natural-language YES/NO ("yeah", "go ahead", "actually no") that the
@@ -2744,17 +2188,6 @@ const handleInboundInner = traceable(
   // ── Caregiver keyword handling ──────────────────────────────────────────────
   if (session.userType === "caregiver") {
     if (await routeCaregiverMessage({ phone, chatId, text, norm, session }) === "handled") return;
-  }
-
-  // ── Praise loop (fire-and-forget side effect, never consumes the message) ───
-  // A family text landing shortly after an in-shift update gets sentiment-judged
-  // async; genuine warmth relays to the caregiver. Normal routing still answers
-  // the message below regardless.
-  if (session.userType !== "caregiver" && (session as any).lastInShiftUpdate) {
-    import("./inShiftPraise")
-      .then(({ maybeRelayPraiseFromText }) =>
-        maybeRelayPraiseFromText(phone, session as unknown as Record<string, unknown>, text))
-      .catch((err) => console.error("linqWebhook: praise-loop check failed:", err));
   }
 
   // ── Client-side pre-intent state machines (extracted to routeClient.ts) ──────
@@ -3011,11 +2444,7 @@ async function handlePhoneNumberStatusUpdated(event: unknown): Promise<void> {
   }
 }
 
-// ── iMessage emoji reaction → task confirmation ───────────────────────────────
-// Positive emojis (👍 ❤️ 😍 🎉 ✅ 👏 💙) → YES / confirm pending task
-// Negative emojis (👎 ✖️) → NO / decline pending task
-
-const POSITIVE_REACTIONS = new Set(["thumbsup", "love", "ha", "emphasize", "like", "heart", "👍", "❤️", "😍", "🎉", "✅", "👏", "💙", "🙌"]);
+// ── iMessage emoji reaction → audit log only ──────────────────────────────────
 
 async function handleReactionAdded(event: any): Promise<void> {
   const phone    = event.data?.sender_handle?.handle as string | undefined;
@@ -3031,24 +2460,6 @@ async function handleReactionAdded(event: any): Promise<void> {
     phone,
     reactedAt: now,
   }).catch(() => {});
-
-  if (!phone || !chatId) return;
-
-  const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-  if (!sessionSnap.exists) return;
-  const session = sessionSnap.data() as AgentSession;
-  if (session.optedOut) return;
-
-  const isYes = POSITIVE_REACTIONS.has(reaction);
-  if (!isYes) return;
-
-  // Praise loop: a positive tapback with nothing pending, landing shortly after
-  // an in-shift update, is the family loving the update — relay it to the
-  // caregiver (one-shot per update; see inShiftPraise.ts).
-  {
-    const { maybeRelayPraiseFromReaction } = await import("./inShiftPraise");
-    await maybeRelayPraiseFromReaction(phone, session as unknown as Record<string, unknown>, reaction);
-  }
 }
 
 // ── Webhook HTTPS function ────────────────────────────────────────────────────

@@ -77,24 +77,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   hoisted.docState.set(`agent_sessions/${PHONE}`, {
     chatId: "private-chat",
-    groupChatId: "family-group-chat",
     userId: "client-1",
     optedOut: false,
   });
 });
 
 describe("sendViaInteractionAgent source-agent routing", () => {
-  it("routes care updates to the family group when a group chat exists", async () => {
-    await sendViaInteractionAgent(PHONE, {
-      content: "Maria finished the visit and Mom ate lunch.",
-      urgency: "standard",
-      sourceAgent: "shift_end_family_update",
-      canDrop: false,
-    });
-
-    expect(sendMessage).toHaveBeenCalledWith("family-group-chat", expect.stringContaining("Maria finished"), {});
-  });
-
   it("keeps visit completion/payment approval prompts in the private primary chat", async () => {
     await sendViaInteractionAgent(PHONE, {
       content: "Reply APPROVE to approve Maria's hours.",

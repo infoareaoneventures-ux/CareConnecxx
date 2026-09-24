@@ -19,7 +19,8 @@ const LIBRARY_ALLOWLIST: Record<string, string[]> = {
   // U9 intake library. Deployed consumers listed here MUST bind
   // INTELLIGENCE_TELEMETRY_KEY_SECRET via runWith({ secrets: [...] }).
   "evals/evalCandidateQueue.ts": [
-    "admin/reviewProactiveDraft.ts (v1-reviewProactiveDraft — binds the secret; rejection path submits candidates)",
+    // No deployed consumer today: admin/reviewProactiveDraft.ts (v1-reviewProactiveDraft) was removed
+    // 2026-09-23 with the proactive-reflection pipeline. The next deployed caller MUST bind the secret.
   ],
 };
 

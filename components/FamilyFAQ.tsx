@@ -92,7 +92,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'bk-3',
             q: 'How does the Care Journal work?',
-            a: 'The Care Journal acts as a digital logbook for your family. Caregivers can post photos, note what the senior ate, confirm if medications were taken, and log the day\'s activities. All family members added to your account can view these updates in real-time.'
+            a: 'The Care Journal acts as a digital logbook for your family. Caregivers can post photos, note what the senior ate, confirm if medications were taken, and log the day\'s activities. You can view these updates in real-time from your Family Dashboard.'
          },
          {
             id: 'bk-4',
@@ -127,11 +127,6 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
             id: 'ac-1',
             q: 'How do I update my care recipient\'s information?',
             a: 'You can update your senior\'s care needs, medical conditions, and daily routines at any time by navigating to the "Care Plan" section in your Family Dashboard.'
-         },
-         {
-            id: 'ac-2',
-            q: 'How can I add other family members to my account?',
-            a: 'In your Account Settings under "Family Team," you can invite siblings, spouses, or other relatives. You can designate them as "viewers" (to read the Care Journal) or "admins" (who can book care and manage payments).'
          },
          {
             id: 'ac-3',

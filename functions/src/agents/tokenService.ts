@@ -12,8 +12,7 @@ export type TokenTask =
   | "interview_confirm"
   | "booking_confirm"
   | "caregiver_membership"
-  | "mvr_payment"
-  | "family_join";
+  | "mvr_payment";
 
 export interface TokenPayload {
   phone:        string;

@@ -168,9 +168,9 @@ describe("booking tools", () => {
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("RATE_UNKNOWN");
       expect(r.message).toMatch(/confirm/i);
-      // Escalation guidance: the agent is pointed at create_support_ticket so
-      // a family who needs it resolved now has a real path.
-      expect(r.message).toContain("create_support_ticket");
+      // Escalation guidance: the agent is pointed at contact_support (the site's
+      // "Message our team") so a family who needs it resolved now has a real path.
+      expect(r.message).toContain("contact_support");
       expect(JSON.stringify(r)).not.toContain("20");
     });
 
@@ -329,19 +329,4 @@ describe("booking tools", () => {
     });
   });
 
-  describe("referral tools", () => {
-    it("send_referral generates a code, persists it, and files a referral", async () => {
-      hoisted.docState.set("users/u1", { userType: "client" });
-      const r = await handleToolCall("send_referral", { userId: "u1", email: "friend@example.com" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.referralCode).toMatch(/^[A-Z0-9]{6}$/);
-      expect(hoisted.docState.get("users/u1").referralCode).toBe(r.referralCode); // persisted
-      expect(hoisted.adds.some((a) => a.path === "referrals")).toBe(true);
-    });
-    it("send_referral rejects an invalid email", async () => {
-      const r = await handleToolCall("send_referral", { userId: "u1", email: "not-an-email" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("INVALID_INPUT");
-    });
-  });
 });

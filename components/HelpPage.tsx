@@ -37,7 +37,7 @@ const familiesContent = [
       },
       {
         q: 'Can I manage care for a family member who lives in another city?',
-        a: 'Yes. The Care Journal feature lets caregivers post daily activity logs, meal notes, medication confirmations, and photos in real time. Every family member you invite to your account can view these updates from anywhere.',
+        a: 'Yes. The Care Journal feature lets caregivers post daily activity logs, meal notes, medication confirmations, and photos in real time. You can view these updates from anywhere.',
       },
     ],
   },
@@ -118,10 +118,6 @@ const familiesContent = [
       {
         q: "How do I update my senior's care profile?",
         a: 'Navigate to the Care Plan section of your Family Dashboard. Here you can update medical conditions, daily routines, dietary restrictions, medications, and emergency contacts at any time.',
-      },
-      {
-        q: 'Can I add other family members to my account?',
-        a: 'Yes. Go to Account Settings → Family Team and invite family members by email. You can set each person as an "Admin" (can book and pay) or a "Viewer" (read-only access to the Care Journal).',
       },
       {
         q: 'How do I manage notifications?',

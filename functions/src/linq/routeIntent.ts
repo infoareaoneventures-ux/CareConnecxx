@@ -26,45 +26,9 @@ import {
   searchZepMemory,
   getZepUserId,
 } from "../memory/zepClient";
-import { quickComplete } from "../utils/openaiClient";
 import { buildNonMedicalDeflection } from "../agents/medicalBoundary";
 
 const db = admin.firestore();
-
-function normalizeE164(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length === 10) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
-  if (raw.trim().startsWith("+") && digits.length >= 10 && digits.length <= 15) return `+${digits}`;
-  return null;
-}
-
-async function extractFamilyMember(text: string): Promise<{ name: string | null; phone: string | null }> {
-  const extractionRaw = await quickComplete(
-    "Extract the family member name and phone number from this message. " +
-      "Reply with JSON only: {\"name\":\"...\",\"phone\":\"+1...\"}. " +
-      "If no name is present, name=null. If no phone is present, phone=null.",
-    text,
-    { maxTokens: 80 },
-  ).catch(() => "{}");
-
-  try {
-    const parsed = JSON.parse(extractionRaw || "{}");
-    return {
-      name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : null,
-      phone: normalizeE164(typeof parsed.phone === "string" ? parsed.phone : null),
-    };
-  } catch {
-    // JSON parse failed (malformed LLM output). Only fall back to treating the
-    // raw text as a phone number when it actually LOOKS like one — digits plus
-    // common phone punctuation. Prose with stray digits (addresses, "3 days a
-    // week", etc.) must not be coerced into a bogus E.164 number.
-    const trimmed = text.trim();
-    const phoneLike = /^[+(]?[\d\s().+-]{8,}$/.test(trimmed) && trimmed.replace(/\D/g, "").length >= 10;
-    return { name: null, phone: phoneLike ? normalizeE164(text) : null };
-  }
-}
 
 export interface IntentRouteContext {
   phone: string;
@@ -81,78 +45,6 @@ export interface IntentRouteContext {
   eventId?: string;
 }
 
-async function handleAddFamilyMemberIntent(
-  phone: string,
-  chatId: string,
-  text: string,
-  session: AgentSession
-): Promise<void> {
-  if ((session as any).isSecondaryMember) {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "family",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "This person is a secondary member of the care group and asked to add someone new. Warmly explain you're happy to help with updates here, but only the primary account holder can add people to the care group.",
-      fallback: "I can help with updates here, but only the primary account holder can add people to this care group.",
-      maxTokens: 70,
-    }));
-    return;
-  }
-
-  const pendingAdd = (session as any).pendingAddFamilyMember as { name?: string | null; phone?: string | null } | undefined;
-  const extracted = await extractFamilyMember(text);
-  const memberName  = extracted.name  ?? pendingAdd?.name  ?? null;
-  const memberPhone = extracted.phone ?? pendingAdd?.phone ?? null;
-
-  if (!memberPhone) {
-    await db.collection("agent_sessions").doc(phone).update({
-      pendingAddFamilyMember: { name: memberName, phone: null },
-      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    }).catch(() => {});
-    await sendMessage(chatId, "I can add them. What phone number should I use?");
-    return;
-  }
-  if (!memberName) {
-    await db.collection("agent_sessions").doc(phone).update({
-      pendingAddFamilyMember: { name: null, phone: memberPhone },
-      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    }).catch(() => {});
-    await sendMessage(chatId, "Got the number. What name should I use for them?");
-    return;
-  }
-
-  const clientId = session.userId;
-  const seniorId = (session as any).seniorId ?? session.userId;
-  if (!clientId || !seniorId) {
-    await sendMessage(chatId, "I need to finish linking your account before I can add someone to this care group.");
-    return;
-  }
-
-  await db.collection("agent_sessions").doc(phone).update({
-    pendingAddFamilyMember: admin.firestore.FieldValue.delete(),
-    stateExpiresAt: admin.firestore.FieldValue.delete(),
-  }).catch(() => {});
-
-  const { handleToolCall } = await import("../mcp/server");
-  const result = await handleToolCall("add_family_member", {
-    seniorId,
-    name: memberName,
-    memberPhone,
-    clientId,
-  }) as any;
-
-  if (result?._toolError) {
-    await sendMessage(chatId, result.message ?? "I couldn't add them yet. Please check the number and try again.");
-    return;
-  }
-
-  await sendMessage(
-    chatId,
-    result?.notification?.sent === false
-      ? `I added ${memberName} to the care group, but the welcome text did not go through. Please check the number.`
-      : `Done - ${memberName} is in the care group, and I texted them the welcome message.`,
-  );
-}
-
 // ── Intent routing — extracted verbatim from webhooks.ts handleInbound ───────
 // Covers: pendingRematch, the pending agent_task lookup, intent classification
 // and ALL intent branches through the QA-agent fallback. The try/catch/finally
@@ -163,11 +55,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
   if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {/* non-critical */});
 
-    if ((session as any).pendingAddFamilyMember) {
-      await handleAddFamilyMemberIntent(phone, chatId, text, session);
-      return;
-    }
-
     // intentDegraded = the classifier errored/timed out and "QUESTION" is a
     // guess — when set, skip the quick-reply bypass and take the full QA path.
     const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, false);
@@ -176,11 +63,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // Static, side-effect-free reply listing what Evia can do for this role.
     // Reached only via the exact-string command bypass in classifyIntentDetailed.
     if (intent === "HELP") {
-      const role: DiscoveryRole = session.userType === "caregiver"
-        ? "caregiver"
-        : (session as any).isSecondaryMember
-          ? "family-secondary"
-          : "client";
+      const role: DiscoveryRole = session.userType === "caregiver" ? "caregiver" : "client";
       const ops = await loadCaraOperationalContext({
         phone,
         userId: session.userId,
@@ -232,36 +115,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       }
     }
 
-    // ── HIRE_CAREGIVER — "let's go with Maria", "hire James", "I want to
-    // book Sarah" ────────────────────────────────────────────────────────
-    // 2026-09-13 live-testing find: this used to reply "Who would you like
-    // to hire?" UNCONDITIONALLY, even when the family's own message already
-    // named the caregiver (the classifier's own prompt example for this
-    // intent IS "I want to book Sarah") — the name was thrown away and the
-    // conversation dead-ended right here every time, never reaching
-    // request_booking in that turn. Mirrors the FIND_CAREGIVER fix pattern
-    // (2026-09-09/13, same file, below): only ask the generic question when
-    // there's genuinely no caregiver context to resolve a name against;
-    // otherwise fall through to runQaAgent, which already has the context
-    // injection (pendingMatches/shownCaregiverIds) to resolve "her"/a named
-    // caregiver and take the real next step (schedule_interview or
-    // request_booking) itself.
-    if (intent === "HIRE_CAREGIVER") {
-      const sessionSnapHire      = await db.collection("agent_sessions").doc(phone).get();
-      const sessionDataHire      = sessionSnapHire.data() ?? {};
-      const pendingMatchesHire   = sessionDataHire.pendingMatches as Array<unknown> | undefined;
-      const pendingMatchesSetAt  = sessionDataHire.pendingMatchesSetAt as string | undefined;
-      const pendingMatchesFresh  = !!pendingMatchesHire && pendingMatchesHire.length > 0 &&
-        (!pendingMatchesSetAt || pendingMatchesSetAt > new Date(Date.now() - PENDING_MATCHES_TTL_MS).toISOString());
-      const shownCaregiverIdsHire  = sessionDataHire.shownCaregiverIds as Array<string> | undefined;
-      const hasShownCaregiversHire = !!shownCaregiverIdsHire && shownCaregiverIdsHire.length > 0;
-      if (!pendingMatchesFresh && !hasShownCaregiversHire) {
-        await sendMessage(chatId, "Who would you like to hire? Reply with their name and I'll set it up.");
-        return;
-      }
-      // Fresh pendingMatches, or a caregiver already shown this session —
-      // fall through to normal routing / runQaAgent below.
-    }
 
     // ── CAREGIVER_DECLINE_JOB — natural language job decline from caregiver ──
     if (intent === "CAREGIVER_DECLINE_JOB" && session.userType === "caregiver") {
@@ -279,17 +132,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── HIRE — post-interview decision ────────────────────────────────────────
-    // 2026-09-09: this used to resolve a pendingInterviewOutcome flag (set only
-    // by interviewAgent.ts's now-removed sendPostInterviewFollowUp) into a
-    // hireMode handoff. Nothing sets that flag anymore since schedule_interview/
-    // video_interviews became the only interview path (2026-09-07) — the fit
-    // decision after a live interview now goes through submit_interview_feedback
-    // (mcp/server.ts) instead. The fallback below is what always ran regardless.
-    if (norm === "HIRE") {
-      await sendMessage(chatId, "Who would you like to hire? Reply with their name and I'll set it up.");
-      return;
-    }
 
     // ── Caregiver selection (numbers after match presentation) ────────────────
     // 2026-09-07 (Hamse decision): a bare-number/name reply picking a caregiver
@@ -381,11 +223,11 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       // Otherwise fall through to normal intent routing.
     }
 
-    // ── Permission update ─────────────────────────────────────────────────────
-    if (intent === "PERMISSION_UPDATE") {
-      const userId   = session.userId ?? session.caregiverId ?? phone;
-      const userType = session.userType ?? "client";
-      const handled = await updatePermissionFromText(userId, userType, phone, chatId, text);
+    // ── Permission update (caregivers only — the client permission questions
+    // were removed 2026-09-23; clients fall through to the QA agent) ─────────
+    if (intent === "PERMISSION_UPDATE" && session.userType === "caregiver") {
+      const userId  = session.caregiverId ?? session.userId ?? phone;
+      const handled = await updatePermissionFromText(userId, "caregiver", phone, chatId, text);
       if (handled) return;
       // Classifier/parser failures fall through to the QA agent so the user
       // still gets a response instead of a silent terminal turn.
@@ -419,78 +261,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    if (intent === "ADD_FAMILY_MEMBER") {
-      await handleAddFamilyMemberIntent(phone, chatId, text, session);
-      return;
-
-
-      // Both pieces are now in hand — clear the partial-capture state.
-    }
-
-    if (intent === "REMOVE_FAMILY_MEMBER") {
-      if ((session as any).isSecondaryMember) {
-        await sendMessage(chatId, await generateCaraMessage({
-          audience: "family",
-          language: session.preferredLanguage === "es" ? "es" : "en",
-          context: "This person is a secondary member of the care group and asked to remove someone. Warmly explain you're happy to help with updates here, but only the primary account holder can remove people from the care group.",
-          fallback: "I can help with updates here, but only the primary account holder can remove people from this care group.",
-          maxTokens: 70,
-        }));
-        return;
-      }
-
-      const { name: targetName, phone: extractedPhone } = await extractFamilyMember(text);
-      let targetPhone: string | null = extractedPhone;
-
-      if (!targetPhone && targetName) {
-        const memberSnap = await db.collection("family_group_members")
-          .where("primaryPhone", "==", phone)
-          .get();
-        // Exact (normalized) name match, not substring — substring would let
-        // "Ann" resolve to "Joanna" and remove the wrong person. If more than
-        // one member shares the name, ask for the phone to disambiguate rather
-        // than guessing on a destructive action.
-        const target = targetName.toLowerCase().trim();
-        const matches = memberSnap.docs.filter(d =>
-          (d.data().memberName as string ?? "").toLowerCase().trim() === target
-        );
-        if (matches.length > 1) {
-          await sendMessage(chatId, `I have more than one ${targetName} in your care group. What's their phone number so I remove the right person?`);
-          return;
-        }
-        if (matches.length === 1) targetPhone = matches[0].data().memberPhone as string;
-      }
-
-      if (!targetPhone) {
-        await sendMessage(chatId, "I can remove them, but I need their phone number so I remove the right person.");
-        return;
-      }
-
-      const seniorId: string = (session as any).seniorId ?? session.userId ?? phone;
-      const clientId = session.userId;
-      if (!clientId) {
-        await sendMessage(chatId, "I need to finish linking your account before I can remove someone from this care group.");
-        return;
-      }
-
-      const { handleToolCall } = await import("../mcp/server");
-      const result = await handleToolCall("remove_family_member", {
-        seniorId,
-        memberPhone: targetPhone,
-        phone,
-        clientId,
-        userId: clientId,
-      }) as any;
-
-      if (result?._pending_action) {
-        await sendMessage(chatId, `Before I remove ${targetName ?? targetPhone} from the care group, please reply YES to confirm.`);
-      } else if (result?._toolError) {
-        await sendMessage(chatId, result.message ?? `I couldn't remove ${targetName ?? targetPhone} yet.`);
-      } else {
-        await sendMessage(chatId, `Done - ${targetName ?? targetPhone} has been removed from your care group.`);
-      }
-      return;
-    }
     // ── CANCEL — a visit, a whole booking, or a pending request ─────────────
     // 2026-09-17: replaced the legacy path, which looked in the retired
     // `appointments` collection and parked a pendingCancelConfirm flag for

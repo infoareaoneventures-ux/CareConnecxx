@@ -45,23 +45,23 @@ issueEscalator (reply half)|caregiverReferral (reply half)`.
 ## Optional discretionary (engine-owned; migration status)
 | Source | Today | Engine status |
 |---|---|---|
-| `scheduled/proactiveReflection.ts` | review-first drafts | **submits candidates (slice 2)** |
-| `scheduled/wowMomentsJob.ts` | daily warmth sends | **gated (engineGate.ts)** |
-| `scheduled/morningBriefing.ts` | briefing sends | **gated (engineGate.ts)** |
-| `scheduled/familySilenceCheckin.ts` | re-engagement | **gated (engineGate.ts)** |
+| ~~`scheduled/proactiveReflection.ts`~~ | review-first drafts | **removed 2026-09-23** — Evia-only proactive-reflection pipeline (drafts, sender, admin review); no site equivalent |
+| ~~`scheduled/wowMomentsJob.ts`~~ | daily warmth sends | **removed 2026-09-23** — Evia-only family text; no site equivalent |
+| `scheduled/morningBriefing.ts` | caregiver briefing sends | **gated (engineGate.ts)** — the family half was removed 2026-09-23 (no site equivalent) |
+| ~~`scheduled/familySilenceCheckin.ts`~~ | re-engagement | **removed 2026-09-23** — Evia-only family text; no site equivalent |
 | ~~`scheduled/familySatisfactionCheckin.ts`~~ | satisfaction ask | **removed 2026-09-18** — Evia-only question that treated the next reply as its answer; no site equivalent |
 | ~~`scheduled/nextDayFamilyFeedback.ts`~~ | next-day "how did the visit go?" | **removed 2026-09-18** — same reason; the inbound intercept and `feedbackExpiry` went with it |
 | `scheduled/wellbeingCheckin.ts` | wellbeing ask | **gated (engineGate.ts)** |
 | `scheduled/staleSessionNudge.ts` | stale-session nudge | **gated (engineGate.ts)** |
 | `scheduled/staleApplicantNudge.ts` | family nudge on applicants | **gated (engineGate.ts)** |
 | `scheduled/onboardingReengagement.ts` | signup re-engagement | **gated (engineGate.ts)** |
-| `scheduled/paywallWinback.ts` | winback | **gated (engineGate.ts)** |
+| ~~`scheduled/paywallWinback.ts`~~ | winback | **removed 2026-09-23** — Evia-only family text; the `lastPaywallViewedAt`/`paywallContext` stamp went with it on both sides |
 | `scheduled/caregiverInactivityCheck.ts` | caregiver re-engagement | **gated (engineGate.ts)** — both sends (caregiver nudge + family warn, distinct dedupe keys) |
-| `scheduled/firstVisitActivation.ts` | activation nudge | **gated (engineGate.ts)** |
+| ~~`scheduled/firstVisitActivation.ts`~~ | activation nudge | **removed 2026-09-23** — Evia-only family text; no site equivalent |
 | `scheduled/locationRequestNudge.ts` | location ask | **gated (engineGate.ts)** |
-| `scheduled/inShiftUpdate.ts` | in-shift family updates | RECLASSIFIED mandatory-transactional (audited 2026-07-22: active in-progress shift only, per-family pause + cadence override, kill switch IN_SHIFT_UPDATES_ENABLED, bypassDailyCap by design — ≤1/day budget would break multiple-updates-per-shift) |
+| ~~`scheduled/inShiftUpdate.ts`~~ | in-shift family updates | **removed 2026-09-23** — caregiver check-in pings + relay + praise loop had no site equivalent; the live task/notes texts (`triggers/familyVisitUpdates.ts`) stay |
 | `scheduled/weeklyDigest.ts` | weekly digest (perm-gated) | RECLASSIFIED mandatory (opted-in report: per-send `canSendWeeklyDigest` check, user-controllable unsubscribe, delivery-layer send; caveat: flag is default-granted, and the `weekly_digests` marker is written but never read — cron cadence is the only run-dedupe) |
-| `scheduled/healthTrends.ts` | monthly summary | RECLASSIFIED mandatory (opted-in report) after 2026-07-22 repair: added missing per-send `canSendHealthAlerts` check + one-report-per-senior-per-month dedupe read (both were absent); still sends via raw transport (no DND/cap) — acceptable for a monthly opted-in report |
+| ~~`scheduled/healthTrends.ts`~~ | monthly summary | **removed 2026-09-23** — Evia-only monthly health summary + `/health-summary` page; no site equivalent |
 | `scheduled/jobMatchNotifications.ts` | caregiver job matches | **gated (engineGate.ts)** — per (caregiver, job) key, 7-day TTL; the gate is this source's ONLY dedupe (audit found none) |
 | `agents/caregiverReferral.ts` (outreach half) | referral invites | reply-triggered only — engine-exempt (audited 2026-07-22: sole callers are `linq/routeCaregiver.ts` REFER flow + `mcp/server.ts create_caregiver_referral`, both inbound-turn paths; no scheduled/trigger caller) |
 | `triggers/triggerEngine.ts` (non-safety triggers) | trigger sends | **gated (engineGate.ts)** |

@@ -65,7 +65,7 @@ export interface AgentObjective {
   objectiveId: string;
   userId: string;
   seniorId?: string;
-  role: "client" | "caregiver" | "family-secondary";
+  role: "client" | "caregiver";
   channel: "linq" | "web";
   /** Server-derived source-turn key of the turn that created it (U4 wires this). */
   sourceTurnKey?: string;

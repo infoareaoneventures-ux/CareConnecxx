@@ -29,14 +29,10 @@ const sendMessage = vi.fn(async (..._a: any[]) => ({ message_id: "m" }));
 vi.mock("../linq/client", () => ({ sendMessage: (...a: any[]) => sendMessage(...a) }));
 vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback) }));
 vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test", appLink: (path: string) => `https://app.test${path}` }));
-vi.mock("./caregiverSearch", () => ({
-  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
-  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
-}));
 const notifyNewCaregiverOfJobs = vi.fn(async (..._a: any[]) => {});
 vi.mock("../triggers/caregiverJobMatch", () => ({ notifyNewCaregiverOfJobs: (...a: any[]) => notifyNewCaregiverOfJobs(...a) }));
 
-import { classifyPermissionReply, handleClientPermissionsReply, handleCaregiverPermissionsReply } from "./permissionsConversation";
+import { classifyPermissionReply, handleCaregiverPermissionsReply } from "./permissionsConversation";
 
 const session = (step: string, extra: Record<string, unknown> = {}) =>
   ({ onboardingStep: step, onboardingData: { seniorName: "Mom" }, ...extra }) as never;
@@ -65,39 +61,6 @@ describe("classifyPermissionReply", () => {
   it("falls back to 'question' when the LLM errors (never coerces to no)", async () => {
     quickComplete.mockRejectedValueOnce(new Error("down"));
     expect(await classifyPermissionReply("hmm not sure")).toBe("question");
-  });
-});
-
-describe("handleClientPermissionsReply — mid-flow question guard", () => {
-  it("answers a question and re-asks WITHOUT recording a permission", async () => {
-    quickComplete.mockResolvedValue("QUESTION");
-    await handleClientPermissionsReply("+1555", "chat1", "what does that mean?", session("client_permissions_contact"), "u1");
-    // No write to agent_permissions — the bug this fixes.
-    expect(h.sets.find((s) => s.coll === "agent_permissions")).toBeUndefined();
-    // The question was answered + re-asked (natural-voice re-ask, no stiff "Reply YES or NO").
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String((sendMessage.mock.calls[0] as any[])[1])).toContain("reach out to caregivers");
-  });
-
-  it("records the permission as granted on YES", async () => {
-    await handleClientPermissionsReply("+1555", "chat1", "YES", session("client_permissions_contact"), "u1");
-    const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
-    expect(permWrite?.data).toMatchObject({ canContactCaregivers: true });
-  });
-
-  it("records the permission as denied on NO", async () => {
-    await handleClientPermissionsReply("+1555", "chat1", "NO", session("client_permissions_contact"), "u1");
-    const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
-    expect(permWrite?.data).toMatchObject({ canContactCaregivers: false });
-  });
-});
-
-describe("handleClientPermissionsReply — capability menu on completion (U3)", () => {
-  it("sends the client capability menu after the final permissions step completes", async () => {
-    await handleClientPermissionsReply("+1555", "chat1", "YES", session("client_permissions_autobook"), "u1");
-    const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
-    expect(texts.some((t) => t.includes("your care coordinator"))).toBe(true);
-    expect(texts.some((t) => /next visit|care note|backup care/i.test(t))).toBe(true);
   });
 });
 
@@ -172,23 +135,5 @@ describe("permissions question-detour bailout (max ONE re-ask)", () => {
     // Arrival notifications default GRANTED (standard behavior, 2026-07-15).
     expect(permWrite?.data).toMatchObject({ canSendArrivalNotifications: true });
     expect(permWrite?.data).not.toHaveProperty("canDeclineJobsAutomatically");
-  });
-
-  it("client: second question detour defaults remaining permissions OFF (digest/alerts stay on) and completes", async () => {
-    quickComplete.mockResolvedValue("QUESTION");
-    await handleClientPermissionsReply("+1555", "chat1", "what does that mean exactly?",
-      session("client_permissions_contact", { permissionsDetourCount: 1 }), "u1");
-    const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
-    expect(permWrite?.data).toMatchObject({
-      canContactCaregivers:    false,
-      canScheduleInterviews:   false,
-      canBookWithConfirmation: false,
-      canBookAutomatically:    false,
-      canSendWeeklyDigest:     true,
-      canSendHealthAlerts:     true,
-    });
-    const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
-    // No re-ask of the pending permission question — the flow bailed out.
-    expect(texts.some((t) => t.includes("reach out to caregivers"))).toBe(false);
   });
 });

@@ -58,7 +58,6 @@ export interface Senior {
   scheduleNeeded?: string[];
   genderPreference?: 'Female' | 'Male' | 'No Preference';
   excludedTags?: string[];
-  familyMembers?: FamilyMember[];
   languagePreference?: string;
   hasPets?: boolean;
   smokingPreference?: 'non-smoker' | 'smoker' | 'no-preference';
@@ -81,16 +80,6 @@ export interface ClientUser {
   phone?: string;
   createdAt?: string;
 }
-
-export interface FamilyMember {
-  id: string;
-  name: string;
-  email: string;
-  phone?: string;
-  role: 'admin' | 'viewer';
-  status: 'active' | 'pending';
-}
-
 
 // Define WeeklySchedule type
 export interface WeeklySchedule {
@@ -632,23 +621,6 @@ export interface CarePlan {
   dietaryRestrictions?: string;
 }
 
-// --- SUPPORT INTERFACES ---
-export interface SupportTicket {
-  id?: string;
-  userId: string;
-  userName?: string;
-  userType?: 'client' | 'caregiver';
-  type: 'dispute' | 'refund' | 'safety' | 'technical' | 'other';
-  subject?: string;
-  description: string;
-  status: 'open' | 'in-progress' | 'resolved';
-  priority?: 'low' | 'medium' | 'high' | 'urgent';
-  createdAt: string;
-  updatedAt?: string;
-  resolvedAt?: string;
-  assignedTo?: string;
-  responses?: Array<{ text: string; respondedAt: string; respondedBy?: string }>;
-}
 
 // --- NOTIFICATION HISTORY ---
 export interface AppNotification {

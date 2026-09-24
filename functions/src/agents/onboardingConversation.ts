@@ -16,7 +16,7 @@ import {
   StoredEmotionalContext,
 } from "./emotionalContext";
 import { generateToken } from "./tokenService";
-import { getCapabilityExamples } from "./capabilityDiscovery";
+import { getCapabilityExamples, buildHelpSmsReply } from "./capabilityDiscovery";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
@@ -2932,14 +2932,14 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
       `(${seniorName} is the person receiving care); never use the words "background check" here. ` +
       pricePart +
       `plus a 9% service fee on each visit (the caregiver keeps 100% of their rate), and for that Evia coordinates everything for ${seniorName} — ` +
-      `scheduling, live visit updates, and keeping the whole family in the loop. State both the membership price and the 9% fee. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
+      `scheduling and live visit updates. State both the membership price and the 9% fee. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
       `already set up, and do NOT mention sending any link. Membership is what lets the family actually message ` +
       `and book one of the caregivers just shown — do NOT say or imply that matching only starts once membership ` +
       `is active, that would contradict the real matches you just sent them. END with one clear yes/no question ` +
       `asking if they'd like to get set up (e.g. "Want me to get you set up?").`,
     fallback:
       `Evia is ${priceLabel || "one simple monthly membership"} plus a 9% service fee on each visit — the caregiver keeps 100% of their rate. ` +
-      `I coordinate everything for ${seniorName}: scheduling, live visit updates, and keeping your whole family in the loop. Want me to get you set up?`,
+      `I coordinate everything for ${seniorName}: scheduling and live visit updates. Want me to get you set up?`,
     emotionalDirective: (session as any)._emotionalDirective,
     maxTokens: 130,
   });
@@ -4966,7 +4966,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           ...normalizeAdditionalRecipients(d.additionalRecipients).map((r) => r.name),
         ].filter(Boolean).join(" and ") || undefined,
         seniorAge:    d.age          as string | undefined,
-        conditions:   d.conditions   as string | string[] | undefined,
         careNeeds:    d.careNeeds    as string | string[] | undefined,
         city:         d.city         as string | undefined,
         clientName:   d.firstName    as string | undefined,
@@ -5788,11 +5787,14 @@ async function handleJobConfirmPrefill(
     const refreshed  = await db.collection("agent_sessions").doc(phone).get();
     const onboarding = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
     const { jobId } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
-    await updateSession(phone, { onboardingStep: "client_ask_permissions" });
+    // Site parity (2026-09-23): the site posts the request and lands on the
+    // dashboard / Find Caregivers — no follow-up permission questions.
+    await updateSession(phone, { onboardingStep: "complete", optedIn: true });
     await sendMessage(chatId, jobLiveMessage);
-    const { sendClientPermissionsFlow } = await import("./permissionsConversation");
-    const freshSnap = await db.collection("agent_sessions").doc(phone).get();
-    await sendClientPermissionsFlow(phone, chatId, freshSnap.data() as AgentSession);
+    await sendMessage(chatId, buildHelpSmsReply("client", undefined, languageFromSession(session as unknown as Record<string, unknown>)));
+    const { presentCaregiverSearch } = await import("./caregiverSearch");
+    presentCaregiverSearch({ phone, chatId, source: "post_job_prefill" }).catch((err) =>
+      console.error("presentCaregiverSearch error:", err));
     console.log(`[handleJobConfirmPrefill] Job posted: ${jobId} for uid=${uid}`);
   } catch (err) {
     console.error("[handleJobConfirmPrefill] buildAndSaveJobPost error:", err);
@@ -6115,16 +6117,17 @@ async function handleJobConfirmPost(
 
       const { jobId } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
 
-      await updateSession(phone, { onboardingStep: "client_ask_permissions" });
+      // Site parity (2026-09-23): the site posts the request and lands on the
+      // dashboard / Find Caregivers — no follow-up permission questions.
+      await updateSession(phone, { onboardingStep: "complete", optedIn: true });
       await sendMessage(chatId,
         `${jobLiveMessage}\n\n` +
         `You can also browse caregivers and manage everything at ${APP_URL}/client/dashboard`
       );
-
-      // Move to permissions after a short pause
-      const { sendClientPermissionsFlow } = await import("./permissionsConversation");
-      const freshSnap = await db.collection("agent_sessions").doc(phone).get();
-      await sendClientPermissionsFlow(phone, chatId, freshSnap.data() as AgentSession);
+      await sendMessage(chatId, buildHelpSmsReply("client", undefined, languageFromSession(session as unknown as Record<string, unknown>)));
+      const { presentCaregiverSearch } = await import("./caregiverSearch");
+      presentCaregiverSearch({ phone, chatId, source: "post_job_prefill" }).catch((err) =>
+        console.error("presentCaregiverSearch error:", err));
 
       console.log(`[handleJobConfirmPost] Job posted: ${jobId} for uid=${uid}`);
     } catch (err) {

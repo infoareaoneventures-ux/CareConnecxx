@@ -94,30 +94,6 @@ async function findAccountByEmail(email: string): Promise<AccountMatch | null> {
   return null;
 }
 
-async function updateFamilyGroupPhoneReferences(oldPhone: string, newPhone: string): Promise<void> {
-  // Best-effort — a family group's roster is a convenience index, not the
-  // source of truth, so a failure here must never block the phone change.
-  try {
-    const groupsSnap = await db().collection("family_group_members")
-      .where("phones", "array-contains", oldPhone).get();
-    for (const doc of groupsSnap.docs) {
-      await doc.ref.update({
-        phones: admin.firestore.FieldValue.arrayRemove(oldPhone),
-      });
-      await doc.ref.update({
-        phones: admin.firestore.FieldValue.arrayUnion(newPhone),
-      });
-    }
-    const membersSnap = await db().collection("family_group_members")
-      .where("phone", "==", oldPhone).get();
-    for (const doc of membersSnap.docs) {
-      await doc.ref.update({ phone: newPhone });
-    }
-  } catch (err) {
-    console.error("updateFamilyGroupPhoneReferences:", err);
-  }
-}
-
 // Core logic shared by the website's request flow (looks the account up by
 // email) and Evia's request_phone_number_change path (the account is already
 // known, so it hands the email straight through). Both converge here so
@@ -231,7 +207,6 @@ export async function confirmPhoneChange(token: string, code: string): Promise<v
 
   if (oldPhone && oldPhone !== newPhone) {
     await db().collection("agent_sessions").doc(oldPhone).delete().catch(() => {});
-    await updateFamilyGroupPhoneReferences(oldPhone, newPhone);
   }
 
   await ref.update({ status: "consumed" });

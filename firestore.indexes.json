@@ -507,20 +507,6 @@
       ]
     },
     {
-      "collectionGroup": "support_tickets",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "job_posts",
       "queryScope": "COLLECTION",
       "fields": [
@@ -1315,24 +1301,6 @@
       ]
     },
     {
-      "collectionGroup": "appointments",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "preVisitReminderSent",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "startDateTime",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "care_journal",
       "queryScope": "COLLECTION",
       "fields": [
@@ -1609,42 +1577,6 @@
       ]
     },
     {
-      "collectionGroup": "agent_alerts_log",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "seniorId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "signalType",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "sentAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "agent_alerts_log",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "type",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "clientId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "sentAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "health_signals",
       "queryScope": "COLLECTION",
       "fields": [
@@ -1659,24 +1591,6 @@
         {
           "fieldPath": "detectedAt",
           "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "appointments",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "startDateTime",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "preVisitReminderSent",
-          "order": "ASCENDING"
         }
       ]
     },
@@ -1775,34 +1689,6 @@
         {
           "fieldPath": "lastActivityAt",
           "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "proactive_drafts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "approvedAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "proactive_drafts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
         }
       ]
     },
@@ -2096,56 +1982,6 @@
         },
         {
           "fieldPath": "createdAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "proactive_drafts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "userId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "contextHash",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "appointments",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "clientId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "isoDate",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "agent_sessions",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "userType",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "onboardingStep",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "lastInboundAt",
           "order": "ASCENDING"
         }
       ]

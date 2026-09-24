@@ -362,15 +362,6 @@ test.describe('6. Linq Agent Web Pages', () => {
     console.log('✅ QuickConfirmPage handles invalid token gracefully');
   });
 
-  test('6.2 HealthSummaryPage renders with valid token structure', async ({ page }) => {
-    await page.goto(`${BASE}/health-summary/test-token-123`);
-    await page.waitForTimeout(3000);
-    await expect(page.locator('body')).toBeVisible();
-    const has500 = await page.locator('text=/500|server error/i').isVisible().catch(() => false);
-    expect(has500).toBeFalsy();
-    console.log('✅ HealthSummaryPage handles invalid token gracefully');
-  });
-
   test('6.3 Auto-return sms: link present on QuickConfirmPage', async ({ page }) => {
     await page.goto(`${BASE}/confirm/test-token-123`);
     await page.waitForTimeout(3000);

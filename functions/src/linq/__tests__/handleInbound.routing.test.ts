@@ -222,11 +222,6 @@ vi.mock("../../agents/stepHandler", () => ({
   isQuestionOrOther: (...a: any[]) => isQuestionOrOther(...a),
 }));
 
-const answerHumanQuestionOnly = vi.fn(async (..._a: any[]) => "Good question — you're in two care groups, so I just need to know which senior you mean.");
-vi.mock("../../agents/humanReply", () => ({
-  answerHumanQuestionOnly: (...a: any[]) => answerHumanQuestionOnly(...a),
-}));
-
 const handleToolCall = vi.fn(async (..._a: any[]) => ({ success: true, notification: { sent: true } }));
 vi.mock("../../mcp/server", () => ({
   handleToolCall: (...a: any[]) => handleToolCall(...a),
@@ -234,17 +229,12 @@ vi.mock("../../mcp/server", () => ({
 
 // ── Inert collaborators (must load, never fire in these scenarios) ──────────
 vi.mock("../../agents/permissionsConversation", () => ({
-  handleClientPermissionsReply:    vi.fn(async () => {}),
   handleCaregiverPermissionsReply: vi.fn(async () => {}),
   updatePermissionFromText:        vi.fn(async () => true),
   getPermissions:                  vi.fn(async () => ({})),
 }));
 vi.mock("../../triggers/triggerEngine", () => ({ cancelTriggerIfUserReplied: vi.fn(async () => {}) }));
 vi.mock("../../observability/auditLog", () => ({ logCrisisDetected: vi.fn(async () => {}) }));
-vi.mock("../../agents/bereavement", () => ({
-  isBereavementTrigger:   vi.fn(() => false),
-  activateBereavementMode: vi.fn(async () => {}),
-}));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../agents/profileCompleteness", () => ({
   classifyCompleteness: vi.fn(() => "ONBOARDED"),
@@ -335,7 +325,6 @@ vi.mock("../../utils/mediaIntake", () => ({
   storeInboundMedia: vi.fn(async () => null),
 }));
 vi.mock("../../utils/visionVerify", () => ({ classifyMedia: vi.fn(async () => null) }));
-vi.mock("../../utils/personaShiftDetector", () => ({ detectPersonaShift: vi.fn(async () => null) }));
 vi.mock("../../utils/knownNames", () => ({ collectKnownNames: vi.fn(async () => []) }));
 vi.mock("../../utils/language", () => ({
   detectLanguage:      vi.fn(async () => "en"),
@@ -714,19 +703,17 @@ describe("safety + account gates", () => {
     expect(runQaAgent).toHaveBeenCalledTimes(1);
   });
 
-  it("verified emotional crisis sends 988 + consent offer and arms an EMOTIONAL NOTIFY (U3)", async () => {
+  it("verified emotional crisis sends the 988 message only — no NOTIFY offer, nothing armed (U3; care-circle fan-out removed 2026-09-23)", async () => {
     seedSession();
     detectCrisis.mockReturnValue("emotional");
     isLikelyRealCrisis.mockResolvedValue(true);
     await handleInbound(makeEvent("I don't want to be here anymore"));
-    // 988 message + the consent-aware escalation offer.
-    expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify)
-      .toMatchObject({ kind: "emotional" });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify).toBeUndefined();
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
-  it("emotional NOTIFY reply pages the care team with an emotional alert (U3)", async () => {
+  it("a legacy armed emotional NOTIFY reply still pages our support team with an emotional alert (U3)", async () => {
     seedSession({ pendingCrisisNotify: { text: "struggling", detectedAt: "now", kind: "emotional" } });
     await handleInbound(makeEvent("NOTIFY"));
     expect(hoisted.docState.get("admin_alerts/auto-add"))
@@ -734,14 +721,14 @@ describe("safety + account gates", () => {
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
-  it("NOTIFY keyword (armed) pages the care team (U11)", async () => {
+  it("NOTIFY keyword (armed) pages our support team (U11)", async () => {
     seedSession({ pendingCrisisNotify: { text: "x", detectedAt: "now", kind: "medical" } });
     await handleInbound(makeEvent("NOTIFY please"));
     expect(hoisted.docState.get("admin_alerts/auto-add"))
       .toMatchObject({ type: "crisis_notify_requested" });
   });
 
-  it("'do not notify anyone' does NOT page the care team — no substring misfire (U11)", async () => {
+  it("'do not notify anyone' does NOT page our support team — no substring misfire (U11)", async () => {
     seedSession({ pendingCrisisNotify: { text: "x", detectedAt: "now", kind: "medical" } });
     await handleInbound(makeEvent("do not notify anyone"));
     expect(hoisted.docState.get("admin_alerts/auto-add")?.type).not.toBe("crisis_notify_requested");
@@ -754,8 +741,9 @@ describe("safety + account gates", () => {
     // Accented chars make the non-English gate fire deterministically.
     await handleInbound(makeEvent("siento que ya no puedo más"));
     expect(classifyCrisisMultilingual).toHaveBeenCalledTimes(1);
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify)
-      .toMatchObject({ kind: "emotional" });
+    // Emotional path: 988 message sent, nothing armed (no care-circle NOTIFY offer any more).
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify).toBeUndefined();
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
@@ -775,49 +763,6 @@ describe("safety + account gates", () => {
 });
 
 describe("onboarding + rate limit", () => {
-  it("new secondary family member session inherits the existing family group chat", async () => {
-    hoisted.collState.set("agent_sessions", [{
-      id: "+15550009999",
-      chatId: "primary-chat",
-      groupMembers: [PHONE],
-      userId: "u1",
-      seniorId: "senior1",
-      groupChatId: "family-group-chat",
-      onboardingData: { seniorName: "Jane" },
-    }]);
-
-    await handleInbound(makeEvent("hi"));
-
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
-      userId: "u1",
-      seniorId: "senior1",
-      primaryPhone: "+15550009999",
-      isSecondaryMember: true,
-      groupChatId: "family-group-chat",
-    });
-    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care coordinator"));
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  // U8: a phone in multiple care groups is no longer dropped with nothing
-  // persisted (the old dead-loop bug) — it now gets a pending disambiguation
-  // marker so the next inbound's answer has somewhere to land. See the
-  // "multi-care-group disambiguation (U8)" describe block below for the full
-  // two-turn resolution coverage; this test only pins that the phone is never
-  // silently attached to either group without asking.
-  it("does not silently attach a secondary member when their phone is in multiple care groups", async () => {
-    hoisted.collState.set("family_group_members", [
-      { id: "m1", primaryPhone: "+15550001111", memberPhone: PHONE },
-      { id: "m2", primaryPhone: "+15550002222", memberPhone: PHONE },
-    ]);
-
-    await handleInbound(makeEvent("hi"));
-
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.isSecondaryMember).toBeUndefined();
-    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("more than one care group"));
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
   it("mid-onboarding messages route to handleOnboardingStep, not intent routing", async () => {
     seedSession({ onboardingStep: "caregiver_name" });
     await handleInbound(makeEvent("Jane Doe"));
@@ -926,21 +871,6 @@ describe("pending-approval gate and shift-offer interception (order-critical)", 
 });
 
 describe("QA tail (quick-reply bypass vs full agent)", () => {
-  it("routes pending add-family phone replies before intent classification", async () => {
-    seedSession({
-      seniorId: "senior1",
-      pendingAddFamilyMember: { name: "Sarah", phone: null },
-    });
-    await handleInbound(makeEvent("+1 555 222 3333"));
-    expect(classifyIntentDetailed).not.toHaveBeenCalled();
-    expect(handleToolCall).toHaveBeenCalledWith("add_family_member", {
-      seniorId: "senior1",
-      name: "Sarah",
-      memberPhone: "+15552223333",
-      clientId: "u1",
-    });
-  });
-
   it("trivial QUESTION takes the quick-reply bypass, not the full agent", async () => {
     seedSession();
     classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
@@ -1385,230 +1315,6 @@ describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
     expect(drivePostCollectionHandoff).not.toHaveBeenCalled();
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
     expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
-  });
-});
-
-// ── Multi-care-group disambiguation (U8) ─────────────────────────────────────
-// Validated bug: a phone matching 2+ care groups got asked "which senior?" and
-// the turn returned with NOTHING persisted. The next inbound re-hit
-// `!sessionSnap.exists` and re-asked forever — no code path ever consumed the
-// answer. Fix: persist candidates + attempts on agent_sessions/{phone} before
-// returning, and route the next inbound's reply through the resolver first.
-describe("multi-care-group disambiguation (U8)", () => {
-  const PRIMARY_A = "+15550009999";
-  const PRIMARY_B = "+15550008888";
-
-  function seedTwoGroups() {
-    hoisted.collState.set("agent_sessions", [
-      { id: PRIMARY_A, chatId: "chat-a", groupMembers: [PHONE], userId: "uA", seniorId: "seniorA", onboardingData: { seniorName: "Jane" } },
-      { id: PRIMARY_B, chatId: "chat-b", groupMembers: [PHONE], userId: "uB", seniorId: "seniorB", onboardingData: { seniorName: "Bob" } },
-    ]);
-  }
-
-  it("multi-group inbound asks with senior names and persists a marker with attempts 1, writing nothing else", async () => {
-    seedTwoGroups();
-    await handleInbound(makeEvent("hi"));
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    const question = String(sendMessage.mock.calls[0][1]);
-    expect(question).toContain("Jane");
-    expect(question).toContain("Bob");
-
-    const marker = hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation;
-    expect(marker).toMatchObject({ attempts: 1 });
-    expect(marker.candidates).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ primaryPhone: PRIMARY_A, seniorName: "Jane" }),
-        expect.objectContaining({ primaryPhone: PRIMARY_B, seniorName: "Bob" }),
-      ]),
-    );
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("second inbound naming a candidate creates that candidate's session, no re-ask, marker cleared", async () => {
-    // Seed the primary session AND the pending marker as if turn 1 already ran.
-    hoisted.docState.set(`agent_sessions/${PRIMARY_B}`, {
-      chatId: "chat-b", userId: "uB", seniorId: "seniorB", onboardingData: { seniorName: "Bob" },
-    });
-    hoisted.docState.set(`agent_sessions/${PHONE}`, {
-      chatId: CHAT,
-      pendingGroupDisambiguation: {
-        candidates: [
-          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
-          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
-        ],
-        askedAt: "now",
-        attempts: 1,
-      },
-    });
-    parseWithClaude.mockResolvedValueOnce("1"); // index 1 → Bob
-
-    await handleInbound(makeEvent("Bob, my dad"));
-
-    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(session?.pendingGroupDisambiguation).toBeUndefined();
-    expect(session).toMatchObject({
-      userId: "uB",
-      seniorId: "seniorB",
-      primaryPhone: PRIMARY_B,
-      isSecondaryMember: true,
-    });
-    // Exactly one send this turn: the "added to the care group" greeting — no re-ask.
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0][1])).not.toContain("more than one care group");
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("STOP mid-disambiguation opts the user out instead of being parsed as an answer", async () => {
-    hoisted.docState.set(`agent_sessions/${PHONE}`, {
-      chatId: CHAT,
-      pendingGroupDisambiguation: {
-        candidates: [
-          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
-          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
-        ],
-        askedAt: "now",
-        attempts: 1,
-      },
-    });
-
-    await handleInbound(makeEvent("STOP"));
-
-    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    // Marker cleared (the mock records FieldValue.delete() as a sentinel).
-    expect(session?.pendingGroupDisambiguation?.candidates).toBeUndefined();
-    // The reply was never treated as a disambiguation answer.
-    expect(parseWithClaude).not.toHaveBeenCalled();
-    // Standard opt-out handling ran (carrier protocol: STOP always works).
-    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
-  });
-
-  it("a mid-flow question gets answered and re-asked without burning a match attempt", async () => {
-    hoisted.docState.set(`agent_sessions/${PHONE}`, {
-      chatId: CHAT,
-      pendingGroupDisambiguation: {
-        candidates: [
-          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
-          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
-        ],
-        askedAt: "now",
-        attempts: 1,
-      },
-    });
-    isQuestionOrOther.mockResolvedValueOnce(true);
-
-    await handleInbound(makeEvent("why do you need to know that?"));
-
-    expect(answerHumanQuestionOnly).toHaveBeenCalledTimes(1);
-    // Answer + re-ask, and the marker's attempts stay at 1.
-    expect(sendMessage).toHaveBeenCalledTimes(2);
-    const marker = hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation;
-    expect(marker).toMatchObject({ attempts: 1 });
-    expect(parseWithClaude).not.toHaveBeenCalled();
-  });
-
-  it("awaiting-supply hold: a follow-up question gets the honest hold answer, never the orphan START OVER", async () => {
-    // Supply-hold sessions complete WITHOUT payment by design (no caregivers
-    // available → "no charge until then"), so no userId and no users record
-    // exists. The orphan-recovery branch must not fire for them.
-    hoisted.docState.set(`agent_sessions/${PHONE}`, {
-      chatId: CHAT,
-      userType: "client",
-      onboardingStep: "complete",
-      awaitingSupply: true,
-      onboardingData: { firstName: "Imran", seniorName: "Sarda", city: "Santa Clara" },
-    });
-
-    await handleInbound(makeEvent("Do you have caregivers available in San Jose yet?"));
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    const reply = String(sendMessage.mock.calls[0][1]);
-    expect(reply).not.toContain("Something's off");
-    expect(reply).not.toContain("START OVER");
-    // generateCaraMessage mock returns the fallback — the honest hold answer.
-    expect(reply).toContain("first in line");
-    expect(reply).toContain("Sarda");
-    // The session was not reset or advanced.
-    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(session?.onboardingStep).toBe("complete");
-    expect(session?.awaitingSupply).toBe(true);
-  });
-
-  it("a marker with no candidates is cleared and the turn falls through instead of dead-ending", async () => {
-    hoisted.docState.set(`agent_sessions/${PHONE}`, {
-      chatId: CHAT,
-      pendingGroupDisambiguation: { candidates: [], askedAt: "now", attempts: 1 },
-    });
-
-    await handleInbound(makeEvent("hello?"));
-
-    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    // Marker cleared (the mock records FieldValue.delete() as a sentinel).
-    expect(session?.pendingGroupDisambiguation?.candidates).toBeUndefined();
-    expect(parseWithClaude).not.toHaveBeenCalled();
-  });
-
-  it("two consecutive no-match replies: one re-ask, then first-candidate fallback + admin_alerts, no infinite loop", async () => {
-    hoisted.docState.set(`agent_sessions/${PRIMARY_A}`, {
-      chatId: "chat-a", userId: "uA", seniorId: "seniorA", onboardingData: { seniorName: "Jane" },
-    });
-    hoisted.docState.set(`agent_sessions/${PHONE}`, {
-      chatId: CHAT,
-      pendingGroupDisambiguation: {
-        candidates: [
-          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
-          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
-        ],
-        askedAt: "now",
-        attempts: 1,
-      },
-    });
-    parseWithClaude.mockResolvedValueOnce("none");
-
-    // First no-match reply → re-ask, attempts bumped to 2, still pending.
-    await handleInbound(makeEvent("I don't know"));
-    let session = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(session?.pendingGroupDisambiguation).toMatchObject({ attempts: 2 });
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0][1])).toContain("Jane");
-
-    sendMessage.mockClear();
-    parseWithClaude.mockResolvedValueOnce("none");
-
-    // Second no-match reply → give up, fall back to first candidate, alert, marker cleared.
-    await handleInbound(makeEvent("still not sure"));
-    session = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(session?.pendingGroupDisambiguation).toBeUndefined();
-    expect(session).toMatchObject({ primaryPhone: PRIMARY_A, isSecondaryMember: true });
-    expect(hoisted.docState.get("admin_alerts/auto-add")).toMatchObject({
-      type: "group_disambiguation_unresolved",
-    });
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("single-group phone is unaffected (unchanged secondary-member attach behavior)", async () => {
-    hoisted.collState.set("agent_sessions", [{
-      id: PRIMARY_A,
-      chatId: "primary-chat",
-      groupMembers: [PHONE],
-      userId: "u1",
-      seniorId: "senior1",
-      groupChatId: "family-group-chat",
-      onboardingData: { seniorName: "Jane" },
-    }]);
-
-    await handleInbound(makeEvent("hi"));
-
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
-      userId: "u1",
-      seniorId: "senior1",
-      primaryPhone: PRIMARY_A,
-      isSecondaryMember: true,
-      groupChatId: "family-group-chat",
-    });
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation).toBeUndefined();
-    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care coordinator"));
-    expect(runQaAgent).not.toHaveBeenCalled();
   });
 });
 

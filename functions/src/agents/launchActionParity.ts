@@ -24,7 +24,7 @@
 export interface LaunchAction {
   /** Stable kebab id, e.g. "client-book-caregiver". Unique across the registry. */
   id: string;
-  actor: "client" | "caregiver" | "admin" | "family";
+  actor: "client" | "caregiver" | "admin";
   /** Human description of the action (for blocker rows, name the intended tool here). */
   action: string;
   /** Component/page that performs this on the web. */
@@ -109,26 +109,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     notes: "Over text the file is the photo the family attached (stored by the inbound media handler); same storage folder + roster field as the page.",
   },
   {
-    id: "client-add-family-member",
-    actor: "client",
-    action: "Add a member to the family group",
-    webSurface: "components/client/MyCareTeam.tsx",
-    collection: "family_groups",
-    tool: "add_family_member",
-    promptActor: "client",
-    status: "shipped",
-  },
-  {
-    id: "client-remove-family-member",
-    actor: "client",
-    action: "Remove a member from the family group",
-    webSurface: "components/client/MyCareTeam.tsx",
-    collection: "family_groups",
-    tool: "remove_family_member",
-    promptActor: "client",
-    status: "shipped",
-  },
-  {
     id: "client-read-care-journal",
     actor: "client",
     action: "Read the caregiver's notes from completed visits",
@@ -146,16 +126,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     collection: "threads",
     tool: "send_caregiver_message",
     promptActor: "client",
-    status: "shipped",
-  },
-  {
-    id: "client-create-support-ticket",
-    actor: "client",
-    action: "Open a support ticket",
-    webSurface: "components/shared/SupportChatModal.tsx",
-    collection: "support_tickets",
-    tool: "create_support_ticket",
-    promptActor: "any",
     status: "shipped",
   },
   {
@@ -257,28 +227,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
   },
 
   // ── Client CRUD/parity gap closures (agent-native audit 2026-07) ──────────
-  {
-    id: "client-archive-senior-profile",
-    actor: "client",
-    action: "Archive (soft-delete) a senior profile when care ends",
-    webSurface: "n/a",
-    collection: "senior_profiles",
-    tool: "archive_senior_profile",
-    promptActor: "client",
-    status: "shipped",
-    notes: "Soft status flag only (status:'archived'); the care record is retained. Hard delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md).",
-  },
-  {
-    id: "client-update-family-member",
-    actor: "client",
-    action: "Edit a family group member's name/role/relationship/notifications",
-    webSurface: "components/client/MyCareTeam.tsx",
-    collection: "family_group_members",
-    tool: "update_family_member",
-    promptActor: "client",
-    status: "shipped",
-    notes: "Ownership scoped by the userId+memberPhone query — only the caller's own membership docs are reachable.",
-  },
   {
     id: "client-list-interviews",
     actor: "client",
@@ -562,16 +510,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     notes: "Writes non-bookable caregiver referrals, sends the SMS invite, and keeps bookability gated on onboardingStatus='profile_complete', verificationStatus='approved', and Checkr clear.",
   },
   {
-    id: "caregiver-create-support-ticket",
-    actor: "caregiver",
-    action: "Open a support ticket",
-    webSurface: "components/shared/SupportChatModal.tsx",
-    collection: "support_tickets",
-    tool: "create_support_ticket",
-    promptActor: "any",
-    status: "shipped",
-  },
-  {
     id: "caregiver-check-background-status",
     actor: "caregiver",
     action: "Check background check status",
@@ -604,29 +542,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     promptActor: "caregiver",
     status: "shipped",
     notes: "Read primitive over the collection request_shift_swap/accept_shift_swap write: the caller's own requests plus unexpired open offers from peers.",
-  },
-
-  // ── Family (R1/R3 — secondary members) ─────────────────────────────────────
-  {
-    id: "family-read-care-journal",
-    actor: "family",
-    action: "Read the caregiver's notes from completed visits",
-    webSurface: "components/client/ClientVisitsPage.tsx",
-    collection: "shifts",
-    tool: "get_care_journal_client",
-    promptActor: "any",
-    status: "shipped",
-  },
-  {
-    id: "family-add-sibling",
-    actor: "family",
-    action: "Add another family member to the group",
-    webSurface: "components/client/MyCareTeam.tsx",
-    collection: "family_groups",
-    tool: "add_family_member",
-    promptActor: "any",
-    status: "shipped",
-    notes: "AE3 — added member receives a Linq welcome and the action is logged.",
   },
 
   // ── Admin exception handling (R3) ──────────────────────────────────────────
@@ -677,18 +592,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     surface: "callable",
     status: "shipped",
     notes: "U3 — counterpart callable; clears suspension (accountStatus:'active').",
-  },
-  {
-    id: "admin-respond-support-ticket",
-    actor: "admin",
-    action: "Respond to a support ticket so the user sees the reply",
-    webSurface: "components/admin/TicketManager.tsx",
-    collection: "support_tickets",
-    tool: "admin_respond_support_ticket",
-    promptActor: "admin",
-    surface: "callable",
-    status: "shipped",
-    notes: "U3 — admin-gated callable; writes the user-visible responses subcollection + notifies via Linq/notifications.",
   },
   {
     id: "admin-resolve-dispute",

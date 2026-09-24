@@ -20,8 +20,6 @@ export type Intent =
   | "REBOOK_REQUEST"
   | "CANCEL_REQUEST"
   | "MEMORY_QUERY"
-  | "ADD_FAMILY_MEMBER"
-  | "REMOVE_FAMILY_MEMBER"
   | "FACT_CORRECTION"
   | "FIND_CAREGIVER"
   | "PAUSE_SCHEDULE"
@@ -63,7 +61,7 @@ export type Intent =
 
 const VALID_INTENTS = new Set<Intent>([
   "STOP", "HELP", "TASK_REPLY", "PERMISSION_UPDATE", "REBOOK_REQUEST",
-  "CANCEL_REQUEST", "MEMORY_QUERY", "ADD_FAMILY_MEMBER", "REMOVE_FAMILY_MEMBER",
+  "CANCEL_REQUEST", "MEMORY_QUERY",
   "FACT_CORRECTION", "FIND_CAREGIVER", "PAUSE_SCHEDULE", "CANCEL_SCHEDULE", "QUESTION",
   "BOOKING_CONFIRM", "BOOKING_DECLINE", "HIRE_CAREGIVER", "CAREGIVER_DECLINE_JOB",
   "SCHEDULE_REQUEST", "TRIGGER_MANAGEMENT", "CREDENTIAL_MANAGEMENT",
@@ -124,7 +122,7 @@ export async function classifyIntentDetailed(
   try {
     const raw = await quickComplete(
         "You classify a message sent to a care coordinator named Evia. " +
-        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, ADD_FAMILY_MEMBER, REMOVE_FAMILY_MEMBER, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, FIND_REPLACEMENT, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, UPDATE_ONBOARDING, QUESTION.\n" +
+        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, FIND_REPLACEMENT, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, UPDATE_ONBOARDING, QUESTION.\n" +
         "STOP = opting out of all messages.\n" +
         "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
         "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
@@ -135,8 +133,6 @@ export async function classifyIntentDetailed(
         "REBOOK_REQUEST = asking to rebook or RESEND a booking with a caregiver they already have a request or booking with (e.g. 'book Maria again next week', 'can you resend the booking', 'send the booking to Basra again', 'rebook her').\n" +
         "CANCEL_REQUEST = asking to cancel an upcoming visit (e.g. 'cancel Wednesday', 'cancel tomorrow\\'s visit').\n" +
         "MEMORY_QUERY = asking what Evia knows or remembers (e.g. 'what do you know about mom', 'what have you remembered', 'what\\'s in my file').\n" +
-        "ADD_FAMILY_MEMBER = asking to add a family member to care updates (e.g. 'add my sister', 'include my brother John', 'add +1234567890 to updates').\n" +
-        "REMOVE_FAMILY_MEMBER = asking to remove a family member from care updates (e.g. 'remove my sister', 'take John off the updates', 'remove +1234567890', 'stop sending updates to my brother').\n" +
         "FACT_CORRECTION = correcting a previously stated fact (e.g. 'actually mom is 82 not 78', 'I meant Tuesday not Monday', 'wait, her doctor is Dr. Chen not Dr. Lee'). Only pick this when the message explicitly states a corrected value for something already on file — a live-data question (how many/is there/do you have) is never FACT_CORRECTION, even if it references a caregiver or a number. A corrected clock-in, clock-out, hours, or pay for a visit or timesheet ('can you change the clock in time to 10:03', 'she actually left at 10:40', 'the hours are wrong') is NEVER FACT_CORRECTION — pick QUESTION so the agent proposes the correction on the timesheet.\n" +
         "FIND_CAREGIVER = asking to find, search for, or get a new caregiver/companion/home-care helper — Evia's own core service, NOT a medical provider (e.g. 'I need a caregiver', 'can you find someone', 'looking for help', 'find me a caregiver', 'find me a caregiver near me', 'any more caregivers nearby', 'is there another caregiver around me', 'we need a new caregiver', 'search for caregivers', 'how many caregivers do you have available', 'how many caregivers do you have around me', 'what caregivers are available near me'). This is a live lookup — always FIND_CAREGIVER, never FACT_CORRECTION, even though it starts with 'how many'.\n" +
         "PAUSE_SCHEDULE = asking to pause or temporarily stop a recurring care schedule (e.g. 'pause the schedule', 'hold care for now', 'skip next few weeks', 'pause recurring visits').\n" +

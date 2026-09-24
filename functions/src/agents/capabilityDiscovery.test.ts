@@ -1,8 +1,7 @@
 // Unit tests for role-aware capability discovery (U7 / R13).
 //
-// Verifies: each role surfaces the right action themes; discovery stays derived
-// from LAUNCH_ACTION_PARITY shipped rows; and the secondary-family-member
-// authority boundary (AE4) is enforced — no payment-approval capability leaks.
+// Verifies: each role surfaces the right action themes and discovery stays
+// derived from LAUNCH_ACTION_PARITY shipped rows.
 
 import { describe, it, expect } from "vitest";
 import {
@@ -21,15 +20,6 @@ describe("getCapabilityExamples", () => {
     }
   });
 
-  it("family-secondary is a deliberately narrow care-visibility surface (no padding)", () => {
-    // Secondary members genuinely have fewer capabilities (care visibility only).
-    // The helper must NOT pad the list to hit a minimum — it surfaces exactly the
-    // allow-listed actions and is still capped at 5.
-    const ex = getCapabilityExamples("family-secondary");
-    expect(ex.length).toBeGreaterThanOrEqual(2);
-    expect(ex.length).toBeLessThanOrEqual(5);
-  });
-
   it("client examples surface care recipe themes", () => {
     const text = getCapabilityExamples("client", 5).join(" | ").toLowerCase();
     expect(text).toMatch(/visit|care update|backup|memory/);
@@ -42,16 +32,6 @@ describe("getCapabilityExamples", () => {
     expect(text).toMatch(/earnings|payout|paid|hours|pay/);
   });
 
-  it("family-secondary examples surface care-visibility, NOT payment authority (AE4)", () => {
-    const text = getCapabilityExamples("family-secondary", 5).join(" | ").toLowerCase();
-    // Care visibility present.
-    expect(text).toMatch(/mom|care|how|visit|family/);
-    // Payment authority absent — the hard boundary.
-    for (const banned of ["approve", "invoice", "billing", "refund", "timesheet", "payout"]) {
-      expect(text).not.toContain(banned);
-    }
-  });
-
   it("only surfaces SHIPPED parity rows (single source of truth)", () => {
     // Every surfaced phrasing must trace back to a shipped LAUNCH_ACTION_PARITY
     // row — discovery can never advertise a blocker/non-goal action.
@@ -60,11 +40,6 @@ describe("getCapabilityExamples", () => {
     );
     // Sanity: the registry actually has shipped rows we draw from.
     expect(shippedActions.size).toBeGreaterThan(0);
-    // The family-secondary allow-list rows must all be shipped.
-    const familyRows = LAUNCH_ACTION_PARITY.filter(
-      (r) => r.id === "family-read-care-journal" || r.id === "family-add-sibling",
-    );
-    expect(familyRows.every((r) => r.status === "shipped")).toBe(true);
   });
 
   it("recipe examples are packaged care workflows, not raw feature names", () => {
@@ -85,13 +60,6 @@ describe("buildHelpSmsReply", () => {
   it("caregiver HELP reply surfaces caregiver actions", () => {
     const reply = buildHelpSmsReply("caregiver").toLowerCase();
     expect(reply).toMatch(/job|shift|earnings|payout|clock|hours/);
-  });
-
-  it("family-secondary HELP reply never implies payment authority (AE4)", () => {
-    const reply = buildHelpSmsReply("family-secondary").toLowerCase();
-    for (const banned of ["approve", "invoice", "billing", "refund", "timesheet", "payout"]) {
-      expect(reply).not.toContain(banned);
-    }
   });
 
   it("leads with a single contextual action when context is provided", () => {
@@ -117,10 +85,4 @@ describe("buildCapabilityHint", () => {
     expect(noCtx.toLowerCase()).not.toContain("lead with one");
   });
 
-  it("secondary-member hint carries the payment-authority boundary (AE4)", () => {
-    const hint = buildCapabilityHint("family-secondary", false);
-    expect(hint.toLowerCase()).toContain("authority boundary");
-    expect(hint.toLowerCase()).toContain("primary account holder");
-    expect(hint.toLowerCase()).toContain("approve payments");
-  });
 });

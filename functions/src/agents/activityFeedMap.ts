@@ -57,9 +57,6 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   care_plan_restored:         { included: true,  description: "Evia restored a previous care plan version." },
   subscription_cancelled:     { included: true,  description: "Evia cancelled your subscription." },
   subscription_reactivated:   { included: true,  description: "Evia reactivated your subscription." },
-  family_member_added:        { included: true,  description: "Evia added a family member to your group." },
-  family_member_invited:      { included: true,  description: "Evia invited a family member to your group." },
-  family_member_removed:      { included: true,  description: "Evia removed a family member from your group." },
 
   // ── excluded: sensitive / clinical ───────────────────────────────────────
   health_data_accessed:       { included: false },
@@ -88,11 +85,6 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   email_change_requested:     { included: false },
   support_ticket_created:     { included: false },
   referral_invited:           { included: false },
-  family_member_welcome_sent: { included: false },
-  family_member_welcome_failed: { included: false },
-  family_group_created:       { included: false },
-  family_group_participant_added: { included: false },
-  family_group_participant_add_failed: { included: false },
 
   // ── excluded: user-relayed (the user's own action, not Evia's) ───────────
   // conversation_deleted: the family clearing their own Inbox view (mcp
@@ -148,7 +140,6 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   shift_hour_correction_responded:    { included: false },
   standard_payout_requested:          { included: false },
   senior_profile_archived:            { included: false },
-  family_member_updated:              { included: false },
   interview_cancelled:                { included: false },
   interview_rescheduled:              { included: false },
   interview_reschedule_accepted:      { included: false },
@@ -178,12 +169,9 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   support_ticket_updated:             { included: false },
   match_feedback_logged:              { included: false },
   job_post_created:                   { included: false },
-  proactive_draft_cancelled:          { included: false },
   shift_payment_retried:              { included: false },
   booking_payment_method_updated:     { included: false },
   journal_comment_edited:             { included: false },
-  proactive_draft_approved:           { included: false },
-  proactive_draft_rejected:           { included: false },
   // Evia booking-pipeline parity (2026-08-30): family-initiated actions on
   // booking_requests/shifts/booking_amendments, mirroring the website's own
   // My Bookings / Calendar actions.

@@ -127,7 +127,6 @@ import {
   detectPromiseWithoutToolCall,
   detectGenericHelpAsk,
   detectMedicationInstruction,
-  detectPaymentAuthorityLeak,
   detectMultiQuestionDataCollection,
   detectSupportDeflection,
   buildClientSystemPrompt,
@@ -335,20 +334,6 @@ describe("conversation quality detectors", () => {
     expect(detectMedicationInstruction(input)).toBe(false);
   });
 
-  it.each([
-    "Reply APPROVE and I'll release payment.",
-    "You can approve the hours here.",
-    "I'll pay Maria now.",
-  ])("flags payment authority leaks %p", (input) => {
-    expect(detectPaymentAuthorityLeak(input)).toBe(true);
-  });
-
-  it.each([
-    "I can't approve payment from this family group - the primary account holder has to approve Maria's hours.",
-    "The primary client must approve the invoice.",
-  ])("allows payment boundary language %p", (input) => {
-    expect(detectPaymentAuthorityLeak(input)).toBe(false);
-  });
 });
 
 describe("isTrivialQuickReply", () => {
@@ -488,7 +473,6 @@ describe("memory source priority prompt", () => {
     const prompt = buildClientSystemPrompt(
       { name: "Anita", needs: ["companionship"] },
       [],
-      null,
       null,
       "- Mom is 82 (profile)",
       "Zep says Mom is 78",
@@ -1363,7 +1347,6 @@ describe("runQaAgent lazy memory-file bootstrap guard", () => {
     expect(qaHarness.initializeMemoryFiles).toHaveBeenCalledTimes(1);
     expect(qaHarness.initializeMemoryFiles).toHaveBeenCalledWith("client-123", expect.objectContaining({
       seniorName: "Margaret",
-      conditions: ["dementia"],
       careNeeds:  ["meal prep"],
     }));
   });
@@ -1627,7 +1610,6 @@ describe("buildClientSystemPrompt — honest learned-facts label (U5/R16)", () =
     { name: "Anita", needs: ["companionship"] },
     [],
     null,
-    null,
     "- Mom takes metformin (medical)",
   );
 
@@ -1647,7 +1629,7 @@ describe("buildClientSystemPrompt — honest learned-facts label (U5/R16)", () =
   });
 
   it("the no-facts fallback line is unchanged", () => {
-    const empty = buildClientSystemPrompt({ name: "Anita", needs: [] }, [], null, null, undefined);
+    const empty = buildClientSystemPrompt({ name: "Anita", needs: [] }, [], null, undefined);
     expect(empty).toContain("No learned facts on file for this family yet.");
     expect(empty).not.toContain("Relevant learned facts");
   });

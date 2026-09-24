@@ -1,7 +1,7 @@
 // Runtime-enforced confirmation gate for irreversible tool calls.
 //
 // Today Evia is *told* in the system prompt to confirm before
-// remove_family_member, cancel_job_post, etc. — but if she forgets or is
+// cancel_job_post, delete_account, etc. — but if she forgets or is
 // prompt-injected, the action fires immediately. One bad incident in
 // eldercare is irrecoverable, so we enforce confirmation in the runtime.
 //
@@ -37,13 +37,6 @@ export interface PendingAction {
   resolvedAt?:  string;
   // Truncated executed-result preview for debugging; not the full payload.
   executionPreview?: string;
-  // ── Healthcare approver routing (H-U4) ──────────────────────────────────────
-  // For healthcare write actions the doc's `phone` field is set to the account
-  // holder's phone (approverPhone) so getAllPending(senderPhone) matches when the
-  // ACCOUNT HOLDER replies — the fix for the cross-phone bug. triggeredByPhone is
-  // the requester (a secondary member may have started it) for the completion notice.
-  approverPhone?:    string;
-  triggeredByPhone?: string;
   // ── Exactly-once (H-U5) ─────────────────────────────────────────────────────
   // Set when the action is claimed (awaiting → executing) just before dispatch.
   executingStartedAt?: string;
@@ -53,14 +46,8 @@ export interface PendingAction {
 // Mirrors the qaAgent.ts system-prompt list. Adding a tool here is a
 // production-safety change; review the prompt's confirmation guidance too.
 const ALWAYS_CONFIRM = new Set<string>([
-  "remove_family_member",
   "cancel_job_post",
-  // U7: destructive CRUD — deleting a review or hiding a care-journal entry is
-  // family-visible and not casually reversible, so require explicit confirmation.
-  "delete_review",
-  // CRUD-completeness tools (2026-07-03): archiving a senior ends active care
-  // visibility, and deleting a memory file destroys content + its search index.
-  "archive_senior_profile",
+  // Deleting a memory file destroys content + its search index.
   "delete_memory_file",
   // Deleting the account is permanent (cancels billing, wipes Firestore data,
   // removes the login) — never fire without an explicit family confirmation.
@@ -161,8 +148,6 @@ export async function buildActionPreview(toolName: string, toolInput: Record<str
       const when = [toolInput.preferredDate, toolInput.preferredTime].filter(Boolean).join(" at ");
       return `Schedule an interview with ${name}${when ? ` for ${when}` : ""}`;
     }
-    case "remove_family_member":
-      return `Remove family member ${String(toolInput.memberPhone ?? toolInput.memberId ?? "?")}`;
     case "set_subscription_status":
       return toolInput.action === "reactivate" ? `Reactivate Evia subscription` : `Cancel Evia subscription`;
     case "delete_account":

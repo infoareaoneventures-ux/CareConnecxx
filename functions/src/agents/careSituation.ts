@@ -53,7 +53,7 @@ export interface DomainResult<T> {
   latencyMs: number;
 }
 
-export type CareSituationRole = "client" | "caregiver" | "family-secondary" | "unknown";
+export type CareSituationRole = "client" | "caregiver" | "unknown";
 export type CareSituationChannel = "linq" | "web";
 
 export interface CareSituationActor {

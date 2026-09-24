@@ -122,7 +122,6 @@ beforeEach(() => {
 
 describe("isHighRisk", () => {
   it("flags always-confirm tools regardless of input", () => {
-    expect(isHighRisk("remove_family_member",     { memberPhone: "x" })).toBe(true);
     expect(isHighRisk("cancel_job_post",          { jobId: "x" })).toBe(true);
     expect(isHighRisk("delete_account",           {})).toBe(true);
   });
@@ -185,7 +184,6 @@ describe("buildActionPreview", () => {
   it("produces human-readable previews for known tools", async () => {
     expect(await buildActionPreview("set_subscription_status", { action: "cancel" })).toBe("Cancel Evia subscription");
     expect(await buildActionPreview("set_subscription_status", { action: "reactivate" })).toBe("Reactivate Evia subscription");
-    expect(await buildActionPreview("remove_family_member", { memberPhone: "+15551234567" })).toBe("Remove family member +15551234567");
   });
 
   it("falls back to a generic preview for unknown tools", async () => {
@@ -193,7 +191,7 @@ describe("buildActionPreview", () => {
   });
 
   it("handles missing ID fields gracefully", async () => {
-    expect(await buildActionPreview("remove_family_member", {})).toBe("Remove family member ?");
+    expect(await buildActionPreview("cancel_job_post", {})).toBe("Cancel job post ?");
   });
 
   // 2026-09-12 live incident: schedule_interview resolved and confirmed with
@@ -224,17 +222,17 @@ describe("proposePendingAction", () => {
     const action = await proposePendingAction({
       phone:     "+15550001111",
       userId:    "user-1",
-      toolName:  "remove_family_member",
-      toolInput: { memberPhone: "+15559876543" },
+      toolName:  "cancel_job_post",
+      toolInput: { jobId: "j-9876" },
     });
     const after = Date.now();
 
     expect(action.id).toMatch(/^pa_/);
     expect(action.phone).toBe("+15550001111");
     expect(action.userId).toBe("user-1");
-    expect(action.toolName).toBe("remove_family_member");
+    expect(action.toolName).toBe("cancel_job_post");
     expect(action.status).toBe("awaiting");
-    expect(action.preview).toBe("Remove family member +15559876543");
+    expect(action.preview).toBe("Cancel job post j-9876");
 
     const expiresAt = new Date(action.expiresAt).getTime();
     const proposedAt = new Date(action.proposedAt).getTime();
@@ -250,7 +248,7 @@ describe("getLatestPending", () => {
   });
 
   it("returns the most-recent awaiting action for the phone", async () => {
-    await proposePendingAction({ phone: "+15550001111", toolName: "remove_family_member",  toolInput: { memberPhone: "a1" } });
+    await proposePendingAction({ phone: "+15550001111", toolName: "delete_memory_file",  toolInput: { memberPhone: "a1" } });
     await new Promise((r) => setTimeout(r, 5)); // ensure timestamps differ
     const newer = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_subscription", toolInput: {} });
 
@@ -262,7 +260,7 @@ describe("getLatestPending", () => {
   it("returns null and lazily expires a stale awaiting doc", async () => {
     const action = await proposePendingAction({
       phone:     "+15550001111",
-      toolName:  "remove_family_member",
+      toolName:  "delete_memory_file",
       toolInput: { memberPhone: "a1" },
     });
     // Manually expire by overwriting expiresAt to the past
@@ -278,7 +276,7 @@ describe("getLatestPending", () => {
   });
 
   it("does not return actions for a different phone", async () => {
-    await proposePendingAction({ phone: "+15550009999", toolName: "remove_family_member", toolInput: {} });
+    await proposePendingAction({ phone: "+15550009999", toolName: "delete_memory_file", toolInput: {} });
     expect(await getLatestPending("+15550001111")).toBeNull();
   });
 });
@@ -289,7 +287,7 @@ describe("getAllPending", () => {
   });
 
   it("returns ALL awaiting actions for the phone, newest first", async () => {
-    const first = await proposePendingAction({ phone: "+15550001111", toolName: "remove_family_member",  toolInput: { memberPhone: "a1" } });
+    const first = await proposePendingAction({ phone: "+15550001111", toolName: "delete_memory_file",  toolInput: { memberPhone: "a1" } });
     await new Promise((r) => setTimeout(r, 5)); // ensure timestamps differ
     const second = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_subscription", toolInput: {} });
     await proposePendingAction({ phone: "+15550009999", toolName: "cancel_job_post", toolInput: { jobId: "j1" } });
@@ -299,7 +297,7 @@ describe("getAllPending", () => {
   });
 
   it("lazily expires stale docs and excludes them from the result", async () => {
-    const live  = await proposePendingAction({ phone: "+15550001111", toolName: "remove_family_member", toolInput: { memberPhone: "a1" } });
+    const live  = await proposePendingAction({ phone: "+15550001111", toolName: "delete_memory_file", toolInput: { memberPhone: "a1" } });
     const stale = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_job_post",    toolInput: { jobId: "r1" } });
     const snap = hoisted.snapshot();
     hoisted.seed(snap.map(([id, data]) =>
@@ -319,7 +317,7 @@ describe("getAllPending", () => {
 describe("resolvePendingAction", () => {
   it("marks awaiting -> executed and stores executionPreview", async () => {
     const a = await proposePendingAction({
-      phone: "+15550001111", toolName: "remove_family_member", toolInput: { memberPhone: "x" },
+      phone: "+15550001111", toolName: "delete_memory_file", toolInput: { memberPhone: "x" },
     });
     await resolvePendingAction(a.id, "executed", { executionPreview: "{ ok: true }" });
 
@@ -335,7 +333,7 @@ describe("resolvePendingAction", () => {
 
   it("logs a warning and skips when status conflicts with the requested change", async () => {
     const a = await proposePendingAction({
-      phone: "+15550001111", toolName: "remove_family_member", toolInput: {},
+      phone: "+15550001111", toolName: "delete_memory_file", toolInput: {},
     });
     await resolvePendingAction(a.id, "executed");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -352,9 +350,9 @@ describe("buildPendingActionStub", () => {
     const action: PendingAction = {
       id:         "pa_42",
       phone:      "+15550001111",
-      toolName:   "remove_family_member",
+      toolName:   "delete_memory_file",
       toolInput:  {},
-      preview:    "Remove family member +15559876543",
+      preview:    "Delete the profile memory file",
       proposedAt: new Date(Date.now()).toISOString(),
       expiresAt:  new Date(Date.now() + 14 * 60_000).toISOString(),
       status:     "awaiting",
@@ -362,8 +360,8 @@ describe("buildPendingActionStub", () => {
     const stub = buildPendingActionStub(action);
     expect(stub._pending_action).toBe(true);
     expect(stub.actionId).toBe("pa_42");
-    expect(stub.toolName).toBe("remove_family_member");
-    expect(stub.preview).toBe("Remove family member +15559876543");
+    expect(stub.toolName).toBe("delete_memory_file");
+    expect(stub.preview).toBe("Delete the profile memory file");
     expect(stub.expires_in_minutes).toBeGreaterThanOrEqual(13);
     expect(stub.expires_in_minutes).toBeLessThanOrEqual(15);
     expect(stub.guidance.toLowerCase()).toContain("confirm");

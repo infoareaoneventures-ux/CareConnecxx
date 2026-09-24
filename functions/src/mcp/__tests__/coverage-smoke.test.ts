@@ -2,7 +2,7 @@
  * Smoke coverage: every remaining MCP tool gets at least one test that proves
  * (a) the schema rejects missing required inputs and (b) the happy path returns
  * a structured response. Bespoke per-tool tests live in the other files in
- * this folder for the high-stakes ones (booking, family, communication,
+ * this folder for the high-stakes ones (booking, communication,
  * journal, safety, profile, discovery).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -140,11 +140,6 @@ vi.mock("../../memory/preferences", () => ({
 vi.mock("../../agents/caregiverSearch", () => ({
   presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
   searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
-}));
-
-vi.mock("../../agents/familyGroupManager", () => ({
-  buildOrUpdateFamilyGroup: vi.fn().mockResolvedValue(undefined),
-  removeMemberFromGroup:    vi.fn().mockResolvedValue({ removed: true }),
 }));
 
 vi.mock("../../triggers/userTriggerManager", () => ({
@@ -420,12 +415,6 @@ describe("MCP tool smoke coverage", () => {
     expect(r.bookings[0].upcomingShifts.map((x: any) => x.id)).toEqual(["s1", "s2"]);
   });
 
-  it("get_family_group happy path", async () => {
-    hoisted.collState.set("family_group_members", [{ name: "Bob", phone: "+15555550100" }]);
-    const r = await handleToolCall("get_family_group", { phone: "+15555550000" }) as any;
-    expect(r.success).toBe(true);
-  });
-
   // ── Memory ────────────────────────────────────────────────────────────────
   it("read_memory_file happy path", async () => {
     const r = await handleToolCall("read_memory_file", { userId: "u1", file: "profile" }) as any;
@@ -497,35 +486,9 @@ describe("MCP tool smoke coverage", () => {
     expect(r.url).toContain("stripe");
   });
 
-  // ── Support + execution ──────────────────────────────────────────────────
-  it("create_support_ticket happy path", async () => {
-    const r = await handleToolCall("create_support_ticket", {
-      userId: "u1", userType: "client", subject: "Q", description: "Need help",
-    }) as any;
-    expect(r.success).toBe(true);
-  });
 
   // ── Notification surfacing — invariant checks ─────────────────────────────
   describe("CRUD-gap tools (U15)", () => {
-    it("edit_review updates the author's review", async () => {
-      hoisted.docState.set("reviews/r1", { clientId: "c1", rating: 3 });
-      const r = await handleToolCall("edit_review", { clientId: "c1", reviewId: "r1", rating: 5 }) as any;
-      expect(r.success).toBe(true);
-      expect(r.updated).toBe(true);
-    });
-
-    it("edit_review rejects an out-of-range rating", async () => {
-      hoisted.docState.set("reviews/r1", { clientId: "c1", rating: 3 });
-      const r = await handleToolCall("edit_review", { clientId: "c1", reviewId: "r1", rating: 9 }) as any;
-      expect(r._toolError).toBe(true);
-    });
-
-    it("edit_review refuses a non-author", async () => {
-      hoisted.docState.set("reviews/r1", { clientId: "c1" });
-      const r = await handleToolCall("edit_review", { clientId: "other", reviewId: "r1", comment: "x" }) as any;
-      expect(r._toolError).toBe(true);
-    });
-
     it("cancel_followup deletes the owner's scheduled follow-up", async () => {
       hoisted.docState.set("proactive_triggers/t1", { userId: "u1", message: "check in" });
       const r = await handleToolCall("cancel_followup", { triggerId: "t1", userId: "u1" }) as any;
@@ -560,9 +523,8 @@ describe("MCP tool smoke coverage", () => {
       // (awaiting/approved, unexpired) pending doc. An "executed" doc is already
       // resolved, so the gate must refuse with PERMISSION_DENIED rather than
       // re-running the irreversible action.
-      hoisted.docState.set("pending_actions/done", { toolName: "remove_family_member", status: "executed", expiresAt: "2999-01-01T00:00:00.000Z" });
-      hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [] });
-      const r = await handleToolCall("remove_family_member", { seniorId: "s1", clientId: "c1", memberPhone: "+15551234567", _confirmedActionId: "done" }) as any;
+      hoisted.docState.set("pending_actions/done", { toolName: "delete_memory_file", status: "executed", expiresAt: "2999-01-01T00:00:00.000Z" });
+      const r = await handleToolCall("delete_memory_file", { userId: "c1", file: "profile", phone: "+15550000000", _confirmedActionId: "done" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
     });

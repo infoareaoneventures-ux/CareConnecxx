@@ -3,7 +3,6 @@ import { getSharedClient } from "../utils/claudeClient";
 import { quickComplete } from "../utils/openaiClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { describeWhoIsWho } from "./careRecipients";
 import { buildHelpSmsReply } from "./capabilityDiscovery";
 import { languageFromSession } from "../utils/language";
 import { appLink, getAppUrl } from "../config/appUrl";
@@ -96,21 +95,6 @@ async function bumpPermissionsDetourCount(phone: string, session: AgentSession):
 // natural questions, no stiff "Reply YES or NO" instruction and no numbered
 // menus — classifyPermissionReply already understands "yes"/"sure"/"always ask
 // me first"/etc., and "1"/"2" still parse for anyone who replies with numbers.
-const CLIENT_STEPS: Record<string, { desc: string; reask: string }> = {
-  client_permissions_contact: {
-    desc:  "Can Evia reach out to caregivers on your behalf to schedule interviews once you select someone?",
-    reask: "So — can I reach out to caregivers on your behalf to schedule interviews once you select someone? Either way is fine.",
-  },
-  client_permissions_booking: {
-    desc:  "Once you've approved a caregiver, can Evia book their first visits for you (always showing you what's booked and waiting for confirmation)?",
-    reask: "So — once you've approved a caregiver after an interview, can I book their first visits for you? I'll always show you exactly what I'm booking and wait for your confirmation.",
-  },
-  client_permissions_autobook: {
-    desc:  "For recurring visits with a caregiver you've already approved, can Evia book automatically without checking each time?",
-    reask: "And for recurring visits with a caregiver you've already approved — want me to book those automatically, or always check with you first?",
-  },
-};
-
 const CAREGIVER_STEPS: Record<string, { desc: string; reask: string }> = {
   caregiver_permissions_decline: {
     desc:  "Can Evia automatically decline job requests that are outside your stated availability?",
@@ -128,27 +112,11 @@ export interface AgentPermissions {
   userId:                        string;
   userType:                      "client" | "caregiver";
   updatedAt:                     string;
-  // Client permissions
-  canContactCaregivers:          boolean;
-  canScheduleInterviews:         boolean;
-  canBookWithConfirmation:       boolean;
-  canBookAutomatically:          boolean;
-  canCancelWithConfirmation:     boolean;
-  canSendWeeklyDigest:           boolean;
-  canSendHealthAlerts:           boolean;
   // Caregiver permissions
   canAcceptJobsWithConfirmation: boolean;
   canDeclineJobsAutomatically:   boolean;
   canSendArrivalNotifications:   boolean;
   canShareJournalWithFamily:     boolean;
-}
-
-// ── Read helper — used by action handlers to check before acting ──────────────
-
-export async function getPermissions(userId: string): Promise<AgentPermissions | null> {
-  const snap = await db.collection("agent_permissions").doc(userId).get();
-  if (!snap.exists) return null;
-  return snap.data() as AgentPermissions;
 }
 
 async function setPermissions(
@@ -182,7 +150,8 @@ function remainingPermissionDefaults(
   userType: "client" | "caregiver",
   step: string,
 ): Partial<AgentPermissions> {
-  if (userType === "caregiver") {
+  if (userType !== "caregiver") return {};
+  {
     return {
       ...(step === "caregiver_permissions_decline" ? { canDeclineJobsAutomatically: false } : {}),
       // Arrival notifications are standard behavior (founder, 2026-07-15) —
@@ -193,30 +162,6 @@ function remainingPermissionDefaults(
       canAcceptJobsWithConfirmation: true,
     };
   }
-  const fromContact = step === "client_permissions_contact";
-  const fromBooking = fromContact || step === "client_permissions_booking";
-  return {
-    ...(fromContact ? { canContactCaregivers: false, canScheduleInterviews: false } : {}),
-    ...(fromBooking ? {
-      canBookWithConfirmation:   false,
-      canCancelWithConfirmation: false,
-      canSendWeeklyDigest:       true,
-      canSendHealthAlerts:       true,
-    } : {}),
-    canBookAutomatically: false,
-  };
-}
-
-// Find the client's latest intake and kick off matching (fire-and-forget).
-// Shared by the normal autobook completion, the question-detour bailout, and
-// the stale-permissions sweep.
-async function kickOffClientMatching(phone: string, chatId: string): Promise<void> {
-  // The website's Find Caregivers page, texted as cards — the same search
-  // the client dashboard lands on after onboarding (agents/caregiverSearch.ts).
-  const { presentCaregiverSearch } = await import("./caregiverSearch");
-  presentCaregiverSearch({ phone, chatId, source: "permissionsConversation" }).catch((err) =>
-    console.error("presentCaregiverSearch error:", err)
-  );
 }
 
 // Complete the permissions flow with safe defaults for everything unanswered
@@ -250,126 +195,6 @@ export async function finalizePermissionsWithDefaults(
     import("../triggers/caregiverJobMatch")
       .then((m) => m.notifyNewCaregiverOfJobs(userId))
       .catch((err) => console.error("notifyNewCaregiverOfJobs error:", err));
-  } else {
-    await kickOffClientMatching(phone, chatId);
-  }
-}
-
-// ── CLIENT permissions flow ───────────────────────────────────────────────────
-
-export async function sendClientPermissionsFlow(
-  phone:   string,
-  chatId:  string,
-  session: AgentSession
-): Promise<void> {
-  const d = session.onboardingData ?? {};
-  // R11: ground who's who — the caregivers are for the care recipient, never
-  // for the account holder being texted.
-  const whoIsWho = describeWhoIsWho(d as Record<string, unknown>);
-  await db.collection("agent_sessions").doc(phone).update({
-    onboardingStep:     "client_permissions_contact",
-    permissionsContext: "client",
-  });
-
-  const msgPerm1 = await generateCaraMessage({
-    audience: "family",
-    context: (whoIsWho ? whoIsWho + " " : "") + `Evia has already started searching for caregivers for ${d.seniorName ?? "a loved one"}. Before sending matches, Evia needs to ask a couple of quick questions. Introduce this warmly and ask if Evia can reach out to caregivers on the family's behalf to schedule interviews once they select someone. End with that yes/no question itself — never a stiff "Reply YES or NO" instruction or a menu.`,
-    fallback: `I'm already searching for caregivers for ${d.seniorName ?? "your loved one"}. Before I send you matches, two quick questions so I know how to best help you.\n\nCan I reach out to caregivers on your behalf to schedule interviews once you select someone?`,
-  });
-  await sendMessage(chatId, msgPerm1);
-}
-
-export async function handleClientPermissionsReply(
-  phone:   string,
-  chatId:  string,
-  text:    string,
-  session: AgentSession,
-  userId:  string
-): Promise<void> {
-  const step = (session as any).onboardingStep ?? "";
-
-  // Answer a mid-flow question instead of silently recording it as a denial.
-  const verdict = await classifyPermissionReply(text);
-  if (verdict === "question" && CLIENT_STEPS[step]) {
-    const liveFact = await permissionsLiveFact(step, phone, session);
-    const detours  = await bumpPermissionsDetourCount(phone, session);
-    if (detours >= 2) {
-      // Max ONE re-ask: answer their question, default the remaining
-      // permissions OFF, and complete — matching starts either way, and they
-      // can change any setting later by texting.
-      const answer = await generateCaraMessage({
-        audience: "family",
-        context: `${liveFact ? `${liveFact} ` : ""}During permissions setup, the family was asked: "${CLIENT_STEPS[step].desc}". ` +
-          `Instead of yes/no they asked: "${text}". Answer their question briefly, warmly, and honestly. Then let them know ` +
-          `they're ALL SET — Evia has left these optional settings off for now (Evia will always check with them first), ` +
-          `Evia is already finding caregivers and will text the top matches, and they can change any setting anytime just ` +
-          `by texting. Do NOT re-ask the yes/no question.`,
-        fallback: "Good question! For now I've left these optional settings off — I'll always check with you first — and you're all set. I'm finding caregivers now and will text you the top matches. Text me anytime to change anything.",
-      });
-      await sendMessage(chatId, answer);
-      await finalizePermissionsWithDefaults(phone, chatId, "client", userId, step);
-      return;
-    }
-    await answerPermissionQuestion("family", chatId, text, CLIENT_STEPS[step].desc, CLIENT_STEPS[step].reask, liveFact);
-    return;
-  }
-  const isYes = verdict === "yes";
-
-  if (step === "client_permissions_contact") {
-    await setPermissions(phone, userId, "client", {
-      canContactCaregivers:  isYes,
-      canScheduleInterviews: isYes,
-    });
-    await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_booking" });
-    const msgPerm2 = await generateCaraMessage({
-      audience: "family",
-      context: "Evia just received the family's answer about scheduling interviews. Acknowledge their reply, then ask: once they've approved a caregiver after an interview, can Evia book the first visits for them? Mention that Evia will always show exactly what's being booked and wait for confirmation before scheduling anything. End with that yes/no question itself — never a stiff \"Reply YES or NO\" instruction or a menu.",
-      fallback: "Got it.\n\nOnce you've approved a caregiver after an interview, can I book their first visits for you? I'll always show you exactly what I'm booking and wait for your confirmation before anything is scheduled.",
-    });
-    await sendMessage(chatId, msgPerm2);
-    return;
-  }
-
-  if (step === "client_permissions_booking") {
-    await setPermissions(phone, userId, "client", {
-      canBookWithConfirmation:   isYes,
-      canCancelWithConfirmation: isYes,
-      canSendWeeklyDigest:       true,
-      canSendHealthAlerts:       true,
-    });
-    await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "client_permissions_autobook" });
-    const msgPerm3 = await generateCaraMessage({
-      audience: "family",
-      context: "Evia just received the family's answer about booking visits. Acknowledge, then ask: for recurring visits with a caregiver they've already approved, would they like Evia to book automatically, or always check with them first? End with that question itself — never a stiff \"Reply YES or NO\" instruction or a numbered menu.",
-      fallback: "Got it.\n\nOne more thing — for recurring visits with a caregiver you've already approved, want me to book those automatically, or always check with you first?",
-    });
-    await sendMessage(chatId, msgPerm3);
-    return;
-  }
-
-  if (step === "client_permissions_autobook") {
-    await setPermissions(phone, userId, "client", {
-      canBookAutomatically: isYes,
-    });
-    await db.collection("agent_sessions").doc(phone).update({
-      onboardingStep: "complete",
-      optedIn:        true,
-    });
-    const msgPerm4 = await generateCaraMessage({
-      audience: "family",
-      context: `Evia just finished the permissions setup for a family. They ${isYes ? "said YES to automatic booking" : "said NO — they want to make final calls themselves"}. Send a warm closing message acknowledging their choice, let them know Evia is still searching and will text the top caregiver matches within the hour, and invite them to text anytime with questions.`,
-      fallback: `Perfect. I'll handle all the coordination${isYes ? " and book automatically" : " — you make the final calls"}.\n\nI'm still searching for caregivers — I'll text you the top matches within the hour.\n\nQuestions? Just text me anytime.`,
-    });
-    await sendMessage(chatId, msgPerm4);
-
-    // Capability discovery: now that onboarding is complete, tell the family
-    // what Evia can actually do in care-work terms, not a chatbot menu.
-    await sendMessage(chatId, buildHelpSmsReply("client", undefined,
-      languageFromSession(session as unknown as Record<string, unknown>)));
-
-    // Kick off matching
-    await kickOffClientMatching(phone, chatId);
-    return;
   }
 }
 
@@ -525,9 +350,10 @@ export async function updatePermissionFromText(
   chatId:   string,
   text:     string
 ): Promise<boolean> {
-  const permOptions = userType === "client"
-    ? "canSendWeeklyDigest (weekly summaries/digest), canSendHealthAlerts (health alerts), canBookAutomatically (auto-booking)"
-    : "canDeclineJobsAutomatically (auto-decline jobs), canSendArrivalNotifications (arrival notifications), canShareJournalWithFamily (share journal with family)";
+  // Caregiver-only (2026-09-23): the client permission questions were removed —
+  // the site has no equivalent setting, so clients fall through to the QA agent.
+  if (userType !== "caregiver") return false;
+  const permOptions = "canDeclineJobsAutomatically (auto-decline jobs), canSendArrivalNotifications (arrival notifications), canShareJournalWithFamily (share journal with family)";
 
   const raw = await askClaude(
     `The user is changing a notification or feature permission. ` +
@@ -548,7 +374,6 @@ export async function updatePermissionFromText(
   } catch { return false; }
 
   const validPerms: (keyof AgentPermissions)[] = [
-    "canSendWeeklyDigest", "canSendHealthAlerts", "canBookAutomatically",
     "canDeclineJobsAutomatically", "canSendArrivalNotifications", "canShareJournalWithFamily",
   ];
   const matched = validPerms.find(p => p === permission);
@@ -559,9 +384,6 @@ export async function updatePermissionFromText(
   await ref.set({ [matched]: newVal, updatedAt: new Date().toISOString() }, { merge: true });
 
   const friendly: Record<string, string> = {
-    canSendWeeklyDigest:         "weekly summaries",
-    canSendHealthAlerts:         "health alerts",
-    canBookAutomatically:        "automatic booking",
     canDeclineJobsAutomatically: "auto-declining jobs outside your availability",
     canSendArrivalNotifications: "arrival notifications",
     canShareJournalWithFamily:   "sharing journal entries with families",
@@ -570,8 +392,7 @@ export async function updatePermissionFromText(
   if (!newVal) {
     await sendMessage(chatId, `Got it. No more ${label}. Just text me if you change your mind.`);
   } else {
-    const resumeLabel = label.includes("book") ? "asking before booking" : `sending ${label} again`;
-    await sendMessage(chatId, `Sure thing. I'll go back to ${resumeLabel}.`);
+    await sendMessage(chatId, `Sure thing. I'll go back to ${label}.`);
   }
   return true;
 }

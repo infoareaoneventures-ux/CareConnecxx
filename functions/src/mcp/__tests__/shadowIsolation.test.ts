@@ -47,9 +47,9 @@ describe("shadow/dry-run isolation (U11)", () => {
   beforeEach(() => hoisted.reset());
 
   it("synthesizes a mutating tool under shadowMode with NO write", async () => {
-    const r = await handleToolCall("remove_family_member", { phone: "+1", seniorId: "s1", clientId: "c1", memberPhone: "+15551234567" }, true) as any;
+    const r = await handleToolCall("delete_memory_file", { phone: "+1", userId: "c1", file: "profile" }, true) as any;
     expect(r._shadow).toBe(true);
-    expect(r.simulated).toBe("remove_family_member");
+    expect(r.simulated).toBe("delete_memory_file");
     expect(hoisted.writes.length).toBe(0);
   });
 
@@ -65,7 +65,7 @@ describe("shadow/dry-run isolation (U11)", () => {
   });
 
   it("executes mutating tools normally when shadowMode is off (regression)", async () => {
-    const r = await handleToolCall("remove_family_member", { phone: "+1", seniorId: "s1", clientId: "c1", memberPhone: "+15551234567" }, false) as any;
+    const r = await handleToolCall("delete_memory_file", { phone: "+1", userId: "c1", file: "profile" }, false) as any;
     expect(r?._shadow).toBeUndefined();
   });
 
@@ -78,7 +78,7 @@ describe("shadow/dry-run isolation (U11)", () => {
     // audit lesson from 2026-07-06).
     expect(isReadOnlyTool("find_nearby_caregivers")).toBe(false);
     expect(isReadOnlyTool("get_callout_backups")).toBe(false);
-    expect(isReadOnlyTool("remove_family_member")).toBe(false);
+    expect(isReadOnlyTool("delete_memory_file")).toBe(false);
     expect(isReadOnlyTool("cancel_job_post")).toBe(false);
     expect(isReadOnlyTool("manage_booking")).toBe(false);
   });

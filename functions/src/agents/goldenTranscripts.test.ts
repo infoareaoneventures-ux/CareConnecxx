@@ -283,7 +283,7 @@ interface GoldenTranscript {
   seniorId?:   string;
   phone?:      string;
   chatId?:     string;
-  // Optional session overrides (e.g. isSecondaryMember for family-member tests).
+  // Optional session overrides (e.g. a caregiver-typed session).
   session?:    Record<string, unknown>;
   // Per-transcript Firestore doc overrides: path → data
   docs?:       Record<string, Record<string, unknown>>;
@@ -604,70 +604,6 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
   },
 
   {
-    name:        "messy-family-add-name-phone-acts",
-    description: "Family asks in messy SMS shorthand to add a sister and provides name + phone. Evia acts instead of re-asking.",
-    toolMocks: {
-      add_family_member: { success: true, added: true, name: "Jess", phone: "+15552223333", notification: { sent: true } },
-    },
-    claudeScript: [
-      { tools: [{ name: "add_family_member", input: { clientId: "u-1", seniorId: "s-1", name: "Jess", memberPhone: "+15552223333" } }] },
-      { text: "Done - I added Jess and texted her so she'll get Mom's updates too." },
-    ],
-    input: { text: "hey can u add my sis jess 555-222-3333 to moms updates pls" },
-    expect: {
-      replyContains:         ["Jess", "texted"],
-      replyNotContains:      ["what's her phone", "contact support"],
-      toolsCalled:           ["add_family_member"],
-      noListShape:           true,
-      noSupportDeflection:   true,
-      noGenericHelpAsk:      true,
-      oneQuestionAtATime:    true,
-    },
-  },
-
-  {
-    name:        "share-latest-update-to-new-family-member",
-    description: "Family asks to send the latest care update to a sister. Evia adds/invites the member and shares the latest care note without payment details.",
-    toolMocks: {
-      add_family_member:      { success: true, added: true, name: "Jess", phone: "+15552223333", notification: { sent: true }, groupSync: { success: true } },
-      get_care_journal_client: { entries: [{ summary: "Maria noted that Anita ate soup and took a short walk after lunch." }] },
-    },
-    claudeScript: [
-      {
-        tools: [
-          { name: "add_family_member", input: { seniorId: "s-1", name: "Jess", memberPhone: "+15552223333", clientId: "u-1" } },
-          { name: "get_care_journal_client", input: { clientId: "u-1" } },
-        ],
-      },
-      { text: "Done - I added Jess, texted her, and shared the latest note: Maria said Anita ate soup and took a short walk after lunch." },
-    ],
-    input: { text: "send the latest update to my sister jess 555-222-3333" },
-    expect: {
-      replyContains:    ["Jess", "latest note", "soup"],
-      replyNotContains: ["invoice", "billing", "payment", "approve"],
-      toolsCalled:      ["add_family_member", "get_care_journal_client"],
-      noListShape:      true,
-    },
-  },
-
-  {
-    name:        "messy-family-add-missing-phone-one-question",
-    description: "Family asks to add a brother without a phone number. Evia asks only for the missing phone number.",
-    claudeScript: [
-      { text: "Sure - what's Mike's phone number?" },
-    ],
-    input: { text: "can u add my brother mike to updates idk his number rn" },
-    expect: {
-      replyContains:       ["Mike", "phone"],
-      replyNotContains:    ["name and phone", "city", "anything else"],
-      toolsCalled:         [],
-      noListShape:         true,
-      oneQuestionAtATime:  true,
-      noGenericHelpAsk:    true,
-    },
-  },
-
-  {
     name:        "messy-worried-how-is-mom-uses-journal",
     description: "Family asks vaguely and anxiously how Mom is doing. Evia reads care journal instead of guessing.",
     toolMocks: {
@@ -817,17 +753,17 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
     name:        "messy-emergency-fall-creates-alert",
     description: "Family reports a fall in panic. Evia avoids medical advice, tells them to call emergency services if urgent, and creates an admin/safety alert.",
     toolMocks: {
-      create_support_ticket: { success: true, ticketId: "tick-fall-1" },
+      contact_support: { success: true, ticketId: "tick-fall-1" },
     },
     claudeScript: [
-      { tools: [{ name: "create_support_ticket", input: { category: "safety", priority: "urgent", description: "Family reports mom fell and needs urgent guidance." } }] },
+      { tools: [{ name: "contact_support", input: { category: "safety", priority: "urgent", description: "Family reports mom fell and needs urgent guidance." } }] },
       { text: "If Mom may be hurt or cannot get up safely, call 911 now. I flagged this as urgent here too - are you with her right now?" },
     ],
     input: { text: "mom fell omg what do i do???" },
     expect: {
       replyContains:           ["911", "urgent"],
       replyNotContains:        ["take her medication", "diagnose", "probably"],
-      toolsCalled:             ["create_support_ticket"],
+      toolsCalled:             ["contact_support"],
       noMedicationInstruction: true,
       noListShape:             true,
       oneQuestionAtATime:      true,
@@ -935,30 +871,6 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
     },
   },
 
-  {
-    name:        "secondary-family-what-can-you-do-no-payment-authority",
-    description: "Secondary family member asks what Evia can do. Reply surfaces care update/share recipes but NOT payment-approval authority (AE4).",
-    session: { isSecondaryMember: true },
-    claudeScript: [
-      { text: "I can catch you up on Mom's latest care update, pull up the next visit, or help route a request to add another family member." },
-    ],
-    input: { text: "what can you help me with?" },
-    expect: {
-      replyContains:    ["care update", "next visit"],
-      replyNotContains: [
-        "what can I help you with",
-        "how can I help",
-        "approve the payment",
-        "approve payments",
-        "approve a payment",
-        "approve the invoice",
-      ],
-      toolsCalled:      [],
-      noListShape:      true,
-      noGenericHelpAsk: true,
-    },
-  },
-
   // ── U8 / R14 — messy-human regression expansion ─────────────────────────────
   // Each transcript pins one invariant under realistic, messy SMS phrasing.
   // The scripted Claude reply represents the desired behavior; the assertions
@@ -986,29 +898,6 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       noSupportDeflection: true,
       noGenericHelpAsk:    true,
       oneQuestionAtATime:  true,
-    },
-  },
-
-  {
-    name:        "secondary-family-approve-payment-denied-AE4",
-    description: "Secondary family member replies APPROVE to a payment prompt. Evia does NOT approve; she explains the primary account holder must approve (AE4). No tool call that approves hours.",
-    session: { isSecondaryMember: true },
-    claudeScript: [
-      { text: "I can't approve payment from the family group - the primary account holder has to approve Maria's hours directly. I'll let them know it's waiting." },
-    ],
-    input: { text: "yes APPROVE the hours and pay maria" },
-    expect: {
-      replyContains:    ["primary account holder", "approve"],
-      replyNotContains: [
-        "approved Maria",
-        "submitted for payment",
-        "paid Maria",
-        "done - paid",
-        "all set, paid",
-      ],
-      toolsCalled:      [],
-      noListShape:      true,
-      noSupportDeflection: true,
     },
   },
 
@@ -1128,38 +1017,20 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
   },
 
   {
-    name:        "invited-sibling-says-hi-context-led",
-    description: "A newly invited sibling sends a bare hi. Evia answers with care-group context, not a generic helper prompt.",
-    session: { isSecondaryMember: true },
-    claudeScript: [
-      { text: "Hey - you're in Mom's care updates now. Maria's latest note says Mom ate lunch and took a short walk." },
-    ],
-    input: { text: "hi this is jess" },
-    expect: {
-      replyContains:       ["care updates", "Mom"],
-      replyNotContains:    ["what can I help", "how can I help", "feature", "menu"],
-      toolsCalled:         [],
-      noListShape:         true,
-      noGenericHelpAsk:    true,
-      noSupportDeflection: true,
-    },
-  },
-
-  {
     name:        "mixed-panic-medical-logistics-handles-safety-first",
     description: "Family mixes panic, medical uncertainty, and logistics. Evia prioritizes safety, creates the record, and asks one concrete question.",
     toolMocks: {
-      create_support_ticket: { success: true, ticketId: "tick-confused-1" },
+      contact_support: { success: true, ticketId: "tick-confused-1" },
     },
     claudeScript: [
-      { tools: [{ name: "create_support_ticket", input: { category: "safety", priority: "urgent", description: "Family reports sudden confusion and asks whether caregiver should still come." } }] },
+      { tools: [{ name: "contact_support", input: { category: "safety", priority: "urgent", description: "Family reports sudden confusion and asks whether caregiver should still come." } }] },
       { text: "Sudden confusion can be urgent. If this feels new or severe, call 911 now. I flagged it here too - is someone with Mom right now?" },
     ],
     input: { text: "mom is suddenly confused and maria comes at 3 should i cancel??" },
     expect: {
       replyContains:            ["urgent", "911", "flagged"],
       replyNotContains:         ["diagnose", "probably", "likely", "contact support", "the team will"],
-      toolsCalled:              ["create_support_ticket"],
+      toolsCalled:              ["contact_support"],
       noListShape:              true,
       noMedicationInstruction:  true,
       noGenericHelpAsk:         true,

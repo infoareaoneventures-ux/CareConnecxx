@@ -10,21 +10,6 @@ import { evaluateProactiveCap, MAX_PROACTIVE_PER_DAY, type ProactiveTally } from
 
 const db = admin.firestore();
 
-// Sources that route to the family group thread when groupChatId exists
-const GROUP_SOURCE_AGENTS = new Set([
-  "visit_summary",
-  "health_watch",
-  "emergency_replacement",
-  "arrival_notification",
-  "weekly_digest",
-  "shift_end_family_update",
-  "shift_task_family_update",
-  "pre_shift_checkin",
-  "shift_confirm_family_update",
-  "in_shift_update",
-  "in_shift_heartbeat",
-]);
-
 // ── AgentOutput — returned by execution agents, consumed by Interaction Agent ──
 
 export interface AgentOutput {
@@ -215,9 +200,7 @@ export async function sendViaInteractionAgent(
     return false;
   }
 
-  // Determine target chat (group thread for group-appropriate sources)
-  const useGroup = GROUP_SOURCE_AGENTS.has(output.sourceAgent) && !!(session as any).groupChatId;
-  const targetChatId = useGroup ? (session as any).groupChatId as string : session.chatId;
+  const targetChatId = session.chatId;
 
   const prefs = await getPreferences(phone);
 

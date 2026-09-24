@@ -283,11 +283,7 @@ export async function handleWebChatTurn(args: {
       const { buildHelpSmsReply } = await import("../agents/capabilityDiscovery");
       const { loadCaraOperationalContext, buildOperationalRecipeLead } =
         await import("../agents/operationalContext");
-      const role = session.userType === "caregiver"
-        ? ("caregiver" as const)
-        : session.isSecondaryMember
-          ? ("family-secondary" as const)
-          : ("client" as const);
+      const role = session.userType === "caregiver" ? ("caregiver" as const) : ("client" as const);
       const ops = await loadCaraOperationalContext({
         phone,
         userId:      session.userId as string | undefined,

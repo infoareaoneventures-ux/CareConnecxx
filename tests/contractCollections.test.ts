@@ -73,7 +73,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Observability / log streams (admin dashboards read some via direct
     // collection() in AuditDashboard, but they are not part of the contract
     // registry; they have their own rules and are server-write-only)
-    'agent_error_log', 'agent_event_log', 'agent_safety_log', 'agent_alerts_log',
+    'agent_error_log', 'agent_event_log', 'agent_safety_log',
     'agent_uncertainty_log', 'agent_tool_metrics',
     'caregiver_lateness_log', 'issue_log',
     // Idempotency / lock / dedup / rate-limit docs
@@ -97,10 +97,6 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Checkr MCP bridge OTP/session state (caregiver-only report tools,
     // 2026-07-09) — server-only, never read by the web.
     'checkr_mcp_sessions',
-    // In-shift caregiver→family update cadence/ledger state (2026-07-10) —
-    // server-only; families receive the updates over SMS, the web reads
-    // visits/shiftHours mirrors, not this.
-    'in_shift_updates',
     // Matching / scheduling internals (web reads the user-facing mirrors, not these)
     // (memory_embeddings/facts/learned_facts, proactive_triggers/user_triggers,
     // health_signals, and user_preferences moved to CONTRACT_COLLECTIONS as
@@ -111,7 +107,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Triggers / engagement internals
     'trigger_engagement',
     // Health / wellbeing analytics streams
-    'health_trends', 'health_summaries', 'wellbeing_checkins',
+    'wellbeing_checkins',
     'post_visit_feedback',
     // Family-satisfaction check-in replies (2026-09-06) — sentiment logging +
     // admin-alert escalation only; the web never reads this, families see
@@ -122,7 +118,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'billing_events', 'visit_billing', 'visit_payments', 'dispute_flags',
     // Misc internal config / metrics
     'system_config', 'experiment_scorecards', 'weekly_digests',
-    'wow_fires', '_meta',
+    '_meta',
     // Server-only request/workflow records the web does not read directly
     // ('blocks' + 'shift_swap_requests' moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
     'comments', 'client_cancel_requests', 'email_change_requests',
@@ -175,7 +171,7 @@ describe('Evia ↔ Web collection contract', () => {
         for (const required of [
             'users', 'caregivers', 'clientIntakes', 'senior_profiles', 'carePlans',
             'job_postings', 'job_posts', 'appointments', 'shiftHours', 'threads',
-            'support_tickets', 'admin_alerts', 'care_journal', 'proactive_drafts',
+            'admin_alerts', 'care_journal',
             'agent_audit_log', 'agent_action_ledger', 'pending_actions',
         ]) {
             expect(names, `contract.ts is missing '${required}'`).toContain(required);

@@ -1,16 +1,10 @@
 // U9 / KTD3 — CHARACTERIZATION TESTS for the CODED client intent router.
 //
 // Locks in the current behavior of `routeIntentAndRespond` (routeIntent.ts) for
-// the U9 candidate flows on the client side: family add / family remove. These
-// are the launch-critical coded state machines U9 may eventually migrate to
-// agent-composed tool flows — these tests are the safety net that proves a
-// migration preserves behavior. Production routing is NOT changed here.
-//
-// What each test pins (plan's R14-adjacent scenarios):
-//   • incomplete family-add input asks exactly ONE missing question
-//   • a partial family-add resumes from captured state (one question at a time)
-//   • the family-REMOVE confirmation gate FIRES and is not bypassed
-//   • a duplicate family-add inbound does not double-write (idempotency)
+// the coded client-side state machines — the safety net that proves any
+// migration to agent-composed tool flows preserves behavior. Production
+// routing is NOT changed here. (The family add / remove flows these tests
+// originally pinned were removed with the family-group feature, 2026-09-23.)
 //
 // Mock style follows routeClient.test.ts / caregiverReferral.test.ts: in-memory
 // Firestore, every collaborator stubbed, dynamic `handleToolCall` mocked so the
@@ -122,7 +116,7 @@ vi.mock("../../agents/intentClassifier", () => ({
     intent === "FIND_NEARBY_PROVIDER" && /\bcaregivers?\b/i.test(text),
 }));
 
-// `handleToolCall` is dynamically imported by the family add/remove branches.
+// `handleToolCall` is dynamically imported by several router branches.
 // Mock the whole mcp/server module so the real (heavy) registry never loads.
 const handleToolCall = vi.fn(async () => ({ success: true }));
 vi.mock("../../mcp/server", () => ({
@@ -172,7 +166,7 @@ vi.mock("../../memory/learnedFacts", () => ({
   confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
 }));
 vi.mock("../../agents/permissionsConversation", () => ({
-  updatePermissionFromText: vi.fn(async () => true), getPermissions: vi.fn(async () => ({ canBookAutomatically: false })),
+  updatePermissionFromText: vi.fn(async () => true),
 }));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../agents/jobPostingFlow", () => ({ startJobPostingFlow: vi.fn(async () => {}) }));
@@ -238,106 +232,6 @@ beforeEach(() => {
   runQuickReply.mockResolvedValue("");
   isTrivialQuickReply.mockReturnValue(false);
   persistCompletedTurn.mockResolvedValue({ ok: true, operationId: "op-1", sourceTurnKeyHash: "hash-1", deduplicated: false });
-});
-
-// ── R14: family-add incomplete input asks exactly ONE missing question ────────
-describe("characterization — ADD_FAMILY_MEMBER coded flow", () => {
-  it("asks for ONLY the phone when given a name first (one question at a time)", async () => {
-    seed();
-    classifyIntentDetailed.mockResolvedValue({ intent: "ADD_FAMILY_MEMBER", degraded: false });
-    // extractFamilyMember → name only, no phone.
-    quickComplete.mockResolvedValue('{"name":"Sarah","phone":null}');
-
-    await routeIntentAndRespond(ctx("add my sister Sarah"));
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith("chat1", "I can add them. What phone number should I use?");
-    // No tool executed yet — the flow is still collecting.
-    expect(handleToolCall).not.toHaveBeenCalled();
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingAddFamilyMember)
-      .toMatchObject({ name: "Sarah", phone: null });
-  });
-
-  it("resumes a partial add from session state and only then executes add_family_member", async () => {
-    // pendingAddFamilyMember already holds the name; this message supplies the phone.
-    seed({ pendingAddFamilyMember: { name: "Sarah", phone: null } });
-    quickComplete.mockResolvedValue('{"name":null,"phone":"+15552223333"}');
-
-    await routeIntentAndRespond(ctx("555-222-3333"));
-
-    // Both pieces now in hand → the coded path calls the add tool exactly once.
-    expect(handleToolCall).toHaveBeenCalledOnce();
-    expect(handleToolCall).toHaveBeenCalledWith("add_family_member", expect.objectContaining({
-      seniorId: SENIOR_ID, name: "Sarah", memberPhone: "+15552223333", clientId: CLIENT_ID,
-    }));
-    // Pending state cleared after success.
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingAddFamilyMember).toBeUndefined();
-  });
-
-  it("a secondary family member CANNOT add people (authority boundary holds)", async () => {
-    seed({ isSecondaryMember: true });
-    classifyIntentDetailed.mockResolvedValue({ intent: "ADD_FAMILY_MEMBER", degraded: false });
-
-    await routeIntentAndRespond(ctx("add my brother Tom 555-111-2222"));
-
-    expect(handleToolCall).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledWith("chat1", expect.stringContaining("only the primary account holder"));
-  });
-});
-
-// ── Confirmation gate for high-risk remove must FIRE, not be bypassed ─────────
-describe("characterization — REMOVE_FAMILY_MEMBER confirmation gate", () => {
-  it("surfaces a YES confirmation prompt when the tool returns _pending_action (gate fires)", async () => {
-    seed();
-    classifyIntentDetailed.mockResolvedValue({ intent: "REMOVE_FAMILY_MEMBER", degraded: false });
-    // Resolve a member by phone so the branch reaches the tool call.
-    quickComplete.mockResolvedValue('{"name":"Sarah","phone":"+15552223333"}');
-    // The remove tool gates the destructive action behind confirmation.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    handleToolCall.mockResolvedValue({ _pending_action: true } as any);
-
-    await routeIntentAndRespond(ctx("remove Sarah 555-222-3333"));
-
-    expect(handleToolCall).toHaveBeenCalledWith("remove_family_member", expect.objectContaining({
-      seniorId: SENIOR_ID, memberPhone: "+15552223333", clientId: CLIENT_ID,
-    }));
-    // The gate fired: the user is asked to reply YES; the removal is NOT reported as done.
-    expect(sendMessage).toHaveBeenCalledWith("chat1", expect.stringContaining("reply YES to confirm"));
-    const sentTexts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
-    expect(sentTexts.some(t => /has been removed/i.test(t))).toBe(false);
-  });
-
-  it("a secondary family member CANNOT remove people (authority boundary holds)", async () => {
-    seed({ isSecondaryMember: true });
-    classifyIntentDetailed.mockResolvedValue({ intent: "REMOVE_FAMILY_MEMBER", degraded: false });
-
-    await routeIntentAndRespond(ctx("remove Sarah 555-222-3333"));
-
-    expect(handleToolCall).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledWith("chat1", expect.stringContaining("only the primary account holder"));
-  });
-});
-
-// ── Duplicate inbound idempotency for the family-add path ─────────────────────
-describe("characterization — duplicate ADD_FAMILY_MEMBER inbound", () => {
-  it("a replayed completed add does NOT re-call add_family_member off stale pending state", async () => {
-    seed({ pendingAddFamilyMember: { name: "Sarah", phone: null } });
-    quickComplete.mockResolvedValue('{"name":null,"phone":"+15552223333"}');
-
-    // First (completing) delivery.
-    await routeIntentAndRespond(ctx("555-222-3333"));
-    expect(handleToolCall).toHaveBeenCalledOnce();
-
-    // The coded flow cleared pendingAddFamilyMember on success, so a duplicate
-    // delivery cannot resume the finished flow off stale pending state.
-    const session2 = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(session2.pendingAddFamilyMember).toBeUndefined();
-
-    // Replay with the cleared session and a non-add intent → no second add tool call.
-    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
-    await routeIntentAndRespond({ ...ctx("555-222-3333"), session: session2 });
-    expect(handleToolCall).toHaveBeenCalledOnce(); // still ONE, not two
-  });
 });
 
 // ── REBOOK_REQUEST (2026-09-17): the legacy appointments-based rebook path
@@ -692,26 +586,6 @@ describe("HIRE_CAREGIVER defers to the agent when caregiver context exists (2026
     expect(runQaAgent).toHaveBeenCalled();
   });
 
-  it("no caregiver context at all: HIRE_CAREGIVER still asks who (genuinely ambiguous)", async () => {
-    seed();
-    classifyIntentDetailed.mockResolvedValue({ intent: "HIRE_CAREGIVER", degraded: false });
-
-    await routeIntentAndRespond(ctx("hire her"));
-
-    expect(sendMessage).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Who would you like to hire"));
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("stale pendingMatches (past the TTL) and no shownCaregiverIds: HIRE_CAREGIVER still asks who", async () => {
-    const staleSetAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // 3h ago, TTL is 2h
-    seed({ pendingMatches, pendingMatchesSetAt: staleSetAt });
-    classifyIntentDetailed.mockResolvedValue({ intent: "HIRE_CAREGIVER", degraded: false });
-
-    await routeIntentAndRespond(ctx("book her"));
-
-    expect(sendMessage).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Who would you like to hire"));
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
 });
 
 // 2026-09-09 (live-caught): "cancel it" / "cancel that interview", asked

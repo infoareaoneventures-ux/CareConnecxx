@@ -337,24 +337,6 @@ export async function buildLiveCaregiverPermissionsFact(phone: string, session: 
   }
 }
 
-export async function buildLiveClientPermissionsFact(phone: string, session: AgentSession): Promise<string> {
-  try {
-    const s = await readFreshSession(phone, session);
-    const step = (s.onboardingStep ?? "") as string;
-    const pending =
-      step === "client_permissions_booking"  ? "whether Evia may book first visits after they approve a caregiver (always confirming first)" :
-      step === "client_permissions_autobook" ? "whether Evia may book recurring visits automatically with an already-approved caregiver" :
-      "whether Evia may reach out to caregivers on their behalf to schedule interviews";
-    return "LIVE STATUS RIGHT NOW: this family's setup and payment are COMPLETE and Evia is ready to search " +
-      "for caregivers. NOTHING else is missing; never invent missing setup items. The ONLY open item is a " +
-      `quick yes/no permission question: ${pending}. One-word YES or NO finishes setup, and they can change ` +
-      "it anytime by texting.";
-  } catch (e) {
-    console.warn("[buildLiveClientPermissionsFact] failed (fail-soft to static facts):", e);
-    return "";
-  }
-}
-
 // At caregiver_awaiting_bgcheck_consent both the bg-check builder (#5) and the
 // consent builder (#4) apply: run the bg-check one first (if they've authorized,
 // its Checkr state is the richer answer), fall back to the consent builder when
@@ -388,7 +370,4 @@ export const LIVE_GATE_FACT_BUILDERS: Record<string, (phone: string, session: Ag
   client_awaiting_identity:           buildLiveClientIdentityFact,
   caregiver_permissions_decline:      buildLiveCaregiverPermissionsFact,
   caregiver_permissions_arrival:      buildLiveCaregiverPermissionsFact,
-  client_permissions_contact:         buildLiveClientPermissionsFact,
-  client_permissions_booking:         buildLiveClientPermissionsFact,
-  client_permissions_autobook:        buildLiveClientPermissionsFact,
 };

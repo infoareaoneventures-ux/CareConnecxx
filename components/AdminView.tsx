@@ -7,9 +7,8 @@ import {
   Star, ClipboardList, BookOpen, ShieldCheck, BellRing, Sparkles, Flag,
 } from 'lucide-react';
 import { BloomMark } from './ui/BloomMark';
-import { SupportTicket, AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
+import { AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
 import { dbService } from '../services/api';
-import { TicketManager } from './admin/TicketManager';
 import { AdminShiftHoursMediation } from './payroll/AdminShiftHoursMediation';
 import { MatchingDashboard } from './admin/MatchingDashboard';
 import { AssignmentManager } from './admin/AssignmentManager';
@@ -23,7 +22,6 @@ import { CaregiverVerificationDashboard } from './admin/CaregiverVerificationDas
 import { CoordinatorManagement } from './admin/CoordinatorManagement';
 import { AdminBlogManager } from './admin/AdminBlogManager';
 import { AuditTrail } from './admin/AuditTrail';
-import { ProactiveReflectionDashboard } from './admin/ProactiveReflectionDashboard';
 import { AdminAlertsPanel } from './admin/AdminAlertsPanel';
 import { AdminCaraControlRoom } from './admin/AdminCaraControlRoom';
 import { AdminReports } from './admin/AdminReports';
@@ -35,8 +33,8 @@ interface AdminViewProps {
 type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
-  | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog' | 'audit'
-  | 'cara_control' | 'proactive_drafts' | 'alerts' | 'reports';
+  | 'finance' | 'disputes' | 'messages' | 'blog' | 'audit'
+  | 'cara_control' | 'alerts' | 'reports';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -84,7 +82,6 @@ const StatusBadge = ({ status }: { status: string }) => {
 
 export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const [stats, setStats] = useState({ users: 0, clients: 0, caregivers: 0, appointments: 0, revenue: 0 });
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [pendingCaregivers, setPendingCaregivers] = useState<Caregiver[]>([]);
   const [intakeLeads, setIntakeLeads] = useState<ClientIntakeData[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>('overview');
@@ -107,11 +104,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         setPendingCaregivers(pending as Caregiver[]);
       }
     })();
-  }, []);
-
-  useEffect(() => {
-    const unsub = dbService.subscribeToTickets(setTickets);
-    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -170,7 +162,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   };
 
   const pendingLeadsCount = intakeLeads.filter(l => l.status === 'pending').length;
-  const openTicketsCount = tickets.filter(t => t.status === 'open').length;
 
   const filteredLeads = intakeLeads.filter(l =>
     !searchQuery ||
@@ -203,7 +194,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       items: [
         { id: 'finance' as TabId, label: 'Invoicing', icon: DollarSign },
         { id: 'disputes' as TabId, label: 'Shift Disputes', icon: AlertCircle },
-        { id: 'tickets' as TabId, label: 'Support', icon: MessageSquare, badge: openTicketsCount },
         { id: 'alerts' as TabId, label: 'Alerts', icon: BellRing, badge: openAlertsCount },
         { id: 'messages' as TabId, label: 'Messages', icon: MessageSquare },
       ],
@@ -218,7 +208,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       label: 'AI Review',
       items: [
         { id: 'cara_control' as TabId, label: 'Evia Control', icon: Sparkles, badge: caraOpsCount },
-        { id: 'proactive_drafts' as TabId, label: 'Evia Drafts', icon: HeartHandshake },
       ],
     },
     {
@@ -234,7 +223,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'cara_control', 'proactive_drafts', 'reports'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'cara_control', 'reports'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -330,7 +319,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'messages'     && <AdminMessages />}
             {activeTab === 'blog'         && <AdminBlogManager />}
             {activeTab === 'cara_control' && <AdminCaraControlRoom onShowToast={showToast} onNavigate={(tab) => setActiveTab(tab as TabId)} />}
-            {activeTab === 'proactive_drafts' && <ProactiveReflectionDashboard onShowToast={(msg) => showToast(msg)} />}
             {activeTab === 'reports'      && <AdminReports />}
           </div>
         ) : (
@@ -401,31 +389,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
                     ))}
                   </div>
 
-                  {/* Open Tickets */}
-                  <div className="bg-white rounded-xl border border-slate-200 p-5">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold text-slate-900 text-sm">Open Tickets</h3>
-                      <button onClick={() => setActiveTab('tickets')} className="text-xs text-primary-600 hover:text-primary-700 font-medium">
-                        View all →
-                      </button>
-                    </div>
-                    {tickets.filter(t => t.status === 'open').length === 0 ? (
-                      <div className="text-center py-6">
-                        <MessageSquare className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-                        <p className="text-sm text-slate-400">No open tickets</p>
-                      </div>
-                    ) : tickets.filter(t => t.status === 'open').slice(0, 4).map(t => (
-                      <button key={t.id} onClick={() => setActiveTab('tickets')} className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors text-left mb-1">
-                        <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center shrink-0">
-                          <MessageSquare className="w-4 h-4 text-slate-400" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-slate-900 text-sm truncate">{t.subject}</p>
-                          <p className="text-xs text-slate-500 capitalize">{t.priority} priority</p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
                 </div>
               </>
             )}
@@ -513,10 +476,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {/* ── FINANCE ─────────────────────────────── */}
             {activeTab === 'finance' && <InvoicingTab />}
 
-            {/* ── TICKETS ──────────────────────────────── */}
-            {activeTab === 'tickets' && (
-              <TicketManager onShowToast={(msg, type) => { if (type === 'error') showToast(msg); }} />
-            )}
 
             {/* ── SYSTEM ALERTS ────────────────────────── */}
             {activeTab === 'alerts' && (

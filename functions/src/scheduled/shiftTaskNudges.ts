@@ -145,7 +145,7 @@ export const sendShiftTaskNudges = functions.pubsub
         const sessionSnap = await db.collection("agent_sessions").doc(cgPhone).get();
         if (sessionSnap.exists) {
           const s = sessionSnap.data() as any;
-          if (s.awaitingCareNotes || s.awaitingLateMinutes || s.awaitingIssueDescription || s.awaitingInShiftUpdate) continue;
+          if (s.awaitingCareNotes || s.awaitingLateMinutes || s.awaitingIssueDescription) continue;
         }
 
         const clientId = (appt.clientId ?? "") as string;

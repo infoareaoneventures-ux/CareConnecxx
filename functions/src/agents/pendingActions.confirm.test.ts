@@ -30,7 +30,7 @@ describe("isConfirmedActionValid", () => {
   });
 
   it("rejects a tool-name mismatch", () => {
-    expect(isConfirmedActionValid(base, "remove_family_member", "+15550001111", NOW)).toBe(false);
+    expect(isConfirmedActionValid(base, "cancel_job_post", "+15550001111", NOW)).toBe(false);
   });
 
   it("rejects an expired action", () => {

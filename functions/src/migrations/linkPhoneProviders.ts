@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 
 const db = admin.firestore();
 
-// Same normalization rule as the Linq pipeline (routeIntent.normalizeE164):
+// Same normalization rule the Linq pipeline uses for inbound phones:
 // 10 digits → +1XXXXXXXXXX; 11 starting with 1 → +XXXXXXXXXXX; already-+ kept.
 function normalizeE164(raw: string | null | undefined): string | null {
   if (!raw) return null;

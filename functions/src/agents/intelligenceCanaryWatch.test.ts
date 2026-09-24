@@ -74,13 +74,4 @@ describe("intelligenceCanaryWatch (U12 hold signals)", () => {
     expect(result.signals).toHaveLength(0);
   });
 
-  it("weak-evidence health drafts alert at threshold", async () => {
-    hoisted.state.ledger = [];
-    hoisted.state.drafts = Array.from({ length: 3 }, () => ({
-      createdAt: now.toISOString(), category: "health", evidenceCount: 1,
-    }));
-    hoisted.state.alerts.clear();
-    const result = await runIntelligenceCanarySweep(now);
-    expect(result.signals[0]).toMatchObject({ signal: "weak_evidence_health_drafts", count: 3 });
-  });
 });

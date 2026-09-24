@@ -12,7 +12,6 @@ const runtimeFiles = [
   "functions/src/linq/routeClient.ts",
   "functions/src/linq/routeCaregiver.ts",
   "functions/src/linq/webhooks.ts",
-  "functions/src/agents/familyGroupManager.ts",
   "functions/src/agents/instantPayoutHandler.ts",
   "functions/src/agents/humanReply.ts",
   "functions/src/agents/stepHandler.ts",

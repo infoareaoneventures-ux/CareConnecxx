@@ -51,16 +51,13 @@ describe("checkClientAccess — the site's rule", () => {
   it("identity first: an unverified family is blocked on identity even with an active membership", async () => {
     hoisted.docState.set(`users/${UID}`, { membershipStatus: "active" });
     expect(await checkClientAccess(UID, "booking")).toEqual({ ok: false, block: "identity" });
-    expect(hoisted.sets).toHaveLength(0); // no paywall signal on an identity block (site: only the membership branch writes it)
+    expect(hoisted.sets).toHaveLength(0); // the gate only reads — no writes on a block
   });
 
-  it("membership second: verified but lapsed is blocked and records the site's paywall-view signal", async () => {
+  it("membership second: verified but lapsed is blocked (no paywall-view stamp — removed with the win-back job, 2026-09-23)", async () => {
     hoisted.docState.set(`users/${UID}`, { identityCheckStatus: "verified", membershipStatus: "canceled" });
     expect(await checkClientAccess(UID, "booking", "Basra")).toEqual({ ok: false, block: "membership" });
-    expect(hoisted.sets).toHaveLength(1);
-    expect(hoisted.sets[0].opts).toEqual({ merge: true });
-    expect(hoisted.sets[0].data.paywallContext).toEqual({ caregiverName: "Basra", action: "booking" });
-    expect(typeof hoisted.sets[0].data.lastPaywallViewedAt).toBe("string");
+    expect(hoisted.sets).toHaveLength(0);
   });
 
   it.each([

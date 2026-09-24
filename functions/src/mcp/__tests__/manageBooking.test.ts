@@ -361,7 +361,6 @@ describe("request_schedule_amendment", () => {
       bookingRequestId: "br1", clientId: CLIENT, date: "2026-09-07", startTime: "14:00", endTime: "16:00",
     }) as any;
     expect(r.code).toBe("MEMBERSHIP_REQUIRED");
-    expect(hoisted.docState.get(`users/${CLIENT}`)?.paywallContext).toEqual({ caregiverName: "Alice", action: "booking" });
   });
 
   it("writes a booking_amendments doc matching the site's add_recurring_days shape", async () => {

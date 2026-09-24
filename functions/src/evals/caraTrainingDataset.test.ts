@@ -14,10 +14,8 @@ describe("Evia training dataset", () => {
 
     const intents = new Set(STARTER_CARA_TRAINING_EXAMPLES.map((example) => example.labels.intent));
     for (const intent of [
-      "family_member_add",
       "recipe_discovery_context",
       "visit_confirmation",
-      "share_latest_update",
       "caregiver_shift_closeout",
       "safety_emergency",
       "medical_boundary",
@@ -41,7 +39,6 @@ describe("Evia training dataset", () => {
       "send_caregiver_message",
       "find_nearby_caregivers",
       "get_care_journal_client",
-      "add_family_member",
       "review_shift_hours",
       "complete_shift",
       "submit_shift_hours",

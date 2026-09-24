@@ -22,14 +22,6 @@ export type AuditEventType =
   | "review_submitted"
   | "subscription_cancelled"
   | "subscription_reactivated"
-  | "family_member_added"
-  | "family_member_invited"
-  | "family_member_welcome_sent"
-  | "family_member_welcome_failed"
-  | "family_group_created"
-  | "family_group_participant_added"
-  | "family_group_participant_add_failed"
-  | "family_member_removed"
   | "care_update_shared"
   | "referral_invited"
   | "senior_profile_updated"
@@ -96,7 +88,6 @@ export type AuditEventType =
   | "standard_payout_requested"
   // CRUD-completeness tools (mcp/server.ts, 2026-07-03)
   | "senior_profile_archived"
-  | "family_member_updated"
   | "interview_cancelled"
   | "interview_rescheduled"
   | "interview_reschedule_accepted"
@@ -126,13 +117,9 @@ export type AuditEventType =
   | "support_ticket_updated"
   | "match_feedback_logged"
   | "job_post_created"
-  | "proactive_draft_cancelled"
   | "shift_payment_retried"
   | "booking_payment_method_updated"
   | "journal_comment_edited"
-  // U8 review callable (plan 2026-07-18-001)
-  | "proactive_draft_approved"
-  | "proactive_draft_rejected"
   // Evia booking-pipeline parity (2026-08-30): shifts/booking_requests now
   // mirror the website's own collections, so these mirror its actions too.
   | "booking_request_cancelled"

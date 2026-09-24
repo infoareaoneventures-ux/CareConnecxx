@@ -19,7 +19,6 @@ const IdentityCallback = lazy(() => import('./components/client/IdentityCallback
 const CaregiverDashboard = lazy(() => import('./components/CaregiverDashboard').then(module => ({ default: module.CaregiverDashboard })));
 const AdminView = lazy(() => import('./components/AdminView').then(module => ({ default: module.AdminView })));
 const AuditDashboard = lazy(() => import('./components/admin/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
-const JoinFamilyPage = lazy(() => import('./components/pages/JoinFamilyPage'));
 const ClientConnectPage = lazy(() => import('./components/client/ClientConnectPage').then(m => ({ default: m.ClientConnectPage })));
 const CaregiverConnectPage = lazy(() => import('./components/caregiver/CaregiverConnectPage').then(m => ({ default: m.CaregiverConnectPage })));
 const CaregiverProfile = lazy(() => import('./components/CaregiverProfile').then(module => ({ default: module.CaregiverProfile })));
@@ -52,7 +51,6 @@ const HelpCenter = lazy(() => import('./components/HelpCenter').then(module => (
 const HelpPage = lazy(() => import('./components/HelpPage').then(module => ({ default: module.HelpPage })));
 const BlogPage        = lazy(() => import('./components/pages/BlogPage').then(module => ({ default: module.BlogPage })));
 const CityPage        = lazy(() => import('./components/pages/CityPage').then(module => ({ default: module.CityPage })));
-const HealthSummaryPage   = lazy(() => import('./components/pages/HealthSummaryPage'));
 const IMessageSignupPage  = lazy(() => import('./components/landing/IMessageSignupPage'));
 const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage'));
 const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
@@ -337,7 +335,6 @@ const AppContent: React.FC = () => {
           <Route path="/bgcheck"            element={<BgcheckConsentPage />} />
           <Route path="/bgcheck-direct"     element={<BgcheckConsentPage />} />
           <Route path="/done"               element={<GenericSuccessPage />} />
-          <Route path="/health-summary/:token" element={<ErrorBoundary><HealthSummaryPage /></ErrorBoundary>} />
           <Route path="/family-faq" element={<FamilyFAQ onNavigate={handleNavigation} />} />
           <Route path="/help" element={<HelpCenter onNavigate={handleNavigation} />} />
           <Route path="/help/families" element={<HelpPage section="families" onNavigate={handleNavigation} />} />
@@ -435,7 +432,6 @@ const AppContent: React.FC = () => {
 
           <Route path="/admin" element={<AdminRoute element={<AdminView onBack={() => navigate('/')} />} />} />
           <Route path="/admin/audit" element={<AdminRoute element={<AuditDashboard />} />} />
-          <Route path="/join" element={<JoinFamilyPage />} />
           <Route path="/terms" element={<TermsOfServicePage />} />
           <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/stripe/callback" element={<StripeCallback onNavigate={handleNavigation} />} />

@@ -10,7 +10,7 @@ export type Capability =
   | "scheduling"   // recurring care, reminders, availability
   | "billing"      // invoices, payouts, refunds, payment methods, timesheets
   | "care_plan"    // care plan + journal + health + profiles
-  | "messaging"    // family/caregiver messaging, family group, communication
+  | "messaging"    // family/caregiver messaging, communication
   | "memory_search"; // memory files, web search, credentials, external lookups
 
 // Tools tagged with the capability buckets they belong to. Tools NOT listed
@@ -102,12 +102,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   remove_care_recipient:     ["care_plan"],
   set_recipient_photo:       ["care_plan"],
   // U7
-  delete_review:             ["booking"],
-  log_match_feedback:        ["booking"],
   create_job_post:           ["booking"],
-  list_proactive_drafts:     ["scheduling"],
-  cancel_proactive_draft:    ["scheduling"],
-  edit_review:               ["booking"],
   cancel_followup:           ["scheduling"],
   update_caregiver_profile:  ["care_plan"],
   pause_account:             ["scheduling"],
@@ -131,25 +126,18 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   verify_checkr_otp:           ["care_plan"],
   get_checkr_report:           ["care_plan"],
 
-  // ── messaging (family group, contact prefs, safety) ─────────────────────
+  // ── messaging (contact prefs, safety) ─────────────────────
   send_caregiver_message:           ["messaging"],
   send_client_message:              ["messaging"],
   create_caregiver_referral:        ["messaging", "booking"],
   get_recent_messages:              ["messaging"],
-  get_family_group:                 ["messaging"],
-  add_family_member:                ["messaging"],
-  remove_family_member:             ["messaging"],
   update_preferences:               ["messaging"],
-  set_visit_update_frequency:       ["messaging"],
   request_email_change:             ["messaging"],
   set_block_status:                 ["messaging"],
   delete_conversation:              ["messaging"],
   mark_messages_read:               ["messaging"],
-  get_support_tickets:              ["messaging"],
 
   // ── CRUD/parity gap closures (agent-native audit 2026-07) ───────────────
-  archive_senior_profile: ["care_plan"],
-  update_family_member:   ["messaging"],
   list_interviews:            ["booking"],
   cancel_interview:           ["booking"],
   reschedule_interview:       ["booking"],
@@ -168,7 +156,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // Note: untagged tools are "core" and always included.
   // Core tools:
   //   get_senior_profile, list_household_seniors, get_pending_tasks,
-  //   suggest_upcoming_care, get_care_team, create_support_ticket,
+  //   get_care_team,
   //   resume_execution_agent, send_onboarding_link
 };
 
@@ -178,15 +166,7 @@ export const CORE_TOOL_NAMES = new Set<string>([
   "get_senior_profile",
   "list_household_seniors",
   "get_pending_tasks",
-  "suggest_upcoming_care",
   "get_care_team",
-  "create_support_ticket",
-  // U7: support-ticket read/lifecycle — like create_support_ticket, these can
-  // be needed under many intents (a status check mid-conversation), so they're
-  // core rather than bucket-filtered.
-  "get_support_ticket",
-  "list_support_tickets",
-  "update_support_ticket",
   "resume_execution_agent",
   "write_todos",
   "cara_knows",
@@ -211,10 +191,6 @@ export const CORE_TOOL_NAMES = new Set<string>([
   // and never filtered out by intent, so a family reporting an urgent situation
   // can always reach it.
   "trigger_emergency_alert",
-  // Parity: referral send/status don't map to a logistics bucket and are
-  // low-risk; keep them always-available rather than guessing an intent.
-  "send_referral",
-  "get_referral_status",
   // Outbound iMessage tapback (Linq reactions, 2026-07): an expressive,
   // intent-orthogonal nicety — Evia may want to heart a photo or thumbs-up a
   // confirmation under ANY intent, so it must never be filtered out.
@@ -231,7 +207,7 @@ export const CORE_TOOL_NAMES = new Set<string>([
 //   • For composite flows (cancel + notify, swap + reschedule), include all
 //     plausible capabilities even if one is the "primary" intent.
 //   • UPDATE_ONBOARDING is unfiltered because it touches profile, schedule,
-//     family group, and care plan all at once.
+//     and care plan all at once.
 export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   // Broad / fall-through intents — no filter
   STOP:                 [],
@@ -241,9 +217,6 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   UPDATE_ONBOARDING:    [],
   PERMISSION_UPDATE:    ["messaging"],
 
-  // Family group
-  ADD_FAMILY_MEMBER:    ["messaging"],
-  REMOVE_FAMILY_MEMBER: ["messaging"],
 
   // Booking & matching
   REBOOK_REQUEST:        ["booking"],
@@ -320,7 +293,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "set_subscription_status",
   "request_instant_payout", "retry_shift_payment",
   // people & safety
-  "add_family_member", "remove_family_member", "set_block_status",
+  "set_block_status",
   // care data
   "update_care_plan",
   "create_care_journal_entry",
@@ -335,7 +308,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // CRUD/parity gap closures (agent-native audit 2026-07) — falsely reporting
   // an archive, member edit, interview cancel, or memory delete as done
   // would be believed and acted on.
-  "archive_senior_profile", "update_family_member", "cancel_interview",
+  "cancel_interview",
   "reschedule_interview", "accept_interview_reschedule",
   "delete_memory_file", "remove_care_recipient",
   // Booking-pipeline parity (2026-08-30) — cancelling/resending a booking or

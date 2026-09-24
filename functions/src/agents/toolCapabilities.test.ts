@@ -83,14 +83,6 @@ describe("selectToolsForIntent", () => {
     expect(filtered.has("schedule_interview")).toBe(false);
   });
 
-  it("includes messaging tools for ADD_FAMILY_MEMBER", () => {
-    const filtered = names(selectToolsForIntent(MCP_TOOLS, "ADD_FAMILY_MEMBER"));
-    expect(filtered.has("add_family_member")).toBe(true);
-    expect(filtered.has("get_family_group")).toBe(true);
-    expect(filtered.has("send_caregiver_message")).toBe(true);
-    expect(filtered.has("get_pending_timesheets")).toBe(false);
-  });
-
   it("ALWAYS includes core tools regardless of intent", () => {
     // Core tools must be present even for narrow intents like VIEW_INVOICE
     // where they're not part of the matched capability bucket.
@@ -98,7 +90,6 @@ describe("selectToolsForIntent", () => {
     expect(filtered.has("get_senior_profile")).toBe(true);
     expect(filtered.has("get_pending_tasks")).toBe(true);
     expect(filtered.has("resume_execution_agent")).toBe(true);
-    expect(filtered.has("create_support_ticket")).toBe(true);
   });
 
   it("includes booking + messaging for HIRE_CAREGIVER (compound flow)", () => {
@@ -202,9 +193,7 @@ describe("LAUNCH_ACTION_PARITY", () => {
     "get_senior_profile",
     "list_household_seniors",
     "get_pending_tasks",
-    "suggest_upcoming_care",
     "get_care_team",
-    "create_support_ticket",
     "resume_execution_agent",
     "write_todos",
     "cara_knows",

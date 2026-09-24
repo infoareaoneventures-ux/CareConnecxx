@@ -67,14 +67,13 @@ export const sendStaleSessionNudges = functions.pubsub
 
     // ── Auto-complete sessions stuck at a permissions step for 7+ days ────────
     // The permission questions are optional yes/no setup that runs AFTER the
-    // real onboarding is done (caregiver: bg check cleared + payouts live;
-    // client: payment landed) — but the router consumes EVERY inbound text
+    // real caregiver onboarding is done (bg check cleared + payouts live; the
+    // client questions were removed 2026-09-23) — but the router consumes EVERY inbound text
     // while onboardingStep is a permissions step, so a session stuck here
     // blocks all of Evia's normal features indefinitely. After 7 days: default
     // the unanswered permissions OFF, mark complete, and tell them they're set.
     const PERMISSION_STEPS = [
       "caregiver_permissions_decline", "caregiver_permissions_arrival",
-      "client_permissions_contact", "client_permissions_booking", "client_permissions_autobook",
     ];
     const permSnap = await db.collection("agent_sessions")
       .where("onboardingStep", "in", PERMISSION_STEPS)
@@ -89,20 +88,16 @@ export const sendStaleSessionNudges = functions.pubsub
 
       try {
         const step     = session.onboardingStep as string;
-        const userType = step.startsWith("caregiver") ? ("caregiver" as const) : ("client" as const);
-        const userId   = ((userType === "caregiver" ? session.caregiverId : session.userId) ?? doc.id) as string;
+        const userType = "caregiver" as const;
+        const userId   = (session.caregiverId ?? doc.id) as string;
         const { finalizePermissionsWithDefaults } = await import("../agents/permissionsConversation");
         await finalizePermissionsWithDefaults(doc.id, session.chatId as string, userType, userId, step);
 
         const message = await generateCaraMessage({
-          audience: userType === "caregiver" ? "caregiver" : "family",
+          audience: "caregiver",
           language: session.preferredLanguage === "es" ? "es" : "en",
-          context: userType === "caregiver"
-            ? "This caregiver's profile is complete and live, but they never answered the optional yes/no setup questions, so Evia has left those auto-settings OFF and finished setup for them. Tell them warmly: they're all set, their profile is live, and they can turn on auto-declining jobs or arrival notifications anytime by texting. Never claim anything is missing or unfinished."
-            : "This family's setup is complete, but they never answered the optional yes/no permission questions, so Evia has left those settings off (Evia will always check with them first) and finished setup. Tell them warmly they're all set and Evia is finding caregivers now; they can change any setting anytime by texting.",
-          fallback: userType === "caregiver"
-            ? "You're all set — your profile is live! I've left the optional auto-settings off for now; text me anytime to change them."
-            : "You're all set! I've left the optional settings off for now (I'll always check with you first) and I'm finding caregivers for you. Text me anytime to change anything.",
+          context: "This caregiver's profile is complete and live, but they never answered the optional yes/no setup questions, so Evia has left those auto-settings OFF and finished setup for them. Tell them warmly: they're all set, their profile is live, and they can turn on auto-declining jobs or arrival notifications anytime by texting. Never claim anything is missing or unfinished.",
+          fallback: "You're all set — your profile is live! I've left the optional auto-settings off for now; text me anytime to change them.",
           maxTokens: 120,
         });
         await sendViaInteractionAgent(doc.id, {
@@ -251,12 +246,6 @@ export const sendStaleSessionNudges = functions.pubsub
           } else if (step === "client_ask_schedule") {
             context = `${firstName || "This family member"} stalled before telling you how often they need care. Warmly nudge: once you know the schedule you'll start searching for caregivers.`;
             fallback = `${greeting} Almost there. Just need to know how often you need care and I'll start searching for caregivers.`;
-          } else if (step === "client_permissions_contact" || step === "client_permissions_booking" || step === "client_permissions_autobook") {
-            // Setup and payment are DONE at this point — only the yes/no
-            // permission questions gate sending matches. Never imply their
-            // setup is unfinished.
-            context = `${firstName || "This family member"}'s setup and payment are COMPLETE — Evia is ready to search for caregivers. NOTHING else is missing; never say their setup is unfinished. All that's left is a quick yes/no permission question Evia already asked. Warmly invite a quick yes or no so caregiver matches can go out — one word finishes setup, and they can change it anytime. Never write a stiff "Reply YES or NO" instruction.`;
-            fallback = `${greeting} You're all set except one quick question — a quick yes or no to my last text and I'll get your caregiver matches moving.`;
           } else {
             context = `${firstName || "This family member"} stalled partway through getting set up. Send a short, warm nudge inviting them to reply whenever they're ready and you'll pick up where you left off.`;
             fallback = `${greeting} I'm here whenever you're ready to continue.\n\nJust reply and I'll pick up where we left off.`;

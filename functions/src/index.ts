@@ -119,26 +119,16 @@ export { recomputeConfidenceScore } from './triggers/confidenceScoreTrigger';
 export { projectActivityFeed } from './triggers/projectActivityFeed';
 export { projectSwapRequestSummary, projectSwapOfferSummary } from './triggers/projectSwapSummary';
 
-// Linq Sprint 3 — family group thread
-export { createFamilyGroup, addFamilyGroupMember } from './agents/familyGroupManager';
 
 // Token-scoped quick-confirm callable (replaces the QuickConfirmPage direct web
 // writes to agent_tasks / agent_approvals).
 
-// Linq Sprint 4 — weekly digest + monthly health trends
+// Linq Sprint 4 — weekly digest
 export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
-export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/healthTrends';
 
-// Linq proactive — no-visit check-in (daily 9am ET)
-
-// Sprint 4 — proactive reflection (hourly, drafts only, admin-review-first)
-export { runProactiveReflection, triggerProactiveReflectionNow } from './scheduled/proactiveReflection';
+// Objective ledger sweep + intelligence canary
 export { sweepExpiredObjectives } from './scheduled/objectiveExpirySweeper';
 export { intelligenceCanaryWatch } from './agents/intelligenceCanaryWatch';
-
-// Proactive draft sender — every 5 min; consumes status="approved" drafts the admin reviewed.
-export { runProactiveDraftSender, triggerProactiveDraftSendNow, sendApprovedDraftNow } from './scheduled/proactiveDraftSender';
-export { reviewProactiveDraft } from './admin/reviewProactiveDraft';
 
 // Transportation badge evaluation (daily) + on-demand refresh
 export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';
@@ -165,14 +155,10 @@ export {
 export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
 export { sendMorningBriefings } from './scheduled/morningBriefing';
 export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
-export { familySilenceCheckinJob } from './scheduled/familySilenceCheckin';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
 export { memoryOperationWorker } from './scheduled/memoryOperationWorker';
-export { wowMomentsDaily } from './scheduled/wowMomentsJob';
 export { experimentScorecardWeekly } from './scheduled/experimentScorecard';
-export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
 export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
-export { sendInShiftUpdates } from './scheduled/inShiftUpdate';
 // Grouped family texts for tasks checked off / visit notes during a visit (minute sweep).
 export { flushFamilyVisitUpdates } from './scheduled/flushFamilyVisitUpdates';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
@@ -190,7 +176,6 @@ export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
 export { expireAccountRecoveryRequests } from './scheduled/accountRecoveryExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
 export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
-export { sendPaywallWinback } from './scheduled/paywallWinback';
 export { checkBackgroundCheckExpiry } from './scheduled/backgroundCheckExpiry';
 export { wellbeingCheckinJob } from './scheduled/wellbeingCheckin';
 export { dispatchBillingApprovalNotices } from './billing/approvalNoticeDispatcher';
@@ -204,7 +189,7 @@ export { listAdminAlerts, resolveAdminAlert, getAlertStats } from './adminAlerts
 // Admin execution callables (U3) — admin-gated exception handling
 export { admin_review_caregiver_exception, admin_review_document } from './admin/adminCaregiverActions';
 export { admin_suspend_user, admin_restore_user } from './admin/adminUserActions';
-export { admin_respond_support_ticket, admin_resolve_dispute, admin_review_invoice_exception } from './admin/adminSupportActions';
+export { admin_resolve_dispute, admin_review_invoice_exception } from './admin/adminSupportActions';
 export { admin_retry_agent_action } from './admin/adminLedgerActions';
 
 // Control Room executable recovery callables (U4) — backend-backed retry,
@@ -276,9 +261,6 @@ export { sendInterviewFeedbackNudges } from './scheduled/interviewFeedbackNudge'
 
 // BOOKING FOLLOW-UP NUDGE (every 15min — a 'strong' fit decision with no real booking started yet gets followed up)
 export { sendBookingFollowupNudges } from './scheduled/bookingFollowupNudge';
-
-// FIRST-VISIT ACTIVATION (daily 3pm — offers to help families who onboarded but never booked)
-export { sendFirstVisitActivation } from './scheduled/firstVisitActivation';
 
 // GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
 export { submitGpsCheckin } from './agents/gpsCheckin';

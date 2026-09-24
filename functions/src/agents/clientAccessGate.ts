@@ -10,8 +10,7 @@
 // SMS the "modal" is one text with the modal's copy followed by the same CTA
 // the modal offers — the Stripe Identity link, or the membership checkout link
 // (sendOnboardingLink "client_identity" / "client_payment", the links Evia
-// already mints during onboarding). A membership block also records the site's
-// paywall-view signal (lastPaywallViewedAt + paywallContext) for the win-back job.
+// already mints during onboarding).
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { appLink } from "../config/appUrl";
@@ -36,17 +35,7 @@ export async function checkClientAccess(
   const snap = await db.collection("users").doc(clientId).get();
   const u = (snap.exists ? snap.data() : undefined) ?? {};
   if (u.identityCheckStatus !== "verified") return { ok: false, block: "identity" };
-  if (!isClientMembershipActive(u)) {
-    // The site's paywall-view signal (useAccessGates.tsx) — same fields, merge write.
-    // Best-effort, like the site's own `.catch(() => {})` — never blocks the gate itself.
-    try {
-      await db.collection("users").doc(clientId).set({
-        lastPaywallViewedAt: new Date().toISOString(),
-        paywallContext: { caregiverName: caregiverName ?? null, action },
-      }, { merge: true });
-    } catch { /* signal only */ }
-    return { ok: false, block: "membership" };
-  }
+  if (!isClientMembershipActive(u)) return { ok: false, block: "membership" };
   return { ok: true };
 }
 

@@ -61,7 +61,6 @@ describe("formatCaraOperationalContext", () => {
       clientState: {
         nextAppointment: "appt-2 confirmed 2026-06-21 10:00",
         latestCareUpdate: "Mom ate lunch and took a short walk.",
-        familyGroupStatus: "family group active with 3 phone(s)",
         pendingInvoiceOrPayment: "inv-1 sent",
       },
     });
@@ -70,7 +69,6 @@ describe("formatCaraOperationalContext", () => {
     expect(formatted).toContain("Caregiver shift payment context: appt-1: pending_client_review $120");
     expect(formatted).toContain("Client next visit: appt-2 confirmed");
     expect(formatted).toContain("Latest care update: Mom ate lunch");
-    expect(formatted).toContain("Family group: family group active");
     expect(formatted).toContain("Pending invoice/payment: inv-1 sent");
   });
 
@@ -131,17 +129,4 @@ describe("buildOperationalRecipeLead", () => {
     expect(lead).toContain("hours or payment status");
   });
 
-  it("does not lead secondary family members into payment authority", () => {
-    const lead = buildOperationalRecipeLead({
-      pendingActions: [{ id: "pa1", preview: "Approve Maria's hours for $120" }],
-      openAlerts: [],
-      failedActions: [],
-      clientState: {
-        latestCareUpdate: "Mom took a short walk.",
-      },
-    }, "family-secondary");
-
-    expect(lead).toContain("latest care update");
-    expect(lead?.toLowerCase()).not.toMatch(/approve|payment|invoice|hours/);
-  });
 });

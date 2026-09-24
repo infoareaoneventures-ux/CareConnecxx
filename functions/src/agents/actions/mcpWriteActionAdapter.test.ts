@@ -17,16 +17,16 @@ beforeEach(() => {
 
 describe("mcpWriteActionAdapter", () => {
   it("recognizes migrated consequential MCP write actions", () => {
-    expect(isSupportedMcpWriteAction("create_support_ticket")).toBe(true);
+    expect(isSupportedMcpWriteAction("create_caregiver_referral")).toBe(true);
     expect(isSupportedMcpWriteAction("complete_shift")).toBe(true);
     expect(isSupportedMcpWriteAction("get_shifts")).toBe(false);
   });
 
   it("validates required fields before executing legacy MCP logic", async () => {
     await expect(runMcpWriteCaraAction(
-      "create_support_ticket",
-      { userId: "u1", userType: "client", subject: "Billing" },
-      async () => ({ success: true, ticketId: "t1" }),
+      "create_caregiver_referral",
+      { caregiverId: "cg1" },
+      async () => ({ success: true }),
     )).rejects.toBeInstanceOf(CaraActionValidationError);
   });
 
@@ -41,29 +41,29 @@ describe("mcpWriteActionAdapter", () => {
       },
     });
 
-    const execute = vi.fn(async () => ({ success: true, added: true, phone: "+15550001111" }));
+    const execute = vi.fn(async () => ({ success: true, invited: true, referredPhone: "+15550001111" }));
     const input = {
-      clientId: "client-1",
-      seniorId: "senior-1",
-      name: "Maria",
-      memberPhone: "+15550001111",
+      caregiverId: "cg-1",
+      phone: "+15550002222",
+      referredName: "Maria",
+      referredPhone: "+15550001111",
     };
 
-    await expect(runMcpWriteCaraAction("add_family_member", input, execute))
-      .resolves.toEqual({ success: true, added: true, phone: "+15550001111" });
-    await expect(runMcpWriteCaraAction("add_family_member", input, execute))
-      .resolves.toEqual({ success: true, added: true, phone: "+15550001111" });
+    await expect(runMcpWriteCaraAction("create_caregiver_referral", input, execute))
+      .resolves.toEqual({ success: true, invited: true, referredPhone: "+15550001111" });
+    await expect(runMcpWriteCaraAction("create_caregiver_referral", input, execute))
+      .resolves.toEqual({ success: true, invited: true, referredPhone: "+15550001111" });
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(logAgentAction.mock.calls[0][0]).toMatchObject({
-      actionType: "family_member_add",
+      actionType: "caregiver_referral_invited",
       status: "confirmed",
-      toolName: "add_family_member",
+      toolName: "create_caregiver_referral",
     });
     expect(logAgentAction.mock.calls.at(-1)?.[0]).toMatchObject({
-      actionType: "family_member_add",
+      actionType: "caregiver_referral_invited",
       status: "duplicate_blocked",
-      toolName: "add_family_member",
+      toolName: "create_caregiver_referral",
     });
   });
 });

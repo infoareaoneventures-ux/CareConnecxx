@@ -1,10 +1,9 @@
 import { LAUNCH_ACTION_PARITY } from "./launchActionParity";
 
-export type CareRecipeRole = "client" | "caregiver" | "family-secondary" | "admin";
+export type CareRecipeRole = "client" | "caregiver" | "admin";
 
 export type CareRecipeDeliveryRule =
   | "private_primary"
-  | "family_group_allowed"
   | "caregiver_private"
   | "admin_only"
   | "no_outbound";
@@ -24,30 +23,17 @@ export interface CareRecipe {
   parityIds: readonly string[];
 }
 
-const PAYMENT_AUTHORITY_MARKERS = [
-  "approve",
-  "pay ",
-  "payment",
-  "invoice",
-  "billing",
-  "refund",
-  "timesheet",
-  "payout",
-  "charge",
-  "hours approval",
-];
-
 export const CARE_RECIPES: readonly CareRecipe[] = [
   {
     id: "next_visit_briefing",
     label: "Next visit briefing",
     phrase: "pull up your next visit and who is coming",
-    roleScope: ["client", "family-secondary"],
+    roleScope: ["client"],
     triggerPhrases: ["who is coming", "next visit", "when is care", "who is with mom"],
     requiredContext: ["client or family identity", "appointments"],
     toolPlan: ["get_upcoming_appointments", "get_care_team"],
     authorityRule: "Client and family members may read scoped visit/care-team details only.",
-    deliveryRule: "family_group_allowed",
+    deliveryRule: "private_primary",
     failureVisibility: "Failed appointment/care-team reads write cara_turn_metrics and admin_alerts when repeated.",
     parityIds: ["client-view-upcoming-appointments", "client-view-care-team"],
   },
@@ -81,28 +67,14 @@ export const CARE_RECIPES: readonly CareRecipe[] = [
     id: "care_update_summary",
     label: "Care update summary",
     phrase: "catch you up on the latest care note",
-    roleScope: ["client", "family-secondary"],
+    roleScope: ["client"],
     triggerPhrases: ["how is mom", "latest update", "what happened today"],
     requiredContext: ["care_journal"],
     toolPlan: ["get_care_journal_client"],
     authorityRule: "Family can read scoped care updates; no payment or private billing detail is included.",
-    deliveryRule: "family_group_allowed",
+    deliveryRule: "private_primary",
     failureVisibility: "Missing or failed care-journal reads are recorded in turn metrics.",
-    parityIds: ["client-read-care-journal", "family-read-care-journal"],
-  },
-  {
-    id: "share_latest_update",
-    label: "Share latest update",
-    phrase: "share the latest care update with another family member",
-    roleScope: ["client", "family-secondary"],
-    triggerPhrases: ["send this to my sister", "add my brother", "keep her updated"],
-    requiredContext: ["recipient name", "recipient phone", "latest care_journal entry"],
-    toolPlan: ["add_family_member", "get_care_journal_client"],
-    sideEffects: ["buildOrUpdateFamilyGroup"],
-    authorityRule: "Primary client can add directly; secondary family requests route to primary approval when needed.",
-    deliveryRule: "family_group_allowed",
-    failureVisibility: "Welcome send or group-sync failures write failed ledger entries and admin alerts.",
-    parityIds: ["client-add-family-member", "family-add-sibling", "client-read-care-journal"],
+    parityIds: ["client-read-care-journal"],
   },
   {
     id: "approve_or_dispute_hours",
@@ -160,7 +132,7 @@ export const CARE_RECIPES: readonly CareRecipe[] = [
     id: "memory_review_or_correction",
     label: "Memory review or correction",
     phrase: "show or fix what I remember about care preferences",
-    roleScope: ["client", "caregiver", "family-secondary"],
+    roleScope: ["client", "caregiver"],
     triggerPhrases: ["what do you remember", "forget that", "actually her doctor is"],
     requiredContext: ["confirmed identity", "role-scoped memory"],
     toolPlan: ["cara_knows", "update_memory_file"],
@@ -178,8 +150,7 @@ export function getCareRecipesForRole(role: CareRecipeRole): CareRecipe[] {
 
   return CARE_RECIPES.filter((recipe) =>
     recipe.roleScope.includes(role) &&
-    recipe.parityIds.every((id) => shippedIds.has(id)) &&
-    (role !== "family-secondary" || !hasPaymentAuthorityLeak(recipe.phrase)),
+    recipe.parityIds.every((id) => shippedIds.has(id)),
   );
 }
 
@@ -213,9 +184,4 @@ export function findAdvertisedRecipeWithoutBacking(
     if (!advertised) return false;
     return recipe.parityIds.some((id) => !shippedIds.has(id));
   });
-}
-
-export function hasPaymentAuthorityLeak(text: string): boolean {
-  const lower = text.toLowerCase();
-  return PAYMENT_AUTHORITY_MARKERS.some((marker) => lower.includes(marker));
 }

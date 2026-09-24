@@ -29,20 +29,20 @@ const PHONE_KEYED_DOCS = [
   "agent_sessions", "agent_conversations", "web_onboarding_sessions", "agent_tasks_active",
   "user_preferences", "agent_permissions", "day_patterns", "agent_prefetch", "agent_rate",
   "agent_inbound_locks", "agent_outbound_dedup", "agent_read_receipts", "agent_dnd_queue",
-  "trigger_engagement", "wow_fires", "linq_pair_rate", "interviewRequestLimits",
+  "trigger_engagement", "linq_pair_rate", "interviewRequestLimits",
 ];
 /** Collections whose documents point at the account through one of these fields. */
 const FIELD_KEYED_COLLECTIONS = [
   "booking_requests", "shifts", "shiftHours", "appointments", "video_interviews", "interviews", "reviews",
   "job_posts", "job_applications", "booking_amendments", "hire_decisions", "disputes", "invoices", "payments",
   "agent_tasks", "agent_objectives", "pending_actions", "pending_commitments", "proactive_triggers",
-  "proactive_drafts", "user_triggers", "billingApprovalOutbox", "billingOperations", "admin_alerts",
-  "support_tickets", "family_groups", "family_group_members", "email_change_requests", "phone_change_requests",
-  "account_action_requests", "weekly_digests", "emergency_alerts", "emergency_events", "in_shift_updates",
+  "user_triggers", "billingApprovalOutbox", "billingOperations", "admin_alerts",
+  "support_tickets", "email_change_requests", "phone_change_requests",
+  "account_action_requests", "weekly_digests", "emergency_alerts", "emergency_events",
   "shift_checkins", "shift_offers", "shift_swap_requests", "match_history", "match_outcomes", "clientMatches",
   "user_activity_feed", "agent_action_ledger", "agent_audit_log", "agent_uncertainty_log", "agent_event_log",
   "agent_approvals", "wellbeing_checkins", "consent_audit_log", "referrals", "seniors", "notifications",
-  "caregiver_booked_slots", "appointment_care_plans", "carePlanVersions", "care_keepsakes", "health_summaries",
+  "caregiver_booked_slots", "appointment_care_plans", "carePlanVersions",
   "health_alerts_pending", "care_journal", "adminAdvanceQueue",
 ];
 const KEY_FIELDS = ["clientId", "userId", "uid", "recipientId", "ownerId", "requesterId", "caregiverId"];
@@ -114,8 +114,6 @@ export const processResetAccountQueue = functions.firestore
     }
     // Chat rooms (incl. the support room) list the uid as a participant.
     counts.chatRooms = await deleteQueryResults(db.collection("chatRooms").where("participants", "array-contains", uid), errors, "chatRooms");
-    // Family-group rosters list phones.
-    counts.family_group_members_phones = await deleteQueryResults(db.collection("family_group_members").where("phones", "array-contains", phone), errors, "family_group_members.phones");
 
     // Keyed documents, subcollections included (users/{uid}/notifications, customers/{uid}/subscriptions, agent_sessions/{phone}/messages …).
     for (const coll of UID_KEYED_DOCS) await db.recursiveDelete(db.collection(coll).doc(uid)).catch((err) => errors.push(`${coll}/${uid}: ${err.message}`));

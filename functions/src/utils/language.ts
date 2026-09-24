@@ -101,31 +101,18 @@ export const t = {
 
   crisis_medical: (lang: Language): string =>
     lang === "es"
-      ? "🚨 Esto suena a una emergencia. Por favor llama al 911 o ve a la sala de emergencias más cercana de inmediato.\n\nSi necesitas que avise al equipo de cuidado, responde NOTIFICAR."
-      : "🚨 This sounds like an emergency. Please call 911 or go to your nearest ER immediately.\n\nIf you need me to notify the care team, reply NOTIFY.",
+      ? "🚨 Esto suena a una emergencia. Por favor llama al 911 o ve a la sala de emergencias más cercana de inmediato.\n\nSi necesitas que avise a nuestro equipo de soporte, responde NOTIFICAR."
+      : "🚨 This sounds like an emergency. Please call 911 or go to your nearest ER immediately.\n\nIf you need me to notify our support team, reply NOTIFY.",
 
   crisis_notify_sent: (lang: Language): string =>
     lang === "es"
-      ? "Listo — avisé a tu equipo de cuidado y a nuestro personal de soporte. Por favor llama al 911 si es una emergencia que pone en peligro la vida."
-      : "Done — I've alerted your care team and our support staff. Please still call 911 if this is life-threatening.",
+      ? "Listo — avisé a nuestro equipo de soporte. Por favor llama al 911 si es una emergencia que pone en peligro la vida."
+      : "Done — I've alerted our support team. Please still call 911 if this is life-threatening.",
 
   crisis_emotional: (lang: Language): string =>
     lang === "es"
       ? "Te escucho, y me alegra mucho que me escribieras. 💙\n\nPor favor llama o envía un mensaje al 988 (Línea de Prevención del Suicidio y Crisis) — están disponibles 24/7 y les importas.\n\nYo también estoy aquí. ¿Quieres hablar?"
       : "I hear you, and I'm really glad you reached out. 💙\n\nPlease call or text 988 (Suicide & Crisis Lifeline) — they're available 24/7 and they care.\n\nI'm here too. Do you want to talk?",
-
-  // Consent-aware escalation offer after an emotional-crisis message. Opt-in
-  // only — we never page someone's care circle about a mental-health crisis
-  // without the person asking us to.
-  crisis_emotional_notify_offer: (lang: Language): string =>
-    lang === "es"
-      ? "Y si quieres, puedo avisarle a alguien de tu círculo de cuidado para que se comunique contigo — solo responde NOTIFICAR. Solo si tú lo deseas."
-      : "And if you'd like, I can let someone in your care circle know so they can reach out to you — just reply NOTIFY. Only if you want that.",
-
-  crisis_emotional_notify_sent: (lang: Language): string =>
-    lang === "es"
-      ? "Listo — le avisé a tu círculo de cuidado que podrías necesitar apoyo. No estás solo/a. Por favor llama o escribe al 988 en cualquier momento."
-      : "Done — I've let your care circle know you could use some support. You're not alone. Please call or text 988 anytime.",
 
   welcome_back: (lang: Language): string =>
     lang === "es"

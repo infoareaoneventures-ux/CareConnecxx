@@ -17,7 +17,6 @@ import {
 } from "../agents/caregiverReferral";
 import { answerHumanQuestionOnly } from "../agents/humanReply";
 import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
-import type { AwaitingInShiftUpdate } from "../scheduled/inShiftUpdatePolicy";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 import { bookedWindowMillis, createValidatedShiftHours } from "../billing/createValidatedShiftHours";
 import { isJobInviteStale, JOB_INVITE_FLAGS, isFlowStale, MULTI_STEP_FLOW_TTL_MS } from "../utils/sessionState";
@@ -525,13 +524,10 @@ async function handleDone(phone: string, chatId: string, session: AgentSession, 
     await snap.docs[0].ref.update({ completedAt: new Date().toISOString() });
   }
 
-  // Store that we're awaiting care notes. Any open mid-shift check-in prompt is
-  // moot now — clear it, or the caregiver's care-notes reply would be consumed
-  // by the in-shift handler and relayed as a mid-shift update on a done visit.
+  // Store that we're awaiting care notes.
   await db.collection("agent_sessions").doc(phone).update({
     awaitingCareNotes:    true,
     careNotesApptId:      snap.empty ? "" : snap.docs[0].id,
-    awaitingInShiftUpdate: admin.firestore.FieldValue.delete(),
     stateExpiresAt:       new Date(Date.now() + 30 * 60 * 1000).toISOString(),
   });
 
@@ -667,80 +663,6 @@ async function sendFamilyTaskUpdate(params: {
   });
 }
 
-// ── Mid-shift family update (hourly caregiver check-in reply) ─────────────────
-
-async function sendFamilyInShiftUpdate(params: {
-  note:        string;
-  topic:       string;
-  concern?:    boolean;
-  seniorName:  string;
-  clientId:    string;
-  clientPhone: string;
-  caregiverId: string;
-}): Promise<boolean> {
-  const { note, topic, concern, seniorName, clientId, clientPhone, caregiverId } = params;
-
-  let cgFirstName = "";
-  if (caregiverId) {
-    const snap = await db.collection("caregivers").doc(caregiverId).get().catch(() => null);
-    const name = (snap?.data()?.name ?? "") as string;
-    cgFirstName = name.split(" ")[0] || name;
-  }
-  if (!cgFirstName) cgFirstName = "Your caregiver";
-
-  let content: string;
-  try {
-    const raw = await quickComplete(
-      "You write a brief 1-2 sentence real-time care update for a family member during an in-progress visit.\n" +
-        "Tone: warm, direct, reassuring. From Evia (a care coordinator), relaying what the caregiver just shared.\n" +
-        (concern
-          ? "The caregiver flagged something worth keeping an eye on: mention it calmly as something being watched — " +
-            "no alarm, no speculation, no clinical detail.\n"
-          : "") +
-        "PRIVACY: everyday non-clinical language only — no medication names/dosages, lab values, or graphic detail; " +
-        "refer to those in general terms ('took medications as planned'). No emoji. Output only the message text.",
-      `Topic: ${topic}\n` +
-        `What the caregiver reported: ${note || "doing well, nothing notable"}\n` +
-        `Senior: ${seniorName}\n` +
-        `Caregiver: ${cgFirstName}`,
-      { maxTokens: 120 },
-    );
-    content = raw.trim();
-    if (!content) throw new Error("empty");
-  } catch {
-    // Fallback states only verified facts — never the raw caregiver text
-    // (PHI/tone-unchecked) and never a wellbeing claim we didn't compose.
-    content = `${cgFirstName} just checked in from ${seniorName}'s visit — I'll share the full picture in the end-of-visit summary.`;
-  }
-
-  const sent = await sendViaInteractionAgent(clientPhone, {
-    content,
-    urgency:        "standard",
-    sourceAgent:    "in_shift_update",
-    canDrop:        true,
-    bypassDailyCap: true,
-  });
-  if (sent) {
-    logAudit({
-      eventType: "care_update_shared",
-      userId: clientId,
-      phone: clientPhone,
-      data: { source: "in_shift_update", topic, concern: concern === true },
-    }).catch(() => {});
-    // Praise-loop stamp: if the family responds warmly (text or tapback) in the
-    // next hour, inShiftPraise.ts relays that warmth back to the caregiver.
-    db.collection("agent_sessions").doc(clientPhone).update({
-      lastInShiftUpdate: {
-        caregiverId,
-        seniorName,
-        sentAt:        new Date().toISOString(),
-        praiseRelayed: false,
-      },
-    }).catch(() => {});
-  }
-  return sent;
-}
-
 // ── Shift-end family update (after care notes parsed) ────────────────────────
 
 export async function sendFamilyShiftEndUpdate(params: {
@@ -754,8 +676,6 @@ export async function sendFamilyShiftEndUpdate(params: {
 
   const clientPhone = await getClientPhoneByClientId(clientId);
   if (!clientPhone) return;
-  const clientSessionSnap = await db.collection("agent_sessions").doc(clientPhone).get().catch(() => null);
-  const hasFamilyGroup = !!clientSessionSnap?.data()?.groupChatId;
 
   // Resolve senior name
   let seniorName = (apptData?.clientName ?? "") as string;
@@ -814,12 +734,8 @@ export async function sendFamilyShiftEndUpdate(params: {
     });
   }
 
-  const finalContent = hasFamilyGroup
-    ? content
-    : `${content}\n\nWant me to keep someone else updated too? Send me their name and phone.`;
-
   await sendViaInteractionAgent(clientPhone, {
-    content: finalContent,
+    content,
     urgency:     "standard",
     sourceAgent: "shift_end_family_update",
     canDrop:     true,
@@ -831,7 +747,7 @@ export async function sendFamilyShiftEndUpdate(params: {
     data: {
       source: "shift_end_family_update",
       seniorId,
-      deliveryTarget: hasFamilyGroup ? "family_group" : "primary_client",
+      deliveryTarget: "primary_client",
       caregiverName,
       appointmentId: apptData?.id ?? apptData?.appointmentId ?? null,
     },
@@ -845,7 +761,7 @@ export async function sendFamilyShiftEndUpdate(params: {
     targetCollection: "care_journal",
     metadata: {
       seniorId,
-      deliveryTarget: hasFamilyGroup ? "family_group" : "primary_client",
+      deliveryTarget: "primary_client",
       source: "shift_end_family_update",
     },
   }).catch(() => {});
@@ -959,128 +875,6 @@ async function handleTaskAck(
   });
 }
 
-// ── Mid-shift check-in reply handler (in-shift family updates) ────────────────
-
-// Shared core for both paths a mid-shift update can arrive on: a reply to
-// Evia's check-in prompt, or a spontaneous caregiver text during the shift.
-// Structures the note, persists it, relays to the family, updates counters,
-// and acks the caregiver.
-async function processInShiftUpdate(params: {
-  phone:         string;
-  chatId:        string;
-  text:          string;
-  session:       AgentSession;
-  appointmentId: string;
-  clientId:      string;
-  seniorId:      string;
-  seniorName:    string;
-  question:      string;  // "" for unprompted updates
-  topic:         string;
-  prompted:      boolean;
-}): Promise<void> {
-  const { chatId, text, session, appointmentId, clientId, seniorId, seniorName, question, topic, prompted } = params;
-
-  // Structure the free-text note into the wellness shape (feeds the data
-  // flywheel). The LLM judges eating/activity directly — never keyword-match
-  // the meaning of the caregiver's words (CLAUDE.md rule).
-  const parsedRaw = await quickComplete(
-    "Extract a brief structured snapshot from a caregiver's mid-shift note about the person they care for. " +
-      'Reply JSON only: {"mood":"","ateWell":true|false|null,"wasActive":true|false|null,"note":"short lay summary","concern":true|false}. ' +
-      "ateWell/wasActive: true or false only when the note actually speaks to eating or activity; null when it doesn't. " +
-      "Set concern true only if something needs family/clinical follow-up.",
-    text,
-    { maxTokens: 120 },
-  ).catch(() => "{}");
-
-  let mood = "", note = "", concern = false;
-  let ateWell: boolean | null = null, wasActive: boolean | null = null;
-  try {
-    const p = JSON.parse(parsedRaw || "{}");
-    mood      = (p.mood ?? "").toString().trim();
-    note      = (p.note ?? "").toString().trim();
-    concern   = p.concern === true;
-    ateWell   = typeof p.ateWell   === "boolean" ? p.ateWell   : null;
-    wasActive = typeof p.wasActive === "boolean" ? p.wasActive : null;
-  } catch { /* keep defaults */ }
-  if (!note) note = text.trim().slice(0, 300);
-
-  // Persist the snapshot to its own collection (kept separate from care_journal
-  // so it never trips the shift-end journal's one-per-appointment dedup).
-  await db.collection("in_shift_updates").add({
-    appointmentId,
-    caregiverId:   session.caregiverId ?? "",
-    clientId,
-    seniorId,
-    timestamp:     new Date().toISOString(),
-    question,
-    topic,
-    prompted,
-    wellness: { mood, ateWell, wasActive },
-    note,
-    concern,
-  }).catch(err => console.error("[processInShiftUpdate] persist error:", err));
-
-  // A concern is a signal we must never store-and-ignore: surface it to ops
-  // (low severity — the crisis keyword path handles true emergencies) and let
-  // the family relay mention it calmly.
-  if (concern) {
-    db.collection("admin_alerts").add({
-      type:          "in_shift_concern",
-      severity:      "low",
-      resolved:      false,
-      caregiverId:   session.caregiverId ?? "",
-      clientId,
-      appointmentId,
-      note:          note.slice(0, 300),
-      dedupeKey:     `in_shift_concern:${appointmentId}:${new Date().toISOString().slice(0, 13)}`,
-      createdAt:     new Date().toISOString(),
-    }).catch(() => {});
-  }
-
-  // Quiet per-caregiver signal (non-punitive, feeds the 60-day badge decision).
-  if (session.caregiverId) {
-    db.collection("caregivers").doc(session.caregiverId).update({
-      [`inShiftStats.${prompted ? "replies" : "unprompted"}`]: admin.firestore.FieldValue.increment(1),
-    }).catch(() => {});
-  }
-
-  // Relay the substance to the family. The per-shift ceiling counts only real
-  // deliveries — a suppressed/undeliverable relay must not burn a slot.
-  const clientPhone = await getClientPhoneByClientId(clientId);
-  let relayed = false;
-  if (clientPhone) {
-    relayed = await sendFamilyInShiftUpdate({
-      note,
-      topic,
-      concern,
-      seniorName,
-      clientId,
-      clientPhone,
-      caregiverId: session.caregiverId ?? "",
-    }).catch(err => {
-      console.error("[processInShiftUpdate] sendFamilyInShiftUpdate error:", err);
-      return false;
-    });
-  }
-  await db.collection("appointments").doc(appointmentId).update({
-    ...(relayed ? { inShiftFamilyUpdateCount: admin.firestore.FieldValue.increment(1) } : {}),
-    // An unprompted update counts as the slot's update — push the next
-    // scheduled prompt out a full cadence interval from now.
-    ...(prompted ? {} : { inShiftLastPromptAt: new Date().toISOString() }),
-    inShiftUnansweredCount: 0,
-  }).catch(() => {});
-
-  // Warm ack — buffer framing (Evia handles the family so the caregiver doesn't).
-  const ackMsg = await generateCaraMessage({
-    audience: "caregiver",
-    context: `The caregiver just shared a mid-shift update about ${seniorName}: "${note}". ` +
-      `Write a warm 1-sentence thank-you and mention you'll pass it along to the family so they don't have to check in.`,
-    fallback: `Thanks — I'll let ${seniorName}'s family know. You've got this!`,
-    maxTokens: 60,
-  });
-  await sendMessage(chatId, ackMsg);
-}
-
 // stateExpiresAt is SHARED across every awaiting/pending session flag. Deleting
 // it while another flow's flag is still set makes that flow immortal (its expiry
 // check treats a missing stateExpiresAt as never-expired) — so only the last
@@ -1088,104 +882,9 @@ async function processInShiftUpdate(params: {
 export function otherStateFlagsActive(session: Record<string, unknown>, except: string): boolean {
   const FLAGS = [
     "awaitingCareNotes", "awaitingTaskAck", "awaitingLateMinutes", "awaitingIssueDescription",
-    "awaitingInShiftUpdate", "pendingShiftConfirmation", "pendingCaregiverReferral",
+    "pendingShiftConfirmation", "pendingCaregiverReferral",
   ];
   return FLAGS.some(f => f !== except && !!(session as any)[f]);
-}
-
-async function handleInShiftUpdateReply(
-  phone:   string,
-  chatId:  string,
-  text:    string,
-  session: AgentSession
-): Promise<void> {
-  const info = (session as any).awaitingInShiftUpdate as AwaitingInShiftUpdate;
-
-  // isQuestionOrOther — answer a mid-flow question, then re-ask the check-in.
-  const questionRaw = await quickComplete(
-    "A caregiver was asked a quick check-in question about the person they're caring for. " +
-      "Reply YES only if their message is itself a question to the assistant (not an answer). Only YES or NO.",
-    text,
-    { maxTokens: 5 },
-  ).catch(() => "NO");
-  if (questionRaw.trim().toUpperCase().startsWith("Y")) {
-    await sendViaInteractionAgent(phone, {
-      content:     text,
-      urgency:     "standard",
-      sourceAgent: "in_shift_update_question",
-      canDrop:     true,
-    });
-    await sendMessage(chatId, info.question);
-    return;
-  }
-
-  await processInShiftUpdate({
-    phone, chatId, text, session,
-    appointmentId: info.appointmentId,
-    clientId:      info.clientId,
-    seniorId:      info.seniorId,
-    seniorName:    info.seniorName,
-    question:      info.question,
-    topic:         info.topic,
-    prompted:      true,
-  });
-
-  await db.collection("agent_sessions").doc(phone).update({
-    awaitingInShiftUpdate: admin.firestore.FieldValue.delete(),
-    ...(otherStateFlagsActive(session as unknown as Record<string, unknown>, "awaitingInShiftUpdate")
-      ? {} : { stateExpiresAt: admin.firestore.FieldValue.delete() }),
-  });
-}
-
-// ── Unprompted mid-shift update passthrough ───────────────────────────────────
-// A caregiver who texts a spontaneous status update during an in-progress visit
-// ("Dorothy's napping, all good") gets the same relay treatment as a prompted
-// reply — the check-in prompt is a fallback, not a toll gate. Called at the END
-// of routeCaregiverMessage, after every keyword/state handler declined the
-// message, so it can never shadow ARRIVED/DONE/LATE or an awaiting flow.
-async function tryUnpromptedInShiftUpdate(
-  phone:   string,
-  chatId:  string,
-  text:    string,
-  session: AgentSession
-): Promise<boolean> {
-  if (!session.caregiverId) return false;
-  if (!text || text.trim().length < 12) return false; // too short to be a real update
-
-  // No date clause — UTC-vs-Pacific date rollover would hide evening shifts
-  // (same reasoning as handleDone above).
-  const apptSnap = await db.collection("appointments")
-    .where("caregiverId", "==", session.caregiverId)
-    .where("status",      "==", "in-progress")
-    .limit(1).get();
-  if (apptSnap.empty) return false;
-  const apptDoc = apptSnap.docs[0];
-  const appt = apptDoc.data();
-  if (appt.completedAt) return false;
-
-  const verdict = await quickComplete(
-    "A caregiver is mid-visit with an elderly client. Is their message a spontaneous status update about " +
-      "how the client or the visit is going (mood, meals, activities, sleeping, general wellbeing)? " +
-      "Reply YES only for a status update suitable to pass along to the client's family. " +
-      "Reply NO for questions, requests, scheduling/payment topics, complaints, anything about family members, " +
-      "interpersonal conflict, the caregiver's own situation, or anything needing an answer. Only YES or NO.",
-    text,
-    { maxTokens: 5 },
-  ).catch(() => "NO");
-  if (!verdict.trim().toUpperCase().startsWith("Y")) return false;
-
-  const clientId = (appt.clientId ?? "") as string;
-  await processInShiftUpdate({
-    phone, chatId, text, session,
-    appointmentId: apptDoc.id,
-    clientId,
-    seniorId:      (appt.seniorId ?? clientId) as string,
-    seniorName:    ((appt.clientName ?? appt.seniorName ?? "your client") as string).split(" ")[0],
-    question:      "",
-    topic:         "unprompted",
-    prompted:      false,
-  });
-  return true;
 }
 
 // ── Caregiver voice/text → structured journal ─────────────────────────────────
@@ -1691,29 +1390,13 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       }
     }
 
-    // Awaiting care notes after DONE. Checked BEFORE the mid-shift check-in flag:
-    // if both are somehow set, the shift-end journal always wins (handleDone also
-    // clears awaitingInShiftUpdate, so coexistence is a defensive case only).
+    // Awaiting care notes after DONE.
     if ((session as any).awaitingCareNotes) {
       const cnExpiry = (session as any).stateExpiresAt as string | undefined;
       if (cnExpiry && new Date(cnExpiry) < new Date()) {
         await db.collection("agent_sessions").doc(phone).update({ awaitingCareNotes: false, stateExpiresAt: admin.firestore.FieldValue.delete() }).catch(() => {});
       } else {
         await handleCareNotes(phone, chatId, text, session);
-        return "handled";
-      }
-    }
-
-    // Awaiting a mid-shift check-in reply (in-shift family updates)
-    if ((session as any).awaitingInShiftUpdate) {
-      const isuExpiry = (session as any).stateExpiresAt as string | undefined;
-      if (isuExpiry && new Date(isuExpiry) < new Date()) {
-        await db.collection("agent_sessions").doc(phone).update({
-          awaitingInShiftUpdate: admin.firestore.FieldValue.delete(),
-          stateExpiresAt:        admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-      } else {
-        await handleInShiftUpdateReply(phone, chatId, text, session);
         return "handled";
       }
     }
@@ -2073,17 +1756,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         try { await KEYWORDS[nluDispatch](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
         return "handled";
       }
-    }
-
-    // ── Unprompted mid-shift update passthrough ──────────────────────────────
-    // Last caregiver-specific check before general routing: a spontaneous
-    // status text during an in-progress visit relays to the family like a
-    // prompted check-in reply would. Every keyword/NLU/state handler above
-    // (incl. ISSUE) already declined this message.
-    try {
-      if (await tryUnpromptedInShiftUpdate(phone, chatId, text, session)) return "handled";
-    } catch (err) {
-      console.error("[routeCaregiverMessage] unprompted in-shift check failed:", err);
     }
 
   return "fallthrough";

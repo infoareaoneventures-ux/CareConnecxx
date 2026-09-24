@@ -64,22 +64,6 @@ export async function runIntelligenceCanarySweep(now: Date = new Date()): Promis
     }
   }
 
-  // U8 dispositions: drafts carry evidenceCount; suppressions only log, so a
-  // proxy signal is health drafts written with minimal evidence.
-  const draftsSnap = await db.collection("proactive_drafts")
-    .orderBy("createdAt", "desc").limit(100).get()
-    .catch(() => null);
-  if (draftsSnap) {
-    const cutoffIso = new Date(now.getTime() - LOOKBACK_MS).toISOString();
-    const weakHealth = draftsSnap.docs
-      .map((d) => d.data() as { createdAt?: string; category?: string; evidenceCount?: number })
-      .filter((d) => (d.createdAt ?? "") >= cutoffIso && d.category === "health" && (d.evidenceCount ?? 0) < 2)
-      .length;
-    if (weakHealth >= 3) {
-      signals.push({ signal: "weak_evidence_health_drafts", severity: "medium", count: weakHealth, detail: { weakHealth } });
-    }
-  }
-
   // Dedupe: one alert per signal per UTC day.
   let alertsWritten = 0;
   const day = now.toISOString().slice(0, 10);

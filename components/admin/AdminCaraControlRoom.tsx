@@ -5,9 +5,8 @@ import {
 } from 'lucide-react';
 import { dbService } from '../../services/api';
 import { Badge } from '../ui/Badge';
-import { SupportTicket } from '../../types';
 
-type AdminTabTarget = 'alerts' | 'audit' | 'tickets' | 'messages' | 'proactive_drafts' | 'finance' | 'disputes';
+type AdminTabTarget = 'alerts' | 'audit' | 'messages' | 'finance' | 'disputes';
 
 interface Props {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
@@ -77,18 +76,6 @@ interface PendingActionRecord {
   cancelledBy?: string;
 }
 
-interface DraftRecord {
-  id: string;
-  status?: string;
-  severity?: string;
-  phone?: string;
-  userId?: string;
-  reason?: string;
-  draftText?: string;
-  sendError?: string;
-  createdAt?: string;
-}
-
 interface TurnMetricRecord {
   id: string;
   source?: string;
@@ -128,8 +115,6 @@ type QueueKind =
   | 'alert'
   | 'failed_action'
   | 'pending_approval'
-  | 'support_ticket'
-  | 'draft'
   | 'quality_issue';
 
 type QueueFilter =
@@ -139,8 +124,6 @@ type QueueFilter =
   | 'pending_approvals'
   | 'linq'
   | 'qa'
-  | 'support'
-  | 'drafts'
   | 'payments'
   | 'recipes'
   | 'healthcare';
@@ -168,8 +151,6 @@ const FILTERS: Array<{ id: QueueFilter; label: string }> = [
   { id: 'pending_approvals', label: 'Pending approvals' },
   { id: 'linq', label: 'Linq' },
   { id: 'qa', label: 'QA' },
-  { id: 'support', label: 'Support' },
-  { id: 'drafts', label: 'Drafts' },
   { id: 'payments', label: 'Payments' },
   { id: 'recipes', label: 'Recipes' },
   { id: 'healthcare', label: 'Healthcare' },
@@ -221,8 +202,6 @@ function itemMatchesFilter(item: QueueItem, filter: QueueFilter): boolean {
   if (filter === 'critical') return item.severity === 'critical' || item.severity === 'high';
   if (filter === 'failed_actions') return item.kind === 'failed_action' || item.status === 'failed';
   if (filter === 'pending_approvals') return item.kind === 'pending_approval';
-  if (filter === 'support') return item.kind === 'support_ticket';
-  if (filter === 'drafts') return item.kind === 'draft';
   const haystack = `${item.category} ${item.title} ${item.detail} ${item.toolName ?? ''}`.toLowerCase();
   return haystack.includes(filter);
 }
@@ -230,7 +209,7 @@ function itemMatchesFilter(item: QueueItem, filter: QueueFilter): boolean {
 function makeAlertItem(alert: AdminAlertRecord): QueueItem {
   const type = alert.type ?? 'admin_alert';
   const detail = truncate(alert.message ?? alert.reason ?? alert.error ?? 'No details provided');
-  const category = alert.recipeId || type.includes('family_group') || type.includes('recipe') ? 'recipes'
+  const category = alert.recipeId || type.includes('recipe') ? 'recipes'
     : type.includes('linq') ? 'linq'
     : type.includes('qa') || type.includes('agent') || type.includes('cara') ? 'qa'
       : type.includes('payment') || type.includes('invoice') || type.includes('billing') ? 'payments'
@@ -257,7 +236,7 @@ function makeLedgerItem(entry: LedgerRecord): QueueItem {
   const action = entry.actionType ?? 'agent_action';
   const title = `${action.replace(/_/g, ' ')}${entry.toolName ? ` via ${entry.toolName}` : ''}`;
   const haystack = `${action} ${entry.toolName ?? ''} ${String(entry.metadata?.recipeId ?? '')} ${String(entry.metadata?.sourceAgent ?? '')}`;
-  const category = haystack.includes('family_group') || haystack.includes('recipe') || !!entry.metadata?.recipeId ? 'recipes'
+  const category = haystack.includes('recipe') || !!entry.metadata?.recipeId ? 'recipes'
     : haystack.includes('linq') ? 'linq'
       : haystack.includes('healthcare') ? 'healthcare'
     : haystack.includes('payment') ? 'payments'
@@ -304,39 +283,6 @@ function makePendingItem(action: PendingActionRecord): QueueItem {
   };
 }
 
-function makeTicketItem(ticket: SupportTicket): QueueItem {
-  return {
-    id: `ticket:${ticket.id}`,
-    kind: 'support_ticket',
-    category: 'support',
-    title: ticket.subject || 'Support ticket',
-    detail: truncate(ticket.description),
-    severity: ticket.priority === 'urgent' ? 'critical' : ticket.priority === 'high' ? 'high' : 'medium',
-    status: ticket.status,
-    createdAt: ticket.createdAt,
-    userId: ticket.userId,
-    targetTab: 'tickets',
-    raw: ticket as unknown as Record<string, unknown>,
-  };
-}
-
-function makeDraftItem(draft: DraftRecord): QueueItem {
-  const failed = draft.status === 'send_failed';
-  return {
-    id: `draft:${draft.id}`,
-    kind: 'draft',
-    category: 'drafts',
-    title: failed ? 'Evia draft send failed' : 'Evia draft needs review',
-    detail: truncate(draft.sendError ?? draft.reason ?? draft.draftText),
-    severity: failed ? 'high' : normalizeSeverity(draft.severity),
-    status: draft.status ?? 'pending_review',
-    createdAt: draft.createdAt,
-    phone: draft.phone,
-    userId: draft.userId,
-    targetTab: 'proactive_drafts',
-    raw: draft as unknown as Record<string, unknown>,
-  };
-}
 
 const QUALITY_FLAG_LABELS: Record<string, string> = {
   agent_loop_exhausted: 'Agent loop exhausted',
@@ -427,8 +373,6 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
   const [alerts, setAlerts] = useState<AdminAlertRecord[]>([]);
   const [ledger, setLedger] = useState<LedgerRecord[]>([]);
   const [pendingActions, setPendingActions] = useState<PendingActionRecord[]>([]);
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [drafts, setDrafts] = useState<DraftRecord[]>([]);
   const [qualityMetrics, setQualityMetrics] = useState<TurnMetricRecord[]>([]);
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [search, setSearch] = useState('');
@@ -445,8 +389,6 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
       dbService.subscribeAdminAlerts((rows) => setAlerts(rows as AdminAlertRecord[]), () => onShowToast('Failed to load Evia alerts', 'error')),
       dbService.subscribeAgentActionLedger((rows) => setLedger(rows as LedgerRecord[]), () => onShowToast('Failed to load Evia action ledger', 'error')),
       dbService.subscribePendingActions((rows) => setPendingActions(rows as PendingActionRecord[]), () => onShowToast('Failed to load pending Evia actions', 'error')),
-      dbService.subscribeToTickets((rows) => setTickets(rows)),
-      dbService.subscribeProactiveDrafts([], (rows) => setDrafts(rows as DraftRecord[])),
       dbService.subscribeCaraTurnMetrics((rows) => setQualityMetrics(rows as TurnMetricRecord[]), () => onShowToast('Failed to load Evia quality metrics', 'error')),
     ];
     return () => unsubscribers.forEach((unsub) => unsub());
@@ -458,23 +400,17 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     const activePending = pendingActions
       .filter((p) => ['awaiting', 'executing', 'failed'].includes(String(p.status ?? 'awaiting')))
       .map(makePendingItem);
-    const activeTickets = tickets
-      .filter((t) => t.status === 'open' || t.status === 'in-progress')
-      .map(makeTicketItem);
-    const activeDrafts = drafts
-      .filter((d) => d.status === 'pending_review' || d.status === 'send_failed' || d.status === 'expired')
-      .map(makeDraftItem);
     const activeQuality = qualityMetrics
       .filter((m) => (m.qualityFlags?.length ?? 0) > 0 || m.errored || m.replyEmpty)
       .map(makeQualityMetricItem);
 
-    return [...openAlerts, ...failedLedger, ...activePending, ...activeTickets, ...activeDrafts, ...activeQuality]
+    return [...openAlerts, ...failedLedger, ...activePending, ...activeQuality]
       .sort((a, b) => {
         const severityDelta = severityRank[a.severity] - severityRank[b.severity];
         if (severityDelta !== 0) return severityDelta;
         return new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime();
       });
-  }, [alerts, ledger, pendingActions, tickets, drafts, qualityMetrics]);
+  }, [alerts, ledger, pendingActions, qualityMetrics]);
 
   const filteredItems = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -662,7 +598,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
               <h2 className="text-lg font-bold text-slate-900">Evia Control Room</h2>
             </div>
             <p className="text-sm text-slate-500 mt-1">
-              Live queue for failed actions, pending confirmations, Linq delivery issues, support escalations, and draft review.
+              Live queue for failed actions, pending confirmations, Linq delivery issues, and support escalations.
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -981,11 +917,9 @@ function operatorGuidance(item: QueueItem): string {
   if (item.kind === 'failed_action') {
     if (item.category === 'healthcare') return 'Healthcare action failed after approval. Check the browser/session trail and contact the account holder before retrying.';
     if (item.category === 'payments') return 'Payment-related action failed. Check shift hours, invoice, Stripe state, and avoid duplicate charges before retrying.';
-    if (item.category === 'recipes') return 'Recipe or family-group handoff failed. Check the ledger metadata, Linq delivery state, and family group membership before retrying.';
+    if (item.category === 'recipes') return 'Recipe handoff failed. Check the ledger metadata and Linq delivery state before retrying.';
     return 'Review the tool failure, related alert, and user thread. Retry only when idempotency is clear.';
   }
-  if (item.kind === 'support_ticket') return 'Support ticket needs human follow-up. Use the Support tab to respond and update status.';
-  if (item.kind === 'draft') return 'Evia draft requires review or retry. Use Evia Drafts to edit, approve, reject, or send.';
   if (item.kind === 'quality_issue') return 'Conversation quality signal. Review recent messages and tool activity, then decide whether a prompt, routing, or operator follow-up fix is needed.';
   if (item.category === 'linq') return 'Delivery issue. Confirm Linq health, retry state, and whether SMS fallback already happened.';
   if (item.category === 'qa') return 'Evia runtime issue. Review the alert detail, recent messages, and action ledger before marking resolved.';

@@ -722,7 +722,6 @@ export async function getMemoryContext(userId: string): Promise<string> {
 export interface InitialMemoryData {
   seniorName?: string;
   seniorAge?: string | number;
-  conditions?: string | string[];
   careNeeds?: string | string[];
   city?: string;
   clientName?: string;
@@ -736,9 +735,6 @@ export async function initializeMemoryFiles(
   const seniorName = data.seniorName ?? "your loved one";
   const clientName = data.clientName ?? "";
   const relationship = data.relationship ?? "family member";
-  const conditions = Array.isArray(data.conditions)
-    ? data.conditions.join(", ")
-    : (data.conditions ?? "none noted");
   const careNeeds = Array.isArray(data.careNeeds)
     ? data.careNeeds.join(", ")
     : (data.careNeeds ?? "general support");
@@ -750,16 +746,9 @@ export async function initializeMemoryFiles(
     `**Location:** ${data.city ?? "unknown"}\n` +
     `**Care needs:** ${careNeeds}\n`;
 
-  const healthMd =
-    `# Health\n\n` +
-    `**Conditions:** ${conditions}\n` +
-    `**Medications:** unknown\n` +
-    `**Allergies:** unknown\n`;
-
-  await Promise.all([
-    writeMemoryFile(userId, "profile", profileMd),
-    writeMemoryFile(userId, "health", healthMd),
-  ]);
+  // No health file: medications, diagnoses and doctors are out of Evia's
+  // non-medical scope and are never stored (see the prompt's safety rule).
+  await writeMemoryFile(userId, "profile", profileMd);
 }
 
 // Triggered when user asks what Evia knows/remembers ("what do you know about
@@ -961,8 +950,9 @@ export async function consolidateMemoryForUser(
       "Based on recent conversation events, extract new facts and decide which memory files to update. " +
       "Record ONLY facts present in the recent conversation events — never infer or invent. " +
       "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. " +
-      "Memory files: profile (identity/contact prefs), health (diagnoses/meds/allergies), " +
+      "Memory files: profile (identity/contact prefs), " +
       "family (relationships/dynamics), recent_episodes (last 30 days events), procedural (routines). " +
+      "Never record medications, diagnoses, allergies, doctors, or other medical details — Evia's scope is non-medical care. " +
       'Reply with JSON: [{"file": "<type>", "append": "<markdown to append>"}]. ' +
       "Only include files that need updating. Keep appended content concise (1–3 lines each).",
     messages: [

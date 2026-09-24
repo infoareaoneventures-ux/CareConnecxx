@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Firestore harness + server-import mocks mirror family.test.ts (the same set
+// Firestore harness + server-import mocks mirror reactToMessage.test.ts (the same set
 // server.ts needs to import cleanly), plus a mock of the Linq client so the
 // native request never hits the network.
 
@@ -58,7 +58,6 @@ vi.mock("../../agents/caregiverSearch", () => ({
   presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
   searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
 }));
-vi.mock("../../agents/familyGroupManager", () => ({ buildOrUpdateFamilyGroup: vi.fn().mockResolvedValue(undefined), removeMemberFromGroup: vi.fn().mockResolvedValue({ removed: true }) }));
 vi.mock("../../utils/toolNotify", () => ({ trySend: vi.fn().mockResolvedValue({ sent: true }), trySendViaCara: vi.fn().mockResolvedValue({ sent: true }) }));
 
 // The unit under test: stub only requestLocation; canRequestNativeLocation stays real (pure).

@@ -125,20 +125,6 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: false,
     notes: "Caregiver YES/NO offer state machine (agents/shiftOffer.ts).",
   },
-  family_groups: {
-    path: "family_groups",
-    docId: "auto",
-    caraWrites: true,
-    webReads: false,
-    notes: "Linq group chat metadata for family care groups. Server-created through familyGroupManager.",
-  },
-  family_group_members: {
-    path: "family_group_members",
-    docId: "composite",
-    caraWrites: true,
-    webReads: false,
-    notes: "Deterministic primaryPhone_memberPhone membership index used by inbound routing and /join.",
-  },
   shiftHours: {
     path: "shiftHours",
     docId: "appointmentId",
@@ -153,13 +139,6 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Web chat. Evia conversations are mirrored in (linq/threadMirror.ts, thread ID cara_{uid}).",
   },
-  support_tickets: {
-    path: "support_tickets",
-    docId: "auto",
-    caraWrites: true,
-    webReads: true,
-    notes: "Evia's create_support_ticket tool writes here; admin TicketManager reads.",
-  },
   admin_alerts: {
     path: "admin_alerts",
     docId: "auto",
@@ -173,13 +152,6 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     caraWrites: true,
     webReads: true,
     notes: "Caregiver visit journal; family/client surfaces read entries.",
-  },
-  proactive_drafts: {
-    path: "proactive_drafts",
-    docId: "auto",
-    caraWrites: true,
-    webReads: true,
-    notes: "Evia-drafted proactive messages awaiting admin review.",
   },
   cara_turn_metrics: {
     path: "cara_turn_metrics",

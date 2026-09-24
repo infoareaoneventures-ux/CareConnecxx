@@ -1,7 +1,6 @@
 import * as admin from "firebase-admin";
 import { sanitizePromptContext, sanitizePromptContextValue } from "./promptContext";
-import { selectNextAppointment, NEXT_APPOINTMENT_STATUSES } from "./careEvidence";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { selectNextAppointment } from "./careEvidence";
 
 const db = admin.firestore();
 
@@ -162,12 +161,13 @@ export async function loadCaraOperationalContext(params: {
     // The old desc-ordered query fed a recent PAST visit into "Client next
     // visit" whenever no future one landed in the window.
     userId
-      ? safeDocs(db.collection("appointments")
+      // `shifts` is the site's collection (appointments has had no writer since
+      // 2026-09-17). Same clientId + date desc index as ClientVisitsPage.tsx;
+      // selectNextAppointment filters to today-or-later + live statuses.
+      ? safeDocs(db.collection("shifts")
         .where("clientId", "==", userId)
-        .where("status", "in", [...NEXT_APPOINTMENT_STATUSES])
-        .where("date", ">=", businessTodayStr())
-        .orderBy("date", "asc")
-        .limit(10)
+        .orderBy("date", "desc")
+        .limit(50)
         .get())
       : Promise.resolve([]),
     userId

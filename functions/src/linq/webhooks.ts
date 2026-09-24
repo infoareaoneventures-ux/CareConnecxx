@@ -197,11 +197,11 @@ async function handleTypingStarted(event: unknown): Promise<void> {
     db.collection("care_journal")
       .where("seniorId", "==", seniorId)
       .orderBy("timestamp", "desc").limit(3).get(),
-    db.collection("appointments")
+    // Next visit from `shifts` (site collection; same clientId + date desc index
+    // as ClientVisitsPage.tsx), narrowed in memory to today-or-later scheduled/in-progress.
+    db.collection("shifts")
       .where("clientId", "==", userId)
-      .where("isoDate",  ">=", now.slice(0, 10))
-      .where("status",   "in", ["confirmed", "pending_caregiver_confirmation"])
-      .orderBy("isoDate", "asc").limit(1).get(),
+      .orderBy("date", "desc").limit(50).get(),
     db.collection("agent_conversations").doc(phone)
       .collection("messages").orderBy("timestamp", "desc").limit(10).get(),
   ]).catch(() => [null, null, null, null]);
@@ -211,7 +211,14 @@ async function handleTypingStarted(event: unknown): Promise<void> {
   await db.collection("agent_prefetch").doc(phone).set({
     seniorProfile:       seniorProfileRead.profile,
     recentJournal:       journalSnap ? journalSnap.docs.map((d) => d.data()) : [],
-    nextAppointment:     apptSnap && !apptSnap.empty ? apptSnap.docs[0].data() : null,
+    nextAppointment:     (() => {
+      const today = now.slice(0, 10);
+      const upcoming = (apptSnap?.docs ?? [])
+        .map((d) => d.data())
+        .filter((s) => ["scheduled", "in-progress"].includes(String(s.status)) && String(s.date ?? "") >= today)
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.startTime ?? "").localeCompare(String(b.startTime ?? "")));
+      return upcoming[0] ?? null;
+    })(),
     conversationHistory: historySnap
       ? historySnap.docs.map((d) => d.data()).reverse()
       : [],

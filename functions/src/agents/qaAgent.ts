@@ -419,12 +419,16 @@ export async function buildClientCoreContext(
     // different, disconnected collection nothing on the site ever writes to.
     db.collection("carePlans").doc(userId).get().catch(() => null),
     db.collection("users").doc(userId).get().catch(() => null),
-    db.collection("appointments")
+    // Visits live in `shifts` (the site's collection; the legacy appointments
+    // model has had no writer since 2026-09-17). Same query shape as
+    // ClientVisitsPage.tsx (clientId + date desc) so no new index is needed;
+    // statuses are filtered below.
+    db.collection("shifts")
       .where("clientId", "==", userId)
-      .where("status", "in", ["confirmed", "completed", "in-progress"])
       .orderBy("date", "desc")
       .limit(50)
       .get()
+      .then((snap) => ({ empty: snap.docs.every((d) => !["scheduled", "in-progress", "completed"].includes(String(d.data().status))), docs: snap.docs.filter((d) => ["scheduled", "in-progress", "completed"].includes(String(d.data().status))) }))
       .catch(() => null),
     // Booking-pipeline redesign (2026-08-30) parity: a caregiver booked
     // entirely through booking_requests/shifts (not the legacy appointments

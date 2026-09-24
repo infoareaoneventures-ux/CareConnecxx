@@ -797,23 +797,21 @@ describe("buildClientCoreContext — CARE TEAM roster", () => {
     expect(out).toContain("Basra Yousuf (next 2999-01-01)");
   });
 
-  it("still includes a legacy appointments-only caregiver (no regression)", async () => {
-    qaHarness.collectionDocs["appointments"] = [
-      { id: "a1", data: { clientId: "client-1", caregiverName: "Alice", status: "confirmed", date: "2999-01-01" } },
+  it("includes a caregiver known only from a scheduled shift (the site's collection; the appointments model is retired)", async () => {
+    qaHarness.collectionDocs["shifts"] = [
+      { id: "s0", data: { clientId: "client-1", caregiverName: "Alice", status: "scheduled", date: "2999-01-01" } },
     ];
     const out = await buildClientCoreContext("client-1", null, {});
     expect(out).toContain("CARE TEAM: Alice (next 2999-01-01).");
   });
 
   it("merges both pipelines without duplicating a caregiver present in both", async () => {
-    qaHarness.collectionDocs["appointments"] = [
-      { id: "a1", data: { clientId: "client-1", caregiverName: "Basra Yousuf", status: "completed", date: "2026-01-01" } },
-    ];
     qaHarness.collectionDocs["booking_requests"] = [
       { id: "br1", data: { clientId: "client-1", caregiverName: "Basra Yousuf", status: "accepted" } },
     ];
     qaHarness.collectionDocs["shifts"] = [
-      { id: "s1", data: { clientId: "client-1", bookingRequestId: "br1", status: "scheduled", date: "2999-01-01" } },
+      { id: "s0", data: { clientId: "client-1", caregiverName: "Basra Yousuf", status: "completed", date: "2026-01-01" } },
+      { id: "s1", data: { clientId: "client-1", bookingRequestId: "br1", caregiverName: "Basra Yousuf", status: "scheduled", date: "2999-01-01" } },
     ];
     const out = await buildClientCoreContext("client-1", null, {});
     const occurrences = (out.match(/Basra Yousuf/g) ?? []).length;

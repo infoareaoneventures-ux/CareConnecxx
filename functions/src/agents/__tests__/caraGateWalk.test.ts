@@ -313,8 +313,11 @@ describe("caregiver gate webhooks — end-to-end to an active caregiver doc", ()
     const cg = hoisted.caregiverDoc();
     expect(cg).not.toBeNull();
     expect(cg!.path).toBe("caregivers/cg-uid");          // uid-keyed (web/Evia data contract)
-    expect(cg!.data.status).toBe("active");
-    expect(cg!.data.onboardingStatus).toBe("profile_complete"); // FindCaregivers visibility gate
+    // Site parity (2026-09-25): `status: 'active'` is the Checkr webhook's to
+    // write on a clear report, and onboardingStatus 'profile_complete' lands at
+    // complete_collection (the wizard's bio-save moment) — neither is written by
+    // the payout finalization any more.
+    expect(cg!.data.status).not.toBe("active");
     expect(cg!.data.verificationStatus).toBe("submitted");      // admin verification queue
     expect(cg!.data.name).toBe("Maria Lopez");
     expect(cg!.data.hourlyRate).toBe(22);
@@ -524,20 +527,6 @@ describe("gate status questions are grounded in live state (all builders)", () =
     expect(answerPrompt()).toContain("WENT THROUGH");
   });
 
-  it("photo: says the photo is IN when onboardingData.profilePhoto is present", async () => {
-    const session = seed("caregiver_awaiting_photo", { ...FULL_DATA }); // FULL_DATA has profilePhoto
-    awaitingKind = "question";
-    await handleOnboardingStep(PHONE, CHAT, "did you get my photo?", session);
-    expect(answerPrompt()).toContain("photo is IN");
-  });
-
-  it("documents: reports how many certifications are on file", async () => {
-    const session = seed("caregiver_awaiting_documents", { ...FULL_DATA }); // 1 document
-    awaitingKind = "question";
-    await handleOnboardingStep(PHONE, CHAT, "did my CNA come through?", session);
-    expect(answerPrompt()).toContain("1 certification");
-  });
-
   it("payouts: says payouts are LIVE when the caregiver doc is onboarding-complete", async () => {
     const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA }, { caregiverId: "cg-uid" });
     hoisted.docState.set("caregivers/cg-uid", { stripeAccountId: "acct_1", stripeOnboardingComplete: true, payoutsEnabled: true });
@@ -555,13 +544,6 @@ describe("gate status questions are grounded in live state (all builders)", () =
       p.includes("payout link sets up their Stripe account"));
     expect(staticCall, "static payout facts still ground the answer").toBeTruthy();
     expect(sentMessages.length).toBeGreaterThan(0);
-  });
-
-  it("mvr: says the driving check is under way when mvrPaid is set", async () => {
-    const session = seed("caregiver_awaiting_mvr", { ...FULL_DATA }, { mvrPaid: true, mvrCheckoutUrl: "https://pay/mvr" });
-    awaitingKind = "question";
-    await handleOnboardingStep(PHONE, CHAT, "did my driver check payment work?", session);
-    expect(answerPrompt()).toContain("under way");
   });
 
   it("bgcheck consent: fresh read reveals consent already authorized (composite falls to the consent builder)", async () => {
@@ -665,14 +647,6 @@ describe("resend helpers confirm instead of re-sending a link when payment lande
     expect(sentText().toLowerCase()).toContain("came through");
   });
 
-  it("mvr resend: a paid session gets a confirmation, not the payment link again", async () => {
-    const session = seed("caregiver_awaiting_mvr", { ...FULL_DATA },
-      { mvrPaid: true, mvrCheckoutUrl: "https://pay/mvr-stale" });
-    awaitingKind = "other";
-    await handleOnboardingStep(PHONE, CHAT, "hey", session);
-    expect(sentText()).not.toContain("pay/mvr-stale");
-    expect(sentText().toLowerCase()).toContain("came through");
-  });
 });
 
 // ── 5. CLIENT care records — persisted at intake-confirm, not only at payment
@@ -948,34 +922,6 @@ describe("gate-step link resend — the link actually goes out, as a link part",
     m.text && typeof m.text === "object" && Array.isArray((m.text as any).parts)
       ? (m.text as any).parts.filter((p: any) => p.type === "link").map((p: any) => String(p.value))
       : []);
-
-  it("photo: an 'other' reply (resend ask) at caregiver_awaiting_photo resends the tokened upload link", async () => {
-    const session = seed("caregiver_awaiting_photo", { ...FULL_DATA });
-    awaitingKind = "other";
-    await handleOnboardingStep(PHONE, CHAT, "can you resend the link", session);
-    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
-  });
-
-  it("photo: a question ('link hasn't been sent yet') gets answered AND the real link follows", async () => {
-    const session = seed("caregiver_awaiting_photo", { ...FULL_DATA });
-    awaitingKind = "question";
-    await handleOnboardingStep(PHONE, CHAT, "the link hasn't been sent yet", session);
-    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
-  });
-
-  it("photo: a pure ack does NOT re-blast the link", async () => {
-    const session = seed("caregiver_awaiting_photo", { ...FULL_DATA });
-    awaitingKind = "ack";
-    await handleOnboardingStep(PHONE, CHAT, "sounds good", session);
-    expect(linkParts()).toHaveLength(0);
-  });
-
-  it("documents: an 'other' reply resends the certification upload link", async () => {
-    const session = seed("caregiver_awaiting_documents", { ...FULL_DATA });
-    awaitingKind = "other";
-    await handleOnboardingStep(PHONE, CHAT, "resend it please", session);
-    expect(linkParts().some((u) => u.includes("/upload/document?t="))).toBe(true);
-  });
 
   it("client payment: a status question does NOT re-mint a link; a 'never got it' report DOES", async () => {
     const s1 = seed("client_awaiting_payment", {}, { userType: "client" });

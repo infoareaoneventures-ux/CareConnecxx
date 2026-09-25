@@ -39,10 +39,8 @@ import {
   buildLiveBgcheckFact,
   buildLiveMembershipFact,
   buildLivePhotoFact,
-  buildLiveDocumentsFact,
   buildLiveBgcheckConsentFact,
   buildLivePayoutSetupFact,
-  buildLiveMvrFact,
   buildLiveClientPaymentFact,
   buildLiveClientIdentityFact,
   LIVE_GATE_FACT_BUILDERS,
@@ -130,21 +128,6 @@ describe("buildLivePhotoFact", () => {
   });
 });
 
-describe("buildLiveDocumentsFact", () => {
-  it("counts one certification", async () => {
-    fresh({ onboardingData: { documents: ["a"] } });
-    expect(await buildLiveDocumentsFact(PHONE, sess())).toContain("1 certification ");
-  });
-  it("counts multiple certifications", async () => {
-    fresh({ onboardingData: { documents: ["a", "b"] } });
-    expect(await buildLiveDocumentsFact(PHONE, sess())).toContain("2 certifications");
-  });
-  it("says none received when empty", async () => {
-    fresh({ onboardingData: { documents: [] } });
-    expect(await buildLiveDocumentsFact(PHONE, sess())).toContain("no certifications received");
-  });
-});
-
 describe("buildLiveBgcheckConsentFact", () => {
   it("says ALREADY authorized when the caregiver doc shows consent", async () => {
     fresh({ caregiverId: "cg" });
@@ -182,21 +165,6 @@ describe("buildLivePayoutSetupFact", () => {
   it("returns '' with no caregiverId or doc", async () => {
     expect(await buildLivePayoutSetupFact(PHONE, sess({}))).toBe("");
     expect(await buildLivePayoutSetupFact(PHONE, sess({ caregiverId: "missing" }))).toBe("");
-  });
-});
-
-describe("buildLiveMvrFact", () => {
-  it("says under way when mvrPaid", async () => {
-    fresh({ mvrPaid: true });
-    expect(await buildLiveMvrFact(PHONE, sess())).toContain("under way");
-  });
-  it("says link-out-not-paid when only a checkout url", async () => {
-    fresh({ mvrCheckoutUrl: "https://pay" });
-    expect(await buildLiveMvrFact(PHONE, sess())).toContain("hasn't come through yet");
-  });
-  it("says not-started otherwise", async () => {
-    fresh({});
-    expect(await buildLiveMvrFact(PHONE, sess())).toContain("hasn't been started");
   });
 });
 
@@ -251,13 +219,12 @@ describe("buildLiveClientIdentityFact", () => {
 
 describe("LIVE_GATE_FACT_BUILDERS map", () => {
   it("registers every gate/awaiting step in the spec", () => {
+    // Photo / certifications / MVR gates were removed 2026-09-25 (the photo and
+    // transport documents are collected inside the loop; MVR rides on membership).
     const expected = [
-      "caregiver_send_membership", "caregiver_awaiting_membership", "caregiver_ask_mvr",
-      "caregiver_send_photo", "caregiver_awaiting_photo",
-      "caregiver_send_documents", "caregiver_awaiting_documents",
+      "caregiver_send_membership", "caregiver_awaiting_membership",
       "caregiver_send_bgcheck", "caregiver_awaiting_bgcheck_consent", "caregiver_awaiting_bgcheck",
       "caregiver_send_stripe_connect", "caregiver_awaiting_stripe",
-      "caregiver_send_mvr", "caregiver_awaiting_mvr",
       "client_send_payment", "client_awaiting_payment", "client_awaiting_identity",
     ];
     for (const step of expected) expect(LIVE_GATE_FACT_BUILDERS[step], step).toBeTypeOf("function");

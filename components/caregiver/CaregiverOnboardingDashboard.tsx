@@ -10,7 +10,7 @@ import { BackgroundCheckModal } from '../BackgroundCheckModal';
 import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
 import { CaregiverBookingsCard } from './CaregiverBookingsCard';
 import { jobApplicationService } from '../../hooks/useJobApplications';
-import { hasValidTransportDocs } from '../../utils/transportDocs';
+import { hasValidTransportDocs, transportDocsApproved } from '../../utils/transportDocs';
 import { openCaregiverBillingPortal } from '../../services/stripeService';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -72,7 +72,12 @@ export const CaregiverProgressCard: React.FC<{
   const profileFieldsDone = hasPhoto && hasBio && services.length > 0 && hasAvailability;
   const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || profileFieldsDone || isApproved;
   const hasPaid = membershipActive;
-  const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
+  // Consent-first order (2026-09-25): after payment — and again at every annual
+  // renewal — the account waits on the caregiver's FCRA authorization before any
+  // Checkr invitation exists. A candidate id from last year does not count.
+  const needsConsent = p.backgroundCheckData?.consentRequired === true || p.backgroundCheckData?.invitationStatus === 'awaiting_consent';
+  const consentIsRenewal = needsConsent && p.backgroundCheckData?.consentReason === 'renewal';
+  const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId && !needsConsent;
   const rejected = p.verificationStatus === 'rejected';
   const infoRequested = p.verificationStatus === 'info_requested';
   const bgCheckInProgress = checkrInitiated && !bgApprovedFull;
@@ -156,10 +161,12 @@ export const CaregiverProgressCard: React.FC<{
       cardCta = { label: 'Activate membership', onClick: () => onNavigate('caregiver-membership') };
     }
   } else if (activeStep === 3) {
-    cardTitle = 'Start your background check';
-    cardDesc = '';
+    cardTitle = consentIsRenewal ? 'Renew your background check' : 'Start your background check';
+    cardDesc = consentIsRenewal
+      ? "Your annual membership renewed. Authorize this year's background check refresh to stay bookable."
+      : '';
     cardCta = {
-      label: 'Start background check',
+      label: consentIsRenewal ? 'Authorize this year\'s check' : 'Start background check',
       onClick: () => setShowBgModal(true),
     };
   } else if (activeStep === 4) {
@@ -173,7 +180,16 @@ export const CaregiverProgressCard: React.FC<{
   } else if (activeStep === 6) {
     const anyDocRejected = transportDocStatuses.includes('rejected');
     const anyDocMissing = transportDocStatuses.includes('missing');
-    if (anyDocRejected) {
+    const docsApproved = transportDocsApproved(profile);
+    if (docsApproved && p.isApprovedDriver !== true) {
+      // Documents are in; the badge now waits only on the driving record
+      // (MVR) check the flat membership covers (2026-09-25).
+      cardTitle = 'Driving record check in progress';
+      cardDesc = p.mvrStatus === 'consider' || p.mvrStatus === 'suspended'
+        ? 'Your driving record check needs a review — our team will follow up.'
+        : 'Your documents are approved. Your transportation badge turns on as soon as your driving record (MVR) check clears.';
+      cardVariant = 'info';
+    } else if (anyDocRejected) {
       cardTitle = 'Documents rejected';
       cardDesc = 'Some transport documents were rejected. Please re-upload to continue.';
       cardVariant = 'warning';
@@ -305,7 +321,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
     try {
       await jobApplicationService.applyToJob(
         applyingJob.id, applyingJob.title, applyingJob.clientId, applyingJob.clientName,
-        { caregiverId: profile.uid, caregiverName: profile.name, caregiverPhoto: (profile as any).photo || (profile as any).imageUrl || '', experience: profile.experience ?? 0, rating: (profile as any).rating ?? undefined, skills: (profile as any).skills || (profile as any).certifications || [] },
+        { caregiverId: profile.uid, caregiverName: profile.name, caregiverPhoto: (profile as any).photo || (profile as any).imageUrl || '', experience: profile.experience ?? 0, rating: (profile as any).rating ?? undefined, skills: (profile as any).skills || [] },
         coverLetter,
       );
       onShowToast?.(`Application submitted for ${applyingJob.title}!`, 'success');

@@ -180,14 +180,14 @@ describe("staleSessionNudge grounding", () => {
     // FIX 2 (2026-07-17): the 7-day recovery re-delivers the gate link but never
     // opened the resend cooldown — an inbound `other` reply right after the
     // nudge delivered a SECOND link card within a minute.
-    seedStuckSession("+15550005555", "caregiver_awaiting_photo", { userType: "caregiver" });
+    seedStuckSession("+15550005555", "caregiver_awaiting_stripe", { userType: "caregiver" });
 
     await (sendStaleSessionNudges as any)();
 
     expect(resendStuckStep).toHaveBeenCalledWith("+15550005555");
     const stamps = stampWrites("+15550005555");
     expect(stamps).toHaveLength(1);
-    const stampValue = stamps[0].data["gateLinkResentAt.caregiver_awaiting_photo"];
+    const stampValue = stamps[0].data["gateLinkResentAt.caregiver_awaiting_stripe"];
     expect(typeof stampValue).toBe("string");
     expect(isNaN(Date.parse(stampValue))).toBe(false);
     // The recovery bookkeeping still happened too.
@@ -195,7 +195,7 @@ describe("staleSessionNudge grounding", () => {
   });
 
   it("stuck-recovery that could NOT resend (resendStuckStep false) writes no stamp", async () => {
-    seedStuckSession("+15550006666", "caregiver_awaiting_photo", { userType: "caregiver" });
+    seedStuckSession("+15550006666", "caregiver_awaiting_stripe", { userType: "caregiver" });
     resendStuckStep.mockResolvedValue(false);
 
     await (sendStaleSessionNudges as any)();
@@ -219,7 +219,7 @@ describe("staleSessionNudge grounding", () => {
     // says "reply here and I'll send the link again", it never sends the link
     // itself, so it must NOT open the cooldown window.
     seedSession("+15550008888", {
-      onboardingStep: "caregiver_awaiting_photo", userType: "caregiver",
+      onboardingStep: "caregiver_awaiting_stripe", userType: "caregiver",
       onboardingData: { name: "Ana" },
     });
 

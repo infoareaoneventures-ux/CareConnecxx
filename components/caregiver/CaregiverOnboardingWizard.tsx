@@ -54,6 +54,8 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const [step, setStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [emailOnRecord, setEmailOnRecord] = useState(false);
+  const [existingDocs, setExistingDocs] = useState<Record<string, any>>({});
   const blobUrlsRef = useRef<Set<string>>(new Set());
 
   const [form, setForm] = useState<WizardForm>({
@@ -85,6 +87,11 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     (dbService.getUser(uid) as Promise<any>).then((profile: any) => {
       if (cancelled || !profile) { setIsInitializing(false); return; }
       const p = profile as any;
+      // /start collects the email with the name, and Evia's text flow requires
+      // one too — so the Email step only exists for a legacy record with none
+      // (founder, 2026-09-25: "we will drop the email there").
+      setEmailOnRecord(typeof p.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email.trim()));
+      setExistingDocs(p.documents && typeof p.documents === 'object' ? p.documents : {});
       const loadedServices: string[] = Array.isArray(p.skills)
         ? p.skills
         : Array.isArray(p.services) ? p.services : [];
@@ -121,12 +128,15 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       // Restore saved wizard step
       if (p.wizardStep) {
         const hasTransport = loadedServices.includes('Transportation');
+        const hasEmail = typeof p.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email.trim());
         const restoredSteps = [
-          'welcome', 'location', 'email', 'photo', 'availability', 'services',
+          'welcome', 'location', ...(hasEmail ? [] : ['email']), 'photo', 'availability', 'services',
           ...(hasTransport ? ['transport-docs'] : []),
           'rates', 'bio', 'done',
         ];
-        const idx = restoredSteps.indexOf(p.wizardStep as string);
+        // A record parked on the (now skipped) email step resumes at photo.
+        const savedStep = p.wizardStep === 'email' && hasEmail ? 'photo' : (p.wizardStep as string);
+        const idx = restoredSteps.indexOf(savedStep);
         if (idx > 0) setStep(idx + 1);
       }
       setIsInitializing(false);
@@ -141,7 +151,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
 
   const hasTransportation = form.selectedServices.includes('Transportation');
   const stepsArr = [
-    'welcome', 'location', 'email', 'photo', 'availability', 'services',
+    'welcome', 'location', ...(emailOnRecord ? [] : ['email']), 'photo', 'availability', 'services',
     ...(hasTransportation ? ['transport-docs'] : []),
     'rates', 'bio', 'done',
   ];
@@ -152,16 +162,20 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const back = () => setStep(s => Math.max(s - 1, 1));
 
   const handleSaveLocation = async () => {
+    // Every field required (founder, 2026-09-25: "the site should require the
+    // ones that are optional") — street and state used to be skippable.
+    if (!form.locationStreet.trim()) { onShowToast('Please enter your street address', 'error'); return; }
     if (!form.locationZip.trim() || form.locationZip.length < 5) { onShowToast('Please enter a valid zip code', 'error'); return; }
     if (!form.locationCity.trim()) { onShowToast('Please enter your city', 'error'); return; }
+    if (!form.locationState.trim()) { onShowToast('Please enter your state', 'error'); return; }
     setIsLoading(true);
     try {
       await dbService.updateUser('caregivers', uid, cleanData({
-        street:     form.locationStreet.trim() || undefined,
+        street:     form.locationStreet.trim(),
         city:       form.locationCity.trim(),
-        state:      form.locationState.trim() || undefined,
+        state:      form.locationState.trim(),
         zipCode:    form.locationZip.trim(),
-        wizardStep: 'email',
+        wizardStep: emailOnRecord ? 'photo' : 'email',
       }) as any);
       next();
     } catch { onShowToast('Failed to save location. Please try again.', 'error'); }
@@ -183,6 +197,9 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
 
   const handleSavePhoto = async () => {
     if (!form.profilePhoto.file) {
+      // A photo is required (founder, 2026-09-25) — the same gate Evia holds
+      // by text. A photo already on the record (preview, no new file) passes.
+      if (!form.profilePhoto.preview) { onShowToast('Please add a profile photo to continue', 'error'); return; }
       dbService.updateUser('caregivers', uid, { wizardStep: 'availability' } as any).catch(() => {});
       next();
       return;
@@ -361,7 +378,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
 
       // ── Transportation Documents (conditional) ───────────────────────────
       case 'transport-docs':
-        return <TransportDocStep uid={uid} onNext={handleTransportDocsNext} onShowToast={onShowToast} />;
+        return <TransportDocStep uid={uid} existingDocs={existingDocs} onNext={handleTransportDocsNext} onShowToast={onShowToast} />;
 
       // ── Rates ────────────────────────────────────────────────────────────
       case 'rates':
@@ -947,12 +964,22 @@ const TRANSPORT_DOCS: { type: DocumentType; label: string; desc: string }[] = [
 
 const TransportDocStep: React.FC<{
   uid: string;
+  existingDocs: Record<string, any>;
   onNext: () => void;
   onShowToast: AddToastFunction;
-}> = ({ uid, onNext, onShowToast }) => {
+}> = ({ uid, existingDocs, onNext, onShowToast }) => {
+  // All three uploads are required before Continue (founder, 2026-09-25) —
+  // a document already on the record (from a previous visit or Evia) counts.
   const [status, setStatus] = useState<Record<string, 'idle' | 'uploading' | 'done' | 'error'>>({
-    driversLicense: 'idle', insurance: 'idle', registration: 'idle',
+    driversLicense: existingDocs?.driversLicense?.url ? 'done' : 'idle',
+    insurance:      existingDocs?.insurance?.url      ? 'done' : 'idle',
+    registration:   existingDocs?.registration?.url   ? 'done' : 'idle',
   });
+  const allUploaded = TRANSPORT_DOCS.every(({ type }) => status[type] === 'done');
+  const handleContinue = () => {
+    if (!allUploaded) { onShowToast('Please upload all three documents to continue', 'error'); return; }
+    onNext();
+  };
   const fileRefs: Record<string, React.RefObject<HTMLInputElement>> = {
     driversLicense: useRef<HTMLInputElement>(null),
     insurance: useRef<HTMLInputElement>(null),
@@ -1022,8 +1049,10 @@ const TransportDocStep: React.FC<{
         ))}
       </div>
 
-      <button onClick={onNext}
-        className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors">
+      <button onClick={handleContinue}
+        className={`w-full font-semibold py-3 rounded-full transition-colors ${
+          allUploaded ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+        }`}>
         Continue
       </button>
     </div>

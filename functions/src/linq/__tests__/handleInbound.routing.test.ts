@@ -1164,10 +1164,13 @@ describe("onboarding agent-loop flag routing", () => {
 // signup always runs the scripted runner. Only "caregiver" in the role list
 // routes caregiver collection turns to the loop.
 describe("caregiver onboarding agent-loop flag routing", () => {
+  // = the site wizard's fields (2026-09-25): address, photo, job type, availability,
+  // services + experience bucket, rate + travel distance, email, 150+ char bio.
   const FULL_CAREGIVER_DATA = {
-    name: "Maria", city: "San Jose", yearsExperience: 6, specialties: ["dementia"],
-    availability: { days: ["Monday"], hours: "9am-5pm" }, jobType: "part_time",
-    hourlyRate: 25, email: "maria@example.com", bio: "I treat every client like family.",
+    name: "Maria", street: "12 Oak St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "https://x/p.jpg",
+    jobType: "part_time", availability: { days: ["Monday"], hours: "9am-5pm" },
+    specialties: ["dementia"], yearsExperience: "5-10 years",
+    hourlyRate: 25, serviceRadius: 10, email: "maria@example.com", bio: "I treat every client like family. ".repeat(6),
   };
 
   afterEach(() => { delete process.env.ONBOARDING_AGENT_LOOP; });
@@ -1206,7 +1209,7 @@ describe("caregiver onboarding agent-loop flag routing", () => {
       .toMatchObject({ yearsExperience: 6, specialties: ["dementia"] });
   });
 
-  it("collection completes → drives the photo gate via the scripted runner's __RESUME__ sentinel", async () => {
+  it("collection completes → drives the membership gate via the scripted runner's __RESUME__ sentinel", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_bio", onboardingData: { ...FULL_CAREGIVER_DATA, bio: "" } });
     // Simulate the model saving the bio and complete_collection advancing the
@@ -1214,28 +1217,28 @@ describe("caregiver onboarding agent-loop flag routing", () => {
     runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
       hoisted.docState.set(`agent_sessions/${PHONE}`, {
         ...hoisted.docState.get(`agent_sessions/${PHONE}`),
-        onboardingStep: "caregiver_send_photo",
+        onboardingStep: "caregiver_send_membership",
         onboardingData: FULL_CAREGIVER_DATA,
       });
       return "qa reply";
     });
     await handleInbound(makeEvent("I treat every client like family."));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
-    // The proactive handoff drives the send-photo step exactly once, with the
+    // The proactive handoff drives the membership step exactly once, with the
     // no-user-text resume sentinel — and the client handoff never fires.
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
     expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
-    expect(handleOnboardingStep.mock.calls[0][3]).toMatchObject({ onboardingStep: "caregiver_send_photo" });
+    expect(handleOnboardingStep.mock.calls[0][3]).toMatchObject({ onboardingStep: "caregiver_send_membership" });
     expect(continueAfterClientCollection).not.toHaveBeenCalled();
   });
 
-  it("stuck-signup net: all caregiver fields present but the model never called complete_collection → cursor advances to the photo gate", async () => {
+  it("stuck-signup net: all caregiver fields present but the model never called complete_collection → cursor advances to the membership gate", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_bio", onboardingData: FULL_CAREGIVER_DATA });
     // Loop replies but writes nothing; data is already complete.
     await handleInbound(makeEvent("anything else you need?"));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingStep).toBe("caregiver_send_photo");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingStep).toBe("caregiver_send_membership");
     // And the gate is driven in the same turn (no dead-end silence).
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
     expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");

@@ -1348,7 +1348,11 @@ service cloud.firestore {
     // RESET ACCOUNT QUEUE — admin writes; trigger wipes all data for the account
     match /adminResetQueue/{docId} {
       allow create: if isAdmin();
-      allow read, update, delete: if false;
+      // The admin page listens on the doc it just created for the trigger's
+      // processedAt/success/error so it can report what actually happened
+      // (2026-09-25) — read only, the trigger owns every write after create.
+      allow read: if isAdmin();
+      allow update, delete: if false;
     }
 
     // ACCOUNT ACTION QUEUE — website writes a phone/email-change or

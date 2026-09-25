@@ -87,7 +87,6 @@ Keep it factual, concise, and objective. Use medical terminology where appropria
       const allSkills = [
         ...(c.medicalSkills || []),
         ...(c.personalityTags || []),
-        ...(c.certifications || []),
       ];
       return `ID: ${c.id}, Name: ${sanitizeName(c.name)}, Rate: $${c.hourlyRate}/hr, Skills: ${allSkills.join(", ") || "N/A"}, Rating: ${c.rating || "N/A"}, Distance: ${c.distance}mi, Verified: ${c.verified}`;
     }).join("\n");

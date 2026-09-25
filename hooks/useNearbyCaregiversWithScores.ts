@@ -215,7 +215,6 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
             imageUrl: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
             documents: data.documents || {},
             skills: cgSkills,
-            certifications: data.certifications || [],
             experience: data.experience || data.yearsExperience || 0,
             bio: data.bio || data.about || '',
             availability: Array.isArray(data.availability) ? data.availability : [],

@@ -42,7 +42,6 @@ interface Caregiver {
   photoURL?: string;
   hasReliableTransportation: boolean;
   skills?: string[];
-  certifications?: string[];
   languages?: string[];
   experience?: number;
   bio?: string;
@@ -378,7 +377,6 @@ export default function FindCaregivers() {
           photoURL: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
           hasReliableTransportation: hasValidTransportDocs(data),
           skills: data.skills || data.specializations || data.specialties || [],
-          certifications: data.certifications || [],
           languages: data.languages || ['English'],
           experience: data.experience || data.yearsExperience || 0,
           bio: data.bio || data.about || '',

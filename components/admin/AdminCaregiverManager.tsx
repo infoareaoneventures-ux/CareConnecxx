@@ -5,6 +5,7 @@ import {
   Users, FileText, ExternalLink, Car, RotateCcw,
 } from 'lucide-react';
 import { adminService, dbService } from '../../services/api';
+import { queueAdminReset } from '../../services/adminResetQueue';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { db, functions } from '../../lib/firebase';
 import { Caregiver, Appointment } from '../../types';
@@ -127,7 +128,6 @@ export const AdminCaregiverManager: React.FC = () => {
       name: c.name, email: c.email, phone: c.phone, bio: c.bio,
       hourlyRate: c.hourlyRate, experience: c.experience, location: c.location,
       skills: c.skills ? [...c.skills] : [],
-      certifications: c.certifications ? [...c.certifications] : [],
       gender: c.gender,
       languages: c.languages ? [...c.languages] : [],
     });
@@ -265,19 +265,17 @@ export const AdminCaregiverManager: React.FC = () => {
     if (!selected) return;
     setModerating(true);
     try {
-      await db!.collection('adminResetQueue').add({
-        type: 'reset_account',
-        uid: selected.uid,
-        phone: selected.phone ?? '',
-        role: 'caregiver',
-        createdAt: new Date(),
-      });
-      showToast(`Reset queued for ${selected.name} — data will be wiped in seconds`, 'success');
+      const result = await queueAdminReset({ uid: selected.uid, phone: selected.phone, role: 'caregiver' });
+      if (!result.success) {
+        showToast(`Reset failed for ${selected.name}: ${result.error ?? result.errors?.[0] ?? 'unknown error'}`, 'error');
+        return;
+      }
+      showToast(result.note ? `${selected.name} reset (${result.note})` : `${selected.name} reset — account wiped`, 'success');
       setSelected(null);
       setCaregivers(prev => prev.filter(c => c.uid !== selected.uid));
       setModerationAction(null);
-    } catch {
-      showToast('Failed to queue reset', 'error');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to queue reset', 'error');
     } finally {
       setModerating(false);
     }
@@ -806,6 +804,37 @@ export const AdminCaregiverManager: React.FC = () => {
                           >Revoked</button>
                         </div>
                       </div>
+                      {/* Driving record (MVR) override — shown only for caregivers who
+                          offer Transportation. Server-locked field; admin writes are
+                          allowed by rules. Approved also stamps mvrStatus so the
+                          result line and the badge gate agree. */}
+                      {((selected as any).services || (selected as any).skills || []).includes('Transportation') && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-slate-700">Driving record (MVR)</span>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={async () => {
+                                const patch: any = { isApprovedDriver: true, mvrStatus: 'clear', mvrClearedAt: new Date().toISOString() };
+                                await adminService.updateCaregiver(selected.uid, patch);
+                                setSelected(p => p ? { ...p, ...patch } as any : p);
+                                try { const refreshBadge = functions?.httpsCallable('v1-refreshTransportBadge'); if (refreshBadge) await refreshBadge({ uid: selected.uid }); } catch { /* badge recalculates on the daily job */ }
+                                showToast('Driving record approved', 'success');
+                              }}
+                              className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).isApprovedDriver === true ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
+                            >Approved</button>
+                            <button
+                              onClick={async () => {
+                                const patch: any = { isApprovedDriver: false, mvrStatus: 'consider' };
+                                await adminService.updateCaregiver(selected.uid, patch);
+                                setSelected(p => p ? { ...p, ...patch } as any : p);
+                                try { const refreshBadge = functions?.httpsCallable('v1-refreshTransportBadge'); if (refreshBadge) await refreshBadge({ uid: selected.uid }); } catch { /* badge recalculates on the daily job */ }
+                                showToast('Driving record revoked', 'success');
+                              }}
+                              className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).isApprovedDriver === false && (selected as any).mvrStatus ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
+                            >Revoked</button>
+                          </div>
+                        </div>
+                      )}
                       {/* Payout setup (Stripe Connect) — Approved dual-writes the
                           real parent+private/payout fields via adminAdvanceQueue
                           (client writes to private/payout are denied by
@@ -863,16 +892,54 @@ export const AdminCaregiverManager: React.FC = () => {
                   )}
                 </div>
 
-                {/* Checkr Background Check Result */}
+                {/* Driving record (MVR) — its own line, separate from the criminal
+                    check (founder, 2026-09-25). Bundled at signup when Transportation
+                    was on the profile (mvrIncluded), or run on its own when
+                    transportation was added later. */}
+                {(() => {
+                  const s = selected as any;
+                  const offersTransportation = ((s.services || s.skills || []) as string[]).includes('Transportation');
+                  if (!offersTransportation && !s.mvrPaid && !s.mvrStatus && s.isApprovedDriver !== true) return null;
+                  const mvrStatus: string = s.isApprovedDriver === true ? 'clear'
+                    : (s.mvrStatus as string | undefined) ?? (s.mvrCheckInitiated || s.backgroundCheckData?.mvrIncluded ? 'pending' : 'not started');
+                  const tone = mvrStatus === 'clear' ? 'bg-green-100 text-green-700'
+                    : mvrStatus === 'consider' ? 'bg-orange-100 text-orange-700'
+                    : mvrStatus === 'suspended' ? 'bg-red-100 text-red-700'
+                    : mvrStatus === 'pending' ? 'bg-amber-100 text-amber-700'
+                    : 'bg-slate-100 text-slate-500';
+                  const docsApproved = ['driversLicense', 'insurance', 'registration'].every((k) => s.documents?.[k]?.status === 'approved');
+                  return (
+                    <div className="bg-slate-50 rounded-xl p-5">
+                      <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                        <Car className="w-4 h-4 text-blue-600" /> Driving Record (MVR)
+                      </h3>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className={`text-sm font-bold px-3 py-1.5 rounded-full uppercase tracking-wide ${tone}`}>{mvrStatus}</span>
+                        {s.backgroundCheckData?.mvrIncluded && <span className="text-xs text-slate-500">Bundled with the criminal check</span>}
+                        {s.mvrClearedAt && <span className="text-xs text-slate-500">Cleared {new Date(s.mvrClearedAt).toLocaleDateString()}</span>}
+                        {s.mvrInitiatedAt && !s.mvrClearedAt && <span className="text-xs text-slate-500">Started {new Date(s.mvrInitiatedAt).toLocaleDateString()}</span>}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-3">
+                        Transportation badge: {s.isApprovedDriver === true && docsApproved ? 'active — MVR clear and all documents approved' : `waiting on ${[s.isApprovedDriver !== true ? 'the MVR' : null, !docsApproved ? 'document approval' : null].filter(Boolean).join(' and ')}`}.
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                {/* Checkr criminal background check result */}
                 {selected.backgroundCheckData && (
                   <div className="bg-slate-50 rounded-xl p-5">
                     <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
-                      <Shield className="w-4 h-4 text-primary-600" /> Background Check Result
+                      <Shield className="w-4 h-4 text-primary-600" /> Criminal Background Check
                     </h3>
                     {(!(selected.backgroundCheckData as any).status || (selected.backgroundCheckData as any).status === 'pending') ? (
                       <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
                         <Clock className="w-4 h-4 shrink-0" />
-                        <span>Awaiting result from Checkr.</span>
+                        <span>
+                          {(selected.backgroundCheckData as any).consentRequired === true || (selected.backgroundCheckData as any).invitationStatus === 'awaiting_consent'
+                            ? `Waiting on the caregiver to authorize the ${(selected.backgroundCheckData as any).consentReason === 'renewal' ? 'annual renewal' : 'background'} check — no Checkr invitation exists yet.`
+                            : 'Awaiting result from Checkr.'}
+                        </span>
                       </div>
                     ) : (
                       <>

@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
-import { canChargeBundledMvr, canChargeStandaloneMvr, mvrPriceId } from "../mvrConfig";
+import { isMvrCheckConfigured } from "../mvrConfig";
 import { writeCaregiverBackgroundPII } from "../caregiverPrivate";
 import { createCheckrInvitation, cancelCheckrInvitationsForCandidate } from "../checkrApi";
 import Stripe from "stripe";
@@ -32,9 +32,9 @@ import { SharedLocation } from "../utils/locationShare";
 import { WAITLISTED_STEP } from "./serviceAreaGate";
 import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
 import { addKnownNames } from "../utils/knownNames";
-import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
+import { verifyProfilePhoto } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
-import { caregiverAnnualDisplay, caregiverAnnualAmount, clientMonthlyDisplay, mvrDisplay } from "../config/pricing";
+import { caregiverAnnualDisplay, caregiverAnnualAmount, clientMonthlyDisplay } from "../config/pricing";
 // onboardingSteps.client is KEPT only for its reask() text (currentStepQuestion
 // below). The loop-only cut deleted the scripted CONVERSATIONAL collection
 // handlers, and the legacy post-collection steps (client_ask_start/preferences/
@@ -55,7 +55,7 @@ import {
 import { coerceClientRate } from "./onboardingContract";
 import { businessTodayStr, formatDateForDisplay } from "../utils/scheduledTime";
 import { canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "./careNeedsTaxonomy";
-import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue } from "./onboardingContract";
+import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, toExperienceBucket, offersTransportation, transportDocumentsComplete } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { describeSharedProfile } from "./profileBriefing";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
@@ -218,7 +218,7 @@ async function updateSession(phone: string, updates: Record<string, unknown>): P
   await db.collection("agent_sessions").doc(phone).update(updates);
 }
 
-async function mergeOnboardingData(phone: string, data: Record<string, unknown>): Promise<void> {
+export async function mergeOnboardingData(phone: string, data: Record<string, unknown>): Promise<void> {
   if (isOnboardingDryRun()) {
     recordSideEffect("firestore.update:agent_sessions.onboardingData", { phone, keys: Object.keys(data) });
     return;
@@ -289,6 +289,9 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   // it here means every future onboarding-data update self-heals this
   // instead of leaving it silently wrong forever.
   copy("phone",   d.phone);
+  // Wizard location step (2026-09-25): street + state alongside city/zip.
+  copy("street",  d.street);
+  copy("state",   d.state);
   copy("city",    d.city);
   copy("zipCode", d.zipCode);
   // Coords — from a shared location pin OR geocoded from city/zip (see
@@ -313,14 +316,15 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
     out.photoURL     = d.profilePhoto;
     out.photo        = d.profilePhoto;
   }
-  if (Array.isArray(d.documents) && d.documents.length) out.documents = d.documents;
-  copy("yearsExperience", d.yearsExperience);
-  // Web parity aliases — the client-facing cards/modal and aiMatching read
-  // these exact names (types.ts Caregiver): experience, hasTransportation,
-  // skills. Without them Evia-onboarded caregivers render with blank
-  // experience/skills and no transportation badge.
-  copy("experience", d.yearsExperience);
-  if (Array.isArray(d.certifications) && d.certifications.length) out.certifications = d.certifications;
+  // Transport documents are written straight onto the site's documents.{type}
+  // map by the upload callable — never mirrored from the draft (the old
+  // certifications URL array is gone; the site never had it).
+  // Experience is the wizard's bucket string on BOTH fields the site writes.
+  const expBucket = toExperienceBucket(d.yearsExperience);
+  if (expBucket) {
+    out.yearsExperience = expBucket;
+    out.experience      = expBucket;
+  }
   // specialties = the caregiver's RAW words (profile flavor). skills/services =
   // the CANONICAL care-services enum the webapp checkboxes + matching engine read
   // (canonicalized at save time; see caregiverServices.ts). Prefer the canonical
@@ -340,6 +344,8 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
     // The webapp reads services || skills; write both so the checkboxes light
     // regardless of which field the profile page prefers.
     out.services = skills;
+    // The wizard's services step also writes primaryServices [{name, yearsExperience}].
+    if (expBucket) out.primaryServices = skills.map((name) => ({ name, yearsExperience: expBucket }));
   }
   copy("availability", d.availability);
   // Structured map read by ai/scoring.ts availabilityOverlap and the web
@@ -347,25 +353,34 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   const weekly = deriveWeeklyAvailability(d.availability);
   if (weekly) out.weeklyAvailability = weekly;
   copy("hourlyRate", d.hourlyRate);
+  // Wizard rates step: travel distance (5/10/15/25/50 miles).
+  if (typeof d.serviceRadius === "number" && d.serviceRadius > 0) out.serviceRadius = d.serviceRadius;
   copy("email",      d.email);
   copy("bio",        d.bio);
-  // The webapp progress card treats the Profile step's bio requirement as met
-  // when the caregiver explicitly skipped it over SMS — mirror the flag so an
-  // Evia skip doesn't leave the dashboard stuck on "add your bio".
-  if (d.bioSkipped === true) out.bioSkipped = true;
   copy("jobType",    d.jobType);
   // Webapp display parity: the profile "Looking for" pills read jobTypes (array
   // of hyphenated ids), which nothing server-side reads — matching uses jobType.
-  const jobTypes = caregiverJobTypesToWebIds(d.jobType, d.jobTypes);
+  const jobTypes = caregiverJobTypesToWebIds(d.jobType, undefined);
   if (jobTypes.length) out.jobTypes = jobTypes;
-  copy("gender",     d.gender);
-  if (Array.isArray(d.languages) && d.languages.length) out.languages = d.languages;
-  if (d.canDrive !== undefined && d.canDrive !== null) {
-    out.canDrive          = d.canDrive;
-    out.hasTransportation = d.canDrive;
-  }
   copy("stripeAccountId", d.stripeAccountId);
+  // The site's wizard resumes from `wizardStep`; stamp where Evia's collection
+  // stands so a caregiver who opens the site mid-text lands on the right step.
+  const wizardStep = wizardStepForDraft(d);
+  if (wizardStep) out.wizardStep = wizardStep;
   return out;
+}
+
+/** The wizard step id the caregiver would resume at, from what Evia has collected so far (mirrors the wizard's step list). */
+export function wizardStepForDraft(d: Record<string, unknown>): string | null {
+  const has = (k: string) => isFieldFilled(d[k]);
+  if (!(has("street") && has("zipCode") && has("city") && has("state"))) return "location";
+  if (!has("profilePhoto")) return "photo";
+  if (!(has("jobType") && has("availability"))) return "availability";
+  if (!(has("specialties") && has("yearsExperience"))) return "services";
+  if (offersTransportation(d) && !transportDocumentsComplete(d)) return "transport-docs";
+  if (!(has("hourlyRate") && has("serviceRadius"))) return "rates";
+  if (!has("bio")) return "bio";
+  return "done";
 }
 
 // Geocode a caregiver's typed city/zip into onboardingData lat/lng (no-op when
@@ -930,10 +945,6 @@ function currentStepQuestion(step: string, session: AgentSession): string {
     client_send_payment:           "finishing your payment setup with the link I sent",
     client_awaiting_payment:       "finishing your payment setup with the link I sent",
     client_awaiting_identity:      "the quick identity check with the link I sent",
-    caregiver_send_photo:          "adding your profile photo with the link I sent",
-    caregiver_awaiting_photo:      "adding your profile photo with the link I sent",
-    caregiver_send_documents:      "uploading your certifications (or reply SKIP)",
-    caregiver_awaiting_documents:  "uploading your certifications (or reply SKIP)",
     caregiver_send_membership:     "activating your membership with the link I sent",
     caregiver_awaiting_membership: "activating your membership with the link I sent",
     caregiver_send_bgcheck:        "authorizing your background check with the link I sent",
@@ -1351,108 +1362,9 @@ export async function handleOnboardingStep(
     // owns caregiver collection. These cursors never reach this switch (webhook
     // routes them to the loop); the defensive default below covers strays. The
     // gate steps below (send_photo onward) are KEPT — the loop hands off to them.
-    case "caregiver_send_photo":       return handleCaregiverSendPhoto(phone, chatId, session);
-    case "caregiver_awaiting_photo": {
-      const photoReplyKind = await classifyAwaitingReply(text, "upload their profile photo via the link Evia sent");
-      if (photoReplyKind === "ack") {
-        await sendAwaitingAck(chatId, session,
-          "The caregiver just acknowledged your photo-upload ask (a thanks or 'will do') — no rush, you're here when it's in.",
-          "Sounds good — I'm here whenever it's in!");
-        return;
-      }
-      if (photoReplyKind === "question") {
-        // Reported problems ("link doesn't work", "never got it") classify as
-        // questions — answer, then ALWAYS follow with the real link (membership
-        // handler pattern). Prose alone here was the 2026-07-15 live bug: the
-        // model claimed "just resent it" with no code path able to send.
-        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
-        await resendGateLink(phone, chatId, "caregiver_awaiting_photo", "caregiver_photo",
-          "Here's your photo upload link again — it opens right on your phone:");
-        return;
-      }
-      if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
-        "your profile photo — the upload link I sent is ready whenever you are")) return;
-      if (await resendGateLink(phone, chatId, "caregiver_awaiting_photo", "caregiver_photo",
-        "Here's your photo upload link again — it opens right on your phone:", { throttled: true })) return;
-      // resendGateLink declined = the step advanced under us (photo landed) —
-      // the live fact below grounds the confirmation.
-      const livePhotoFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_photo(phone, session);
-      const photoNudge = await generateCaraMessage({
-        audience: "caregiver",
-        language: session.preferredLanguage === "es" ? "es" : "en",
-        context: `The caregiver just texted: "${text}". ` + (livePhotoFact ? `${livePhotoFact} ` : "") +
-          "Respond to what they actually said, grounded in the live status above if present — if the photo is already IN, confirm you've got it and do NOT ask them to upload it again; otherwise warmly nudge them to tap the upload link you already sent.",
-        fallback: "Still waiting for your photo! Tap the upload link I sent 📷",
-        maxTokens: 60,
-      });
-      await sendMessage(chatId, photoNudge);
-      await runGateLinkNet(phone, chatId, session, photoNudge);
-      return;
-    }
-    case "caregiver_send_documents":  return handleCaregiverSendDocuments(phone, chatId, session);
-    case "caregiver_awaiting_documents": {
-      // "SKIP" fast path kept (zero latency, old links/copy said it) — but the
-      // ask is phrased naturally now, so also understand free-form skips
-      // ("don't have any", "no certs", "nope") and answer questions instead of
-      // nudging past them.
-      let docIntent: string = norm === "SKIP" ? "skip" : "";
-      if (!docIntent) {
-        const parsed = await parseWithClaude(
-          "The caregiver was asked to upload certifications (CNA license, HHA certificate, etc.) via a link, and told it's fine to say so if they don't have any. Classify the reply: " +
-          "wants to skip / has none / will add later (\"skip\", \"don't have any\", \"no certs\", \"nope\", \"not yet\") → skip. " +
-          "Asked a question (what counts, is it required, link not working) → question. " +
-          "ONLY a thanks or acknowledgment with nothing else (\"thanks\", \"sounds good\", \"ok great\") → ack. " +
-          "Says they HAVE certs or will upload (\"yes I have my CNA\", \"one sec\", \"uploading now\") or anything else → other. " +
-          "Reply with exactly one word: skip, question, ack, or other.",
-          text
-        );
-        const v = (parsed ?? "").trim().toLowerCase();
-        docIntent = v === "skip" || v === "question" || v === "ack" ? v : "other";
-      }
-      if (docIntent === "skip") {
-        await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
-        return handleCaregiverAskMvr(phone, chatId, session);
-      }
-      if (docIntent === "ack") {
-        await sendAwaitingAck(chatId, session,
-          "The caregiver just acknowledged your certifications ask (a thanks or 'ok') — you're here whenever they've uploaded, or they can tell you to skip it.",
-          "Sounds good — I'm here whenever you're ready!");
-        return;
-      }
-      if (docIntent === "question") {
-        // Answer, then follow with the REAL link instead of a "tap the link"
-        // line pointing at a message that may never have arrived (see the
-        // caregiver_awaiting_photo note — same defect class).
-        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
-        await resendGateLink(phone, chatId, "caregiver_awaiting_documents", "caregiver_documents",
-          "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:");
-        return;
-      }
-      if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
-        "your certifications via the upload link — or just tell me to skip it")) return;
-      if (await resendGateLink(phone, chatId, "caregiver_awaiting_documents", "caregiver_documents",
-        "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:", { throttled: true })) return;
-      const liveDocsFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_documents(phone, session);
-      const docsNudge = await generateCaraMessage({
-        audience: "caregiver",
-        language: session.preferredLanguage === "es" ? "es" : "en",
-        context: `The caregiver just texted: "${text}". ` + (liveDocsFact ? `${liveDocsFact} ` : "") +
-          "Respond to what they actually said, grounded in the live status above if present — if certifications are already on file, acknowledge that and let them add more or move on; otherwise warmly nudge them to tap the upload link you already sent, and weave in naturally that they can also just tell you to skip it if they don't have certifications.",
-        fallback: "Tap the link I sent to upload your certifications — or if you don't have any, just tell me to skip it.",
-        maxTokens: 70,
-      });
-      await sendMessage(chatId, docsNudge);
-      await runGateLinkNet(phone, chatId, session, docsNudge);
-      return;
-    }
-    case "caregiver_ask_mvr":          return handleCaregiverAskMvr(phone, chatId, text, session);
     case "caregiver_send_membership":  return handleCaregiverSendMembership(phone, chatId, session);
     case "caregiver_awaiting_membership":
       await handleCaregiverResendMembership(phone, chatId, session, text);
-      return;
-    case "caregiver_send_mvr":         return handleCaregiverSendMvr(phone, chatId, session);
-    case "caregiver_awaiting_mvr":
-      await handleCaregiverResendMvr(phone, chatId, session, text);
       return;
     case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session);
     case "caregiver_awaiting_bgcheck_consent":
@@ -1915,6 +1827,20 @@ async function dispatchOnboardingToLoop(
 //      "that's everything I need".
 // Idempotent and non-fatal: a no-op unless collection is (now) complete, and any
 // handoff failure is logged, never thrown.
+// An upload (photo / transport documents) landed while the caregiver is
+// mid-collection: pick the conversation back up with the next question. The
+// loop rebuilds "what's still needed" from the fresh session + the live
+// caregiver record, so it simply asks the next item (2026-09-25).
+export async function resumeCaregiverCollection(phone: string, chatId: string): Promise<void> {
+  try {
+    const fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as AgentSession | undefined;
+    if (!fresh) return;
+    await handleOnboardingStep(phone, chatId, "__RESUME__", { ...fresh, chatId } as AgentSession);
+  } catch (err) {
+    console.error("resumeCaregiverCollection failed:", err instanceof Error ? err.message : err);
+  }
+}
+
 export async function drivePostCollectionHandoff(
   phone: string,
   chatId: string,
@@ -3151,102 +3077,21 @@ async function getLocalJobTeaser(city: string): Promise<{ count: number; lines: 
   }
 }
 
-// Called immediately after doc upload — ask before building the checkout so MVR can be bundled
-async function handleCaregiverAskMvr(phone: string, chatId: string, textOrSession: string | AgentSession, session?: AgentSession): Promise<void> {
-  // When called as a switch case, textOrSession is the user's reply text
-  // When called programmatically (no reply yet), textOrSession is the session object
-  if (typeof textOrSession !== "string") {
-    // First visit — ask the question
-    await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: textOrSession.preferredLanguage === "es" ? "es" : "en",
-      context:
-        "Mid-signup, ask the caregiver whether they ever drive clients to appointments or errands. " +
-        `If they do, there's an optional Motor Vehicle Record check they can bundle with their membership — a one-time ${mvrDisplay()} add-on (charged together with their membership, doesn't change the annual price) that puts a verified-driver badge on their profile that families who need a driver look for. ` +
-        "Weave the choice in naturally, like a person would ('want me to add it? totally fine to leave it off') — do NOT write a stiff 'Reply YES or NO' instruction. Do NOT include any URL.",
-      fallback:
-        `Do you ever drive clients to appointments or errands? If so, I can add a Motor Vehicle Record check for a one-time ${mvrDisplay()} — it gives you a verified-driver badge families look for. Want me to add it, or leave it off?`,
-      maxTokens: 120,
-    }));
-    return;
-  }
-
-  // User has replied — classify the answer with the LLM (the ask is phrased
-  // naturally, so replies are free-form: "yeah sure", "nah I don't drive",
-  // "how much is it?"). Strict YES/NO stays as a zero-latency fast path.
-  const raw  = (textOrSession as string).trim();
-  const norm = raw.toUpperCase();
-  let verdict: "yes" | "no" | "question" | "unclear";
-  if (norm === "YES" || norm === "Y") verdict = "yes";
-  else if (norm === "NO" || norm === "N") verdict = "no";
-  else {
-    const parsed = await parseWithClaude(
-      "The caregiver was just asked whether they want an optional Motor Vehicle Record (driving) check added to their profile. " +
-      "Clear agreement (\"yes\", \"sure\", \"yeah add it\", \"sounds good\", \"I do drive so yes\") → yes. " +
-      "Clear decline (\"no\", \"nah\", \"skip\", \"not now\", \"not at the moment\", \"not right now\", \"maybe later\", \"I don't drive\") → no. " +
-      "They asked a question (what it costs, what it is, how long it takes) → question. " +
-      "Anything else or ambiguous → unclear. Reply with exactly one word: yes, no, question, or unclear.",
-      raw
-    );
-    const v = (parsed ?? "").trim().toLowerCase();
-    verdict = v === "yes" || v === "no" || v === "question" ? (v as "yes" | "no" | "question") : "unclear";
-  }
-
-  if (verdict === "question") {
-    await sendMessage(chatId, await answerQuestionMidFlow(raw, session!, phone));
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: session?.preferredLanguage === "es" ? "es" : "en",
-      context: "You just answered the caregiver's question about the optional driving-record check. In ONE short, natural line ask whether they'd like it added or left off.",
-      fallback: "So — want me to add the driving check, or leave it off for now?",
-      maxTokens: 50,
-    }));
-    return; // stay at caregiver_ask_mvr for their answer
-  }
-
-  if (verdict === "unclear") {
-    const attempts = (((session?.onboardingData ?? {}).mvrAskAttempts as number | undefined) ?? 0);
-    if (attempts < 1) {
-      await mergeOnboardingData(phone, { mvrAskAttempts: attempts + 1 });
-      await sendMessage(chatId, await generateCaraMessage({
-        audience: "caregiver",
-        language: session?.preferredLanguage === "es" ? "es" : "en",
-        context: "The caregiver's reply didn't clearly say whether they want the optional driving-record check. In ONE warm line, ask again simply — add it or leave it off.",
-        fallback: "No rush — should I add the driving check to your profile, or leave it off for now?",
-        maxTokens: 60,
-      }));
-      return;
-    }
-    // Second unclear reply — don't loop. Default to no, say so gracefully, move on.
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: session?.preferredLanguage === "es" ? "es" : "en",
-      context: "You couldn't get a clear answer on the optional driving check, so you're leaving it off — tell them warmly it's off for now and they can add it any time later, then move on.",
-      fallback: "I'll leave the driving check off for now — you can add it anytime by texting me. Moving on!",
-      maxTokens: 60,
-    }));
-    verdict = "no";
-  }
-
-  await mergeOnboardingData(phone, { wantsMvr: verdict === "yes" });
-  await updateSession(phone, { onboardingStep: "caregiver_send_membership" });
-  await handleCaregiverSendMembership(phone, chatId, session!);
-}
-
 async function handleCaregiverSendMembership(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const d       = session.onboardingData ?? {};
-  const wantsMvr = (d.wantsMvr as boolean | undefined) ?? false;
+  // Flat membership: the MVR rides along whenever their services include
+  // Transportation — the same rule the site's payment webhook applies.
+  const wantsMvr = offersTransportation(d as Record<string, unknown>);
   const token   = generateToken({ phone, task: "caregiver_membership" });
   let checkoutUrl = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
 
-  // MVR is charged only when it can BOTH be charged (price) AND run (bundled
-  // package) — and `includeMVR` is derived from THIS, never from wantsMvr alone.
-  // Old bug: includeMVR was set from wantsMvr regardless of whether the line item
-  // was added, so a missing price flagged mvrPaid downstream with no charge.
-  const mvrCharged = wantsMvr && canChargeBundledMvr();
+  // Flat membership (founder, 2026-09-25): the annual fee covers the MVR, so
+  // there is NO separate line item any more — `includeMVR` only tells the
+  // webhook to run the bundled criminal+MVR package, and that needs the
+  // bundled package to be configured.
+  const mvrCharged = wantsMvr && isMvrCheckConfigured("bundled");
   if (wantsMvr && !mvrCharged) {
-    console.error("Caregiver opted into MVR but it is not configured (price/package); proceeding membership-only.");
+    console.error("Caregiver opted into MVR but the bundled package is not configured; proceeding membership-only.");
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",
       language: session.preferredLanguage === "es" ? "es" : "en",
@@ -3271,13 +3116,10 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
       const lineItems: { price: string; quantity: number }[] = [
         { price: membershipPriceId, quantity: 1 },
       ];
-      if (mvrCharged) {
-        lineItems.push({ price: mvrPriceId(), quantity: 1 });
-      }
 
       // Recurring annual membership (mode "subscription" → renews yearly).
       // NOTE: STRIPE_CAREGIVER_ANNUAL must be a *recurring* annual price in Stripe.
-      // The optional MVR add-on is a one-time price, added to the first invoice.
+      // One flat price — the MVR is covered by it, never a second line item.
       // We intentionally omit payment_method_types so Checkout uses the account's
       // automatic payment methods — this surfaces Apple Pay / Google Pay / Link
       // (caregivers are mobile-first over SMS), which an explicit ["card"] list suppresses.
@@ -3363,16 +3205,14 @@ async function handleGateLinkKeyword(phone: string, chatId: string, step: string
   const mins        = gateLinkCooldownMinutes(fresh, step);
   const inCooldown  = mins !== null;
   const bypassSpent = inCooldown && gateLinkBypassConsumed(fresh, step);
-  if (step === "caregiver_awaiting_membership" || step === "caregiver_awaiting_mvr") {
+  if (step === "caregiver_awaiting_membership") {
     // No text → no classification. The handler's paid short-circuit must win
     // over ANY cooldown copy — a paid user must get the paid confirmation,
     // never "I sent that link" — so bypassSpent is passed DOWN instead of
     // early-returning here. The handler reports whether a link actually went
     // out; the cooldown/bypass stamps are written only on a REAL send
     // (mirrors resendGateLink's stamp-only-on-real-send rule).
-    const sent = step === "caregiver_awaiting_membership"
-      ? await handleCaregiverResendMembership(phone, chatId, session, undefined, { bypassSpent })
-      : await handleCaregiverResendMvr(phone, chatId, session, undefined, { bypassSpent });
+    const sent = await handleCaregiverResendMembership(phone, chatId, session, undefined, { bypassSpent });
     if (sent) {
       if (inCooldown) await stampGateLinkBypassUsed(phone, step);
       else await stampGateLinkResent(phone, step);
@@ -3627,204 +3467,6 @@ async function handleCaregiverResendMembership(
   return true;
 }
 
-// ── Add-MVR-later (standalone "Approved Driver" upgrade over SMS) ─────────────
-// Bespoke handler (NOT a data-driven ConversationStep) because it creates a
-// one-time Stripe payment and triggers a side effect — mirrors
-// handleCaregiverSendMembership. On payment the webhook (task: 'mvr_payment')
-// initiates an MVR-only Checkr check whose result only affects the driver badge.
-async function handleCaregiverSendMvr(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  // Only offer when the add-on can be both charged and run, so a caregiver is
-  // never charged for an MVR that can't actually run (and vice versa).
-  if (!canChargeStandaloneMvr()) {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "The optional Approved Driver (Motor Vehicle Record) add-on can't be run right now. Warmly apologize, let them know it's temporarily unavailable, and that you've flagged it to your team.",
-      fallback: "Sorry — the Approved Driver add-on isn't available right now. I've let our team know.",
-      maxTokens: 70,
-    }));
-    await db.collection("admin_alerts").add({
-      type: "mvr_addon_unavailable", phone, createdAt: new Date().toISOString(), resolved: false, severity: "medium",
-    }).catch(() => {});
-    return;
-  }
-
-  const token = generateToken({ phone, task: "mvr_payment" });
-  let checkoutUrl = `${APP_URL}/done?task=mvr_payment&t=${token}`;
-  await signalThinking(chatId, session.service);
-  try {
-    const stripeSession = await getStripe().checkout.sessions.create({
-      mode:                "payment", // one-time, separate from the membership subscription
-      line_items:          [{ price: mvrPriceId(), quantity: 1 }],
-      success_url:         `${APP_URL}/done?task=mvr_payment&t=${token}`,
-      cancel_url:          `${APP_URL}/start`,
-      metadata:            { phone, task: "mvr_payment" },
-      payment_intent_data: { metadata: { phone, task: "mvr_payment" } },
-    });
-    checkoutUrl = stripeSession.url ?? checkoutUrl;
-  } catch (err) {
-    console.error("handleCaregiverSendMvr stripe error:", err);
-    await db.collection("admin_alerts").add({
-      type:      "stripe_checkout_create_failed",
-      phone,
-      task:      "mvr_payment",
-      error:     err instanceof Error ? err.message : String(err),
-      severity:  "high",
-      resolved:  false,
-      createdAt: new Date().toISOString(),
-    }).catch(() => {});
-  }
-
-  // Save the prior step — an already-onboarded caregiver returns to it after payment.
-  await updateSession(phone, {
-    onboardingStep: "caregiver_awaiting_mvr",
-    mvrCheckoutUrl: checkoutUrl,
-    mvrPriorStep:   session.onboardingStep ?? null,
-  });
-  await sendMessage(chatId, await generateCaraMessage({
-    audience: "caregiver",
-    language: session.preferredLanguage === "es" ? "es" : "en",
-    context:
-      "The caregiver wants the Approved Driver add-on. Naturally explain: it adds a Motor Vehicle Record (driving) check to their profile, families who need a driver see a verified-driver badge, it's a one-time add-on, and it doesn't change their annual membership. The payment link comes right below. Do NOT include any URL.",
-    fallback: "Becoming an Approved Driver adds a Motor Vehicle Record check to your profile — families who need a driver see your verified-driver badge. One-time add-on, doesn't change your membership. Tap to add it:",
-    maxTokens: 110,
-  }));
-  await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
-}
-
-// Returns true only when a payment link ACTUALLY went out this turn — see
-// handleCaregiverResendMembership above (same real-send contract).
-async function handleCaregiverResendMvr(
-  phone:   string,
-  chatId:  string,
-  session: AgentSession,
-  text?:   string,
-  opts:    { bypassSpent?: boolean } = {},
-): Promise<boolean> {
-  // Only an `other`-classified inbound is cooldown-gated (U9) — see the
-  // membership handler above for the shape.
-  let throttled = false;
-  if (text) {
-    const kind = await classifyAwaitingReply(text, "add their Approved Driver check via the payment link Evia sent");
-    if (kind === "ack") {
-      await sendAwaitingAck(chatId, session,
-        "The caregiver just acknowledged your Approved Driver ask (a thanks or 'will do') — you're here when it's done.",
-        "Sounds good — I'm here when it's done!");
-      return false;
-    }
-    if (kind === "question") {
-      await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
-    } else if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
-      "adding your Approved Driver check via the payment link I sent")) {
-      return false;
-    } else {
-      throttled = true; // `other` fell through to the resend below
-    }
-  }
-  // Don't re-send the MVR payment link if the webhook already recorded payment
-  // (the driving check is under way) — confirm instead.
-  let mvrPaidNow = false;
-  let freshMvrData: Record<string, unknown> | undefined;
-  try {
-    const snap = await db.collection("agent_sessions").doc(phone).get();
-    freshMvrData = snap.data() as Record<string, unknown> | undefined;
-    mvrPaidNow = (freshMvrData as any)?.mvrPaid === true;
-  } catch { /* fail-soft: treat as not paid → resend link as before */ }
-  if (mvrPaidNow) {
-    const liveFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_mvr(phone, session);
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context: (liveFact ? `${liveFact} ` : "") +
-        "Their Approved Driver payment already landed and the driving-record check is under way. Warmly confirm it's in progress — do NOT ask them to pay or tap any link again.",
-      fallback: "Your Approved Driver payment already came through — the driving-record check is under way. I'll let you know when it's done!",
-      maxTokens: 80,
-    }));
-    return false;
-  }
-  // LINK-keyword caller with this window's bypass already spent (checked AFTER
-  // the paid short-circuit so a paid user never sees cooldown copy).
-  if (opts.bypassSpent) {
-    const mins = gateLinkCooldownMinutes(freshMvrData, "caregiver_awaiting_mvr") ?? 1;
-    await sendMessage(chatId, gateLinkBypassSpentCopy(mins, gateLinkCooldownResetMinutes(freshMvrData, "caregiver_awaiting_mvr")));
-    return false;
-  }
-  // U9 cooldown — `other`-branch resends only; paid short-circuit above wins.
-  if (throttled) {
-    const mins = gateLinkCooldownMinutes(freshMvrData, "caregiver_awaiting_mvr");
-    if (mins !== null) {
-      await sendMessage(chatId, gateLinkInCooldownReplyCopy(freshMvrData, "caregiver_awaiting_mvr", mins));
-      return false;
-    }
-  }
-  const url = (session as any).mvrCheckoutUrl as string | undefined;
-  if (url) {
-    await sendMessage(chatId, "Tap the link below to add your Approved Driver check:");
-    await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
-  } else {
-    await handleCaregiverSendMvr(phone, chatId, session);
-  }
-  if (throttled) await stampGateLinkResent(phone, "caregiver_awaiting_mvr");
-  return true;
-}
-
-async function handleCaregiverSendPhoto(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  // Collection is complete — create the caregiver's webapp account NOW (Auth
-  // user + users/{uid} seed) instead of waiting for the bg-check/Stripe gates,
-  // so a caregiver who stalls at uploads can still log into the web app.
-  if (!session.userId) {
-    const uid = await ensureWebAccount(phone, "caregiver", ((session.onboardingData ?? {}).name as string) ?? "");
-    if (uid) (session as any).userId = uid;
-  }
-
-  const token   = generateToken({ phone, task: "photo_upload" });
-  const photoUrl = `${APP_URL}/upload/photo?t=${token}`;
-
-  await updateSession(phone, { onboardingStep: "caregiver_awaiting_photo" });
-  const d = session.onboardingData ?? {};
-  const firstName = (((d.name ?? "") as string).split(" ")[0]) || "";
-  const ask = await generateCaraMessage({
-    audience: "caregiver",
-    language: session.preferredLanguage === "es" ? "es" : "en",
-    context:
-      `The caregiver${firstName ? ` (first name ${firstName})` : ""} just finished sharing their background and experience — their profile is coming together. ` +
-      "Naturally ask them to add a profile photo next: families want to see who they're trusting, and a clear friendly headshot makes a real difference in getting booked. " +
-      "Tell them you're dropping the upload link right below. Do NOT include any URL — the link is sent right after your text.",
-    fallback:
-      `Almost there${firstName ? `, ${firstName}` : ""}! One more thing — families want to see who they're trusting, and a clear friendly headshot makes a big difference. Tap here to add your photo:`,
-    maxTokens: 110,
-  });
-  await sendMessage(chatId, ask);
-  // Rich preview card (2026-07-12): /upload/** is served through the
-  // v1-uploadPageMeta OG rewrite (same pattern as the /p/ profile links), so a
-  // link part renders a branded "Add your profile photo — Evia" card instead of
-  // the raw token URL that used to be inlined here.
-  await sendMessage(chatId, { parts: [{ type: "link", value: photoUrl }] });
-}
-
-async function handleCaregiverSendDocuments(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  const token  = generateToken({ phone, task: "doc_upload" });
-  const docUrl = `${APP_URL}/upload/document?t=${token}`;
-
-  await updateSession(phone, { onboardingStep: "caregiver_awaiting_documents" });
-  const ask = await generateCaraMessage({
-    audience: "caregiver",
-    language: session.preferredLanguage === "es" ? "es" : "en",
-    context:
-      "The caregiver just added their profile photo. Next, ask naturally whether they have any caregiving certifications — CNA license, HHA certificate, caregiver training, anything like that (Evia is non-medical in-home care, so never suggest medical credentials) — because certs make their profile stand out to families. " +
-      "Tell them you're dropping an upload link right below this message, and weave in naturally that it's totally fine if they don't have any — they can just say so and you'll move on. " +
-      "Do NOT write a stiff 'reply SKIP' instruction, do NOT include any URL — the link is sent right after your text.",
-    fallback:
-      "Nice — photo's in! Do you have any certifications, like a CNA license or HHA certificate? They really make your profile stand out. Here's an upload link — and if you don't have any, just say so and we'll keep moving:",
-    maxTokens: 120,
-  });
-  await sendMessage(chatId, ask);
-  // Rich preview card (2026-07-12): /upload/** is served through the
-  // v1-uploadPageMeta OG rewrite, so a link part renders a branded
-  // "Add your certifications — Evia" card instead of the raw token URL.
-  await sendMessage(chatId, { parts: [{ type: "link", value: docUrl }] });
-}
-
 // ── Inbound media during onboarding (texted photo / document) ─────────────────
 // A caregiver snaps a headshot or a CNA/HHA card and texts it instead of using
 // the web upload link. Route by the current step; gate with gpt-4o vision and
@@ -3837,11 +3479,13 @@ async function handleInboundMedia(
   media:   InboundMediaPart,
   step:    string
 ): Promise<void> {
-  if (step === "caregiver_send_photo" || step === "caregiver_awaiting_photo") {
+  // A caregiver mid-collection who texts a photo: their profile photo (the
+  // wizard's photo step lives inside the loop now). Once a photo is on file,
+  // a texted picture is treated like any other file — nudged to the link
+  // (transport documents are three specific files; they go through the page).
+  if (session.userType === "caregiver" && collectionStepsForRole("caregiver").includes(step)
+      && !isFieldFilled((session.onboardingData ?? {}).profilePhoto)) {
     return handleInboundProfilePhoto(phone, chatId, media);
-  }
-  if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
-    return handleInboundDocument(phone, chatId, media);
   }
   if (collectionStepsForRole("client").includes(step)) {
     return handleInboundClientRecipientPhoto(phone, chatId, media);
@@ -3917,39 +3561,6 @@ async function handleInboundProfilePhoto(
     console.error("handleInboundProfilePhoto failed", { phone, err: (err as Error)?.message });
     await sendMessage(chatId,
       "I had trouble opening that photo — could you try sending it again, or tap the upload link I sent?"
-    );
-  }
-}
-
-async function handleInboundDocument(
-  phone:  string,
-  chatId: string,
-  media:  InboundMediaPart
-): Promise<void> {
-  try {
-    const dl = await downloadMedia(media);
-    const verdict = await verifyDocument(dl.buffer, dl.content_type);
-    if (!verdict.ok) {
-      const why = verdict.reason ? ` ${verdict.reason}` : "";
-      await sendMessage(chatId,
-        `Thanks for that!${why} Could you resend a clear photo of your certification ` +
-        `(CNA license, HHA certificate, etc.)? Or reply SKIP to move on — you can always add it later.`
-      );
-      return;
-    }
-    const url = await storeInboundMedia({
-      phone, kind: "document", buffer: dl.buffer,
-      content_type: dl.content_type, ext: dl.ext,
-    });
-    const label = verdict.docType && verdict.docType !== "document" && verdict.docType !== "unknown"
-      ? `your ${verdict.docType}`
-      : "your certification";
-    await sendMessage(chatId, `Got ${label} — saved. ✅`);
-    await advanceOnboardingStep(phone, "doc_upload", url);
-  } catch (err) {
-    console.error("handleInboundDocument failed", { phone, err: (err as Error)?.message });
-    await sendMessage(chatId,
-      "I had trouble opening that document — could you try again, or reply SKIP to continue?"
     );
   }
 }
@@ -4516,7 +4127,7 @@ export type OnboardingLinkType =
   | "client_identity"
   | "caregiver_membership"
   | "caregiver_photo"
-  | "caregiver_documents"
+  | "caregiver_transport_docs"
   | "caregiver_background_check"
   | "caregiver_payouts";
 
@@ -4566,11 +4177,10 @@ export async function sendOnboardingLink(
       url = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
       const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.STRIPE_CAREGIVER_ANNUAL ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
       if (membershipPriceId) {
-        const wantsMvr   = (d.wantsMvr as boolean | undefined) ?? false;
-        // includeMVR derived from the actual charge, not wantsMvr — see handleCaregiverSendMembership.
-        const mvrCharged = wantsMvr && canChargeBundledMvr();
+        const wantsMvr   = offersTransportation(d as Record<string, unknown>);
+        // Flat fee: includeMVR only selects the bundled Checkr package — see handleCaregiverSendMembership.
+        const mvrCharged = wantsMvr && isMvrCheckConfigured("bundled");
         const lineItems: { price: string; quantity: number }[] = [{ price: membershipPriceId, quantity: 1 }];
-        if (mvrCharged) lineItems.push({ price: mvrPriceId(), quantity: 1 });
         const stripeSession = await getStripe().checkout.sessions.create({
           mode:                 "subscription",
           payment_method_types: ["card"],
@@ -4591,8 +4201,10 @@ export async function sendOnboardingLink(
       break;
     }
 
-    case "caregiver_documents": {
-      url = `${APP_URL}/upload/document?t=${generateToken({ phone, task: "doc_upload" })}`;
+    case "caregiver_transport_docs": {
+      // One page, three slots (driver's license, insurance, registration) —
+      // the same documents.{type} the site's settings page writes.
+      url = `${APP_URL}/upload/transport?t=${generateToken({ phone, task: "doc_upload" })}`;
       break;
     }
 
@@ -4728,18 +4340,6 @@ export async function resendStuckStep(phone: string): Promise<boolean> {
     case "caregiver_send_membership": {
       // Prefer the stored checkout URL; regenerate if it was lost.
       await handleCaregiverResendMembership(phone, chatId, session);
-      return true;
-    }
-    case "caregiver_awaiting_photo":
-    case "caregiver_send_photo": {
-      // Re-send a fresh photo-upload link
-      await handleCaregiverSendPhoto(phone, chatId, session);
-      return true;
-    }
-    case "caregiver_awaiting_documents":
-    case "caregiver_send_documents": {
-      // Re-send a fresh document-upload link
-      await handleCaregiverSendDocuments(phone, chatId, session);
       return true;
     }
     default:
@@ -4907,19 +4507,17 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     case "photo_upload": {
-      // Persist the uploaded photo URL so it lands on the caregiver doc at
-      // finalization (taskData is the Storage URL — from the web upload page OR
-      // a texted headshot). Previously this URL was dropped on the floor.
+      // The wizard's photo step lives INSIDE the collection loop (2026-09-25):
+      // the URL (upload page OR a texted headshot) is saved as profilePhoto —
+      // mergeOnboardingData mirrors it to caregivers/{uid}.photo — and, when the
+      // caregiver is mid-collection, the loop resumes with the next question.
       if (taskData) await mergeOnboardingData(phone, { profilePhoto: taskData });
-      // Post-onboarding photo UPDATES (caregiverProfileHandler's UPDATE_PHOTO
-      // flow) reuse this same token task — only advance the onboarding flow
-      // when the session is actually at the photo gate, otherwise the update
-      // would drag an active caregiver back into the documents step.
       const photoStep = session.onboardingStep ?? "";
-      if (photoStep === "caregiver_send_photo" || photoStep === "caregiver_awaiting_photo") {
-        await updateSession(phone, { onboardingStep: "caregiver_send_documents" });
-        await handleCaregiverSendDocuments(phone, chatId, session);
+      if (collectionStepsForRole("caregiver").includes(photoStep)) {
+        await resumeCaregiverCollection(phone, chatId);
       } else {
+        // Post-onboarding photo UPDATE (caregiverProfileHandler's UPDATE_PHOTO
+        // flow reuses this token task) — confirm, never re-enter onboarding.
         await sendMessage(chatId, await generateCaraMessage({
           audience: "caregiver",
           language: session.preferredLanguage === "es" ? "es" : "en",
@@ -4932,16 +4530,17 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     case "doc_upload": {
-      // Append the document URL to onboardingData.documents (web upload OR texted
-      // certification) so it carries onto the caregiver doc at finalization.
-      if (taskData) {
-        const existingDocs = Array.isArray((session.onboardingData ?? {}).documents)
-          ? ((session.onboardingData ?? {}).documents as string[])
-          : [];
-        await mergeOnboardingData(phone, { documents: [...existingDocs, taskData] });
+      // Transport documents (driver's license / insurance / registration). The
+      // upload callable already wrote the site's documents.{type} map on
+      // caregivers/{uid} and merged onboardingData.transportDocs; taskData is the
+      // document type. The loop resumes only once all three are in — the upload
+      // page holds all three slots, so a partial set means they're still on it.
+      const fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as AgentSession | undefined;
+      const data = (fresh?.onboardingData ?? {}) as Record<string, unknown>;
+      const step = fresh?.onboardingStep ?? "";
+      if (collectionStepsForRole("caregiver").includes(step) && transportDocumentsComplete(data)) {
+        await resumeCaregiverCollection(phone, chatId);
       }
-      await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
-      await handleCaregiverAskMvr(phone, chatId, session);
       break;
     }
 
@@ -5009,24 +4608,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         maxTokens: 40,
       }));
       await handleCaregiverSendBgcheck(phone, chatId, session);
-      break;
-    }
-
-    case "mvr_payment": {
-      await db.collection("agent_sessions").doc(phone).update({
-        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
-      });
-      // Caregiver was already onboarded — restore their prior step so later
-      // messages route normally; the MVR-only check runs server-side.
-      const priorStep = (session as any).mvrPriorStep as string | undefined;
-      if (priorStep) await updateSession(phone, { onboardingStep: priorStep }).catch(() => {});
-      await sendMessage(chatId, await generateCaraMessage({
-        audience: "caregiver",
-        language: session.preferredLanguage === "es" ? "es" : "en",
-        context: "The caregiver just paid for the Approved Driver add-on. Naturally confirm: payment received, their driving-record (MVR) check is underway, you'll text them the moment their verified-driver badge is active, and it doesn't affect their existing caregiver approval.",
-        fallback: "Payment received — your driving record check is underway. I'll text you the moment your Approved Driver badge is active. This doesn't change your existing caregiver approval.",
-        maxTokens: 90,
-      }));
       break;
     }
 
@@ -5301,11 +4882,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         // Normally the "membership" webhook task mirrored this already; this
         // covers sessions where no uid was resolvable at payment time.
         ...((session as any).caregiverSubscriptionId ? { membershipPaid: true } : {}),
-        status:          "active",
-        // Visibility gate: families' FindCaregivers query only loads caregivers
-        // where onboardingStatus === 'profile_complete'. Evia is the canonical
-        // onboarding path, so it must set this too (the web wizard already does).
-        onboardingStatus: "profile_complete",
+        // onboardingStatus 'profile_complete' is stamped when collection
+        // completes (complete_collection — the wizard's bio-save moment), and
+        // `status: 'active'` is the Checkr webhook's to write on a clear check,
+        // exactly as on the site. Neither belongs here (2026-09-25).
       };
 
       // Admin verification queue reads verificationStatus === 'submitted' (the value
@@ -5992,8 +5572,8 @@ async function handleJobConfirmPost(
 const MEMBERSHIP_STEP_FACTS =
   `The ${caregiverAnnualDisplay()} caregiver membership INCLUDES their required background check (no separate charge) and unlocks applying to jobs, ` +
   "getting booked, and Evia's scheduling + payout tools. It renews yearly. Right after payment comes the background-check step; " +
-  `Evia texts them the moment it clears — then they're approved and families can book them (never promise a specific turnaround time). The optional Approved Driver (MVR) check is a one-time ${mvrDisplay()} add-on ` +
-  `charged together with the membership in the same checkout — it does not change the ${caregiverAnnualAmount()} annual renewal.`;
+  `Evia texts them the moment it clears — then they're approved and families can book them (never promise a specific turnaround time). ` +
+  `It is ONE flat fee (${caregiverAnnualAmount()} a year): if they offer transportation, the driving-record (MVR) check is included in the same background check at no extra charge.`;
 const BGCHECK_CONSENT_STEP_FACTS =
   "Their background check is already paid for — included in the membership, no extra charge. The link Evia sent opens Evia's secure page to review " +
   "the FCRA disclosure and authorize the check (it asks for their LEGAL name because records are searched against it). After they authorize, Checkr — " +
@@ -6006,16 +5586,6 @@ const BGCHECK_WAIT_STEP_FACTS =
 const PAYOUTS_STEP_FACTS =
   "Their background check cleared — they're approved on Evia. The payout link sets up their Stripe account so they get paid after each visit: " +
   "earnings pay out daily automatically (free); an optional instant payout carries Stripe's 1% fee (min $0.50).";
-const PHOTO_STEP_FACTS =
-  "A profile photo is how families see who they're trusting — a clear, friendly headshot makes them much more likely to request an interview. " +
-  "The link Evia sent opens a phone-friendly upload page and returns them right back to Messages when they're done. Next after the photo is certifications.";
-const DOCUMENTS_STEP_FACTS =
-  "Certifications (CNA license, HHA certificate, etc. — Evia is non-medical in-home care, so never suggest medical credentials) are OPTIONAL — they help a profile stand out, but a caregiver can skip them and keep going. " +
-  "The link Evia sent opens a phone-friendly upload page. After this comes the optional Approved Driver (MVR) question, then activating their membership.";
-const MVR_STEP_FACTS =
-  "The Approved Driver check is an OPTIONAL one-time add-on: it adds a Motor Vehicle Record (driving) check so families who need a driver see a verified-driver " +
-  `badge on their profile. It's a one-time ${mvrDisplay()} charge and does NOT change their ${caregiverAnnualAmount()} annual membership — entirely their choice, and they can add it ` +
-  "anytime later by texting Evia or from the Payments page.";
 const CLIENT_PAYMENT_STEP_FACTS =
   `The family membership is ${clientMonthlyDisplay()} — it's what lets Evia coordinate care: finding, vetting, and matching caregivers plus scheduling and secure payments. ` +
   "It's a recurring monthly membership and setup takes about 30 seconds. Once it's active, you can message, interview and book the caregivers you've seen.";
@@ -6025,13 +5595,6 @@ const CLIENT_IDENTITY_STEP_FACTS =
 const STEP_QUESTION_FACTS: Record<string, string> = {
   caregiver_send_membership:          MEMBERSHIP_STEP_FACTS,
   caregiver_awaiting_membership:      MEMBERSHIP_STEP_FACTS,
-  caregiver_ask_mvr:                  MEMBERSHIP_STEP_FACTS,
-  caregiver_send_photo:               PHOTO_STEP_FACTS,
-  caregiver_awaiting_photo:           PHOTO_STEP_FACTS,
-  caregiver_send_documents:           DOCUMENTS_STEP_FACTS,
-  caregiver_awaiting_documents:       DOCUMENTS_STEP_FACTS,
-  caregiver_send_mvr:                 MVR_STEP_FACTS,
-  caregiver_awaiting_mvr:             MVR_STEP_FACTS,
   caregiver_send_bgcheck:             BGCHECK_CONSENT_STEP_FACTS,
   caregiver_awaiting_bgcheck_consent: BGCHECK_CONSENT_STEP_FACTS,
   caregiver_awaiting_bgcheck:         BGCHECK_WAIT_STEP_FACTS,

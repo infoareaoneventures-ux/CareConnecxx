@@ -13,7 +13,7 @@ import { InstantPayoutModal } from './InstantPayoutModal';
 import { CompletedShift, SubmitShiftHoursModal } from '../payroll/SubmitShiftHoursModal';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { shiftHoursService, dbService } from '../../services/api';
-import { checkOnboardingStatus, requestInstantPayout, getPayoutBalance, getSubscriptionStatus, getCaregiverBillingPortalUrl, createMvrAddonCheckout } from '../../services/stripeService';
+import { checkOnboardingStatus, requestInstantPayout, getPayoutBalance, getSubscriptionStatus, getCaregiverBillingPortalUrl } from '../../services/stripeService';
 import { db } from '../../lib/firebase';
 import type { Caregiver } from '../../types';
 import { paymentMethodLabel } from '../../types';
@@ -1358,7 +1358,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [subLoading, setSubLoading] = useState(false);
   const [managing, setManaging] = useState(false);
-  const [becomingDriver, setBecomingDriver] = useState(false);
 
   // ── data subscriptions ──────────────────────────────────────────────────────
 
@@ -1608,24 +1607,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
       addToast(msg, 'error');
     } finally {
       setManaging(false);
-    }
-  };
-
-  const handleBecomeApprovedDriver = async () => {
-    setBecomingDriver(true);
-    try {
-      const successUrl = `${window.location.origin}/caregiver/payments?mvr=success`;
-      const cancelUrl = `${window.location.origin}/caregiver/payments`;
-      const url = await createMvrAddonCheckout(successUrl, cancelUrl);
-      if (url) {
-        window.location.href = url;
-      } else {
-        addToast('Could not start the Approved Driver checkout. Please try again.', 'error');
-      }
-    } catch (e: any) {
-      addToast(e?.message || 'The Approved Driver add-on is unavailable right now. Please try again later.', 'error');
-    } finally {
-      setBecomingDriver(false);
     }
   };
 
@@ -2066,9 +2047,8 @@ export const CaregiverPaymentsPage: React.FC = () => {
             />
             <ApprovedDriverCard
               isApprovedDriver={(profile as any)?.isApprovedDriver === true}
-              mvrPending={(profile as any)?.mvrPaid === true && (profile as any)?.isApprovedDriver !== true}
-              onBecomeDriver={handleBecomeApprovedDriver}
-              busy={becomingDriver}
+              mvrPending={(profile as any)?.mvrStatus === 'pending' || ((profile as any)?.mvrPaid === true && (profile as any)?.isApprovedDriver !== true)}
+              offersTransportation={((profile as any)?.services || (profile as any)?.skills || []).includes('Transportation')}
             />
           </div>
         )}
@@ -2088,19 +2068,19 @@ export const CaregiverPaymentsPage: React.FC = () => {
 };
 
 // ── ApprovedDriverCard ─────────────────────────────────────────────────────────
-// Surfaces the caregiver's Approved Driver (MVR) status and the self-serve
-// "add MVR later" upgrade. isApprovedDriver was previously written by the backend
-// but shown nowhere — this is its first UI surface.
+// Surfaces the caregiver's Approved Driver (MVR) status. The flat membership
+// covers the driving record check (founder, 2026-09-25), so there is nothing to
+// buy here any more: it runs with the background check when Transportation is
+// on the profile, or on its own when transportation is added later.
 
 interface ApprovedDriverCardProps {
   isApprovedDriver: boolean;
   mvrPending: boolean;
-  onBecomeDriver: () => void;
-  busy: boolean;
+  offersTransportation: boolean;
 }
 
 const ApprovedDriverCard: React.FC<ApprovedDriverCardProps> = ({
-  isApprovedDriver, mvrPending, onBecomeDriver, busy,
+  isApprovedDriver, mvrPending, offersTransportation,
 }) => {
   if (isApprovedDriver) {
     return (
@@ -2132,27 +2112,33 @@ const ApprovedDriverCard: React.FC<ApprovedDriverCardProps> = ({
     );
   }
 
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5">
-      <div className="flex items-start gap-3 mb-4">
+  if (offersTransportation) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
         <div className="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
           <Car className="w-5 h-5 text-blue-600" />
         </div>
         <div className="flex-1">
-          <p className="font-semibold text-slate-900 text-sm">Become an Approved Driver</p>
+          <p className="font-semibold text-slate-900 text-sm">Driving record check included</p>
           <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-            Add a Motor Vehicle Report (MVR) check so families who need a driver can see your verified-driver badge. One-time add-on; doesn't change your membership.
+            Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears — no extra charge.
           </p>
         </div>
       </div>
-      <button
-        onClick={onBecomeDriver}
-        disabled={busy}
-        className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
-      >
-        {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Car className="w-4 h-4" />}
-        {busy ? 'Starting checkout…' : 'Add Approved Driver status'}
-      </button>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
+      <div className="w-11 h-11 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
+        <Car className="w-5 h-5 text-slate-400" />
+      </div>
+      <div className="flex-1">
+        <p className="font-semibold text-slate-900 text-sm">Offer transportation?</p>
+        <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+          Add Transportation to your services and upload your driver's license, insurance, and registration. Your membership already covers the driving record check.
+        </p>
+      </div>
     </div>
   );
 };
@@ -2232,7 +2218,7 @@ const MembershipCard: React.FC<MembershipCardProps> = ({
           </div>
           <p className="text-white/70 text-sm mb-0.5">Evia Membership</p>
           {/* No hardcoded amount here — members on the legacy $66.49 price and the
-              current $54.99 price both land on this page; exact billing lives in
+              current flat $69.99 price both land on this page; exact billing lives in
               the Stripe portal via Manage. */}
           <p className="text-2xl font-bold">Annual plan</p>
           {subscription?.cancelAtPeriodEnd ? (

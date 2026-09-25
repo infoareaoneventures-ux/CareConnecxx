@@ -142,7 +142,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
               <div key={i} className="bg-slate-50 rounded-lg px-3 py-2">
                 <p className="text-xs font-semibold text-slate-800 truncate">{s.name}</p>
                 <p className="text-xs text-ink-400 mt-0.5 truncate">
-                  {[s.filters?.searchTerm, ...(s.filters?.certifications || [])].filter(Boolean).join(' · ') || 'All caregivers'}
+                  {s.filters?.searchTerm || 'All caregivers'}
                 </p>
                 <button
                   onClick={() => navigate('/client/find-caregivers')}

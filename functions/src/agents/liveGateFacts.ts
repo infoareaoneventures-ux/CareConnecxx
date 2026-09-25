@@ -120,26 +120,6 @@ export async function buildLivePhotoFact(phone: string, session: AgentSession): 
   }
 }
 
-// ── Certifications / documents (caregiver) ─────────────────────────────────────
-// onboardingData.documents is appended by advanceOnboardingStep("doc_upload").
-// Session-only (see caveat above). Uploading is optional — a caregiver may skip.
-export async function buildLiveDocumentsFact(phone: string, session: AgentSession): Promise<string> {
-  try {
-    const s = await readFreshSession(phone, session);
-    const d = (s.onboardingData ?? {}) as Record<string, unknown>;
-    const docs = Array.isArray(d.documents) ? d.documents : [];
-    if (docs.length > 0) {
-      return `LIVE STATUS RIGHT NOW: Evia has ${docs.length} certification${docs.length === 1 ? "" : "s"} on file ` +
-        "for them — confirm what's received; uploading more is optional and they can move on whenever.";
-    }
-    return "LIVE STATUS RIGHT NOW: no certifications received yet — uploading is entirely optional, so they can " +
-      "add them or skip and keep going.";
-  } catch (e) {
-    console.warn("[buildLiveDocumentsFact] failed (fail-soft to static facts):", e);
-    return "";
-  }
-}
-
 // ── Bg-check consent (caregiver_awaiting_bgcheck_consent) ──────────────────────
 // This step sits between the /bgcheck consent link and the caregiver authorizing.
 // caregiverId + backgroundCheckData are created by confirmBgcheckConsent the
@@ -198,27 +178,6 @@ export async function buildLivePayoutSetupFact(phone: string, session: AgentSess
       "sent resumes right where they left off.";
   } catch (e) {
     console.warn("[buildLivePayoutSetupFact] failed (fail-soft to static facts):", e);
-    return "";
-  }
-}
-
-// ── Standalone MVR / Approved Driver add-on (caregiver) ────────────────────────
-// mvrPaid / mvrCheckoutUrl live on the session (see handleCaregiverSendMvr + the
-// mvr_payment Stripe webhook).
-export async function buildLiveMvrFact(phone: string, session: AgentSession): Promise<string> {
-  try {
-    const s = await readFreshSession(phone, session);
-    if ((s as any).mvrPaid === true) {
-      return "LIVE STATUS RIGHT NOW: their Approved Driver (MVR) payment landed and the driving-record check is " +
-        "under way. Do NOT ask them to pay again; confirm it's in progress.";
-    }
-    if ((s as any).mvrCheckoutUrl) {
-      return "LIVE STATUS RIGHT NOW: the Approved Driver payment hasn't come through yet — the link Evia sent is " +
-        "the way (Evia can re-send it if they ask).";
-    }
-    return "LIVE STATUS RIGHT NOW: the Approved Driver add-on hasn't been started yet.";
-  } catch (e) {
-    console.warn("[buildLiveMvrFact] failed (fail-soft to static facts):", e);
     return "";
   }
 }
@@ -353,18 +312,11 @@ async function buildLiveBgcheckConsentComposite(phone: string, session: AgentSes
 export const LIVE_GATE_FACT_BUILDERS: Record<string, (phone: string, session: AgentSession) => Promise<string>> = {
   caregiver_send_membership:          buildLiveMembershipFact,
   caregiver_awaiting_membership:      buildLiveMembershipFact,
-  caregiver_ask_mvr:                  buildLiveMembershipFact,
-  caregiver_send_photo:               buildLivePhotoFact,
-  caregiver_awaiting_photo:           buildLivePhotoFact,
-  caregiver_send_documents:           buildLiveDocumentsFact,
-  caregiver_awaiting_documents:       buildLiveDocumentsFact,
   caregiver_send_bgcheck:             (_p, s) => buildLiveBgcheckFact(s),
   caregiver_awaiting_bgcheck_consent: buildLiveBgcheckConsentComposite,
   caregiver_awaiting_bgcheck:         (_p, s) => buildLiveBgcheckFact(s),
   caregiver_send_stripe_connect:      buildLivePayoutSetupFact,
   caregiver_awaiting_stripe:          buildLivePayoutSetupFact,
-  caregiver_send_mvr:                 buildLiveMvrFact,
-  caregiver_awaiting_mvr:             buildLiveMvrFact,
   client_send_payment:                buildLiveClientPaymentFact,
   client_awaiting_payment:            buildLiveClientPaymentFact,
   client_awaiting_identity:           buildLiveClientIdentityFact,

@@ -175,8 +175,6 @@ export async function stampGateLinkBypassUsed(phone: string, step: string): Prom
 export const GATE_LINK_KEYWORD_TARGETS: Record<string, { linkType: OnboardingLinkType; intro: string }> = {
   client_awaiting_identity:     { linkType: "client_identity",           intro: "Here's a fresh link for the quick 30-second identity check:" },
   client_awaiting_payment:      { linkType: "client_payment",            intro: "Here's your membership link again — it takes about 30 seconds:" },
-  caregiver_awaiting_photo:     { linkType: "caregiver_photo",           intro: "Here's your photo upload link again — it opens right on your phone:" },
-  caregiver_awaiting_documents: { linkType: "caregiver_documents",       intro: "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:" },
   caregiver_awaiting_bgcheck:   { linkType: "caregiver_background_check", intro: "Here's your background-check link:" },
   caregiver_awaiting_stripe:    { linkType: "caregiver_payouts",         intro: "Here's a fresh payout-setup link:" },
 };
@@ -184,8 +182,7 @@ export const GATE_LINK_KEYWORD_TARGETS: Record<string, { linkType: OnboardingLin
 /** Steps where a bare LINK reply is honored as the cooldown escape hatch. */
 export function isGateLinkKeywordStep(step: string): boolean {
   return step in GATE_LINK_KEYWORD_TARGETS
-    || step === "caregiver_awaiting_membership"
-    || step === "caregiver_awaiting_mvr";
+    || step === "caregiver_awaiting_membership";
 }
 
 // ── Cross-surface helpers (stale-nudge cron, MCP send_onboarding_link) ───────
@@ -200,8 +197,6 @@ export function gateStepForLinkType(linkType: string): string | null {
   switch (linkType) {
     case "client_identity":            return "client_awaiting_identity";
     case "client_payment":             return "client_awaiting_payment";
-    case "caregiver_photo":            return "caregiver_awaiting_photo";
-    case "caregiver_documents":        return "caregiver_awaiting_documents";
     case "caregiver_background_check": return "caregiver_awaiting_bgcheck";
     case "caregiver_payouts":          return "caregiver_awaiting_stripe";
     case "caregiver_membership":       return "caregiver_awaiting_membership";

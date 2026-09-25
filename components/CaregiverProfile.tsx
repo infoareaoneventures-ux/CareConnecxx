@@ -335,10 +335,24 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <SectionActions
                   section="services"
                   onEdit={() => { setEditServices(displayServices); setEditingSection('services'); }}
-                  onSave={() => saveSection({
-                    services: editServices,
-                    skills: editServices,
-                  })}
+                  onSave={() => {
+                    // Adding Transportation requires the three documents up front
+                    // (founder, 2026-09-25) — same rule the signup wizard enforces.
+                    // Uploads land on the record immediately, so the section below
+                    // is live while editing and Save waits on it.
+                    if (editServices.includes('Transportation')) {
+                      const docs = (profile as any).documents || {};
+                      const missing = (['driversLicense', 'insurance', 'registration'] as const).filter(k => !docs[k]?.url);
+                      if (missing.length) {
+                        onShowToast("Upload your driver's license, vehicle insurance, and registration below to offer transportation", 'error');
+                        return;
+                      }
+                    }
+                    saveSection({
+                      services: editServices,
+                      skills: editServices,
+                    });
+                  }}
                 />
               </div>
               {editingSection === 'services' ? (
@@ -376,9 +390,12 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
               )}
             </div>
 
-            {/* Transport Documents — only rows that need action; section hidden when badge is active */}
+            {/* Transport Documents — only rows that need action; section hidden when badge is active.
+                While the services editor has Transportation checked, the section shows at once
+                so the caregiver can upload before Save (which requires all three). */}
             {(() => {
-              if (!displayServices.includes('Transportation') || hasTransportation) return null;
+              const servicesForDocs = editingSection === 'services' ? editServices : displayServices;
+              if (!servicesForDocs.includes('Transportation') || hasTransportation) return null;
               const TRANSPORT_DOCS_LIST = [
                 { type: 'driversLicense' as DocumentType, label: "Driver's License" },
                 { type: 'insurance' as DocumentType, label: 'Vehicle Insurance' },
@@ -401,7 +418,13 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                   <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-3">
                     <Car className="w-4 h-4 text-primary-600" />
                     Transportation Documents
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">Required</span>
                   </h3>
+                  {actionableRows.some(r => r.status === 'missing') && (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-3 leading-relaxed">
+                      To offer transportation, upload all three documents. Our team approves them after your background and driving record checks come back — families see your transportation badge only once everything is cleared.
+                    </p>
+                  )}
                   <div className="space-y-2">
                     {actionableRows.map(({ type, label, status, doc }) => {
                       const isUploading = transportUploading[type];

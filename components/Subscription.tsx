@@ -22,7 +22,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         },
         {
             question: "How much do caregivers pay?",
-            answer: "Caregivers pay $54.99/year, which covers their required background check and full platform access. This keeps our caregiver pool high-quality and committed, which means better matches for families seeking care."
+            answer: "Caregivers pay one flat $69.99/year, which covers their required background check (and driving record check when they offer transportation) and full platform access. This keeps our caregiver pool high-quality and committed, which means better matches for families seeking care."
         },
         {
             question: "What's included in the $29.95/month fee?",
@@ -62,7 +62,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         <>
             <SEO
                 title="Pricing & Subscription Plans - Evia"
-                description="Evia pricing: $29.95/month for families, $54.99/year for caregivers. Cancel anytime."
+                description="Evia pricing: $29.95/month for families, one flat $69.99/year for caregivers. Cancel anytime."
                 keywords="caregiver pricing, senior care cost, caregiving subscription, affordable care platform, free for caregivers"
                 canonicalUrl="https://www.eviacares.com/pricing"
             />
@@ -112,7 +112,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                 Care that's <span className="text-ink-400">affordable</span> for everyone.
                             </h1>
                             <p className="text-xl text-ink-600 mb-8 leading-relaxed font-light max-w-2xl mx-auto">
-                                One simple price for families. <span className="font-semibold text-ink-900">$54.99/year for caregivers.</span> Clear pricing, no surprises.
+                                One simple price for families. <span className="font-semibold text-ink-900">One flat $69.99/year for caregivers.</span> Clear pricing, no surprises.
                             </p>
                         </div>
                     </div>

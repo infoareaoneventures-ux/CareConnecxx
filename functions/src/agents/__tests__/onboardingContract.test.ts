@@ -31,10 +31,16 @@ describe("onboardingContract", () => {
     expect(isAllowedField("client", "timeOfDay")).toBe(true);
   });
 
-  it("caregiver required fields match the caregiver step parse targets", () => {
+  it("caregiver required fields are the site wizard's steps, in the wizard's order (2026-09-25)", () => {
     expect(CAREGIVER_REQUIRED_FIELDS).toEqual([
-      "name", "city", "yearsExperience", "specialties",
-      "availability", "jobType", "hourlyRate", "email", "bio",
+      "name",
+      "street", "zipCode", "city", "state",
+      "profilePhoto",
+      "jobType", "availability",
+      "specialties", "yearsExperience",
+      "transportDocuments",
+      "hourlyRate", "serviceRadius",
+      "email", "bio",
     ]);
   });
 
@@ -103,10 +109,24 @@ describe("onboardingContract", () => {
     });
 
     it("caregiver gate checks the caregiver set", () => {
-      const data = { name: "Maria", city: "Austin", yearsExperience: 5 };
+      const data = { name: "Maria", city: "Austin", yearsExperience: "3-5 years" };
       expect(missingRequiredFields("caregiver", data)).toEqual([
-        "specialties", "availability", "jobType", "hourlyRate", "email", "bio",
+        "street", "zipCode", "state", "profilePhoto", "jobType", "availability", "specialties",
+        "hourlyRate", "serviceRadius", "email", "bio",
       ]);
+    });
+
+    it("caregiver transport documents are required only when Transportation is offered, and only until all three are in", () => {
+      const base = {
+        name: "Maria", street: "1 Main St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "https://x/p.jpg",
+        jobType: "part_time", availability: { days: ["Monday"], hours: "mornings" }, specialties: ["Companionship"],
+        yearsExperience: "3-5 years", hourlyRate: 25, serviceRadius: 10, email: "m@x.com", bio: "x".repeat(150),
+      };
+      expect(missingRequiredFields("caregiver", base)).toEqual([]);
+      const driver = { ...base, skills: ["Companionship", "Transportation"] };
+      expect(missingRequiredFields("caregiver", driver)).toEqual(["transportDocuments"]);
+      expect(missingRequiredFields("caregiver", { ...driver, transportDocs: { driversLicense: "u", insurance: "u" } })).toEqual(["transportDocuments"]);
+      expect(missingRequiredFields("caregiver", { ...driver, transportDocs: { driversLicense: "u", insurance: "u", registration: "u" } })).toEqual([]);
     });
   });
 
@@ -246,8 +266,8 @@ describe("onboardingContract", () => {
     it("client hands off straight to the intake confirmation (legacy start/preferences/budget steps removed)", () => {
       expect(firstGateStep("client")).toBe("client_confirm_intake");
     });
-    it("caregiver hands off to the first upload gate", () => {
-      expect(firstGateStep("caregiver")).toBe("caregiver_send_photo");
+    it("caregiver hands off to membership — the site dashboard's first card after the wizard", () => {
+      expect(firstGateStep("caregiver")).toBe("caregiver_send_membership");
     });
   });
 
@@ -310,9 +330,12 @@ describe("onboardingContract", () => {
       expect(collectionStepsForRole("caregiver")).toBe(CAREGIVER_COLLECTION_STEPS);
     });
 
-    it("caregiver loop may save the optional scripted-flow fields (story/profile/service-area)", () => {
-      for (const f of ["certifications", "skills", "zipCode", "gender", "languages", "canDrive"]) {
+    it("caregiver loop may save the derived fields, and nothing the site's wizard doesn't collect", () => {
+      for (const f of ["skills", "services", "zipCode", "street", "state", "serviceRadius", "transportDocs"]) {
         expect(isAllowedField("caregiver", f)).toBe(true);
+      }
+      for (const f of ["certifications", "gender", "languages", "canDrive", "bioSkipped", "jobTypes", "wantsMvr"]) {
+        expect(isAllowedField("caregiver", f)).toBe(false);
       }
     });
   });

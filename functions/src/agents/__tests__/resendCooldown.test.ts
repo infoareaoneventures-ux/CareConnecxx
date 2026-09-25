@@ -22,8 +22,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ── Shared spies (hoisted so vi.mock factories can close over them) ────────────
 const stripeSpies = vi.hoisted(() => ({
   accountsCreate:     vi.fn(async () => ({ id: "acct_live" })),
-  accountLinksCreate: vi.fn(async () => ({ url: "https://stripe.local/connect-onboarding" })),
-  checkoutCreate:     vi.fn(async () => ({ id: "cs_live", url: "https://stripe.local/checkout" })),
+  accountLinksCreate: vi.fn(async () => ({ url: "https:///pay/" })),
+  checkoutCreate:     vi.fn(async () => ({ id: "cs_live", url: "https:///pay/" })),
   identityCreate:     vi.fn(async () => ({ id: "vs_live", url: "https://stripe.local/identity" })),
   priceRetrieve:      vi.fn(async () => ({ id: "price_live", unit_amount: 0, recurring: null })),
 }));
@@ -197,7 +197,8 @@ const FULL_DATA = {
 function seed(step: string, data: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
   const session: any = {
     chatId: CHAT, service: "SMS", optedOut: false, createdAt: "now",
-    userType: "caregiver", onboardingStep: step, onboardingData: data, ...extra,
+    userType: "caregiver", onboardingStep: step, onboardingData: data,
+    ...(step === "client_awaiting_payment" ? GATE_EXTRA : {}), ...extra,
   };
   hoisted.docState.set(SESSION_PATH, { ...session });
   return session;
@@ -215,7 +216,11 @@ const sentText = () => sentMessages
   .join("\n");
 
 // The step under test for the resendGateLink-based path.
-const PHOTO_STEP = "caregiver_awaiting_photo";
+// 2026-09-25: the photo gate moved into the collection loop; the resendGateLink
+// cooldown path is exercised on the family payment wait step instead (its `other`
+// branch resends the checkout link through the same resendGateLink).
+const PHOTO_STEP = "client_awaiting_payment";
+const GATE_EXTRA = { userType: "client", userId: "client-uid" };
 // Cooldown state helpers: stamps live as per-step maps on the session doc.
 const cooldownState = (resentMinsAgo: number, extra: Record<string, unknown> = {}) => ({
   gateLinkResentAt: { [PHOTO_STEP]: minutesAgo(resentMinsAgo) },
@@ -240,7 +245,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
 
     await handleOnboardingStep(PHONE, CHAT, "can you resend the link", session);
 
-    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
+    expect(linkParts().some((u) => u.includes("/pay/"))).toBe(true);
     const stamp = stored()?.gateLinkResentAt?.[PHOTO_STEP];
     expect(typeof stamp).toBe("string");
     expect(isNaN(Date.parse(stamp))).toBe(false);
@@ -279,7 +284,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
 
     // First LINK — the escape hatch: real resend, bypass consumed.
     await handleOnboardingStep(PHONE, CHAT, "  link ", session);
-    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
+    expect(linkParts().some((u) => u.includes("/pay/"))).toBe(true);
     const bypassStamp = stored()?.gateLinkBypassUsedAt?.[PHOTO_STEP];
     expect(typeof bypassStamp).toBe("string");
 
@@ -332,7 +337,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
 
     await handleOnboardingStep(PHONE, CHAT, "still waiting on that link", session);
 
-    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
+    expect(linkParts().some((u) => u.includes("/pay/"))).toBe(true);
     // A fresh window opened: the stamp was rewritten to now-ish.
     const stamp = stored()?.gateLinkResentAt?.[PHOTO_STEP];
     expect(Date.now() - Date.parse(stamp)).toBeLessThan(60_000);
@@ -341,12 +346,13 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
   it("a `question` during cooldown is answered normally — the cooldown never mutes answers", async () => {
     const session = seed(PHOTO_STEP, { ...FULL_DATA }, cooldownState(2));
     awaitingKind = "question";
+    wantsLink    = "YES"; // a broken-link report — the question path re-mints the real link
 
     await handleOnboardingStep(PHONE, CHAT, "the link doesn't open for me", session);
 
     // Answer went out and the question path's real-link follow stayed intact.
     expect(sentMessages.length).toBeGreaterThan(0);
-    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
+    expect(linkParts().some((u) => u.includes("/pay/"))).toBe(true);
     // No in-cooldown copy on the question path.
     expect(sentText()).not.toContain("reply LINK and I'll resend it");
   });
@@ -356,12 +362,12 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
     const s1 = seed(PHOTO_STEP, { ...FULL_DATA }, { gateLinkResentAt: "garbage" });
     awaitingKind = "other";
     await handleOnboardingStep(PHONE, CHAT, "resend it please", s1);
-    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
+    expect(linkParts().some((u) => u.includes("/pay/"))).toBe(true);
 
     sentMessages.length = 0;
     const s2 = seed(PHOTO_STEP, { ...FULL_DATA }, { gateLinkResentAt: { [PHOTO_STEP]: "not-a-date" } });
     await handleOnboardingStep(PHONE, CHAT, "resend it please", s2);
-    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
+    expect(linkParts().some((u) => u.includes("/pay/"))).toBe(true);
   });
 
   it("expired window sanity: the TTL constant is 10 minutes", () => {
@@ -474,32 +480,6 @@ describe("U9 — membership / MVR checkout resends", () => {
     expect(stored()?.gateLinkBypassUsedAt?.[MEMBERSHIP_STEP]).toBe(session.gateLinkBypassUsedAt[MEMBERSHIP_STEP]);
   });
 
-  it("MVR: `other` inside the window gets the deterministic copy, not the payment link", async () => {
-    const session = seed("caregiver_awaiting_mvr", { ...FULL_DATA }, {
-      mvrCheckoutUrl: "https://pay/mvr",
-      gateLinkResentAt: { caregiver_awaiting_mvr: minutesAgo(1) },
-    });
-    awaitingKind = "other";
-
-    await handleOnboardingStep(PHONE, CHAT, "hey", session);
-
-    expect(linkParts()).toHaveLength(0);
-    expect(sentText()).toContain("about 1 minute ago");
-    expect(sentText()).toContain("reply LINK");
-  });
-
-  it("MVR: paid short-circuit unchanged even inside a cooldown window", async () => {
-    const session = seed("caregiver_awaiting_mvr", { ...FULL_DATA }, {
-      mvrPaid: true, mvrCheckoutUrl: "https://pay/mvr-stale",
-      gateLinkResentAt: { caregiver_awaiting_mvr: minutesAgo(1) },
-    });
-    awaitingKind = "other";
-
-    await handleOnboardingStep(PHONE, CHAT, "hey", session);
-
-    expect(sentText()).not.toContain("pay/mvr-stale");
-    expect(sentText().toLowerCase()).toContain("came through");
-  });
 });
 
 describe("U12 — removed caregiver_awaiting_identity step", () => {

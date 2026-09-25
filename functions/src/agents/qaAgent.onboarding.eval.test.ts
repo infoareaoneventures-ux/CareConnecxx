@@ -208,7 +208,27 @@ vi.mock("../mcp/server", () => {
       if (!fieldName) return { _toolError: true, error: "fieldName is required" };
       if (!isAllowedField(role, fieldName)) return { _toolError: true, error: `'${fieldName}' is not a collectable field for a ${role}.` };
       if (fieldValue === undefined || fieldValue === null || fieldValue === "") return { _toolError: true, error: "fieldValue is required" };
-      sess.onboardingData[fieldName] = fieldValue;
+      // Caregiver wizard rules (2026-09-25), mirrored from mcp/server.ts so the
+      // eval's feedback matches production: uploads are never typed, bio ≥ 150,
+      // experience/radius/state coerced to the wizard's shapes.
+      const contract = await import("./onboardingContract");
+      if (role === "caregiver" && (fieldName === "profilePhoto" || fieldName === "transportDocuments" || fieldName === "transportDocs")) {
+        return { ok: true, saved: false, invalidValue: true, guidance: `${fieldName} is never typed — call send_onboarding_link (${fieldName === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"}) instead.` };
+      }
+      if (role === "caregiver" && fieldName === "bio") {
+        const bioText = typeof fieldValue === "string" ? fieldValue.trim() : "";
+        if (bioText.length < contract.BIO_MIN_CHARS) {
+          return { ok: true, saved: false, invalidValue: true, guidance: `Their bio is ${bioText.length} characters; it needs at least ${contract.BIO_MIN_CHARS} and there is no skip.` };
+        }
+      }
+      const normalized = contract.normalizeOnboardingFieldValue(fieldName, fieldValue);
+      if (role === "caregiver" && fieldName === "yearsExperience" && !contract.EXPERIENCE_BUCKETS.includes(normalized as string)) {
+        return { ok: true, saved: false, invalidValue: true, guidance: "Ask roughly how many years they've been caregiving." };
+      }
+      if (role === "caregiver" && fieldName === "serviceRadius" && !contract.TRAVEL_RADIUS_OPTIONS.includes(normalized as number)) {
+        return { ok: true, saved: false, invalidValue: true, guidance: "Ask how far they're willing to travel in miles." };
+      }
+      sess.onboardingData[fieldName] = normalized;
       const missing = missingRequiredFields(role, sess.onboardingData);
       return { ok: true, fieldName, saved: true, missing, collectionComplete: missing.length === 0 };
     }
@@ -527,7 +547,7 @@ describe("eval harness tool engine (no spend)", () => {
     expect(store.sessions.get(phone)!.onboardingStep).toBe(firstGateStep("client"));
   });
 
-  it("caregiver role: save/complete semantics mirror the caregiver contract and hand off to the photo gate", async () => {
+  it("caregiver role: save/complete semantics mirror the caregiver contract (= the site wizard) and hand off to the membership gate", async () => {
     const { handleToolCall } = await import("../mcp/server");
     const phone = "+15550000002";
     store.ensure(phone, "caregiver_ask_name");
@@ -543,24 +563,43 @@ describe("eval harness tool engine (no spend)", () => {
     expect(early.complete).toBe(false);
     expect(early.missing.length).toBeGreaterThan(0);
 
-    // Optional scripted-flow fields (story extraction / profile step) are allowed…
-    const cert: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "certifications", fieldValue: ["CNA", "CPR"] }, false);
-    expect(cert.ok).toBe(true);
-    // …while invented keys and cross-role keys are rejected.
-    const bad: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "seniorName", fieldValue: "Jane" }, false);
-    expect(bad._toolError).toBe(true);
+    // Nothing the site's wizard doesn't collect is a field (2026-09-25):
+    // certifications, invented keys and cross-role keys are all rejected.
+    for (const fieldName of ["certifications", "canDrive", "seniorName"]) {
+      const bad: any = await handleToolCall("save_onboarding_field", { ...base, fieldName, fieldValue: "x" }, false);
+      expect(bad._toolError, fieldName).toBe(true);
+    }
+    // Uploads are never typed — the tool points the model at send_onboarding_link.
+    const typedPhoto: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "profilePhoto", fieldValue: "a selfie" }, false);
+    expect(typedPhoto.saved).toBe(false);
+    expect(typedPhoto.guidance).toContain("caregiver_photo");
+    // A short bio is refused with the wizard's 150-character rule (no skip).
+    const shortBio: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "bio", fieldValue: "I care." }, false);
+    expect(shortBio.saved).toBe(false);
+    expect(shortBio.guidance).toContain("150");
 
     for (const [fieldName, fieldValue] of [
-      ["city", "San Jose"], ["yearsExperience", 6], ["specialties", ["dementia"]],
-      ["availability", { days: ["Monday"], hours: "9am-5pm" }], ["jobType", "part_time"],
-      ["hourlyRate", 25], ["email", "maria@example.com"], ["bio", "I treat every client like family."],
+      ["street", "12 Oak St"], ["city", "San Jose"], ["state", "ca"],
+      ["jobType", "part_time"], ["availability", { days: ["Monday"], hours: "9am-5pm" }],
+      ["specialties", ["dementia"]], ["yearsExperience", 6],
+      ["hourlyRate", 25], ["serviceRadius", "about 12 miles"], ["email", "maria@example.com"],
+      ["bio", "I treat every client like family. ".repeat(6)],
     ] as Array<[string, unknown]>) {
-      await handleToolCall("save_onboarding_field", { ...base, fieldName, fieldValue }, false);
+      const r: any = await handleToolCall("save_onboarding_field", { ...base, fieldName, fieldValue }, false);
+      expect(r.saved, fieldName).toBe(true);
     }
+    // Wizard value shapes landed: bucketed experience, snapped travel distance, 2-letter state.
+    const saved = store.sessions.get(phone)!.onboardingData;
+    expect(saved.yearsExperience).toBe("5-10 years");
+    expect(saved.serviceRadius).toBe(10);
+    expect(saved.state).toBe("CA");
+    // ZIP (a network lookup in prod) and the photo (upload page) are set by other paths.
+    saved.zipCode = "95134";
+    saved.profilePhoto = "https://x/photo.jpg";
 
     const done: any = await handleToolCall("complete_collection", base, false);
     expect(done.complete).toBe(true);
-    expect(done.nextStep).toBe("caregiver_send_photo");
+    expect(done.nextStep).toBe("caregiver_send_membership");
     expect(store.sessions.get(phone)!.onboardingStep).toBe(firstGateStep("caregiver"));
   });
 });

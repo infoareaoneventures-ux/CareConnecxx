@@ -45,23 +45,35 @@ describe("buildCaregiverOnboardingDirective", () => {
 
   it("with everything collected instructs complete_collection, no link promises", () => {
     const d = buildCaregiverOnboardingDirective({
-      name: "Maria", city: "San Jose", yearsExperience: 6, specialties: ["dementia"],
-      availability: { days: ["Monday"], hours: "9am-5pm" }, jobType: "part_time",
-      hourlyRate: 25, email: "maria@example.com", bio: "I treat every client like family.",
+      name: "Maria", street: "12 Oak St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "https://x/p.jpg",
+      jobType: "part_time", availability: { days: ["Monday"], hours: "9am-5pm" },
+      specialties: ["dementia"], yearsExperience: "5-10 years",
+      hourlyRate: 25, serviceRadius: 10, email: "maria@example.com", bio: "I treat every client like family. ".repeat(6),
     });
     expect(d).toContain("complete_collection");
     expect(d).toContain("all required fields collected");
     expect(d.toLowerCase()).toContain("do not send or mention any link");
   });
 
+  it("when the next item is an upload (photo / transport documents) it instructs send_onboarding_link, not a question", () => {
+    const afterAddress = buildCaregiverOnboardingDirective({ name: "Maria", street: "12 Oak St", zipCode: "95134", city: "San Jose", state: "CA" });
+    expect(afterAddress).toContain("send_onboarding_link this turn with linkType caregiver_photo");
+    const driver = buildCaregiverOnboardingDirective({
+      name: "Maria", street: "12 Oak St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "https://x/p.jpg",
+      jobType: "part_time", availability: { days: ["Monday"], hours: "9am-5pm" },
+      specialties: ["transportation"], skills: ["Transportation"], yearsExperience: "5-10 years",
+    });
+    expect(driver).toContain("send_onboarding_link this turn with linkType caregiver_transport_docs");
+  });
+
   it("hands off the deterministic gates in the scripted order and forbids running them", () => {
     const d = buildCaregiverOnboardingDirective({});
     const lower = d.toLowerCase();
     // the gates, in the scripted flow's order
+    // The site dashboard's three cards after the wizard, in order (2026-09-25):
+    // photo and transport documents moved INTO the collection; certifications
+    // and the MVR opt-in are gone.
     const order = [
-      "profile photo upload",
-      "certification documents",
-      "motor vehicle record",
       "membership activation",
       "checkr background check",
       "payout-account setup",
@@ -97,8 +109,8 @@ describe("buildCaregiverOnboardingDirective", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
     expect(d).toContain("their story");
     expect(d).toContain("yearsexperience");
-    expect(d).toContain("certifications");
-    expect(d).toContain("don't re-ask anything the story already answered");
+    expect(d).toContain("save it, don't re-ask");
+    expect(d).toContain("if they front-load several answers, save them all and skip ahead");
   });
 
   it("answers money/trust questions honestly then keeps collecting", () => {
@@ -124,15 +136,18 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("never send a numbered list");
   });
 
-  it("asks the optional profile-parity extras once, combined, without holding up signup (2g)", () => {
+  it("never asks anything the site's wizard doesn't (no extras, no certifications) — 2026-09-25", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
-    expect(d).toContain("profile extras");
-    expect(d).toContain("gender");
-    expect(d).toContain("languages");
-    expect(d).toContain("drive");
-    expect(d).toContain("optional");
-    // one combined question, never a form
-    expect(d).toContain("one short, casual question");
+    expect(d).toContain("the website asks nothing more either");
+    expect(d).toContain("do not save it and do not ask about it");
+    expect(d).not.toContain("profile extras");
+    expect(d).not.toContain("motor vehicle record");
+  });
+
+  it("requires the bio at the wizard's minimum length with no skip", () => {
+    const d = buildCaregiverOnboardingDirective({}).toLowerCase();
+    expect(d).toContain("at least 150 characters");
+    expect(d).toContain("there is no skip");
   });
 
   it("surfaces concrete care services in the ask and sweeps the rest once", () => {
@@ -144,7 +159,7 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("transportation");
     // one sweep, not a recited list
     expect(d).toContain("sweep the rest once");
-    expect(d).toContain("never read all eight back like a form");
+    expect(d).toContain("never read all ten back like a form");
   });
 
   it("asks availability in the webapp's parts-of-day vocabulary and echoes what it saved", () => {
@@ -154,10 +169,11 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("reflect back");
   });
 
-  it("captures every job type named (webapp jobTypes parity)", () => {
+  it("job type is a single choice, like the wizard's picker", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
     expect(d).toContain("job type");
-    expect(d).toContain("jobtypes");
+    expect(d).toContain("one choice");
+    expect(d).not.toContain("jobtypes");
   });
 
   it("user-facing brand is Evia (never Cara) in the directive prose", () => {

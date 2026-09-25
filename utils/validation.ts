@@ -741,7 +741,6 @@ export const caregiverSignupSchema = object({
   hourlyRate: number().min(15).max(200),
   bio: string().min(50),
   skills: array(string()),
-  certifications: array(string()),
   backgroundCheckData: object({
     legalFirstName: string(),
     legalLastName: string(),

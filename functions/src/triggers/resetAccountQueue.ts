@@ -12,17 +12,46 @@
 // of every uid/phone-keyed document (subcollections included), field-keyed
 // sweeps across every collection that references the account, and the Stripe
 // subscription cancelled + customer deleted.
+//
+// 2026-09-25 (founder: the caregiver Reset Account button "doesn't work"): the
+// admin page sends whatever phone the caregivers/{uid} record has — and for a
+// unified-identity caregiver the phone lives on users/{uid} (and Auth), not on
+// the caregiver record — so the queue doc arrived with phone "" and this
+// trigger refused it ("uid and phone are required") four times in a row while
+// the UI toasted "data will be wiped in seconds". Now the phone is resolved
+// server-side (users → caregivers → Auth) and a uid with no phone anywhere is
+// still reset — the phone-keyed parts are simply skipped and noted.
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 
 const db = admin.firestore();
 const auth = admin.auth();
 
+/** The phone the admin page could not supply — users doc first (unified identity), then the caregiver doc, then Auth. */
+export async function resolveResetPhone(uid: string, supplied?: string | null): Promise<string | null> {
+  const given = (supplied ?? "").trim();
+  if (given) return given;
+  const pick = (d: Record<string, unknown> | undefined) => {
+    const v = (d?.phone ?? d?.phoneNumber) as string | undefined;
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  const users = await db.collection("users").doc(uid).get().catch(() => null);
+  const fromUsers = pick(users?.exists ? users.data() : undefined);
+  if (fromUsers) return fromUsers;
+  const cg = await db.collection("caregivers").doc(uid).get().catch(() => null);
+  const fromCg = pick(cg?.exists ? cg.data() : undefined);
+  if (fromCg) return fromCg;
+  const au = await auth.getUser(uid).catch(() => null);
+  return au?.phoneNumber?.trim() || null;
+}
+
 /** Documents keyed by the uid — deleted recursively (subcollections too). */
 const UID_KEYED_DOCS = [
   "users", "customers", "clientIntakes", "carePlans", "care_plans", "senior_profiles", "job_postings",
   "agent_memory_files", "learned_facts", "memory_embeddings", "memory_reconciliation",
   "user_preferences", "agent_permissions", "caregivers", "publicCaregiverProfiles", "stripe_accounts",
+  // Out-of-area lead captured by the job wizard (2026-09-23) — keyed by uid.
+  "waitlist",
 ];
 /** Documents keyed by the phone number — deleted recursively. */
 const PHONE_KEYED_DOCS = [
@@ -87,12 +116,13 @@ async function stripeCleanup(uid: string, errors: string[]): Promise<void> {
 export const processResetAccountQueue = functions.firestore
   .document("adminResetQueue/{docId}")
   .onCreate(async (snap) => {
-    const { uid, phone } = snap.data() as { uid: string; phone: string; role?: string };
+    const { uid, phone: suppliedPhone } = snap.data() as { uid: string; phone?: string; role?: string };
 
-    if (!uid || !phone) {
-      await snap.ref.update({ error: "uid and phone are required", processedAt: new Date().toISOString() });
+    if (!uid) {
+      await snap.ref.update({ error: "uid is required", processedAt: new Date().toISOString() });
       return;
     }
+    const phone = await resolveResetPhone(uid, suppliedPhone);
 
     const errors: string[] = [];
     const counts: Record<string, number> = {};
@@ -109,7 +139,7 @@ export const processResetAccountQueue = functions.firestore
     for (const coll of FIELD_KEYED_COLLECTIONS) {
       let n = 0;
       for (const f of KEY_FIELDS) n += await deleteQueryResults(db.collection(coll).where(f, "==", uid), errors, `${coll}.${f}`);
-      for (const f of PHONE_FIELDS) n += await deleteQueryResults(db.collection(coll).where(f, "==", phone), errors, `${coll}.${f}`);
+      if (phone) for (const f of PHONE_FIELDS) n += await deleteQueryResults(db.collection(coll).where(f, "==", phone), errors, `${coll}.${f}`);
       if (n) counts[coll] = n;
     }
     // Chat rooms (incl. the support room) list the uid as a participant.
@@ -117,10 +147,10 @@ export const processResetAccountQueue = functions.firestore
 
     // Keyed documents, subcollections included (users/{uid}/notifications, customers/{uid}/subscriptions, agent_sessions/{phone}/messages …).
     for (const coll of UID_KEYED_DOCS) await db.recursiveDelete(db.collection(coll).doc(uid)).catch((err) => errors.push(`${coll}/${uid}: ${err.message}`));
-    for (const coll of PHONE_KEYED_DOCS) await db.recursiveDelete(db.collection(coll).doc(phone)).catch((err) => errors.push(`${coll}/${phone}: ${err.message}`));
+    if (phone) for (const coll of PHONE_KEYED_DOCS) await db.recursiveDelete(db.collection(coll).doc(phone)).catch((err) => errors.push(`${coll}/${phone}: ${err.message}`));
 
-    // Zep memory.
-    try {
+    // Zep memory (keyed by phone).
+    if (phone) try {
       const { getZepUserId: resolveId } = await import("../memory/zepClient");
       const zepUserId = resolveId(phone);
       const { ZepClient } = await import("@getzep/zep-cloud");
@@ -138,7 +168,7 @@ export const processResetAccountQueue = functions.firestore
     // Storage: profile photos, uploads, documents under the uid or phone.
     try {
       const bucket = admin.storage().bucket();
-      for (const prefix of [`${uid}/`, `profile_photos/${uid}/`, `uploads/${phone}/`, `uploads/${uid}/`, `documents/${uid}/`]) {
+      for (const prefix of [`${uid}/`, `profile_photos/${uid}/`, ...(phone ? [`uploads/${phone}/`] : []), `uploads/${uid}/`, `documents/${uid}/`]) {
         const [files] = await bucket.getFiles({ prefix });
         await Promise.all(files.map((f) => f.delete().catch(() => null)));
       }
@@ -149,8 +179,10 @@ export const processResetAccountQueue = functions.firestore
     await snap.ref.update({
       processedAt: new Date().toISOString(),
       counts,
+      phoneResolved: !!phone,
+      ...(phone ? {} : { note: "no phone on users/caregivers/Auth — phone-keyed data (SMS session, memory) was not touched" }),
       ...(errors.length ? { errors } : { success: true }),
     });
 
-    console.log(`[resetAccountQueue] uid=${uid} phone=${phone} done`, { counts, errors: errors.length ? errors : "none" });
+    console.log(`[resetAccountQueue] uid=${uid} phone=${phone ? "resolved" : "none"} done`, { counts, errors: errors.length ? errors : "none" });
   });

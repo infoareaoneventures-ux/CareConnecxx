@@ -198,7 +198,6 @@ export const matchService = {
         const caregiverSkills = [
             ...(caregiver.medicalSkills || []),
             ...(caregiver.skills || []),
-            ...(caregiver.certifications || [])
         ];
 
         const matchedSkills = neededSkills.filter(need =>
@@ -573,7 +572,6 @@ export function computeObjectiveSignals(
     const caregiverSkills = [
         ...(caregiver.medicalSkills || []),
         ...(caregiver.skills || []),
-        ...(caregiver.certifications || [])
     ];
     const skillsCoveragePercent = neededSkills.length > 0
         ? Math.round(
@@ -597,7 +595,6 @@ export function computeObjectiveSignals(
 
     // Certification flags
     const allCerts = [
-        ...(caregiver.certifications || []),
         ...(caregiver.medicalSkills || []),
         ...(caregiver.skills || [])
     ].map(c => c.toLowerCase());
@@ -618,7 +615,7 @@ export function computeObjectiveSignals(
         isVerified: caregiver.verified || false,
         reliabilityScore: caregiver.reliabilityScore || 80,
         retentionRate: caregiver.retentionRate || 0,
-        certifications: [...(caregiver.certifications || []), ...(caregiver.medicalSkills || [])],
+        certifications: [...(caregiver.medicalSkills || [])],
         languages: caregiver.languages || [],
         personalityTags: caregiver.personalityTags || [],
         hourlyRate: caregiver.hourlyRate || 0,

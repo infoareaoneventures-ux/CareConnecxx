@@ -6,9 +6,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // instead of going silent (the 2026-07-07 live-test bug).
 
 const hoisted = vi.hoisted(() => {
-  const sessionData: Record<string, unknown> = { onboardingStep: "caregiver_send_photo" };
+  const sessionData: Record<string, unknown> = { onboardingStep: "caregiver_send_membership" };
   const quickComplete = vi.fn(async (..._a: unknown[]) => "YES");
-  const sendOnboardingLink = vi.fn(async (..._a: unknown[]) => ({ success: true, linkType: "caregiver_photo" }));
+  const sendOnboardingLink = vi.fn(async (..._a: unknown[]) => ({ success: true, linkType: "caregiver_membership" }));
   const recordCommitment = vi.fn(async (..._a: unknown[]) => "id-1");
   return { sessionData, quickComplete, sendOnboardingLink, recordCommitment };
 });
@@ -39,16 +39,16 @@ const BASE = { phone: "+15551112222", chatId: "chat-1", userType: "caregiver" as
 
 beforeEach(() => {
   vi.clearAllMocks();
-  hoisted.sessionData.onboardingStep = "caregiver_send_photo";
+  hoisted.sessionData.onboardingStep = "caregiver_send_membership";
   hoisted.quickComplete.mockResolvedValue("YES");
-  hoisted.sendOnboardingLink.mockResolvedValue({ success: true, linkType: "caregiver_photo" });
+  hoisted.sendOnboardingLink.mockResolvedValue({ success: true, linkType: "caregiver_membership" });
 });
 
 describe("fulfillNarratedLinkPromise", () => {
   it("delivers the step's link when the reply narrates a link and no tool fired", async () => {
     await fulfillNarratedLinkPromise({ ...BASE, reply: "I'm pulling up your secure photo link — I'll send it here." });
 
-    expect(hoisted.sendOnboardingLink).toHaveBeenCalledWith("+15551112222", "caregiver_photo");
+    expect(hoisted.sendOnboardingLink).toHaveBeenCalledWith("+15551112222", "caregiver_membership");
     expect(hoisted.recordCommitment).not.toHaveBeenCalled();
   });
 
@@ -88,13 +88,13 @@ describe("fulfillNarratedLinkPromise", () => {
 
     expect(hoisted.recordCommitment).toHaveBeenCalledWith(expect.objectContaining({
       kind:     "link",
-      linkType: "caregiver_photo",
+      linkType: "caregiver_membership",
       phone:    "+15551112222",
     }));
   });
 
   it("records a commitment when delivery reports success:false", async () => {
-    hoisted.sendOnboardingLink.mockResolvedValue({ success: false, linkType: "caregiver_photo" });
+    hoisted.sendOnboardingLink.mockResolvedValue({ success: false, linkType: "caregiver_membership" });
     await fulfillNarratedLinkPromise({ ...BASE, reply: "I'm sending your photo link now." });
 
     expect(hoisted.recordCommitment).toHaveBeenCalledWith(expect.objectContaining({ kind: "link" }));

@@ -20,8 +20,9 @@ export const getStripe = () => {
 // Client monthly membership — $29.95/mo (live price ID)
 export const MEMBERSHIP_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
 
-// Caregiver annual membership (criminal-only background check) — $54.99/yr (live price ID)
-export const CAREGIVER_ANNUAL_PRICE_ID = import.meta.env.VITE_STRIPE_CAREGIVER_ANNUAL || 'price_1TtBYwL7Ss5iuUb7iZ1s0PQg';
+// Caregiver annual membership — ONE flat $69.99/yr (background check + MVR when transportation is offered)
+// Display-only — the charge itself is resolved server-side (createCheckoutSession, plan 'caregiver_annual').
+export const CAREGIVER_ANNUAL_PRICE = 69.99;
 
 export interface SubscriptionStatus {
   status: 'active' | 'canceled' | 'incomplete' | 'past_due' | 'unpaid' | 'trialing' | null;
@@ -56,12 +57,13 @@ export const createCheckoutSession = async (successUrl: string, cancelUrl: strin
   }
 };
 
-// Create checkout session for caregiver membership (accepts a specific priceId)
+// Create checkout session for the caregiver membership — ONE flat annual fee
+// (founder, 2026-09-25) covering the background check and, for caregivers who
+// offer transportation, the driving record (MVR) check. The server picks the
+// price from `plan`, so no price id travels from the browser.
 export const createCaregiverCheckoutSession = async (
-  priceId: string,
   successUrl: string,
   cancelUrl: string,
-  options?: { includeMVR?: boolean }
 ): Promise<string | null> => {
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
@@ -70,29 +72,10 @@ export const createCaregiverCheckoutSession = async (
   const functions = getFunctions();
   const createCheckoutSessionFn = httpsCallable(functions, 'v1-createCheckoutSession');
   const result = await createCheckoutSessionFn({
-    priceId,
+    plan: 'caregiver_annual',
     successUrl,
     cancelUrl,
-    ...(options?.includeMVR && { includeMVR: true }),
   });
-  const { url } = (result.data as { url?: string }) ?? {};
-  return url ?? null;
-};
-
-// Create a one-time checkout session for the standalone MVR ("Approved Driver")
-// add-on purchased after signup. On payment, the backend initiates an MVR-only
-// Checkr check; the result only affects the Approved Driver badge.
-export const createMvrAddonCheckout = async (
-  successUrl: string,
-  cancelUrl: string,
-): Promise<string | null> => {
-  if (!auth) throw new Error('Auth not initialized');
-  const user = auth.currentUser;
-  if (!user) throw new Error('User must be logged in');
-
-  const functions = getFunctions();
-  const fn = httpsCallable(functions, 'v1-createMvrAddonCheckoutSession');
-  const result = await fn({ successUrl, cancelUrl });
   const { url } = (result.data as { url?: string }) ?? {};
   return url ?? null;
 };

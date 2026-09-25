@@ -19,18 +19,21 @@ beforeEach(() => {
 describe("absorbCaregiverFields", () => {
   it("captures a front-loaded multi-field message", async () => {
     parseWithClaude.mockResolvedValueOnce(JSON.stringify({
-      name: "Maria", city: "San Jose", yearsExperience: 6,
+      name: "Maria", street: "12 Oak St", city: "San Jose", state: "ca", zipCode: "95134", yearsExperience: 6,
       specialties: ["dementia"], certifications: ["CNA", "CPR"],
-      hourlyRate: 25, email: "Maria.G@Example.com",
+      hourlyRate: 25, serviceRadius: 12, email: "Maria.G@Example.com",
       jobType: "part_time", availability: { days: ["Monday"], hours: "8am-4pm" },
     }));
     const out = await absorbCaregiverFields("I'm Maria in San Jose...", {});
+    // Wizard shapes: experience bucketed, travel distance snapped to the nearest option,
+    // state upper-cased; certifications are NOT a wizard field and are never absorbed.
     expect(out).toMatchObject({
-      name: "Maria", city: "San Jose", yearsExperience: 6,
-      specialties: ["dementia"], certifications: ["CNA", "CPR"],
-      hourlyRate: 25, email: "maria.g@example.com", jobType: "part_time",
+      name: "Maria", street: "12 Oak St", city: "San Jose", state: "CA", zipCode: "95134", yearsExperience: "5-10 years",
+      specialties: ["dementia"],
+      hourlyRate: 25, serviceRadius: 10, email: "maria.g@example.com", jobType: "part_time",
       availability: { days: ["Monday"], hours: "8am-4pm" },
     });
+    expect(out).not.toHaveProperty("certifications");
   });
 
   it("never overwrites an already-saved field (model-saved values win)", async () => {
@@ -66,18 +69,18 @@ describe("absorbCaregiverFields", () => {
     expect(out).toEqual({ name: "Maria" });
   });
 
-  it("captures the optional profile-parity extras when volunteered (2g)", async () => {
+  it("ignores volunteered extras the site's wizard never asks (gender, languages, driving) — 2026-09-25", async () => {
     parseWithClaude.mockResolvedValueOnce(JSON.stringify({
       gender: "female", languages: ["English", "Spanish"], canDrive: true,
     }));
     const out = await absorbCaregiverFields("I'm a woman, I speak English and Spanish, and yes I drive", {});
-    expect(out).toEqual({ gender: "female", languages: ["English", "Spanish"], canDrive: true });
+    expect(out).toEqual({});
   });
 
-  it("captures canDrive:false (a definite 'no', not a skip)", async () => {
-    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ canDrive: false }));
-    const out = await absorbCaregiverFields("no, I don't drive", {});
-    expect(out).toEqual({ canDrive: false });
+  it("drops a street with no house number (a city or neighbourhood misread as a street)", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ street: "Willow Glen", state: "California" }));
+    const out = await absorbCaregiverFields("I'm over in Willow Glen, California", {});
+    expect(out).toEqual({});
   });
 
   it("omits profile extras that aren't clearly stated", async () => {

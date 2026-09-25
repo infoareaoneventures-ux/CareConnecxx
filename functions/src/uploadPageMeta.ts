@@ -42,10 +42,10 @@ export function buildUploadMeta(pathname: string): ProfileMeta {
     };
   }
   return {
-    title:       "Add your certifications — Evia",
-    description: "Upload your CNA license, HHA certificate, or any caregiving certification. Certs make your profile stand out — and you can skip this step anytime.",
+    title:       "Add your transportation documents — Evia",
+    description: "Upload your driver's license, vehicle insurance, and vehicle registration. Our team reviews them after your background and driving-record checks.",
     image:       `${appUrl}/icon-512.png`,
-    url:         `${appUrl}/upload/document`,
+    url:         `${appUrl}/upload/transport`,
   };
 }
 

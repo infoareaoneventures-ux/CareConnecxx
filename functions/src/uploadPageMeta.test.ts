@@ -14,15 +14,14 @@ import { buildUploadMeta } from "./uploadPageMeta";
 import { injectProfileMeta } from "./caregiverProfileMeta";
 
 describe("buildUploadMeta", () => {
-  it("builds the certifications card for /upload/document", () => {
-    const meta = buildUploadMeta("/upload/document");
-    expect(meta.title).toBe("Add your certifications — Evia");
-    expect(meta.description).toContain("CNA license");
-    expect(meta.description).toContain("HHA certificate");
-    // Non-medical platform — the card must never suggest medical credentials.
-    expect(meta.description).not.toMatch(/\bCPR\b/i);
+  it("builds the transportation-documents card for /upload/transport (certifications retired 2026-09-25)", () => {
+    const meta = buildUploadMeta("/upload/transport");
+    expect(meta.title).toBe("Add your transportation documents — Evia");
+    expect(meta.description).toContain("driver's license");
+    expect(meta.description).toContain("vehicle registration");
+    expect(meta.description).not.toMatch(/certif/i);
     expect(meta.image).toMatch(/icon-512\.png$/);
-    expect(meta.url).toMatch(/\/upload\/document$/);
+    expect(meta.url).toMatch(/\/upload\/transport$/);
   });
 
   it("builds the background-check card for /bgcheck (and not for /bgcheck-direct-style paths)", () => {
@@ -41,7 +40,7 @@ describe("buildUploadMeta", () => {
 
   it("never reflects the query token — canonical url is token-free", () => {
     // req.path never carries the query string, but guard the contract anyway.
-    const meta = buildUploadMeta("/upload/document");
+    const meta = buildUploadMeta("/upload/transport");
     expect(JSON.stringify(meta)).not.toContain("t=");
   });
 
@@ -53,8 +52,8 @@ describe("buildUploadMeta", () => {
       <meta property="og:image" content="https://www.eviacares.com/icon-512.png" />
       <meta property="og:url" content="https://www.eviacares.com/" />
       </head><body><div id="root"></div></body></html>`;
-    const out = injectProfileMeta(html, buildUploadMeta("/upload/document"));
-    expect(out).toContain("<title>Add your certifications — Evia</title>");
-    expect(out).toMatch(/og:title" content="Add your certifications — Evia"/);
+    const out = injectProfileMeta(html, buildUploadMeta("/upload/transport"));
+    expect(out).toContain("<title>Add your transportation documents — Evia</title>");
+    expect(out).toMatch(/og:title" content="Add your transportation documents — Evia"/);
   });
 });

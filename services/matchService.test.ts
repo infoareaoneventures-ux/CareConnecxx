@@ -51,7 +51,6 @@ describe('MatchService', () => {
     longitude: -89.60,
     skills: [], // No skills to reduce score
     medicalSkills: [],
-    certifications: [],
     experience: 1, // Low experience
     rating: 3.0, // Low rating
     reviewCount: 5,

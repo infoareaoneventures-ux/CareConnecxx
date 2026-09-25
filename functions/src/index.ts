@@ -231,6 +231,9 @@ export { processAdminAdvanceQueue } from './triggers/adminAdvanceQueue';
 
 // RESET ACCOUNT QUEUE — Firestore trigger; wipes all data for a test account
 export { processResetAccountQueue } from './triggers/resetAccountQueue';
+// Flat membership (2026-09-25): Transportation added after the criminal check
+// cleared → MVR-only Checkr check, no charge (replaces the MVR add-on checkout).
+export { startMvrOnTransportationAdded } from './triggers/transportationMvr';
 
 // MATCH PATTERNS — U7 (plan 2026-07-18-001, R36/KTD14): hired/rejected
 // aggregates are restricted to funnel/offline analytics and may not feed

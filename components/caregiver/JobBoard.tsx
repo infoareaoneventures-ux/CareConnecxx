@@ -295,7 +295,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         try {
             await jobApplicationService.applyToJob(
                 applyingJob.id, applyingJob.title, applyingJob.clientId, applyingJob.clientName,
-                { caregiverId: profile.uid, caregiverName: profile.name, caregiverPhoto: profile.photo || profile.imageUrl || '', experience: profile.experience ?? 0, rating: profile.rating ?? undefined, skills: profile.skills || profile.certifications || [] },
+                { caregiverId: profile.uid, caregiverName: profile.name, caregiverPhoto: profile.photo || profile.imageUrl || '', experience: profile.experience ?? 0, rating: profile.rating ?? undefined, skills: profile.skills || [] },
                 coverLetter,
             );
             onShowToast(`Application submitted for ${applyingJob.title}!`, 'success');

@@ -119,7 +119,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'py-4',
             q: 'Are there membership fees?',
-            a: 'One plan for families: $29.95/month, billed monthly, cancel anytime. Caregivers pay $54.99/year, which covers their background check.'
+            a: 'One plan for families: $29.95/month, billed monthly, cancel anytime. Caregivers pay one flat $69.99/year, which covers their background check and driving record check.'
          }
       ],
       'account': [

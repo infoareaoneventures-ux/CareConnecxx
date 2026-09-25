@@ -114,10 +114,79 @@ export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   "firstName",
 ];
 
+// = the site's CaregiverOnboardingWizard, step for step (founder, 2026-09-25:
+// Evia asks the same questions in the same order and writes the same fields):
+//   location (street, zip → city/state, state) → photo → availability (job
+//   type, days, parts of day) → services + years of experience → transport
+//   documents when Transportation is offered → rate + travel distance → bio.
+// `profilePhoto` and `transportDocuments` are collected through the tokened
+// upload links (send_onboarding_link), not typed — the loop still owns them.
+// Email is collected on /start (the wizard skips it when on file).
 export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
-  "name", "city", "yearsExperience", "specialties",
-  "availability", "jobType", "hourlyRate", "email", "bio",
+  "name",
+  "street", "zipCode", "city", "state",
+  "profilePhoto",
+  "jobType", "availability",
+  "specialties", "yearsExperience",
+  "transportDocuments",
+  "hourlyRate", "serviceRadius",
+  "email", "bio",
 ];
+
+/** The wizard's experience buckets (components/caregiver/signup/constants.ts EXPERIENCE_LEVELS). */
+export const EXPERIENCE_BUCKETS: readonly string[] = ["< 1 year", "1-2 years", "3-5 years", "5-10 years", "10+ years"];
+/** The wizard's travel-distance options in miles (TRAVEL_OPTIONS); default 10. */
+export const TRAVEL_RADIUS_OPTIONS: readonly number[] = [5, 10, 15, 25, 50];
+export const DEFAULT_TRAVEL_RADIUS = 10;
+/** The wizard's bio minimum (BioStep minChars). */
+export const BIO_MIN_CHARS = 150;
+/** The three transportation documents the wizard requires when Transportation is offered. */
+export const TRANSPORT_DOC_TYPES: readonly string[] = ["driversLicense", "insurance", "registration"];
+
+/** Does the collected data say the caregiver offers Transportation? (canonical skills/services, or raw specialties) */
+export function offersTransportation(d: Record<string, unknown> | undefined): boolean {
+  if (!d) return false;
+  const lists = [d.skills, d.services, d.specialties].filter(Array.isArray) as unknown[][];
+  return lists.some((l) => l.some((s) => typeof s === "string" && s.trim().toLowerCase() === "transportation"));
+}
+
+/** Years of experience → the wizard's bucket string. Accepts a number, "6 years", "10+", or an exact bucket. */
+export function toExperienceBucket(value: unknown): string | null {
+  if (typeof value === "string" && EXPERIENCE_BUCKETS.includes(value.trim())) return value.trim();
+  let n: number | null = null;
+  if (typeof value === "number" && Number.isFinite(value)) n = value;
+  else if (typeof value === "string") {
+    const t = value.trim().toLowerCase();
+    if (/^(less than|under)\s*(a|1|one)\b/.test(t) || /^<\s*1/.test(t)) return "< 1 year";
+    const m = t.match(/(\d+(\.\d+)?)/);
+    if (m) n = Number(m[1]);
+    else if (/\b(a|one)\s+year\b/.test(t)) n = 1;
+  }
+  if (n === null || !Number.isFinite(n) || n < 0) return null;
+  if (n < 1) return "< 1 year";
+  if (n <= 2) return "1-2 years";
+  if (n <= 5) return "3-5 years";
+  if (n < 10) return "5-10 years";
+  return "10+ years";
+}
+
+/** Travel distance → the nearest wizard option (5/10/15/25/50 miles). */
+export function toServiceRadius(value: unknown): number | null {
+  let n: number | null = null;
+  if (typeof value === "number" && Number.isFinite(value)) n = value;
+  else if (typeof value === "string") {
+    const m = value.match(/(\d+(\.\d+)?)/);
+    if (m) n = Number(m[1]);
+  }
+  if (n === null || !Number.isFinite(n) || n <= 0) return null;
+  return TRAVEL_RADIUS_OPTIONS.reduce((best, opt) => (Math.abs(opt - (n as number)) < Math.abs(best - (n as number)) ? opt : best), TRAVEL_RADIUS_OPTIONS[0]);
+}
+
+/** All three transport documents on file? (onboardingData.transportDocs = { type: url }) */
+export function transportDocumentsComplete(d: Record<string, unknown> | undefined): boolean {
+  const docs = (d?.transportDocs ?? {}) as Record<string, unknown>;
+  return TRANSPORT_DOC_TYPES.every((t) => typeof docs[t] === "string" && (docs[t] as string).length > 0);
+}
 
 // Fields the loop is allowed to write via save_onboarding_field — the required
 // set plus the optional/derived fields the wizard also captures.
@@ -163,17 +232,13 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
 
 export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CAREGIVER_REQUIRED_FIELDS,
-  // Optional/derived fields the scripted caregiver flow also captures:
-  //   certifications + skills — story/experience extraction targets
-  //   zipCode — the service-area gate in save_onboarding_field asks for a ZIP
-  //     when the city isn't recognized; the loop must be able to save it
-  //   gender / languages / canDrive — the caregiver_ask_profile step's fields
-  //   jobTypes — webapp display-parity array (mirror of jobType); the model may
-  //     save it directly when a caregiver names more than one work type
-  //   services — canonical care-services (mirror of skills); rarely saved by the
-  //     model directly but allowed so the absorber/canonicalizer can write it
-  "certifications", "skills", "services", "zipCode", "gender", "languages",
-  "canDrive", "bioSkipped", "jobTypes",
+  // Derived fields the save handler / absorber write alongside a required one:
+  //   skills / services — the canonical care-services enum (from specialties)
+  //   transportDocs — { driversLicense|insurance|registration: url }, written by
+  //     the upload callable, never by the model
+  // Nothing the wizard doesn't collect is allowed here (no certifications,
+  // gender, languages, canDrive, bioSkipped, jobTypes — removed 2026-09-25).
+  "skills", "services", "transportDocs",
 ]);
 
 // The step the flow advances to once conversational collection completes and the
@@ -183,7 +248,10 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
 // collected them). Caregiver → the first upload gate (matches the scripted
 // handoff: handleCaregiverAskBio sets caregiver_send_photo).
 export const CLIENT_POST_COLLECTION_STEP = "client_confirm_intake";
-export const CAREGIVER_FIRST_GATE_STEP = "caregiver_send_photo";
+// After the wizard's last step (bio) the site lands on the dashboard whose
+// first card is Membership — so does Evia. (Photo and transport documents are
+// collected inside the loop now; the old photo/certification/MVR gates are gone.)
+export const CAREGIVER_FIRST_GATE_STEP = "caregiver_send_membership";
 
 export function requiredFieldsForRole(role: OnboardingRole): readonly string[] {
   return role === "caregiver" ? CAREGIVER_REQUIRED_FIELDS : CLIENT_REQUIRED_FIELDS;
@@ -253,6 +321,14 @@ export function normalizeOnboardingFieldValue(fieldName: string, value: unknown)
   if (fieldName in NUMERIC_FIELD_RANGE) {
     const n = coerceNumericOnboardingField(fieldName, value);
     return n ?? value; // unparseable passes through; write sites reject via the coercer
+  }
+  // Wizard value shapes (2026-09-25): experience is one of five bucket strings,
+  // travel distance one of five mile options, state a 2-letter code.
+  if (fieldName === "yearsExperience") return toExperienceBucket(value) ?? value;
+  if (fieldName === "serviceRadius")   return toServiceRadius(value) ?? value;
+  if (fieldName === "state" && typeof value === "string") {
+    const t = value.trim();
+    return t.length === 2 ? t.toUpperCase() : t;
   }
   return value;
 }
@@ -335,7 +411,11 @@ export function missingRequiredFields(
 ): string[] {
   const d = data ?? {};
   return requiredFieldsForRole(role).filter((f) => {
-    if (role === "caregiver" && f === "bio" && d.bioSkipped === true) return false;
+    // Transport documents are required only when the caregiver offers
+    // Transportation (wizard: the transport-docs step exists only then).
+    if (role === "caregiver" && f === "transportDocuments") {
+      return offersTransportation(d) && !transportDocumentsComplete(d);
+    }
     // Wizard canAdvanceAt(6): `selectedDays.length > 0 || daysFlexible` — a
     // family whose days are flexible with no fixed days is complete.
     if (role === "client" && f === "selectedDays" && d.daysFlexible === true) return false;

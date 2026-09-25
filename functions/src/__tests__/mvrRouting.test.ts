@@ -183,6 +183,49 @@ describe("criminal report — unchanged core behavior (characterization)", () =>
     expect(w.status).toBe("active");
     expect(w.isApprovedDriver).toBeUndefined(); // mvrPaid !== true
   });
+
+  it("bundled criminal+MVR report (flat membership, Transportation on the profile) clears both and records the MVR on its own fields", async () => {
+    seedCaregiver("cg1", { verified: false, verificationStatus: "submitted", mvrPaid: true });
+    const res = makeRes();
+
+    await (checkrWebhook as any)(checkrReq(reportEvent("rep_bundle", { pkg: "criminal_basic", result: "clear" })), res);
+
+    const w = caregiverWrites("cg1");
+    expect(w.verified).toBe(true);
+    expect(w.isApprovedDriver).toBe(true);
+    expect(w.mvrStatus).toBe("clear");
+    expect(typeof w.mvrClearedAt).toBe("string");
+  });
+
+  it("bundled report that comes back 'consider' asks Checkr for the MVR screening's own result — clear MVR, criminal under review", async () => {
+    seedCaregiver("cg1", { verified: false, verificationStatus: "submitted", mvrPaid: true, phone: "" });
+    const fetchMock = vi.fn(async (url: string) => ({
+      ok: true, text: async () => "",
+      json: async () => (String(url).includes("/motor_vehicle_reports/mvr_9") ? { id: "mvr_9", status: "complete", result: "clear" } : {}),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const ev = reportEvent("rep_bundle2", { pkg: "criminal_basic", result: "consider" });
+    (ev.data.object as any).motor_vehicle_report = "mvr_9";
+
+    await (checkrWebhook as any)(checkrReq(ev), makeRes());
+
+    const w = caregiverWrites("cg1");
+    expect(w["backgroundCheckData.status"]).toBe("consider");
+    expect(w.mvrStatus).toBe("clear");
+    expect(w.isApprovedDriver).toBe(true);
+    expect(w.verified).toBeUndefined();
+  });
+
+  it("bundled 'consider' with no MVR id (or a failed lookup) mirrors the overall result onto the MVR line", async () => {
+    seedCaregiver("cg1", { verified: false, verificationStatus: "submitted", mvrPaid: true, phone: "" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 500, text: async () => "boom", json: async () => ({}) })));
+
+    await (checkrWebhook as any)(checkrReq(reportEvent("rep_bundle3", { pkg: "criminal_basic", result: "consider" })), makeRes());
+
+    const w = caregiverWrites("cg1");
+    expect(w.mvrStatus).toBe("consider");
+    expect(w.isApprovedDriver).toBe(false);
+  });
 });
 
 describe("initiateMvrOnlyCheck", () => {

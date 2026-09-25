@@ -104,7 +104,7 @@ const familiesContent = [
       },
       {
         q: 'Are there membership plans?',
-        a: 'One plan for families: $29.95/month, billed monthly, cancel anytime. Caregivers pay $54.99/year, which covers their background check.',
+        a: 'One plan for families: $29.95/month, billed monthly, cancel anytime. Caregivers pay one flat $69.99/year, which covers their background check and driving record check.',
       },
       {
         q: 'What if I am charged incorrectly?',

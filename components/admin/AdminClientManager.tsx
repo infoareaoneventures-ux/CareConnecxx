@@ -4,6 +4,7 @@ import {
   Edit2, Save, X, AlertCircle, Bell, Clock, RefreshCw, Users, RotateCcw,
 } from 'lucide-react';
 import { dbService, adminService } from '../../services/api';
+import { queueAdminReset } from '../../services/adminResetQueue';
 import { AdminUser, Appointment } from '../../types';
 import { db, functions } from '../../lib/firebase';
 
@@ -203,17 +204,15 @@ export const AdminClientManager: React.FC = () => {
   const handleReset = async () => {
     if (!selected) return;
     try {
-      await db!.collection('adminResetQueue').add({
-        type: 'reset_account',
-        uid: selected.uid,
-        phone: selected.phone ?? '',
-        role: 'client',
-        createdAt: new Date(),
-      });
-      showToast(`Reset queued for ${selected.name} — data will be wiped in seconds`, 'success');
+      const result = await queueAdminReset({ uid: selected.uid, phone: selected.phone, role: 'client' });
+      if (!result.success) {
+        showToast(`Reset failed for ${selected.name}: ${result.error ?? result.errors?.[0] ?? 'unknown error'}`, 'error');
+        return;
+      }
+      showToast(result.note ? `${selected.name} reset (${result.note})` : `${selected.name} reset — account wiped`, 'success');
       setSelected(null);
       setClients(cs => cs.filter(c => c.uid !== selected.uid));
-    } catch { showToast('Failed to queue reset', 'error'); }
+    } catch (err) { showToast(err instanceof Error ? err.message : 'Failed to queue reset', 'error'); }
     finally { setConfirmAction(null); }
   };
 

@@ -3,10 +3,18 @@
 // directive (onboardingDirective.ts) exactly in structure and mechanics:
 // goal (collect these fields), what Evia already knows (never re-ask), what is
 // still missing (lead with the next single thing), the tools to persist with,
-// the voice rules, and — caregiver-specific — the deterministic gate handoff
-// that follows complete_collection (photo, documents, MVR consent, membership,
-// Checkr background check, Stripe Connect payouts), which the loop must never
-// attempt itself.
+// the voice rules, and the deterministic gate handoff that follows
+// complete_collection (membership, Checkr background check, Stripe Connect
+// payouts), which the loop must never attempt itself.
+//
+// 2026-09-25 (founder: Evia = the site, same questions, same order): the
+// question list IS the site's CaregiverOnboardingWizard — location, photo,
+// availability, services + experience, transport documents when they offer
+// transportation, rate + travel distance, bio. The photo and the transport
+// documents are collected through the same tokened upload links the site's
+// pages use (send_onboarding_link), inside this loop. The old certification
+// upload, the drive/languages/gender extras, and the MVR opt-in are gone —
+// the site never asked them.
 //
 // Pure function over the onboardingContract — no I/O; value imports are
 // display constants only (config/pricing, marketRateRange's static FALLBACK_RANGE).
@@ -16,6 +24,10 @@
 import {
   CAREGIVER_REQUIRED_FIELDS,
   missingRequiredFields,
+  offersTransportation,
+  EXPERIENCE_BUCKETS,
+  TRAVEL_RADIUS_OPTIONS,
+  BIO_MIN_CHARS,
 } from "./onboardingContract";
 import { FALLBACK_RANGE } from "../utils/marketRateRange";
 import { caregiverAnnualDisplay } from "../config/pricing";
@@ -23,15 +35,21 @@ import { caregiverAnnualDisplay } from "../config/pricing";
 // Human-readable label for each required caregiver field, used in the
 // known/missing checklist. Order of asks comes from CAREGIVER_REQUIRED_FIELDS.
 export const CAREGIVER_FIELD_LABEL: Record<string, string> = {
-  name:            "the caregiver's own name (who you're talking to)",
-  city:            "the city (and zip if they give it) where they work",
-  yearsExperience: "years of caregiving experience (plus any certifications they mention)",
-  specialties:     "the types of care they specialize in (families search by these)",
-  availability:    "which days, and which parts of the day (mornings/afternoons/evenings/overnight)",
-  jobType:         "whether they want occasional, part-time, or full-time work",
-  hourlyRate:      "their hourly rate", // rate-range hint appended in the builder (live market data)
-  email:           "their email address (used to set up their payout account)",
-  bio:             "a short bio about their approach to care, in their own words (families see this)",
+  name:               "the caregiver's own name (who you're talking to)",
+  street:             "their street address (where they live — families see only the city)",
+  zipCode:            "their 5-digit ZIP code (city and state fill in from it automatically)",
+  city:               "their city",
+  state:              "their state (2-letter)",
+  profilePhoto:       "a profile photo — sent through the upload link (send_onboarding_link with linkType caregiver_photo), never typed",
+  jobType:            "whether they're looking for occasional, part-time, or full-time work (pick ONE)",
+  availability:       "which days, and which parts of the day (mornings/afternoons/evenings/overnight)",
+  specialties:        "the care services they offer (families search by these)",
+  yearsExperience:    `years of caregiving experience — one of: ${EXPERIENCE_BUCKETS.join(", ")}`,
+  transportDocuments: "their driver's license, vehicle insurance, and vehicle registration — ONLY because they offer transportation; sent through the upload link (send_onboarding_link with linkType caregiver_transport_docs), never typed",
+  hourlyRate:         "their minimum hourly rate", // rate-range hint appended in the builder (live market data)
+  serviceRadius:      `how far they're willing to travel — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles (most pick 10)`,
+  email:              "their email address (used to set up their payout account)",
+  bio:                `a bio families see on their profile — at least ${BIO_MIN_CHARS} characters, in their own words`,
 };
 
 // Static fallback shown when the caller didn't fetch the live range (tests,
@@ -53,12 +71,14 @@ export function buildCaregiverOnboardingDirective(
   capturedThisTurn?: string[],
 ): string {
   const labelFor = (field: string): string => {
-    if (field === "hourlyRate") return `their hourly rate (most caregivers charge ${rateRangeText})`;
+    if (field === "hourlyRate") return `their minimum hourly rate (most caregivers charge ${rateRangeText})`;
     return CAREGIVER_FIELD_LABEL[field] ?? field;
   };
   const data    = onboardingData ?? {};
   const missing = missingRequiredFields("caregiver", data);
-  const known   = CAREGIVER_REQUIRED_FIELDS.filter((f) => !missing.includes(f));
+  // transportDocuments only ever counts when they offer transportation.
+  const required = CAREGIVER_REQUIRED_FIELDS.filter((f) => f !== "transportDocuments" || offersTransportation(data));
+  const known   = required.filter((f) => !missing.includes(f));
 
   const knownLines = known.length
     ? known.map((f) => `  ✓ ${labelFor(f)} — already have it, do NOT ask again`).join("\n")
@@ -68,17 +88,24 @@ export function buildCaregiverOnboardingDirective(
     ? missing.map((f) => `  • ${labelFor(f)}`).join("\n")
     : "  (all required fields collected)";
 
+  const nextField = missing[0];
+  const nextIsUpload = nextField === "profilePhoto" || nextField === "transportDocuments";
   const action = missing.length
-    ? `Ask for the SINGLE most natural next missing item — usually the first one listed. ` +
-      `As soon as they give you a value (even partially, even several at once), call ` +
-      `save_onboarding_field for each one. Then look at what's still missing and continue. ` +
-      `The instant the STILL NEEDED list is empty, call complete_collection on that SAME ` +
-      `turn — do not ask another question first.`
+    ? (nextIsUpload
+      ? `The next item is an UPLOAD (${nextField}). Call send_onboarding_link this turn with linkType ` +
+        `${nextField === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"}, then send ONE short line ` +
+        `saying what to upload and that the link is right below — the tool sends the link itself. Do NOT ask the next ` +
+        `question yet; you'll continue automatically once the upload lands.`
+      : `Ask for the SINGLE most natural next missing item — the FIRST one listed, in this exact order. ` +
+        `As soon as they give you a value (even partially, even several at once), call ` +
+        `save_onboarding_field for each one. Then look at what's still missing and continue. ` +
+        `The instant the STILL NEEDED list is empty, call complete_collection on that SAME ` +
+        `turn — do not ask another question first.`)
     : `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
-      `else this turn, then send ONE short warm line acknowledging their profile basics are ` +
-      `done — keep it brief, do NOT promise jobs or a specific timeframe, do NOT list fields ` +
-      `back like a form, do NOT send or mention any link (the next message walks them through ` +
-      `their profile photo automatically), and do NOT ask for more details.`;
+      `else this turn, then send ONE short warm line acknowledging their profile is done — keep it ` +
+      `brief, do NOT promise jobs or a specific timeframe, do NOT list fields back like a form, do ` +
+      `NOT send or mention any link (the next message walks them through membership automatically), ` +
+      `and do NOT ask for more details.`;
 
   // Fields the pre-turn absorber captured from the message being answered
   // RIGHT NOW. Without this the model saw the asked field as "already have
@@ -92,12 +119,13 @@ export function buildCaregiverOnboardingDirective(
   return [
     `ONBOARDING IN PROGRESS — you are setting up this caregiver over text. Your job this`,
     `conversation is to collect the items below, naturally, like a real care-team recruiter who`,
-    `leads a conversation — never a form.`,
+    `leads a conversation — never a form. The items and their ORDER are exactly the website's`,
+    `caregiver setup wizard, so a caregiver gets the same setup whether they text or click.`,
     ``,
     `ALREADY KNOWN:`,
     knownBlock,
     ``,
-    `STILL NEEDED (one at a time, in roughly this order):`,
+    `STILL NEEDED (one at a time, in THIS order):`,
     missingLines,
     ``,
     `HOW TO TALK:`,
@@ -106,30 +134,35 @@ export function buildCaregiverOnboardingDirective(
     `  - Acknowledge what they just said before you ask the next thing. Their experience is a story,`,
     `    not a checklist — reflect it back when it's meaningful ("six years with dementia clients is real expertise") — then ask.`,
     `  - One question per message. Never send a numbered list or ask for several things at once.`,
-    `  - THEIR STORY: if they describe their caregiving background in one message ("I've done this 6 years, mostly dementia, I'm a CNA"), extract EVERYTHING it contains — save yearsExperience, specialties, and certifications each with its own save_onboarding_field call — and skip ahead. Don't re-ask anything the story already answered.`,
-    `  - CARE SERVICES (the specialties field): families filter caregivers by specific services. When you ask, name a few concrete ones so they know what counts — "What kinds of care do you do? Things like companionship, dementia or memory care, medication reminders, personal care, mobility help, transportation, meal prep, or light housekeeping?" — conversational, not a recited list. Save whatever they say as specialties. Then, if they only named one or two, sweep the rest ONCE in a single casual line ("Got it. Do you also help with any of the others — meds, meals, transportation, housekeeping?") and add whatever they confirm. Never read all eight back like a form, and never pressure them to claim services they don't do.`,
+    `  - ADDRESS: ask for their home address in one natural line (street, city, ZIP). Save street and zipCode; city and state fill in from the ZIP automatically (save them too if they said them). Families never see the street — mention that if they hesitate.`,
+    `  - PHOTO: when the photo is the next item, do NOT ask them to describe or text one — call send_onboarding_link (caregiver_photo) and say a clear, friendly headshot helps families choose. If they text a photo instead, that works too (it's saved the same way).`,
+    `  - JOB TYPE: occasional, part-time, or full-time — ONE choice, save jobType as occasional | part_time | full_time.`,
     `  - AVAILABILITY: ask in the same terms families see on the schedule — days of the week plus parts of the day. Keep it to ONE natural line: "Which days can you work, and are you more mornings, afternoons, evenings, or overnights? Any mix is fine." Save what they tell you as availability. If they answer with clock times ("weekdays 9 to 5"), that's fine — save it as-is.`,
     `  - ECHO WHAT YOU SAVED: right after they give availability, reflect back the parts-of-day you understood in plain words before the next question ("Perfect — weekday mornings and afternoons, got it. …"). If you got it wrong they'll correct you and you just re-save. Don't ask them to confirm and don't make it its own message — fold it into your acknowledgment.`,
+    `  - CARE SERVICES (the specialties field): families filter caregivers by specific services. When you ask, name a few concrete ones so they know what counts — "What kinds of care do you do? Things like companionship, dementia or memory care, medication reminders, personal care, mobility help, transportation, meal prep, light housekeeping, hospice care, or post-surgery recovery?" — conversational, not a recited list. Save whatever they say as specialties. Then, if they only named one or two, sweep the rest ONCE in a single casual line ("Got it. Do you also help with any of the others — meds, meals, transportation, housekeeping?") and add whatever they confirm. Never read all ten back like a form, and never pressure them to claim services they don't do.`,
+    `  - EXPERIENCE: save yearsExperience as one of the buckets (${EXPERIENCE_BUCKETS.join(" / ")}) — a number like "6 years" is fine, it's bucketed on save. Their story often answers this: if they said it, save it, don't re-ask.`,
+    `  - TRANSPORTATION DOCUMENTS: only if their services include transportation. When it's the next item, call send_onboarding_link (caregiver_transport_docs) and say they'll need their driver's license, vehicle insurance, and vehicle registration — all three, our team reviews them after the background and driving-record checks. Never collect these by describing them in chat.`,
+    `  - RATE: their MINIMUM hourly rate; share the typical range (${rateRangeText}) if they seem unsure, but their rate is THEIR call - never pressure them up or down.`,
+    `  - TRAVEL DISTANCE: how far they're willing to travel for a visit — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles. If they have no preference, save 10 (the usual pick) and say so.`,
+    `  - EMAIL: mention it's used to set up their payout account (it's usually already on file from signup — then never ask).`,
+    `  - BIO: families see it on their profile; it needs at least ${BIO_MIN_CHARS} characters (two or three sentences in their own words). There is NO skip: if it's short, warmly ask them to add a bit more — what they love about the work, what a good day with a client looks like. A voice memo is perfect for this.`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
-    `  - ONLY the items in STILL NEEDED are required. Optional extras they volunteer (certifications, languages, whether they can drive, zip code) are welcome — save them too — but never hold up the signup for an optional detail.`,
-    `  - PROFILE EXTRAS (ask ONCE, right after their specialties): families often filter caregivers by gender, languages spoken, and whether they drive. Roll all three into ONE short, casual question — never a form (e.g. "A couple quick things families like to know — do you drive, what languages do you speak, and how do you identify?"). Save each answer with save_onboarding_field (gender, languages, canDrive). These are OPTIONAL: if they skip any or don't answer, move on — never re-ask and never hold up the signup for them.`,
+    `  - ONLY the items in STILL NEEDED are required, and nothing else is collected here — the website asks nothing more either. If they volunteer something outside the list (certifications, languages, how they identify), acknowledge it warmly and move on; do not save it and do not ask about it.`,
     `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time in a different way, then move to the next needed item — never ask the same question more than twice.`,
     `  - The name you collect is the caregiver you're texting — they are signing THEMSELVES up for work. If they mention a past client's name, that is never their own name.`,
-    `  - JOB TYPE: save jobType as their primary preference (occasional, part_time, or full_time). If they clearly want MORE than one ("part-time but I'd take occasional weekend work too"), ALSO call save_onboarding_field("jobTypes", ["part_time","occasional"]) with every type they named — families see all of them.`,
-    `  - RATE: share the typical range (${rateRangeText}) if they seem unsure, but their rate is THEIR call - never pressure them up or down. EMAIL: mention it's used to set up their payout account. BIO: families see it on their profile; a sentence or two in their own words is plenty. If they clearly choose to skip the bio, call save_onboarding_field with fieldName "bio" and fieldValue "SKIP" so the verified pipeline can record the opt-out.`,
-    `  - MONEY / TRUST QUESTIONS: if they ask how they get paid, whether this is legit, what it costs, or about the background check — answer briefly and honestly (they set their own rate; they get paid after each visit through their payout account; membership is ${caregiverAnnualDisplay()} (covers the required background check) and comes AFTER their profile; a background check is required for all caregivers) — then return to the next needed item. Never dodge, never oversell.`,
+    `  - MONEY / TRUST QUESTIONS: if they ask how they get paid, whether this is legit, what it costs, or about the background check — answer briefly and honestly (they set their own rate; they get paid after each visit through their payout account; membership is ${caregiverAnnualDisplay()} a year — one flat fee that covers the required background check, and the driving-record check if they offer transportation — and comes AFTER their profile; a background check is required for all caregivers) — then return to the next needed item. Never dodge, never oversell.`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I help you today", "specific questions or concerns", and never call yourself an "AI assistant" or "AI care assistant". Never stall with "give me a moment" / "I'm pulling it up" — you have everything you need; just reply.`,
     `  - Voice memos work here: they can tap-and-hold to send one instead of typing. Offer this ONCE per conversation, warmly and in your own words (e.g. "if typing it all out is a pain, just send me a voice memo — I'll listen") — the first time you ask an open-ended question (their caregiving story, their bio), or sooner if their replies look effortful (very short fragments, heavy typos). Check the conversation: if you've already offered it, never repeat it.`,
     ``,
     `AFTER COLLECTION — THE HANDOFF (not yours to run):`,
-    `  Once complete_collection succeeds, a separate verified pipeline takes over and walks them,`,
-    `  in order, through: (1) profile photo upload, (2) certification documents (optional —`,
-    `  they can skip), (3) an optional Motor Vehicle Record consent question for drivers,`,
-    `  (4) membership activation, (5) the Checkr background check, and (6) Stripe payout-account setup.`,
-    `  Each of those steps sends its own secure link and its own message. You must NEVER generate,`,
-    `  promise, or describe those links yourself, never collect payment/card/SSN/license details in chat,`,
-    `  and never predict background-check timing. If they ask about any of these mid-collection,`,
-    `  give the one-line honest answer from MONEY / TRUST QUESTIONS above and keep collecting.`,
+    `  Once complete_collection succeeds, their profile is complete (the same moment the website's`,
+    `  wizard finishes) and a separate verified pipeline walks them, in order, through the same three`,
+    `  steps the website's dashboard shows: (1) membership activation, (2) the Checkr background check`,
+    `  (they authorize it first; it includes the driving-record check when they offer transportation),`,
+    `  and (3) Stripe payout-account setup. Each step sends its own secure link and its own message.`,
+    `  You must NEVER generate, promise, or describe those links yourself, never collect payment/card/SSN/license details in chat,`,
+    `  and never predict background-check timing. If they ask about any of these mid-collection, give the`,
+    `  one-line honest answer from MONEY / TRUST QUESTIONS above and keep collecting.`,
     `  HARD RULE — LINK PROMISES: never say a link is coming, being pulled up, or will arrive`,
     `  ("I'll send it here", "pulling up your secure link now"). Saying it does NOT send anything.`,
     `  Links are only ever sent by the pipeline itself or by you CALLING send_onboarding_link in the`,

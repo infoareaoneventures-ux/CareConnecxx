@@ -33,10 +33,6 @@ const LINK_MENTION = /\blink\b|\btap\b|\bbutton\b|\burl\b|enlace|bot[oó]n/i;
 // moment required fields complete — sending a gate link early would jump the
 // flow (and the bio/persistence nets already cover that failure).
 const STEP_TO_LINK: Record<string, OnboardingLinkType> = {
-  caregiver_send_photo:          "caregiver_photo",
-  caregiver_awaiting_photo:      "caregiver_photo",
-  caregiver_send_documents:      "caregiver_documents",
-  caregiver_awaiting_documents:  "caregiver_documents",
   caregiver_send_membership:     "caregiver_membership",
   caregiver_awaiting_membership: "caregiver_membership",
   caregiver_send_bgcheck:        "caregiver_background_check",

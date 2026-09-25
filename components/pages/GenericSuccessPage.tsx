@@ -8,7 +8,7 @@ const MESSAGES: Record<string, { title: string; body: string }> = {
   payment:           { title: 'Payment set up!',        body: "Evia is already searching for caregivers. You'll hear from her shortly." },
   identity:          { title: 'Identity verified!',     body: "You're all set. Evia will continue your onboarding." },
   photo_upload:      { title: 'Photo uploaded!',        body: 'Your profile photo is saved. Almost done!' },
-  doc_upload:        { title: 'Document uploaded!',     body: 'Certification saved. Moving to your next step.' },
+  doc_upload:        { title: 'Document uploaded!',     body: 'Saved. Our team reviews your transportation documents after your background and driving-record checks.' },
   background_check:  { title: 'Background check started!', body: "Results usually arrive in 1–3 days. Evia will text you." },
   stripe_connect:    { title: 'Payout account ready!', body: "You're all set to get paid. Evia will text you next steps." },
   quick_confirm:     { title: 'Confirmed!',             body: 'Your request has been confirmed.' },

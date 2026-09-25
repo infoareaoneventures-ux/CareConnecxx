@@ -18,16 +18,27 @@ describe("mapCaregiversDocToOnboardingData", () => {
       email: "basra@example.com", bio: "I love caring for seniors.", gender: "female",
       hourlyRate: 26, yearsExperience: 6, languages: ["English", "Somali"], canDrive: true,
     });
+    // gender / languages / canDrive are not wizard fields → never read back (2026-09-25).
     expect(out).toEqual({
       name: "Basra Yousuf", city: "San Jose", zipCode: "95134", street: "1 Main St", state: "CA",
-      email: "basra@example.com", bio: "I love caring for seniors.", gender: "female",
-      hourlyRate: 26, yearsExperience: 6, languages: ["English", "Somali"], canDrive: true,
+      email: "basra@example.com", bio: "I love caring for seniors.",
+      hourlyRate: 26, yearsExperience: "5-10 years",
     });
   });
 
-  it("prefers experience over yearsExperience only when the canonical field is absent", () => {
-    expect(mapCaregiversDocToOnboardingData({ yearsExperience: 6, experience: "6" }).yearsExperience).toBe(6);
-    expect(mapCaregiversDocToOnboardingData({ experience: "6" }).yearsExperience).toBe("6");
+  it("buckets experience into the wizard's labels, preferring yearsExperience over the legacy experience field", () => {
+    expect(mapCaregiversDocToOnboardingData({ yearsExperience: 6, experience: "12" }).yearsExperience).toBe("5-10 years");
+    expect(mapCaregiversDocToOnboardingData({ experience: "6" }).yearsExperience).toBe("5-10 years");
+    expect(mapCaregiversDocToOnboardingData({ yearsExperience: "10+ years" }).yearsExperience).toBe("10+ years");
+  });
+
+  it("reads the site's documents map back as transportDocs urls, and serviceRadius straight through", () => {
+    const out = mapCaregiversDocToOnboardingData({
+      serviceRadius: 15,
+      documents: { driversLicense: { url: "https://x/dl", status: "pending" }, insurance: { url: "https://x/ins" }, profilePhoto: { url: "https://x/p" } },
+    });
+    expect(out.serviceRadius).toBe(15);
+    expect(out.transportDocs).toEqual({ driversLicense: "https://x/dl", insurance: "https://x/ins" });
   });
 
   it("maps the wizard's photo field onto Evia's profilePhoto, preferring an already-Evia-shaped value", () => {

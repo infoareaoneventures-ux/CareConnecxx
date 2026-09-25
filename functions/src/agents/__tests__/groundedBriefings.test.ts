@@ -55,33 +55,5 @@ describe("match-pitch briefing — no ungrounded 'state the price' ask (R12)", (
   });
 });
 
-describe("MVR classifier — soft declines are decline exemplars (R14)", () => {
-  const mvr = sliceBetween(
-    onboardingSrc,
-    "async function handleCaregiverAskMvr",
-    "async function handleCaregiverSendMembership",
-  );
-
-  it.each([
-    "not at the moment",
-    "not right now",
-    "maybe later",
-  ])("classifier instruction lists %p as a decline exemplar", (exemplar) => {
-    // The exemplars sit in the decline (→ no) line of the parseWithClaude
-    // instruction, alongside the pre-existing ones.
-    const declineLine = mvr.split("\n").find((l) => l.includes("Clear decline"));
-    expect(declineLine, "decline exemplar line missing from classifier instruction").toBeTruthy();
-    expect(declineLine).toContain(exemplar);
-  });
-
-  it("keeps the strict YES/NO zero-latency fast path unchanged", () => {
-    expect(mvr).toContain('if (norm === "YES" || norm === "Y") verdict = "yes";');
-    expect(mvr).toContain('else if (norm === "NO" || norm === "N") verdict = "no";');
-  });
-
-  it("keeps the question and unclear branches", () => {
-    expect(mvr).toContain('→ question.');
-    expect(mvr).toContain('verdict === "question"');
-    expect(mvr).toContain('verdict === "unclear"');
-  });
-});
+// (The MVR opt-in classifier block was removed 2026-09-25 with the caregiver_ask_mvr step —
+//  the flat membership covers the driving-record check whenever Transportation is offered.)

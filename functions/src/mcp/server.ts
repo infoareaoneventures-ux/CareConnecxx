@@ -1893,7 +1893,7 @@ export const MCP_TOOLS: McpTool[] = [
             "client_identity",
             "caregiver_membership",
             "caregiver_photo",
-            "caregiver_documents",
+            "caregiver_transport_docs",
             "caregiver_background_check",
             "caregiver_payouts",
           ],
@@ -6693,7 +6693,7 @@ async function executeToolCall(
       if (!phone) return toolError("INVALID_INPUT", "phone is required");
       const validTypes = [
         "client_payment", "client_identity", "caregiver_membership",
-        "caregiver_photo", "caregiver_documents", "caregiver_background_check", "caregiver_payouts",
+        "caregiver_photo", "caregiver_transport_docs", "caregiver_background_check", "caregiver_payouts",
       ];
       if (!linkType || !validTypes.includes(linkType as string)) {
         return toolError("INVALID_INPUT", `linkType must be one of: ${validTypes.join(", ")}`);
@@ -6875,23 +6875,45 @@ async function executeToolCall(
           console.error("save_onboarding_field: availability normalization failed (keeping raw):", err);
         }
       }
-      if (role === "caregiver" && fieldName === "bio" && typeof fieldValue === "string") {
-        try {
-          const { quickComplete } = await import("../utils/openaiClient");
-          const raw = await quickComplete(
-            "Classify whether this caregiver is explicitly choosing to skip writing a public profile bio. Reply exactly SKIP or BIO. SKIP only for clear skip/no bio/not now intent. Otherwise BIO.",
-            fieldValue,
-            { maxTokens: 5 },
-          );
-          if (raw.trim().toUpperCase() === "SKIP") {
-            onboardingDataPatch = { bio: "", bioSkipped: true };
-          } else {
-            onboardingDataPatch = { bio: fieldValue.trim(), bioSkipped: false };
-          }
-        } catch (err) {
-          console.error("save_onboarding_field bio skip classification error:", err);
-          return toolError("UNAVAILABLE", "Couldn't process that bio preference right now - ask the caregiver to share a short bio or confirm they want to skip it.");
+      // Wizard value rules for the caregiver profile (CaregiverOnboardingWizard.tsx,
+      // 2026-09-25): bio ≥ 150 chars with no skip; experience is one of five
+      // buckets; travel distance one of five options; photo/documents never typed.
+      if (role === "caregiver" && fieldName === "bio") {
+        const { BIO_MIN_CHARS } = await import("../agents/onboardingContract");
+        const bioText = typeof fieldValue === "string" ? fieldValue.trim() : "";
+        if (bioText.length < BIO_MIN_CHARS) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `Their bio is ${bioText.length} characters; it needs at least ${BIO_MIN_CHARS} (about two or three sentences) and there is no skip — the website requires the same. Warmly ask them to add a bit more: what they love about the work, what a good day with a client looks like, the kind of care they're best at. Offer a voice memo if they'd rather talk it out.`,
+          };
         }
+        onboardingDataPatch = { bio: bioText };
+      }
+      if (role === "caregiver" && fieldName === "yearsExperience") {
+        const { toExperienceBucket, EXPERIENCE_BUCKETS } = await import("../agents/onboardingContract");
+        const bucket = toExperienceBucket(fieldValue);
+        if (!bucket) {
+          return { ok: true, saved: false, invalidValue: true, guidance: `Couldn't turn "${String(fieldValue)}" into years of experience. Ask roughly how many years they've been caregiving (${EXPERIENCE_BUCKETS.join(" / ")}) and save that.` };
+        }
+        onboardingDataPatch = { yearsExperience: bucket };
+      }
+      if (role === "caregiver" && fieldName === "serviceRadius") {
+        const { toServiceRadius, TRAVEL_RADIUS_OPTIONS } = await import("../agents/onboardingContract");
+        const radius = toServiceRadius(fieldValue);
+        if (!radius) {
+          return { ok: true, saved: false, invalidValue: true, guidance: `Couldn't read "${String(fieldValue)}" as a distance. Ask how far they're willing to travel — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles — and save the number (10 if they have no preference).` };
+        }
+        onboardingDataPatch = { serviceRadius: radius };
+      }
+      if (role === "caregiver" && (fieldName === "profilePhoto" || fieldName === "transportDocuments" || fieldName === "transportDocs")) {
+        return {
+          ok: true,
+          saved: false,
+          invalidValue: true,
+          guidance: `${fieldName} is never typed — it is filled automatically when the caregiver uploads through the link. Call send_onboarding_link (${fieldName === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"}) instead and tell them the link is right below.`,
+        };
       }
       // Zip → city/state auto-derivation (2026-08-22) — mirrors the website
       // wizard's zippopotam.us lookup exactly, so the model is never asked (or
@@ -6900,7 +6922,9 @@ async function executeToolCall(
       // model parsed a combined "what's your address" answer. City/state are
       // ALWAYS overwritten from a valid zip, matching the wizard's own
       // behavior of re-deriving them whenever the zip changes.
-      if (role === "client" && fieldName === "zipCode" && typeof normalizedValue === "string") {
+      // Both roles: the caregiver wizard's location step derives city/state from
+      // the ZIP the same way (2026-09-25).
+      if (fieldName === "zipCode" && typeof normalizedValue === "string") {
         const { lookupZipPlace } = await import("../utils/geocode");
         const place = await lookupZipPlace(normalizedValue).catch(() => null);
         if (place?.city) onboardingDataPatch = { ...onboardingDataPatch, city: place.city, state: place.state };
@@ -7004,6 +7028,24 @@ async function executeToolCall(
       }
       const nextStep = firstGateStep(role);
       await ref.set({ onboardingStep: nextStep }, { merge: true });
+      // Caregiver: this is the moment the site's wizard finishes (bio saved) —
+      // write exactly what the wizard writes so the dashboard, FindCaregivers
+      // and the admin queue see the same record either way (2026-09-25).
+      if (role === "caregiver") {
+        const caregiverId = snap.data()?.caregiverId as string | undefined;
+        if (caregiverId) {
+          const cgRef = db.collection("caregivers").doc(caregiverId);
+          const cgSnap = await cgRef.get();
+          const currentV = cgSnap.data()?.verificationStatus as string | undefined;
+          const TERMINAL = ["submitted", "approved", "rejected", "pre_adverse_action", "checkr_clear", "pending", "info_requested"];
+          await cgRef.set({
+            onboardingStep: 2,
+            onboardingStatus: "profile_complete",
+            wizardStep: "done",
+            ...(!currentV || !TERMINAL.includes(currentV) ? { verificationStatus: "profile_complete" } : {}),
+          }, { merge: true }).catch((err) => console.error("complete_collection: caregiver profile_complete write failed:", err));
+        }
+      }
       return { ok: true, complete: true, nextStep, status: "collection_complete" };
     }
 

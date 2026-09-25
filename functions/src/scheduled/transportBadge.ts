@@ -17,7 +17,8 @@ function isExpiringSoon(expirationDate?: string, daysAhead = 30): boolean {
 
 /**
  * Daily job: re-evaluate transportation badges for all caregivers who offer Transportation.
- * Badge requires: admin-approved account + all three transport docs approved + none expired.
+ * Badge requires: admin-approved account + all three transport docs approved + none expired
+ * + the driving record (MVR) cleared (isApprovedDriver).
  * Strips badge if any doc expires. Notifies caregiver when docs are expiring soon.
  */
 export const evaluateTransportBadges = functions.pubsub
@@ -59,7 +60,10 @@ export const evaluateTransportBadges = functions.pubsub
         isExpired(insurance?.expirationDate) ||
         isExpired(registration?.expirationDate);
 
-      const shouldHaveBadge = allApproved && !anyExpired;
+      // Badge = documents approved AND the driving record (MVR) cleared
+      // (founder, 2026-09-25: admin approves the documents after both checks
+      // are back; neither alone earns the badge).
+      const shouldHaveBadge = allApproved && !anyExpired && data.isApprovedDriver === true;
 
       if (shouldHaveBadge !== (data.transportationBadge === true)) {
         batch.update(doc.ref, { transportationBadge: shouldHaveBadge });
@@ -135,7 +139,7 @@ export const refreshTransportBadge = functions.https.onCall(async (data, context
     isExpired(docs.insurance?.expirationDate) ||
     isExpired(docs.registration?.expirationDate);
 
-  const badge = allApproved && !anyExpired;
+  const badge = allApproved && !anyExpired && caregiverData.isApprovedDriver === true;
   await snap.ref.update({ transportationBadge: badge });
   return { badge };
 });

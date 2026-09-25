@@ -59,7 +59,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
          step: "01",
          icon: <Users className="w-6 h-6" />,
          title: "Create Your Profile",
-         desc: "Sign up for free and build your professional profile. Showcase your experience, certifications, availability, and special skills. Set your own hourly rate.",
+         desc: "Sign up for free and build your professional profile. Showcase your experience, availability, and the care services you offer. Set your own hourly rate.",
          highlight: "Free to join",
          color: "orange"
       },
@@ -92,7 +92,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    const faqs = [
       {
          q: "How much does it cost?",
-         a: "Families pay $29.95/month for the platform, plus the caregiver's hourly rate and a 9% service fee on each visit. No placement fees and no long-term contracts. Caregivers pay $54.99/year, which covers their background check, and keep 100% of their hourly rate."
+         a: "Families pay $29.95/month for the platform, plus the caregiver's hourly rate and a 9% service fee on each visit. No placement fees and no long-term contracts. Caregivers pay one flat $69.99/year, which covers their background check and, for those who offer transportation, their driving record check — and they keep 100% of their hourly rate."
       },
       {
          q: "How is this different from a traditional agency?",
@@ -100,7 +100,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
       },
       {
          q: "Are the caregivers really verified?",
-         a: "Yes. Every caregiver undergoes a comprehensive background check through Checkr, including criminal history and the sex offender registry — plus driving records for caregivers who add the Approved Driver check. We also verify identity through Stripe."
+         a: "Yes. Every caregiver undergoes a comprehensive background check through Checkr, including criminal history and the sex offender registry — plus driving records for caregivers who offer transportation. We also verify identity through Stripe."
       },
       {
          q: "What areas do you serve?",
@@ -293,7 +293,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <p className="mt-4 text-sm text-ink-600">
                         {activeTab === 'families' 
                            ? 'Free to browse. $29.95/month when you hire.' 
-                           : '$54.99/year. Keep 100% of your rate.'
+                           : '$69.99/year. Keep 100% of your rate.'
                         }
                      </p>
                   </div>
@@ -338,7 +338,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <div className="bg-accent-50 rounded-3xl p-8 border border-accent-100">
                         <div className="text-accent-600 font-semibold mb-2">For Caregivers</div>
                         <div className="flex items-baseline justify-center gap-2 mb-4">
-                           <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$54.99<span className="text-2xl text-ink-500">/yr</span></span>
+                           <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$69.99<span className="text-2xl text-ink-500">/yr</span></span>
                         </div>
                         <p className="text-ink-600 mb-6">Keep 100% of your hourly rate. Daily payouts are free; instant cash-out carries Stripe's 1% fee (min $0.50).</p>
                         <ul className="text-left space-y-3 mb-8">

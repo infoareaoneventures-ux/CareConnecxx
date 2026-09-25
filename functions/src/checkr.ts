@@ -2,7 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { claimWebhookEvent, settleWebhookEvent, CHECKR_EVENTS_COLLECTION } from "./utils/webhookLedger";
-import { checkrPost } from "./checkrApi";
+import { checkrPost, checkrGet } from "./checkrApi";
 import { assertMvrCheckConfig } from "./mvrConfig";
 import { writeCaregiverBackgroundPII } from "./caregiverPrivate";
 
@@ -77,8 +77,11 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
     const existingCandidateId: string | undefined = bgData.checkrCandidateId;
     const invitationStatus: string | undefined = bgData.invitationStatus;
 
-    // Block duplicate submissions unless the invitation expired or was canceled
-    if (existingCandidateId && invitationStatus !== "expired" && invitationStatus !== "canceled") {
+    // Block duplicate submissions unless the invitation expired or was canceled —
+    // or the account is waiting on THIS consent (first check after payment, or
+    // the yearly renewal refresh; 2026-09-25 consent-first order).
+    const awaitingConsent = invitationStatus === "awaiting_consent" || bgData.consentRequired === true;
+    if (existingCandidateId && !awaitingConsent && invitationStatus !== "expired" && invitationStatus !== "canceled") {
       return { success: true, candidateId: existingCandidateId };
     }
 
@@ -110,9 +113,15 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
       candidateId = candidate.id as string;
     }
 
-    const mvrPaid = caregiverData.mvrPaid === true;
+    // Flat membership (2026-09-25): the MVR rides along whenever the profile
+    // offers Transportation (the webhook stamps mvrPaid from the same rule; read
+    // the profile too in case Transportation was added between payment and consent).
+    const profileServices: string[] = Array.isArray(caregiverData.services) && caregiverData.services.length
+      ? caregiverData.services
+      : (Array.isArray(caregiverData.skills) ? caregiverData.skills : []);
+    const mvrPaid = caregiverData.mvrPaid === true || profileServices.includes("Transportation");
     // assertMvrCheckConfig throws if the MVR package is unset or equals the base
-    // package — a loud failure beats silently running a non-MVR check after charging.
+    // package — a loud failure beats silently running a non-MVR check.
     const selectedPackage = mvrPaid ? assertMvrCheckConfig("bundled") : CHECKR_PACKAGE;
     const invitationBody: Record<string, unknown> = {
       candidate_id: candidateId,
@@ -127,17 +136,42 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
     // subcollection — NOT the world-readable parent doc. Operational fields
     // stay on the parent for agent gating + the admin verification query.
     await writeCaregiverBackgroundPII(uid, { legalFirstName, legalLastName, zip: zipCode });
+    const consentAt = new Date().toISOString();
+    const consentReason = (bgData.consentReason as string | undefined) ?? "initial";
     await db.collection("caregivers").doc(uid).set({
+      ...(mvrPaid && { mvrPaid: true }),
+      verificationStatus: "submitted",
       backgroundCheckData: {
         checkrCandidateId: candidateId,
         consentGiven: true,
-        submittedAt: new Date().toISOString(),
+        consentGivenAt: consentAt,
+        consentRequired: false,
+        submittedAt: consentAt,
         status: "pending",
         invitationStatus: "sent",
-        ...(invitationUrl && { invitationUrl }),
-        ...(mvrPaid && { mvrIncluded: true }),
+        ...(invitationUrl ? { invitationUrl } : { invitationUrl: null }),
+        initiatedVia: consentReason === "renewal" ? "annual_renewal" : "consent_form",
+        mvrIncluded: mvrPaid,
+        checkrClearedAt: null,
       },
     }, { merge: true });
+
+    // Text the caregiver their Checkr link (Checkr also emails it, but an
+    // SMS-first caregiver may never see that email). Moved here from the
+    // payment webhook when the order became pay → consent → invitation.
+    const caregiverPhone = String(caregiverData.phone || "").trim();
+    if (invitationUrl && caregiverPhone) {
+      const { textCaregiver } = await import("./bgcheckConsentRequest");
+      await db.collection("agent_sessions").doc(caregiverPhone).update({
+        bgcheckInviteUrl: invitationUrl,
+        bgcheckInviteSentAt: consentAt,
+      }).catch(() => {});
+      await textCaregiver(caregiverPhone,
+        consentReason === "renewal"
+          ? `Thanks — here's this year's background check refresh. It usually takes about 5 minutes: ${invitationUrl}`
+          : `Thanks for authorizing! Here's your background check link — it usually takes about 5 minutes: ${invitationUrl}`,
+      ).catch((err) => console.error(`initiateCheckrCandidate: text to ${uid} failed:`, err));
+    }
 
     return { success: true, candidateId, invitationUrl };
   } catch (error: any) {
@@ -292,6 +326,44 @@ export async function initiateMvrOnlyCheck(caregiverUid: string): Promise<void> 
   }, { merge: true });
 
   console.log(`initiateMvrOnlyCheck: MVR-only invitation sent for ${caregiverUid}`);
+}
+
+/**
+ * Bundled criminal+MVR report (Transportation on the profile at payment) that
+ * came back NON-clear: Checkr gives one overall result for the whole report, so
+ * on its own it can't say whether the criminal search or the driving record
+ * caused it. Ask Checkr for the MVR screening's own result and record THAT on
+ * the MVR fields, so the admin's "Driving Record" line tells the truth
+ * (founder, 2026-09-25). Falls back to mirroring the overall result when the
+ * report carries no MVR id or the lookup fails — never throws.
+ */
+async function resolveBundledMvrStatus(
+  payload: Record<string, any>,
+  cgData: Record<string, any>,
+  updates: Record<string, any>,
+  overallStatus: "consider" | "suspended",
+): Promise<void> {
+  if (cgData.mvrPaid !== true) return;
+  const mvrId = typeof payload.motor_vehicle_report === "string" ? payload.motor_vehicle_report
+    : typeof payload.motor_vehicle_report?.id === "string" ? payload.motor_vehicle_report.id : null;
+  let resolved: string = overallStatus;
+  if (mvrId) {
+    try {
+      const mvr = await checkrGet(`/motor_vehicle_reports/${mvrId}`);
+      const own = mapCheckrResult(mvr ?? {});
+      if (own === "clear" || own === "consider" || own === "suspended" || own === "pending") resolved = own;
+    } catch (err) {
+      console.warn(`resolveBundledMvrStatus: MVR lookup failed for ${mvrId}; mirroring overall "${overallStatus}":`, err);
+    }
+  }
+  updates["mvrStatus"] = resolved;
+  if (resolved === "clear") {
+    // Driving record itself is fine — the badge still waits on core approval.
+    updates["isApprovedDriver"] = true;
+    updates["mvrClearedAt"] = new Date().toISOString();
+  } else if (resolved === "consider" || resolved === "suspended") {
+    updates["isApprovedDriver"] = false;
+  }
 }
 
 /**
@@ -584,6 +656,11 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           // mvrIncluded:true via the profile-submission write and self-grant the badge.
           if (cgData?.mvrPaid === true) {
             updates["isApprovedDriver"] = true;
+            // The bundled report carries the MVR — record it on the same
+            // fields the standalone MVR-only path uses, so the admin's
+            // "Driving record" line and the badge gate read one shape.
+            updates["mvrStatus"] = "clear";
+            updates["mvrClearedAt"] = new Date().toISOString();
           }
           const cgPhone = cgData?.phone as string | undefined;
           if (cgPhone) {
@@ -628,6 +705,9 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         try {
           const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
           const cgData = cgSnap.data() ?? {};
+          // Bundled criminal+MVR report: record the MVR screening's OWN result
+          // so the admin's "Driving record" line says which check needs review.
+          await resolveBundledMvrStatus(payload, cgData, updates, "consider");
           await db.collection("admin_alerts").add({
             type:        "background_check_review",
             caregiverId: caregiverUid,
@@ -668,6 +748,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         try {
           const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
           const cgData = cgSnap.data() ?? {};
+          await resolveBundledMvrStatus(payload, cgData, updates, "suspended");
           await db.collection("admin_alerts").add({
             type:        "background_check_suspended",
             caregiverId: caregiverUid,

@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import {
-  ShieldCheck, CheckCircle, Loader2, ChevronLeft, X,
+  ShieldCheck, Loader2, ChevronLeft, X,
   DollarSign, MessageCircle, Briefcase, Car,
 } from 'lucide-react';
 import {
   createCaregiverCheckoutSession,
-  CAREGIVER_ANNUAL_PRICE_ID,
+  CAREGIVER_ANNUAL_PRICE,
 } from '../../services/stripeService';
 import { authService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -24,8 +24,8 @@ const BENEFITS = [
   },
   {
     icon: ShieldCheck,
-    title: 'Background check badge',
-    desc: 'A verified badge on your profile builds family trust.',
+    title: 'Background check included',
+    desc: 'Your criminal background check is covered — and so is the driving record check if you offer transportation.',
   },
   {
     icon: Briefcase,
@@ -39,6 +39,11 @@ const BENEFITS = [
   },
 ];
 
+// ONE flat annual fee (founder, 2026-09-25): $69.99/yr covers the criminal
+// background check and, for a caregiver whose profile offers Transportation,
+// the driving record (MVR) check — bundled into the same Checkr run, or run on
+// its own if transportation is added later. No add-on, no toggle. The price
+// itself is chosen server-side (createCheckoutSession, plan 'caregiver_annual').
 export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   onNavigate,
   onShowToast,
@@ -47,23 +52,8 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   const { caregiverProfile } = useCareConnex();
   const p = caregiverProfile as any;
   const hasTransportation = (p?.services || p?.skills || []).includes('Transportation');
-  // MVR is a real opt-in for every caregiver (default off), not auto-bundled with
-  // the Transportation service. Default it on for drivers as a helpful suggestion,
-  // but it remains fully toggleable.
-  const [includeMVR, setIncludeMVR] = useState<boolean>(false);
-
   const [loading, setLoading] = useState(false);
-
-  // $54.99/yr — the actual Stripe charge (price_1TtBYw…, unit_amount 5499,
-  // 2026-07-14 repricing). Covers the criminal-only Checkr background check +
-  // verified badge. MVR (Approved Driver) is a separate $11.50 one-time add-on
-  // (price_1TtBZ9…) charged in the same checkout when opted in.
-  const annualPrice = 54.99;
-  const mvrPrice = 11.50;
-
-  const selectedPrice = annualPrice;
-  const selectedPriceId = CAREGIVER_ANNUAL_PRICE_ID;
-
+  const annualPrice = CAREGIVER_ANNUAL_PRICE;
 
   const handleCheckout = async () => {
     const user = authService.getCurrentUser();
@@ -76,7 +66,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
     try {
       const successUrl = `${window.location.origin}/caregiver/dashboard?membership=success`;
       const cancelUrl = `${window.location.origin}/caregiver/membership`;
-      const url = await createCaregiverCheckoutSession(selectedPriceId, successUrl, cancelUrl, { includeMVR });
+      const url = await createCaregiverCheckoutSession(successUrl, cancelUrl);
       if (url) {
         window.location.href = url;
       } else {
@@ -140,7 +130,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
               Membership: <span className="font-extrabold">${annualPrice}/year</span>
             </p>
             <p className="text-white/50 text-xs mt-1">
-              Billed annually — includes background check and verified badge.
+              One flat fee, billed annually — background check and driving record check included.
             </p>
           </div>
         </div>
@@ -150,7 +140,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
       <div className="lg:w-[45%] bg-white px-8 py-10 lg:py-16 flex flex-col justify-center">
         <div className="max-w-sm w-full mx-auto">
           <h2 className="text-2xl font-extrabold text-slate-900 mb-1">Join today</h2>
-          <p className="text-slate-500 text-sm mb-8">Annual membership includes your background check.</p>
+          <p className="text-slate-500 text-sm mb-8">One flat annual fee. Your background check is included.</p>
 
           {/* Annual plan summary */}
           <div className="mb-6">
@@ -160,7 +150,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
                   <div className="w-2.5 h-2.5 rounded-full bg-primary-500" />
                 </div>
                 <div>
-                  <p className="font-semibold text-slate-900 text-sm">Annual plan</p>
+                  <p className="font-semibold text-slate-900 text-sm">Annual membership</p>
                   <p className="text-xs text-slate-500">Billed once a year</p>
                 </div>
               </div>
@@ -168,30 +158,21 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             </div>
           </div>
 
-          {/* MVR add-on — a real opt-in offered to every caregiver */}
-          <div className="mb-6">
-            <button
-              type="button"
-              onClick={() => setIncludeMVR(v => !v)}
-              aria-pressed={includeMVR}
-              className={`w-full flex items-start gap-3 p-4 rounded-2xl border-2 text-left transition-colors ${includeMVR ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-300'}`}
-            >
-              <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${includeMVR ? 'border-blue-500 bg-blue-500' : 'border-slate-300'}`}>
-                {includeMVR && <CheckCircle className="w-3.5 h-3.5 text-white" />}
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Car className="w-4 h-4 text-blue-600" />
-                    <p className="font-semibold text-slate-900 text-sm">Add Approved Driver status</p>
-                  </div>
-                  <p className="font-bold text-blue-700 text-sm">+${mvrPrice.toFixed(2)}</p>
-                </div>
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  Includes a Motor Vehicle Report (MVR). Families that need a driver will be able to see your Approved Driver badge.
-                </p>
-              </div>
-            </button>
+          {/* What's included */}
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2.5">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Included in your membership</p>
+            <div className="flex items-start gap-2.5 text-sm text-slate-700">
+              <ShieldCheck className="w-4 h-4 text-primary-600 flex-shrink-0 mt-0.5" />
+              <span>Criminal background check through Checkr, plus your verified badge.</span>
+            </div>
+            <div className="flex items-start gap-2.5 text-sm text-slate-700">
+              <Car className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+              <span>
+                {hasTransportation
+                  ? 'Driving record (MVR) check — you offer transportation, so it runs with your background check.'
+                  : 'Driving record (MVR) check whenever you add transportation to your services — no extra charge.'}
+              </span>
+            </div>
           </div>
 
           {/* Total */}
@@ -199,16 +180,10 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             <div className="flex items-center justify-between">
               <span className="font-semibold text-slate-700">Total today</span>
               <span className="text-xl font-extrabold text-slate-900">
-                ${selectedPrice.toFixed(2)}
-                {includeMVR && <span className="text-base font-bold text-slate-900"> + ${mvrPrice.toFixed(2)}</span>}
+                ${annualPrice.toFixed(2)}
                 <span className="text-sm font-medium text-slate-500 ml-1">/year</span>
               </span>
             </div>
-            {includeMVR && (
-              <p className="text-xs text-slate-400 text-right mt-1">
-                ${mvrPrice.toFixed(2)} MVR is a one-time charge — your annual renewal is ${selectedPrice.toFixed(2)}/yr
-              </p>
-            )}
           </div>
 
           {/* CTA */}

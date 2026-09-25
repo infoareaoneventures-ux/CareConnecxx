@@ -1513,6 +1513,15 @@ const handleInboundInner = traceable(
     }
   }
 
+  // Site → Evia (2026-09-25): before routing a caregiver mid-setup, move the
+  // cursor past anything the site already finished (wizard profile, membership,
+  // background-check consent, payouts) — both channels write one record.
+  if (session.userType === "caregiver" && session.onboardingStep && session.onboardingStep !== "complete") {
+    const { reconcileCaregiverOnboardingWithSite } = await import("../agents/caregiverSiteSync");
+    const reconciled = await reconcileCaregiverOnboardingWithSite(phone, session);
+    if (reconciled.onboardingStep !== session.onboardingStep) (session as any).onboardingStep = reconciled.onboardingStep;
+  }
+
   const step = session.onboardingStep ?? "";
   if (step && step !== "complete") {
     // Soft-resume ack REMOVED (founder, 2026-07-14): the old 10–30-min-gap

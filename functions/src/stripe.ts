@@ -2,11 +2,8 @@ import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from './utils/webhookLedger';
-import { fetchWithTimeout } from './utils/httpTimeout';
 import { appLink } from './config/appUrl';
 import { businessTodayStr, DEFAULT_TZ, formatDateWithWeekday } from './utils/scheduledTime';
-import { assertMvrPaymentConfig, assertMvrCheckConfig } from './mvrConfig';
-import { writeCaregiverBackgroundPII } from './caregiverPrivate';
 
 // Initialize Stripe with secret key
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
@@ -22,20 +19,24 @@ const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 // Price ID for $29.95/month membership (legacy fallback)
 const MEMBERSHIP_PRICE_ID = process.env.STRIPE_MEMBERSHIP_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
 
-// Allowed price IDs for all three plans + caregiver membership.
-// NOTE: STRIPE_MVR_PRICE_ID is intentionally NOT in this list — the MVR add-on
-// has its own dedicated callable (createMvrAddonCheckoutSession). If an MVR
-// priceId is passed to createCheckoutSession it falls back to MEMBERSHIP_PRICE_ID,
-// which is the correct safe default (silently ignores an unexpected priceId).
+// Caregiver membership: ONE flat annual fee (founder, 2026-09-25 — $69.99/yr)
+// that covers the criminal background check and, for a caregiver whose profile
+// offers Transportation, the bundled MVR as well. The former $11.50 MVR add-on
+// line item and its standalone "Approved Driver" checkout are gone. The site
+// asks for this by `plan: 'caregiver_annual'` — the server picks the price, so
+// a stale VITE price id in the bundle can never charge a caregiver a family plan
+// (the fallback to MEMBERSHIP_PRICE_ID did exactly that before this change).
+const CAREGIVER_ANNUAL_PRICE_ID = process.env.STRIPE_CAREGIVER_ANNUAL || 'price_1UJRHKL7Ss5iuUb7jUeIva1L';
+
+// Allowed price IDs for the family plans + caregiver membership.
 const ALLOWED_PRICE_IDS = [
   process.env.STRIPE_PRICE_MONTHLY        || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO',
   process.env.STRIPE_PRICE_QUARTERLY      || '',
   process.env.STRIPE_PRICE_ANNUAL         || '',
-  // $54.99/yr caregiver membership (criminal-only background check via Checkr;
-  // 2026-07-14 repricing — MVR is a separate $11.50 one-time add-on line item).
-  // The old $66.49 price (price_1TqGrE…) and its product were archived in Stripe;
-  // existing subscriptions keep billing on it, but new checkouts must not use it.
-  process.env.STRIPE_CAREGIVER_ANNUAL     || 'price_1TtBYwL7Ss5iuUb7iZ1s0PQg',
+  // Caregiver annual membership (flat fee — see CAREGIVER_ANNUAL_PRICE_ID).
+  // Older prices ($66.49 → $54.99) are archived in Stripe; existing
+  // subscriptions keep billing on them, but new checkouts must not use them.
+  CAREGIVER_ANNUAL_PRICE_ID,
   process.env.STRIPE_CAREGIVER_MONTHLY    || '',
   MEMBERSHIP_PRICE_ID,
 ].filter(Boolean);
@@ -49,16 +50,15 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
 
-  const { successUrl, cancelUrl, priceId, includeMVR } = data;
+  const { successUrl, cancelUrl, priceId, plan } = data;
   const userId = context.auth.uid;
 
-  // Resolve which price to charge — validate against allowed list
-  const resolvedPriceId = (priceId && ALLOWED_PRICE_IDS.includes(priceId))
-    ? priceId
-    : MEMBERSHIP_PRICE_ID;
-
-  const mvrPriceId = (process.env.STRIPE_MVR_PRICE_ID || '').trim();
-  const addMVR = includeMVR === true && mvrPriceId.length > 0 && !mvrPriceId.startsWith('FILL_IN');
+  // Resolve which price to charge. A caregiver membership is always the flat
+  // annual price (server-chosen); family plans validate the requested price
+  // against the allowed list.
+  const resolvedPriceId = plan === 'caregiver_annual'
+    ? CAREGIVER_ANNUAL_PRICE_ID
+    : (priceId && ALLOWED_PRICE_IDS.includes(priceId)) ? priceId : MEMBERSHIP_PRICE_ID;
 
   try {
     // Get or create Stripe customer
@@ -92,9 +92,6 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [
       { price: resolvedPriceId, quantity: 1 },
     ];
-    if (addMVR) {
-      lineItems.push({ price: mvrPriceId, quantity: 1 });
-    }
 
     // Create checkout session
     const session = await stripe.checkout.sessions.create({
@@ -110,7 +107,6 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
       },
       metadata: {
         firebaseUID: userId,
-        ...(addMVR && { includeMVR: 'true' }),
       },
     });
 
@@ -119,67 +115,6 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
     const stripeMsg = error?.raw?.message || error?.message || String(error);
     console.error('Error creating checkout session:', stripeMsg, error);
     throw new functions.https.HttpsError('internal', `Failed to create checkout session: ${stripeMsg}`);
-  }
-});
-
-/**
- * Create a one-time Stripe Checkout session for the standalone MVR ("Approved
- * Driver") add-on purchased after signup. Unlike membership (subscription mode),
- * this is a single one-time charge. On payment the webhook initiates an MVR-only
- * Checkr check (see handleCheckoutSessionCompleted, task: 'mvr_addon').
- *
- * Eligibility: any signed-in caregiver, anytime after signup — no base-check-cleared gate.
- */
-export const createMvrAddonCheckoutSession = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
-  const userId = context.auth.uid;
-  const { successUrl, cancelUrl } = data || {};
-
-  // Loud config check: refuse rather than create a checkout that can't deliver MVR.
-  let mvrPriceId: string;
-  try {
-    mvrPriceId = assertMvrPaymentConfig();
-  } catch (err) {
-    console.error('createMvrAddonCheckoutSession: MVR not configured:', err);
-    throw new functions.https.HttpsError('failed-precondition', 'The Approved Driver add-on is not available right now.');
-  }
-
-  try {
-    // Get or create the Stripe customer (mirrors createCheckoutSession).
-    const userRef = admin.firestore().collection('customers').doc(userId);
-    const userDoc = await userRef.get();
-    let customerId = userDoc.data()?.stripeCustomerId;
-    if (!customerId) {
-      const user = await admin.auth().getUser(userId);
-      const customer = await stripe.customers.create({
-        email: user.email,
-        metadata: { firebaseUID: userId },
-      });
-      customerId = customer.id;
-      await userRef.set({
-        stripeCustomerId: customerId,
-        email: user.email,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      customer: customerId,
-      line_items: [{ price: mvrPriceId, quantity: 1 }],
-      mode: 'payment', // one-time charge, NOT a subscription
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      metadata: { firebaseUID: userId, task: 'mvr_addon' },
-      payment_intent_data: { metadata: { firebaseUID: userId, task: 'mvr_addon' } },
-    });
-
-    return { sessionId: session.id, url: session.url };
-  } catch (error: any) {
-    const stripeMsg = error?.raw?.message || error?.message || String(error);
-    console.error('Error creating MVR add-on checkout session:', stripeMsg, error);
-    throw new functions.https.HttpsError('internal', `Failed to create MVR checkout session: ${stripeMsg}`);
   }
 });
 
@@ -384,64 +319,6 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
-  // Evia SMS — standalone "add MVR later" one-time payment complete. Resolve the
-  // caregiver behind this phone and kick off an MVR-only check (idempotent).
-  if (session.metadata?.task === 'mvr_payment' && session.metadata?.phone) {
-    const phone = session.metadata.phone;
-    try {
-      const sessionSnap = await admin.firestore().collection('agent_sessions').doc(phone).get();
-      const caregiverUid = sessionSnap.data()?.caregiverId as string | undefined;
-      if (!caregiverUid) {
-        console.error(`mvr_payment: no caregiverId on agent_sessions/${phone}`);
-        await admin.firestore().collection('admin_alerts').add({
-          type: 'mvr_init_failed', phone, errorMessage: 'no caregiverId on session',
-          createdAt: new Date().toISOString(), resolved: false, severity: 'high',
-        }).catch(() => {});
-        return;
-      }
-      const { initiateMvrOnlyCheck } = await import('./checkr');
-      await initiateMvrOnlyCheck(caregiverUid);
-      const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
-      await advanceOnboardingStep(phone, 'mvr_payment', '');
-    } catch (err) {
-      console.error(`mvr_payment: failed to initiate MVR check for ${phone}:`, err);
-      await admin.firestore().collection('admin_alerts').add({
-        type: 'mvr_init_failed', phone, errorMessage: err instanceof Error ? err.message : String(err),
-        createdAt: new Date().toISOString(), resolved: false, severity: 'high',
-      }).catch(() => {});
-    }
-    return;
-  }
-
-  // One-time MVR ("Approved Driver") add-on purchased after signup (web self-serve).
-  // On payment, kick off a standalone MVR-only Checkr check. initiateMvrOnlyCheck is
-  // idempotent (mvrCheckInitiated precondition), so a redelivered webhook is safe.
-  if (session.metadata?.task === 'mvr_addon') {
-    const caregiverUid = session.metadata?.firebaseUID;
-    if (!caregiverUid) {
-      console.error('mvr_addon checkout completed without firebaseUID');
-      return;
-    }
-    try {
-      const { initiateMvrOnlyCheck } = await import('./checkr');
-      await initiateMvrOnlyCheck(caregiverUid);
-    } catch (err) {
-      // assertMvrCheckConfig and Checkr errors surface here. Don't storm Stripe
-      // retries on a persistent config error — record the paid-but-uninitiated
-      // state for an admin and ack the webhook.
-      console.error(`mvr_addon: failed to initiate MVR check for ${caregiverUid}:`, err);
-      await admin.firestore().collection('admin_alerts').add({
-        type:         'mvr_init_failed',
-        caregiverId:  caregiverUid,
-        errorMessage: err instanceof Error ? err.message : String(err),
-        createdAt:    new Date().toISOString(),
-        resolved:     false,
-        severity:     'high',
-      }).catch(() => {});
-    }
-    return;
-  }
-
   const userId = session.metadata?.firebaseUID;
   if (!userId) return;
 
@@ -481,175 +358,31 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
 
   const caregiverData = caregiverSnap.data() || {};
 
-  // Idempotency: skip if Checkr already initiated and invitation not expired
-  const bgData = caregiverData.backgroundCheckData || {};
-  if (bgData.checkrCandidateId && bgData.invitationStatus !== 'expired' && bgData.invitationStatus !== 'canceled') {
-    await admin.firestore().collection('caregivers').doc(userId).set({
-      membershipPaid: true,
-      verificationStatus: 'submitted',
-    }, { merge: true });
-    console.log(`Checkr already initiated for caregiver: ${userId}`);
-    return;
-  }
+  // Flat membership (2026-09-25): the MVR is covered whenever the profile
+  // offers Transportation — no separate purchase, no checkout toggle.
+  // `mvrPaid` keeps its name (firestore.rules locks it as the webhook-only
+  // badge gate) but now means "covered".
+  const profileServices: string[] = Array.isArray(caregiverData.services) && caregiverData.services.length
+    ? caregiverData.services
+    : (Array.isArray(caregiverData.skills) ? caregiverData.skills : []);
+  const includeMVRFlag = profileServices.includes('Transportation');
 
-  // Gather caregiver info for Checkr candidate
-  let email: string | undefined;
-  try {
-    const authUser = await admin.auth().getUser(userId);
-    email = authUser.email;
-  } catch (e) {
-    console.error(`Could not get auth user for ${userId}`, e);
-  }
-  if (!email) {
-    console.error(`Caregiver ${userId} has no email — cannot initiate Checkr`);
-    return;
-  }
+  await admin.firestore().collection('caregivers').doc(userId).set({
+    membershipPaid: true,
+    ...(includeMVRFlag && { mvrPaid: true }),
+    verificationStatus: 'submitted',
+  }, { merge: true });
+  await admin.firestore().collection('users').doc(userId).set({ verificationStatus: 'submitted' }, { merge: true });
 
-  const nameParts = (caregiverData.name || '').trim().split(/\s+/);
-  const firstName = caregiverData.firstName || nameParts[0] || '';
-  const lastName = caregiverData.lastName || nameParts.slice(1).join(' ') || '';
-  const zipCode = (caregiverData.zipCode || caregiverData.zip || '').trim();
-  const state = (caregiverData.state || '').trim();
-
-  const includeMVRFlag = session.metadata?.includeMVR === 'true';
-
-  if (!firstName || !lastName || !zipCode) {
-    console.warn(`Caregiver ${userId} missing profile fields — marking paid, deferring Checkr`);
-    await admin.firestore().collection('caregivers').doc(userId).set({
-      membershipPaid: true,
-      checkrInitPending: true,
-      ...(includeMVRFlag && { mvrPaid: true }),
-    }, { merge: true });
-    return;
-  }
-
-  const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || '').trim();
-  if (!apiKey) {
-    console.error('CHECKR_KEY / CHECKR_API_KEY not configured — marking paid, skipping Checkr');
-    await admin.firestore().collection('caregivers').doc(userId).set({ membershipPaid: true }, { merge: true });
-    return;
-  }
-
-  try {
-    const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
-    const CHECKR_PKG_BASE = process.env.CHECKR_PACKAGE || 'checkrdirect_essential_criminal';
-    let CHECKR_PKG = CHECKR_PKG_BASE;
-    if (includeMVRFlag) {
-      try {
-        // Validate the bundled MVR package is set and distinct from base.
-        CHECKR_PKG = assertMvrCheckConfig('bundled');
-      } catch (cfgErr) {
-        // Paid for MVR but the bundled package is misconfigured. Run the base
-        // criminal check (so the caregiver isn't blocked) and alert an admin to
-        // resolve the MVR portion — never silently run a non-MVR check as MVR.
-        console.error(`Bundled MVR package misconfigured for ${userId}:`, cfgErr);
-        await admin.firestore().collection('admin_alerts').add({
-          type:         'mvr_bundle_misconfigured',
-          caregiverId:  userId,
-          errorMessage: cfgErr instanceof Error ? cfgErr.message : String(cfgErr),
-          createdAt:    new Date().toISOString(),
-          resolved:     false,
-          severity:     'high',
-        }).catch(() => {});
-      }
-    }
-    const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
-    const dateKey = new Date().toISOString().slice(0, 10);
-    const workLocations = state ? [{ country: 'US', state: state.toUpperCase() }] : [];
-
-    const candidateBody: Record<string, unknown> = {
-      first_name: firstName, last_name: lastName, email,
-      zipcode: zipCode, custom_id: userId,
-    };
-    if (workLocations.length) candidateBody.work_locations = workLocations;
-
-    const candidateRes = await fetchWithTimeout(`${CHECKR_BASE}/candidates`, {
-      method: 'POST',
-      headers: { Authorization: authHeader, 'Content-Type': 'application/json', 'Idempotency-Key': `${userId}-candidate-${dateKey}` },
-      body: JSON.stringify(candidateBody),
-    });
-
-    if (!candidateRes.ok) {
-      const errText = await candidateRes.text().catch(() => '');
-      console.error(`Checkr candidate failed for ${userId}: ${candidateRes.status} ${errText}`);
-      await admin.firestore().collection('caregivers').doc(userId).set({ membershipPaid: true }, { merge: true });
-      return;
-    }
-    const candidate = await candidateRes.json();
-    const candidateId: string = candidate.id;
-
-    const invBody: Record<string, unknown> = { candidate_id: candidateId, package: CHECKR_PKG };
-    if (workLocations.length) invBody.work_locations = workLocations;
-
-    const invRes = await fetchWithTimeout(`${CHECKR_BASE}/invitations`, {
-      method: 'POST',
-      headers: { Authorization: authHeader, 'Content-Type': 'application/json', 'Idempotency-Key': `${userId}-invitation-${dateKey}` },
-      body: JSON.stringify(invBody),
-    });
-
-    const invOk = invRes.ok;
-    let invitationUrl: string | undefined;
-    if (!invOk) {
-      const errText = await invRes.text().catch(() => '');
-      console.error(`Checkr invitation failed for ${userId}: ${invRes.status} ${errText}`);
-    } else {
-      const inv = await invRes.json().catch(() => null);
-      if (typeof inv?.invitation_url === 'string') invitationUrl = inv.invitation_url;
-    }
-
-    // Identity PII → owner/admin-only private subcollection, not the parent.
-    await writeCaregiverBackgroundPII(userId, { legalFirstName: firstName, legalLastName: lastName, zip: zipCode });
-    await admin.firestore().collection('caregivers').doc(userId).set({
-      membershipPaid: true,
-      ...(includeMVRFlag && { mvrPaid: true }),
-      verificationStatus: 'submitted',
-      backgroundCheckData: {
-        checkrCandidateId: candidateId,
-        submittedAt: new Date().toISOString(),
-        status: 'pending',
-        invitationStatus: invOk ? 'sent' : 'error',
-        ...(invitationUrl && { invitationUrl }),
-        initiatedVia: 'stripe_webhook',
-        ...(includeMVRFlag && { mvrIncluded: true }),
-      },
-    }, { merge: true });
-
-    // Text the caregiver their background-check link. Checkr also emails it, but
-    // an SMS-first caregiver may never see that email — the link must reach them
-    // where the rest of onboarding happens.
-    const caregiverPhone = (caregiverData.phone || '').trim();
-    if (invitationUrl && caregiverPhone) {
-      try {
-        await admin.firestore().collection('agent_sessions').doc(caregiverPhone).update({
-          bgcheckInviteUrl: invitationUrl,
-          // Stamp the mint time so Evia's reuse guard can tell a live invite from
-          // a stale one (Checkr's 7-day expiry) — an unstamped cache would fall to
-          // the submittedAt fallback and, once that ages out, force-re-mint.
-          bgcheckInviteSentAt: new Date().toISOString(),
-        }).catch(() => {});
-        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
-        await sendViaInteractionAgent(caregiverPhone, {
-          content:
-            'Payment received! Next step: your background check — it usually takes about 5 minutes. ' +
-            `Tap to get started: ${invitationUrl}`,
-          urgency:     'immediate',
-          sourceAgent: 'checkr_status',
-          canDrop:     false,
-        });
-      } catch (err) {
-        console.error(`Failed to text bg-check link to caregiver ${userId}:`, err);
-      }
-    }
-
-    await admin.firestore().collection('users').doc(userId).set({
-      verificationStatus: 'submitted',
-    }, { merge: true });
-
-    console.log(`Checkr initiated for caregiver: ${userId}, candidate: ${candidateId}`);
-  } catch (err: any) {
-    console.error(`Checkr auto-initiation error for ${userId}:`, err?.message);
-    await admin.firestore().collection('caregivers').doc(userId).set({ membershipPaid: true }, { merge: true });
-  }
+  // Consent-first (founder, 2026-09-25): the webhook no longer creates the
+  // Checkr candidate/invitation. It parks the account on "authorize your
+  // background check" (bell + text); the FCRA consent form
+  // (initiateCheckrCandidate) is the ONLY place the invitation is minted —
+  // the same order Evia's SMS path already follows.
+  const { requestBackgroundCheckConsent } = await import('./bgcheckConsentRequest');
+  await requestBackgroundCheckConsent(userId, 'initial')
+    .catch((err) => console.error(`requestBackgroundCheckConsent(initial) failed for ${userId}:`, err));
+  console.log(`Membership paid for caregiver ${userId} — awaiting background-check consent`);
 }
 
 /**
@@ -817,129 +550,16 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     return;
   }
 
-  const caregiverSnap = await admin.firestore().collection('caregivers').doc(userId).get();
-  if (!caregiverSnap.exists) return;
-
-  const caregiverData = caregiverSnap.data() || {};
-  const bgData = caregiverData.backgroundCheckData || {};
-  const existingCandidateId = bgData.checkrCandidateId;
-
-  if (!existingCandidateId) {
-    console.log(`Renewal for caregiver ${userId} but no checkrCandidateId — skipping Checkr`);
-    return;
-  }
-
-  const renewalPhone = ((caregiverData.phone as string | undefined) || '').trim();
-  async function notifyRenewalLinkFailure(reason: string) {
-    await admin.firestore().collection('admin_alerts').add({
-      type:        'onboarding_link_generation_failed',
-      severity:    'high',
-      step:        'stripe_subscription_renewal_bgcheck',
-      caregiverId: userId,
-      phone:       renewalPhone,
-      error:       reason,
-      createdAt:   new Date().toISOString(),
-      resolved:    false,
-    }).catch((alertErr: unknown) => console.error(`Failed to write Checkr renewal alert for ${userId}:`, alertErr));
-    if (renewalPhone) {
-      try {
-        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
-        await sendViaInteractionAgent(renewalPhone, {
-          content: 'Your annual background check needs a quick renewal. I hit a snag pulling up the link, and I will text it as soon as it is ready.',
-          urgency:     'immediate',
-          sourceAgent: 'checkr_status',
-          canDrop:     false,
-        });
-      } catch (sendErr) {
-        console.error(`Failed to text Checkr renewal failure to caregiver ${userId}:`, sendErr);
-      }
-    }
-  }
-
-  // Renewal: reset verification and re-run Checkr for the existing candidate
-  console.log(`Annual renewal for caregiver ${userId} — re-initiating Checkr`);
-
-  const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || '').trim();
-  if (!apiKey) {
-    console.error('CHECKR_KEY not configured - skipping Checkr renewal');
-    await notifyRenewalLinkFailure('CHECKR_KEY not configured');
-    return;
-  }
-
-  try {
-    const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
-    const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'checkrdirect_essential_criminal';
-    const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
-    const dateKey = new Date().toISOString().slice(0, 10);
-
-    const invRes = await fetch(`${CHECKR_BASE}/invitations`, {
-      method: 'POST',
-      headers: { Authorization: authHeader, 'Content-Type': 'application/json', 'Idempotency-Key': `${userId}-renewal-${dateKey}` },
-      body: JSON.stringify({ candidate_id: existingCandidateId, package: CHECKR_PKG }),
-    });
-
-    const invOk = invRes.ok;
-    if (!invOk) {
-      // The invitation failed, so DON'T reset the caregiver's verification state —
-      // doing so would strip their verified status while leaving no valid pending
-      // background check, stranding them in an un-verifiable limbo. Leave the
-      // existing state intact and surface the failure for retry.
-      const errText = await invRes.text().catch(() => '');
-      console.error(`Checkr renewal invitation failed for ${userId}: ${invRes.status} ${errText} — leaving verification state unchanged`);
-      await notifyRenewalLinkFailure(`${invRes.status} ${errText}`.trim());
-      return;
-    }
-
-    const inv = await invRes.json().catch(() => null);
-    const renewalUrl: string | undefined =
-      typeof inv?.invitation_url === 'string' ? inv.invitation_url : undefined;
-
-    await admin.firestore().collection('caregivers').doc(userId).set({
-      verified: false,
-      verificationStatus: 'submitted',
-      backgroundCheckStatus: 'pending',
-      backgroundCheckComplete: false,
-      backgroundCheckData: {
-        ...bgData,
-        submittedAt: new Date().toISOString(),
-        status: 'pending',
-        invitationStatus: 'sent',
-        ...(renewalUrl ? { invitationUrl: renewalUrl } : { invitationUrl: null }),
-        initiatedVia: 'annual_renewal',
-        checkrClearedAt: null,
-      },
-    }, { merge: true });
-
-    // Text the renewal link — same rationale as the first-payment path: the
-    // Checkr email alone is easy to miss, and the caregiver stays unbookable
-    // until the renewed check clears.
-    if (renewalUrl && renewalPhone) {
-      try {
-        await admin.firestore().collection('agent_sessions').doc(renewalPhone).update({
-          bgcheckInviteUrl: renewalUrl,
-          // Stamp the mint time (see the first-payment path) so Evia's reuse guard
-          // treats this renewal invite as live until it actually nears expiry.
-          bgcheckInviteSentAt: new Date().toISOString(),
-        }).catch(() => {});
-        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
-        await sendViaInteractionAgent(renewalPhone, {
-          content:
-            'Your annual membership renewed — time for your yearly background check refresh. ' +
-            `It usually takes about 5 minutes: ${renewalUrl}`,
-          urgency:     'immediate',
-          sourceAgent: 'checkr_status',
-          canDrop:     false,
-        });
-      } catch (err) {
-        console.error(`Failed to text renewal bg-check link to caregiver ${userId}:`, err);
-      }
-    }
-
-    console.log(`Checkr renewal initiated for caregiver: ${userId}`);
-  } catch (err: any) {
-    console.error(`Checkr renewal error for ${userId}:`, err?.message);
-    await notifyRenewalLinkFailure(err?.message ?? String(err));
-  }
+  // Yearly refresh (founder, 2026-09-25: "the renewal would have to happen
+  // yearly"), consent-first: reset the verified state, park the account on
+  // "authorize this year's check", and tell the caregiver. The consent form
+  // then mints a fresh invitation on the existing candidate — with the MVR
+  // bundled when the profile offers Transportation (the old direct re-invite
+  // always ran the criminal-only package and skipped consent).
+  const { requestBackgroundCheckConsent } = await import('./bgcheckConsentRequest');
+  const asked = await requestBackgroundCheckConsent(userId, 'renewal')
+    .catch((err) => { console.error(`requestBackgroundCheckConsent(renewal) failed for ${userId}:`, err); return false; });
+  console.log(`Annual renewal for caregiver ${userId} — ${asked ? 'consent requested for the yearly background check' : 'no caregiver record, nothing to refresh'}`);
 }
 
 /**

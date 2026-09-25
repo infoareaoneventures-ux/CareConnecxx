@@ -13,7 +13,7 @@
 // own) so the webhook can import it without touching the legacy runner.
 
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { isFieldFilled } from "./onboardingContract";
+import { isFieldFilled, toExperienceBucket, toServiceRadius } from "./onboardingContract";
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 const JOB_TYPES = new Set(["occasional", "part_time", "full_time"]);
@@ -43,18 +43,17 @@ export async function absorbCaregiverFields(
       "Return JSON only with the fields you can confidently extract. Omit fields not present. " +
       "Schema: " +
       `{"name":"the caregiver's own first/full name (the person texting; never a client's or senior's name)",` +
+      `"street":"street address line only (number + street), never the city or zip",` +
       `"city":"city name",` +
+      `"state":"2-letter US state code",` +
       `"zipCode":"5-digit US zip code",` +
       `"yearsExperience":number,` +
       `"specialties":["short care specialty like 'dementia' or 'mobility assistance'"],` +
-      `"certifications":["certification name like 'CNA' or 'HHA'"],` +
       `"availability":{"days":["Monday"],"hours":"9am-5pm"},` +
       `"jobType":"occasional | part_time | full_time",` +
       `"hourlyRate":number,` +
-      `"email":"email address",` +
-      `"gender":"how the caregiver identifies, only if they state it (e.g. female, male, non-binary)",` +
-      `"languages":["language they speak, e.g. 'Spanish'"],` +
-      `"canDrive":true or false — only if they clearly say whether they drive}. ` +
+      `"serviceRadius":number of miles they're willing to travel — only if stated,` +
+      `"email":"email address"}. ` +
       "Be conservative — only include a field if it is unambiguously stated. Reply with raw JSON, no markdown.",
     text,
   ).catch(() => "{}");
@@ -66,17 +65,19 @@ export async function absorbCaregiverFields(
   // than persisting garbage. Mirrors the scripted parsers' clamps.
   const candidates: Record<string, unknown> = {};
   if (typeof parsed.name === "string" && parsed.name.trim()) candidates.name = parsed.name.trim();
+  if (typeof parsed.street === "string" && parsed.street.trim() && /\d/.test(parsed.street)) candidates.street = parsed.street.trim();
   if (typeof parsed.city === "string" && parsed.city.trim()) candidates.city = parsed.city.trim();
+  if (typeof parsed.state === "string" && /^[A-Za-z]{2}$/.test(parsed.state.trim())) candidates.state = parsed.state.trim().toUpperCase();
   if (typeof parsed.zipCode === "string" && /^\d{5}$/.test(parsed.zipCode.trim())) {
     candidates.zipCode = parsed.zipCode.trim();
   }
-  if (typeof parsed.yearsExperience === "number" && parsed.yearsExperience > 0) {
-    candidates.yearsExperience = parsed.yearsExperience;
+  // Wizard shape: experience is a bucket string ("3-5 years"), never a raw number.
+  if (typeof parsed.yearsExperience === "number" && parsed.yearsExperience >= 0) {
+    const bucket = toExperienceBucket(parsed.yearsExperience);
+    if (bucket) candidates.yearsExperience = bucket;
   }
   const specialties = cleanStringArray(parsed.specialties);
   if (specialties.length) candidates.specialties = specialties;
-  const certifications = cleanStringArray(parsed.certifications);
-  if (certifications.length) candidates.certifications = certifications;
   if (parsed.availability && typeof parsed.availability === "object" && !Array.isArray(parsed.availability)) {
     const a = parsed.availability as Record<string, unknown>;
     const days  = cleanStringArray(a.days);
@@ -92,14 +93,13 @@ export async function absorbCaregiverFields(
   if (typeof parsed.email === "string" && EMAIL_RE.test(parsed.email.trim().toLowerCase())) {
     candidates.email = parsed.email.trim().toLowerCase();
   }
-  // Optional profile-parity extras (2g). Never required — captured only when the
-  // caregiver clearly volunteers them so families can filter.
-  if (typeof parsed.gender === "string" && parsed.gender.trim()) {
-    candidates.gender = parsed.gender.trim();
+  // Travel distance → the wizard's nearest option (5/10/15/25/50 miles).
+  if (typeof parsed.serviceRadius === "number" && parsed.serviceRadius > 0) {
+    const radius = toServiceRadius(parsed.serviceRadius);
+    if (radius) candidates.serviceRadius = radius;
   }
-  const languages = cleanStringArray(parsed.languages);
-  if (languages.length) candidates.languages = languages;
-  if (typeof parsed.canDrive === "boolean") candidates.canDrive = parsed.canDrive;
+  // Nothing the site's wizard doesn't collect is absorbed (certifications,
+  // gender, languages, canDrive were removed 2026-09-25).
 
   // Only return fields that are actually new (never touch a model-saved value).
   const out: Record<string, unknown> = {};
@@ -168,8 +168,6 @@ export async function absorbCaregiverProfileUpdate(
     "A caregiver already signed up with Evia texted a message. Extract ONLY details about the caregiver themselves " +
       "that they are adding or stating in THIS message. Return JSON only; omit anything not present. Schema: " +
       `{"specialties":["care service or specialty they say they offer, e.g. 'transportation' or 'dementia care'"],` +
-      `"certifications":["certification name like 'CNA'"],` +
-      `"languages":["language they speak"],` +
       `"availabilityDays":["day of week they say they're available"],` +
       `"availabilityHours":"hours they say they're available, e.g. 'mornings'"}. ` +
       "Be conservative — only include what is unambiguously about the caregiver's own offering. Reply with raw JSON, no markdown.",
@@ -180,7 +178,7 @@ export async function absorbCaregiverProfileUpdate(
   try { parsed = JSON.parse(raw); } catch { /* keep {} */ }
 
   let addedSpecialties: string[] = Array.isArray(fresh.specialties) ? (fresh.specialties as string[]) : [];
-  for (const key of ["specialties", "certifications", "languages"] as const) {
+  for (const key of ["specialties"] as const) {
     if (out[key]) continue; // first pass already handled the empty-field case
     const added = cleanStringArray(parsed[key]);
     if (!added.length) continue;

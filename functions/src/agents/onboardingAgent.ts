@@ -145,9 +145,11 @@ export const confirmBgcheckOnboarding = functions
 export const uploadOnboardingFile = functions
   .runWith({ memory: "512MB", timeoutSeconds: 120 })
   .https.onCall(async (data) => {
-    const token       = (data?.token ?? "").toString().trim();
-    const dataBase64  = (data?.dataBase64 ?? "").toString();
-    const contentType = (data?.contentType ?? "").toString().trim().toLowerCase();
+    const token        = (data?.token ?? "").toString().trim();
+    const dataBase64   = (data?.dataBase64 ?? "").toString();
+    const contentType  = (data?.contentType ?? "").toString().trim().toLowerCase();
+    const documentType = (data?.documentType ?? "").toString().trim();
+    const fileName     = (data?.fileName ?? "").toString().trim().slice(0, 120);
 
     if (!token)      throw new functions.https.HttpsError("invalid-argument", "token required");
     if (!dataBase64) throw new functions.https.HttpsError("invalid-argument", "file data required");
@@ -159,6 +161,12 @@ export const uploadOnboardingFile = functions
     const isPhoto = payload.task === "photo_upload";
     if (!isPhoto && payload.task !== "doc_upload") {
       throw new functions.https.HttpsError("permission-denied", "token not valid for file upload");
+    }
+    // Transport documents (2026-09-25): the ONLY documents Evia collects — the
+    // wizard's three (driver's license, vehicle insurance, vehicle registration).
+    const { TRANSPORT_DOC_TYPES } = await import("./onboardingContract");
+    if (!isPhoto && !TRANSPORT_DOC_TYPES.includes(documentType)) {
+      throw new functions.https.HttpsError("invalid-argument", `documentType must be one of: ${TRANSPORT_DOC_TYPES.join(", ")}`);
     }
 
     const typeOk = isPhoto
@@ -174,23 +182,54 @@ export const uploadOnboardingFile = functions
       throw new functions.https.HttpsError("invalid-argument", "file too large (6MB max)");
     }
 
+    // Same record the site writes: the file lives under the caregiver's own
+    // folder by type (services/documentUpload.ts) and the metadata lands on
+    // caregivers/{uid}.documents.{type} in the site's shape. The caregiver doc
+    // exists from the first "Hey Evia" (ensureCaregiverDocForOnboarding).
+    const { ensureCaregiverDocForOnboarding, mergeOnboardingData } = await import("./onboardingConversation");
+    const uid = await ensureCaregiverDocForOnboarding(payload.phone);
+    if (!uid) throw new functions.https.HttpsError("failed-precondition", "caregiver account not ready — text Evia and try the link again");
+
     const ext    = UPLOAD_EXT[contentType] ?? (isPhoto ? "jpg" : "pdf");
-    const digits = payload.phone.replace(/\D/g, "");
-    const path   = `${isPhoto ? "profile_photos" : "caregiver_docs"}/onboarding/${digits}_${Date.now()}.${ext}`;
+    const type   = isPhoto ? "profilePhoto" : documentType;
+    const stamp  = Date.now();
+    const safeName = (fileName || `${type}.${ext}`).replace(/[^a-zA-Z0-9.-]/g, "_");
+    const path   = `caregivers/${uid}/documents/${type}_${stamp}_${safeName}`;
 
     // Download-token URL: readable regardless of storage.rules, no IAM signBlob needed.
     const downloadToken = randomUUID();
     const bucket = admin.storage().bucket();
     await bucket.file(path).save(buf, {
       contentType,
-      metadata: { metadata: { firebaseStorageDownloadTokens: downloadToken } },
+      metadata: {
+        metadata: {
+          firebaseStorageDownloadTokens: downloadToken,
+          uploadedBy: uid, documentType: type, uploadTime: new Date().toISOString(),
+          originalName: safeName, status: "pending",
+        },
+      },
     });
     const url =
       `https://firebasestorage.googleapis.com/v0/b/${bucket.name}` +
       `/o/${encodeURIComponent(path)}?alt=media&token=${downloadToken}`;
 
-    const { advanceOnboardingStep } = await import("./onboardingConversation");
-    await advanceOnboardingStep(payload.phone, payload.task, url);
+    const documentData = {
+      url, path, uploadedAt: new Date().toISOString(), status: "pending",
+      fileName: safeName, fileType: contentType,
+    };
+    const db = admin.firestore();
+    await db.collection("caregivers").doc(uid).set(
+      { documents: { [type]: documentData }, ...(isPhoto ? { photo: url } : {}) },
+      { merge: true },
+    );
+    if (!isPhoto) {
+      const sess = (await db.collection("agent_sessions").doc(payload.phone).get()).data() ?? {};
+      const existing = ((sess.onboardingData as Record<string, unknown> | undefined)?.transportDocs ?? {}) as Record<string, string>;
+      await mergeOnboardingData(payload.phone, { transportDocs: { ...existing, [type]: url } });
+    }
 
-    return { status: "ok", url };
+    const { advanceOnboardingStep } = await import("./onboardingConversation");
+    await advanceOnboardingStep(payload.phone, payload.task, isPhoto ? url : type);
+
+    return { status: "ok", url, type };
   });

@@ -57,6 +57,11 @@ export async function checkrPost(
   return res.json();
 }
 
+/** Authenticated GET against the Checkr API (e.g. a screening's own result inside a bundled report). */
+export async function checkrGet(path: string): Promise<any> {
+  return checkrRequest("GET", path);
+}
+
 async function checkrRequest(method: "GET" | "DELETE", path: string): Promise<any> {
   const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || "").trim();
   if (!apiKey) {

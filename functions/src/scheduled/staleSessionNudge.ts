@@ -26,8 +26,6 @@ export const sendStaleSessionNudges = functions.pubsub
       "caregiver_awaiting_bgcheck",
       "caregiver_awaiting_stripe",
       "caregiver_awaiting_membership",
-      "caregiver_awaiting_photo",
-      "caregiver_awaiting_documents",
       "client_awaiting_payment",
       "client_awaiting_identity",
     ];
@@ -210,15 +208,9 @@ export const sendStaleSessionNudges = functions.pubsub
             const rateText = await getMarketRateText(); // live SCC caregiver rates, fail-soft static
             context = `${firstName || "This caregiver"} stalled on setting their hourly rate. Warmly, no pressure: most caregivers on Evia charge ${rateText}, and they can always update it later. Encourage them to pick something.`;
             fallback = `${greeting} Still thinking about your hourly rate?\n\nMost caregivers on Evia charge ${rateText}. You can always update it later. No pressure to get it perfect now.`;
-          } else if (step === "caregiver_send_photo" || step === "caregiver_awaiting_photo") {
-            context = `${firstName || "This caregiver"} stalled before adding a profile photo. Warmly nudge: a clear headshot makes families much more likely to request an interview, and they can reply here to get the upload link again.`;
-            fallback = `${greeting} Your profile is almost live.\n\nAdding a photo makes families much more likely to request an interview. A clear headshot is all you need. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
             context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their ${caregiverAnnualDisplay()} membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
             fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour ${caregiverAnnualDisplay()} membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
-          } else if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
-            context = `${firstName || "This caregiver"} stalled on uploading certifications (CNA, HHA, etc.). Warmly nudge: they can upload now or reply SKIP to keep going, and reply here to get the upload link again. You MUST mention they can reply "SKIP" to continue.`;
-            fallback = `${greeting} Almost done — just your certifications left (CNA, HHA, etc.).\n\nYou can upload them now or reply SKIP to keep going. Reply here and I'll send the upload link again.`;
           } else if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
             // Their PROFILE is finished at this point — never imply otherwise
             // (founder report 2026-07-10: the generic branch below told a fully

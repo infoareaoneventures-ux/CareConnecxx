@@ -4,16 +4,11 @@ import * as crypto from "crypto";
 import { claimWebhookEvent, settleWebhookEvent, CHECKR_EVENTS_COLLECTION } from "./utils/webhookLedger";
 import { checkrPost, checkrGet } from "./checkrApi";
 import { assertMvrCheckConfig } from "./mvrConfig";
-import { writeCaregiverBackgroundPII } from "./caregiverPrivate";
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
-
-// Essential Criminal: county criminal (7yr), global watchlist, national criminal
-// (standard), sex offender, SSN trace, motor vehicle report.
-const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "checkrdirect_essential_criminal";
 
 type CheckrStatus = "pending" | "clear" | "consider" | "suspended" | "canceled";
 
@@ -71,109 +66,13 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
   }
 
   try {
-    // Read existing caregiver doc for idempotency check and location data
-    const caregiverSnap = await db.collection("caregivers").doc(uid).get();
-    const bgData = caregiverSnap.data()?.backgroundCheckData || {};
-    const existingCandidateId: string | undefined = bgData.checkrCandidateId;
-    const invitationStatus: string | undefined = bgData.invitationStatus;
-
-    // Block duplicate submissions unless the invitation expired or was canceled —
-    // or the account is waiting on THIS consent (first check after payment, or
-    // the yearly renewal refresh; 2026-09-25 consent-first order).
-    const awaitingConsent = invitationStatus === "awaiting_consent" || bgData.consentRequired === true;
-    if (existingCandidateId && !awaitingConsent && invitationStatus !== "expired" && invitationStatus !== "canceled") {
-      return { success: true, candidateId: existingCandidateId };
-    }
-
-    // Build work_locations from form data or profile fallback (REQUIRED by Checkr for US checks)
-    const caregiverData = caregiverSnap.data() || {};
-    const workState: string = (typeof state === "string" && state.trim()) || caregiverData.state || "";
-    const workCity: string = caregiverData.city || "";
-    const workLocations = workState
-      ? [{ country: "US", state: workState.toUpperCase(), ...(workCity && { city: workCity }) }]
-      : [];
-
-    // Date-scoped idempotency key prevents duplicate candidates on same-day retries
-    const dateKey = new Date().toISOString().slice(0, 10);
-
-    // Reuse existing candidate record if re-inviting after expiry — avoids duplicate Checkr records
-    let candidateId = existingCandidateId;
-    if (!candidateId) {
-      const candidateBody: Record<string, unknown> = {
-        first_name: legalFirstName,
-        last_name: legalLastName,
-        email,
-        zipcode: zipCode,
-        custom_id: uid,
-        // Do NOT send no_middle_name — locks the field on the Checkr invitation form (official guide p.10)
-      };
-      if (workLocations.length) candidateBody.work_locations = workLocations;
-
-      const candidate = await checkrPost("/candidates", candidateBody, `${uid}-candidate-${dateKey}`);
-      candidateId = candidate.id as string;
-    }
-
-    // Flat membership (2026-09-25): the MVR rides along whenever the profile
-    // offers Transportation (the webhook stamps mvrPaid from the same rule; read
-    // the profile too in case Transportation was added between payment and consent).
-    const profileServices: string[] = Array.isArray(caregiverData.services) && caregiverData.services.length
-      ? caregiverData.services
-      : (Array.isArray(caregiverData.skills) ? caregiverData.skills : []);
-    const mvrPaid = caregiverData.mvrPaid === true || profileServices.includes("Transportation");
-    // assertMvrCheckConfig throws if the MVR package is unset or equals the base
-    // package — a loud failure beats silently running a non-MVR check.
-    const selectedPackage = mvrPaid ? assertMvrCheckConfig("bundled") : CHECKR_PACKAGE;
-    const invitationBody: Record<string, unknown> = {
-      candidate_id: candidateId,
-      package: selectedPackage,
-    };
-    if (workLocations.length) invitationBody.work_locations = workLocations;
-
-    const invitation = await checkrPost("/invitations", invitationBody, `${uid}-invitation-${dateKey}`);
-    const invitationUrl: string | undefined = invitation?.invitation_url;
-
-    // Identity PII (legal name, ZIP) goes to the owner/admin-only private
-    // subcollection — NOT the world-readable parent doc. Operational fields
-    // stay on the parent for agent gating + the admin verification query.
-    await writeCaregiverBackgroundPII(uid, { legalFirstName, legalLastName, zip: zipCode });
-    const consentAt = new Date().toISOString();
-    const consentReason = (bgData.consentReason as string | undefined) ?? "initial";
-    await db.collection("caregivers").doc(uid).set({
-      ...(mvrPaid && { mvrPaid: true }),
-      verificationStatus: "submitted",
-      backgroundCheckData: {
-        checkrCandidateId: candidateId,
-        consentGiven: true,
-        consentGivenAt: consentAt,
-        consentRequired: false,
-        submittedAt: consentAt,
-        status: "pending",
-        invitationStatus: "sent",
-        ...(invitationUrl ? { invitationUrl } : { invitationUrl: null }),
-        initiatedVia: consentReason === "renewal" ? "annual_renewal" : "consent_form",
-        mvrIncluded: mvrPaid,
-        checkrClearedAt: null,
-      },
-    }, { merge: true });
-
-    // Text the caregiver their Checkr link (Checkr also emails it, but an
-    // SMS-first caregiver may never see that email). Moved here from the
-    // payment webhook when the order became pay → consent → invitation.
-    const caregiverPhone = String(caregiverData.phone || "").trim();
-    if (invitationUrl && caregiverPhone) {
-      const { textCaregiver } = await import("./bgcheckConsentRequest");
-      await db.collection("agent_sessions").doc(caregiverPhone).update({
-        bgcheckInviteUrl: invitationUrl,
-        bgcheckInviteSentAt: consentAt,
-      }).catch(() => {});
-      await textCaregiver(caregiverPhone,
-        consentReason === "renewal"
-          ? `Thanks — here's this year's background check refresh. It usually takes about 5 minutes: ${invitationUrl}`
-          : `Thanks for authorizing! Here's your background check link — it usually takes about 5 minutes: ${invitationUrl}`,
-      ).catch((err) => console.error(`initiateCheckrCandidate: text to ${uid} failed:`, err));
-    }
-
-    return { success: true, candidateId, invitationUrl };
+    // ONE path for both consent surfaces (2026-09-25) — see backgroundCheckConsent.ts.
+    const { authorizeBackgroundCheck } = await import("./backgroundCheckConsent");
+    const result = await authorizeBackgroundCheck({
+      uid, email,
+      form: { legalFirstName, legalLastName, zipCode, state: typeof state === "string" ? state : undefined },
+    });
+    return { success: true, candidateId: result.candidateId, invitationUrl: result.invitationUrl ?? undefined, already: result.status === "already" };
   } catch (error: any) {
     if (error instanceof functions.https.HttpsError) throw error;
     console.error("Checkr initiate error:", error?.message, error?.code, JSON.stringify(error));

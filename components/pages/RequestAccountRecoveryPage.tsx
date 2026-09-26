@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { submitAccountAction } from '../../services/accountActionQueue';
-import { BloomMark } from '../ui/BloomMark';
+import { TaskPageBar } from '../auth/TaskPageBar';
 
 // "Trouble signing in?" destination — mounted at both /client/forgot-password
 // and /caregiver/forgot-password (login here is phone-OTP only for both
@@ -32,12 +32,12 @@ export default function RequestAccountRecoveryPage() {
   };
 
   return (
-    <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col items-center justify-center px-6">
+    <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col">
+      {/* Shared task-page bar: logo → home + help line (2026-09-25). */}
+      <TaskPageBar />
+      <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-2xl bg-paper-100 border hairline flex items-center justify-center mx-auto">
-            <BloomMark className="w-6 h-6 text-ink-900" />
-          </div>
           <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
         </div>
 
@@ -86,6 +86,7 @@ export default function RequestAccountRecoveryPage() {
             </p>
           </form>
         )}
+      </div>
       </div>
     </div>
   );

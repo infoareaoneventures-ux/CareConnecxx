@@ -2,8 +2,8 @@ import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
 import { isMvrCheckConfigured } from "../mvrConfig";
-import { writeCaregiverBackgroundPII } from "../caregiverPrivate";
 import { createCheckrInvitation, cancelCheckrInvitationsForCandidate } from "../checkrApi";
+import { authorizeBackgroundCheck } from "../backgroundCheckConsent";
 import Stripe from "stripe";
 import { recordCommitment, resolveCommitment } from "./commitmentTracker";
 import { sendMessage, signalThinking, AgentSession } from "../linq/client";
@@ -32,7 +32,6 @@ import { SharedLocation } from "../utils/locationShare";
 import { WAITLISTED_STEP } from "./serviceAreaGate";
 import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
 import { addKnownNames } from "../utils/knownNames";
-import { verifyProfilePhoto } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
 import { caregiverAnnualDisplay, caregiverAnnualAmount, clientMonthlyDisplay } from "../config/pricing";
 // onboardingSteps.client is KEPT only for its reask() text (currentStepQuestion
@@ -3479,13 +3478,21 @@ async function handleInboundMedia(
   media:   InboundMediaPart,
   step:    string
 ): Promise<void> {
-  // A caregiver mid-collection who texts a photo: their profile photo (the
-  // wizard's photo step lives inside the loop now). Once a photo is on file,
-  // a texted picture is treated like any other file — nudged to the link
-  // (transport documents are three specific files; they go through the page).
-  if (session.userType === "caregiver" && collectionStepsForRole("caregiver").includes(step)
-      && !isFieldFilled((session.onboardingData ?? {}).profilePhoto)) {
-    return handleInboundProfilePhoto(phone, chatId, media);
+  // ONE path for the profile photo (founder, 2026-09-25): the upload page —
+  // the same write the site's wizard makes. A picture texted to Evia is not
+  // saved; she points them at the link (re-sent right here so it's at hand).
+  if (session.userType === "caregiver" && collectionStepsForRole("caregiver").includes(step)) {
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: "The caregiver texted a picture during signup. Warmly explain that photos and documents are saved through the secure upload link (so they land on their profile correctly), and that you're sending the link again right below. Do NOT include any URL.",
+      fallback: "Thanks for sending that! Photos are saved through the secure upload link so they land on your profile — here it is again:",
+      maxTokens: 70,
+    }));
+    await sendOnboardingLink(phone, isFieldFilled((session.onboardingData ?? {}).profilePhoto) && offersTransportation((session.onboardingData ?? {}) as Record<string, unknown>) && !transportDocumentsComplete((session.onboardingData ?? {}) as Record<string, unknown>)
+      ? "caregiver_transport_docs"
+      : "caregiver_photo");
+    return;
   }
   if (collectionStepsForRole("client").includes(step)) {
     return handleInboundClientRecipientPhoto(phone, chatId, media);
@@ -3528,39 +3535,6 @@ async function handleInboundClientRecipientPhoto(
     console.error("handleInboundClientRecipientPhoto failed", { phone, err: (err as Error)?.message });
     await sendMessage(chatId,
       `I had trouble opening that photo — no worries, it's optional. You can text it again any time, or add it from Account Settings here: ${APP_URL}/client/account`
-    );
-  }
-}
-
-async function handleInboundProfilePhoto(
-  phone:  string,
-  chatId: string,
-  media:  InboundMediaPart
-): Promise<void> {
-  try {
-    const dl = await downloadMedia(media);
-    const verdict = await verifyProfilePhoto(dl.buffer, dl.content_type);
-    if (!verdict.ok) {
-      // Keep them at the photo step and warmly ask for a better shot.
-      const why = verdict.reason ? ` (${verdict.reason})` : "";
-      await sendMessage(chatId,
-        `Thanks${why ? "" : "!"} That photo didn't quite work for your profile${why}. ` +
-        `Could you send one clear, well-lit photo of your face? You can also tap the upload link I sent.`
-      );
-      return;
-    }
-    const url = await storeInboundMedia({
-      phone, kind: "image", buffer: dl.buffer,
-      content_type: dl.content_type, ext: dl.ext,
-    });
-    await sendMessage(chatId, "Perfect — got your photo! 📸");
-    // Reuse the canonical upload-complete path so downstream behavior (advance to
-    // documents) is identical to the web upload flow.
-    await advanceOnboardingStep(phone, "photo_upload", url);
-  } catch (err) {
-    console.error("handleInboundProfilePhoto failed", { phone, err: (err as Error)?.message });
-    await sendMessage(chatId,
-      "I had trouble opening that photo — could you try sending it again, or tap the upload link I sent?"
     );
   }
 }
@@ -3721,34 +3695,49 @@ export async function confirmBgcheckConsent(
   const chatId  = session.chatId;
   const d       = session.onboardingData ?? {};
 
-  // Idempotent: double-tap / re-submit after a successful authorization — the
-  // invitation already exists, don't mint a second candidate (split-state bug).
-  if ((session as any).bgcheckInviteUrl && session.caregiverId) {
+  // ONE path for both consent surfaces (2026-09-25): the same function the
+  // site's dashboard modal calls (checkr.ts initiateCheckrCandidate) — package
+  // by profile, candidate reuse on renewal, consent stamp in the site's shape,
+  // PII to the private subcollection, the Checkr link texted, the session parked.
+  let uid = session.caregiverId ?? await ensureCaregiverDocForOnboarding(phone);
+  if (!uid && isOnboardingDryRun()) {
+    // Dry-run: the account mint is recorded, never executed (same as before the
+    // consent path was unified).
+    recordSideEffect("auth.createUser", { phone });
+    uid = "dryrun-uid";
+  }
+  if (!uid) throw new Error(`confirmBgcheckConsent: no caregiver account for ${phone}`);
+  const cgSnap = await db.collection("caregivers").doc(uid).get();
+  const cgData = (cgSnap.data() ?? {}) as Record<string, any>;
+  const email = (((cgData.email as string | undefined) || (d.email as string | undefined)) ?? "").trim();
+
+  // Idempotent double-tap: a cached live invitation on the session means the
+  // page was already submitted — don't mint a second candidate. Unless the
+  // record is waiting on a (re-)consent (yearly renewal), which always proceeds.
+  const bgNow = (cgData.backgroundCheckData ?? {}) as Record<string, any>;
+  const awaitingReconsent = bgNow.consentRequired === true || bgNow.invitationStatus === "awaiting_consent";
+  if ((session as any).bgcheckInviteUrl && session.caregiverId && !awaitingReconsent) {
     return { status: "already" };
   }
 
-  // Use MVR package if caregiver paid for it; flag is set on session by stripe.ts webhook
-  const mvrPaid   = (session as any).mvrPaid === true;
-  const checkrPkg = mvrPaid
-    ? (process.env.CHECKR_PACKAGE_MVR || "checkrdirect_essential_criminal")
-    : (process.env.CHECKR_PACKAGE     || "checkrdirect_essential_criminal");
-
-  let inv: { invitationUrl: string; candidateId: string };
+  let result: { status: "ok" | "already"; candidateId: string; invitationUrl: string | null };
   try {
-    // Candidate-first (Checkr's contract): POST /candidates with the email
-    // collected at caregiver_ask_email, THEN /invitations with candidate_id.
-    inv = await guardSideEffect(
+    result = await guardSideEffect(
       "checkr.invitation.create",
-      () => createCheckrInvitation({
-        firstName:   form.legalFirstName,
-        lastName:    form.legalLastName,
-        email:       (d.email ?? "") as string,
-        zipCode:     form.zipCode || ((d.zipCode || undefined) as string | undefined),
-        workState:   (form.state || CHECKR_WORK_STATE).toUpperCase(),
-        workCity:    (d.city || undefined) as string | undefined,
-        packageSlug: checkrPkg,
+      () => authorizeBackgroundCheck({
+        uid, email, phone,
+        // Reaching this page from Evia's link IS the re-authorization (restart /
+        // expired invite cleared the cache) — mint a fresh invitation on the
+        // existing candidate rather than short-circuiting on the old one.
+        reconsent: true,
+        form: {
+          legalFirstName: form.legalFirstName,
+          legalLastName:  form.legalLastName,
+          zipCode:        form.zipCode || ((d.zipCode as string | undefined) ?? ""),
+          state:          (form.state || CHECKR_WORK_STATE).toUpperCase(),
+        },
       }),
-      { invitationUrl: "https://dryrun.local/checkr", candidateId: "cand_dryrun" },
+      { status: "ok" as const, candidateId: "cand_dryrun", invitationUrl: "https://dryrun.local/checkr" },
     );
   } catch (err) {
     // The caregiver is looking at the page — it shows the retry state — but ops
@@ -3758,92 +3747,10 @@ export async function confirmBgcheckConsent(
     if (chatId) await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check");
     throw err;
   }
+  if (result.status === "already") return { status: "already" };
 
-  const inviteUrl = inv.invitationUrl;
-  // Cache the real Checkr link so a later "send me the link" request resends
-  // THIS invitation instead of minting a duplicate (see sendOnboardingLink).
-  // Stamp the mint time so the reuse guard can tell a live invite from a stale
-  // one (Checkr's 7-day expiry) instead of resending a dead link.
-  await updateSession(phone, { bgcheckInviteUrl: inviteUrl, bgcheckInviteSentAt: new Date().toISOString() });
-
-  // Pre-create the caregivers doc so the Checkr webhook can find this caregiver
-  // by checkrCandidateId when the report comes back. Keyed by the Firebase Auth
-  // uid so Evia writes land where the web reads (uid-keyed caregivers/{uid}).
-  // Consent fields match the webapp's initiateCheckrCandidate stamp so both
-  // channels hold the same FCRA paper trail.
-  const candidateId = inv.candidateId as string | undefined;
-  if (candidateId && !session.caregiverId) {
-    const docData = {
-      phone,
-      status:    "pending_review",
-      createdAt: new Date().toISOString(),
-      backgroundCheckData: {
-        checkrCandidateId: candidateId,
-        status:            "pending",
-        submittedAt:       new Date().toISOString(),
-        mvrIncluded:       mvrPaid,
-        consentGiven:      true,
-        invitationStatus:  "sent",
-        invitationUrl:     inviteUrl,
-      },
-      ...(mvrPaid && { mvrPaid: true }),
-    };
-    const authUid = await createFirebaseAuthAccount(phone, (d.name ?? "") as string).catch(() => null);
-    let caregiverDocId: string;
-    if (authUid) {
-      await db.collection("caregivers").doc(authUid).set({ ...docData, uid: authUid }, { merge: true });
-      caregiverDocId = authUid;
-    } else {
-      caregiverDocId = (await db.collection("caregivers").add(docData)).id;
-    }
-    // Identity PII → owner/admin-only private subcollection, not the parent doc.
-    await writeCaregiverBackgroundPII(caregiverDocId, {
-      legalFirstName: form.legalFirstName,
-      legalLastName:  form.legalLastName,
-      zip:            form.zipCode,
-    });
-    await updateSession(phone, { caregiverId: caregiverDocId });
-  } else if (candidateId && session.caregiverId) {
-    // Fresh invitation for an already pre-created doc (restart cleared the
-    // cache, invitation.expired deleted it, or the doc was created at the
-    // gate handoff with status "onboarding"): re-point the doc at the NEW
-    // candidate so the Checkr webhook — which matches on checkrCandidateId —
-    // follows the invitation the caregiver will actually complete. Mirrors
-    // sendBgCheckRenewalLink's idiom. Also move status to "pending_review"
-    // (the value this step has always stamped): matchingAgent treats it as
-    // matchable-with-pending-check, unlike the gate-created "onboarding".
-    await db.collection("caregivers").doc(session.caregiverId).update({
-      "status":                                "pending_review",
-      "backgroundCheckData.checkrCandidateId": candidateId,
-      "backgroundCheckData.status":            "pending",
-      "backgroundCheckData.submittedAt":       new Date().toISOString(),
-      "backgroundCheckData.mvrIncluded":       mvrPaid,
-      "backgroundCheckData.consentGiven":      true,
-      "backgroundCheckData.invitationStatus":  "sent",
-      "backgroundCheckData.invitationUrl":     inviteUrl,
-    }).catch(() => {});
-    // Identity PII → owner/admin-only private subcollection, not the parent doc.
-    await writeCaregiverBackgroundPII(session.caregiverId, {
-      legalFirstName: form.legalFirstName,
-      legalLastName:  form.legalLastName,
-      zip:            form.zipCode,
-    });
-  }
-
+  if (!session.caregiverId) await updateSession(phone, { caregiverId: uid });
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
-  if (chatId) {
-    const email = (d.email ?? "") as string;
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context:
-        `The caregiver just reviewed and authorized their background check on Evia's secure page. Naturally confirm: authorization received, and Checkr has emailed them a secure link${email ? ` at ${email}` : ""} to finish — about 5 minutes, and their SSN and date of birth are entered directly with Checkr, never with Evia. Checkr re-sends the email daily if they miss it. You'll text them the moment results come in — then families can book them. Never promise a specific turnaround time. Do NOT include any URL.`,
-      fallback:
-        `Authorization received! Checkr just emailed you a secure link${email ? ` at ${email}` : ""} to finish up — about 5 minutes, and your SSN and date of birth go directly to Checkr, never to me. ` +
-        `I'll text you the moment your results are in — then families can book you.`,
-      maxTokens: 130,
-    }));
-  }
   return { status: "ok" };
 }
 

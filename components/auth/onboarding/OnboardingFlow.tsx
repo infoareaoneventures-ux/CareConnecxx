@@ -10,7 +10,7 @@ import { QRHandoff } from './QRHandoff';
 import { MobileHandoff } from './MobileHandoff';
 import { sanitizeName } from '../../../utils/sanitize';
 import { supportPhone } from '../../../utils/launchConfig';
-import { BloomMark } from '../../ui/BloomMark';
+import { TaskPageBar } from '../TaskPageBar';
 
 export type OnboardingRole = 'client' | 'caregiver';
 type Step = 'role' | 'consent' | 'name' | 'phone' | 'verify' | 'handoff' | 'connected';
@@ -267,38 +267,28 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
 // SHELL COMPONENTS — provide the visual frame for each mode
 // ============================================================================
 
+// Same top bar as the family shell (logo → home, help line) so the caregiver
+// door matches the client door (founder, 2026-09-25).
 const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col items-center justify-center px-6 py-10">
-    <div className="w-full max-w-sm space-y-8">
-      <div className="text-center space-y-2">
-        <div className="w-12 h-12 rounded-2xl bg-paper-100 border hairline flex items-center justify-center mx-auto">
-          <BloomMark className="w-6 h-6 text-ink-900" />
+  <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col">
+    <TaskPageBar />
+    <div className="flex-1 flex flex-col items-center justify-center px-6 py-10">
+      <div className="w-full max-w-sm space-y-8">
+        <div className="text-center space-y-2">
+          <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
+          <p className="text-ink-600 text-sm">Your care coordinator</p>
+          {/* LAUNCH: wording pending counsel review (R15) */}
+          <p className="text-ink-400 text-xs">Evia is an automated coordinator backed by our care team.</p>
         </div>
-        <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
-        <p className="text-ink-600 text-sm">Your care coordinator</p>
-        {/* LAUNCH: wording pending counsel review (R15) */}
-        <p className="text-ink-400 text-xs">Evia is an automated coordinator backed by our care team.</p>
+        {children}
       </div>
-      {children}
     </div>
   </div>
 );
 
 const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children: React.ReactNode }> = ({ step, children }) => (
   <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col">
-    <header className="px-6 pt-8 pb-2 flex items-center justify-between max-w-2xl w-full mx-auto">
-      <Link to="/" className="flex items-center gap-2 group">
-        <div className="w-9 h-9 rounded-xl bg-paper-100 border hairline flex items-center justify-center">
-          <BloomMark className="w-5 h-5 text-ink-900" />
-        </div>
-        <span className="font-semibold text-ink-900 group-hover:text-ink-600 transition">Evia</span>
-      </Link>
-      {supportPhone && (
-        <a href={supportPhone.telHref} className="text-sm font-medium text-ink-600 hover:text-ink-900 transition">
-          Need help? Call {supportPhone.display}
-        </a>
-      )}
-    </header>
+    <TaskPageBar />
     <main className="flex-1 flex flex-col items-center justify-center px-6 py-10">
       <div className="w-full max-w-md space-y-7">
         {step !== 'connected' && (

@@ -7,7 +7,7 @@ interface HeroSectionProps {
 
 export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
     return (
-        <section className="relative overflow-hidden bg-paper-50">
+        <section id="hero" className="relative overflow-hidden bg-paper-50">
             {/* Soft warm wash behind the phone — calm, no hard shapes */}
             <div className="absolute inset-x-0 bottom-0 h-[55%] pointer-events-none"
                 style={{ background: 'linear-gradient(180deg, rgba(252,250,246,0) 0%, #F6F1E9 100%)' }} />

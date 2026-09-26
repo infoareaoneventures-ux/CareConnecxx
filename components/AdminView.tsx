@@ -15,6 +15,7 @@ import { AssignmentManager } from './admin/AssignmentManager';
 import { InvoicingTab } from './admin/InvoicingTab';
 import { AdminMessages } from './admin/AdminMessages';
 import { AdminClientManager } from './admin/AdminClientManager';
+import { AdminTeamManager } from './admin/AdminTeamManager';
 import { AdminCaregiverManager } from './admin/AdminCaregiverManager';
 import { AdminAppointments } from './admin/AdminAppointments';
 import { AdminReviews } from './admin/AdminReviews';
@@ -32,7 +33,7 @@ interface AdminViewProps {
 }
 
 type TabId =
-  | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
+  | 'overview' | 'clients' | 'caregivers' | 'verification' | 'team' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
   | 'finance' | 'disputes' | 'messages' | 'blog' | 'audit'
   | 'cara_control' | 'alerts' | 'reports' | 'waitlist';
@@ -178,6 +179,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         { id: 'clients' as TabId, label: 'Clients', icon: Heart },
         { id: 'caregivers' as TabId, label: 'Caregivers', icon: UserCheck },
         { id: 'verification' as TabId, label: 'Verification', icon: ShieldCheck },
+        // Admin + coordinator accounts in one place (2026-09-26) — neither
+        // shows under Clients (userType client) or Caregivers (caregivers coll.).
+        { id: 'team' as TabId, label: 'Admins & Coordinators', icon: Shield },
       ],
     },
     {
@@ -225,7 +229,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'cara_control', 'reports'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'team', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'cara_control', 'reports'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -312,6 +316,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'clients'      && <AdminClientManager />}
             {activeTab === 'caregivers'   && <AdminCaregiverManager />}
             {activeTab === 'verification' && <CaregiverVerificationDashboard onShowToast={(msg, type) => showToast(msg)} />}
+            {activeTab === 'team'         && <AdminTeamManager />}
             {activeTab === 'coordinators' && <CoordinatorManagement onShowToast={(msg, type) => showToast(msg)} />}
             {activeTab === 'appointments' && <AdminAppointments />}
             {activeTab === 'reviews'      && <AdminReviews />}

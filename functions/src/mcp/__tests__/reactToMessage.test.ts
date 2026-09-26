@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Firestore harness + server-import mocks mirror requestLocation.test.ts (the
-// same set server.ts needs to import cleanly), plus a mock of the Linq client
-// so the reaction POST never hits the network.
+// Firestore harness + server-import mocks are the same set server.ts needs to
+// import cleanly, plus a mock of the Linq client so the reaction POST never
+// hits the network.
 
 const hoisted = vi.hoisted(() => {
   const docState  = new Map<string, any>();

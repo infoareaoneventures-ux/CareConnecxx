@@ -144,10 +144,10 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).not.toContain("motor vehicle record");
   });
 
-  it("requires the bio at the wizard's minimum length with no skip", () => {
+  it("has no minimum bio length on Evia's side (the website keeps its own separately)", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
-    expect(d).toContain("at least 150 characters");
-    expect(d).toContain("there is no skip");
+    expect(d).toContain("no minimum length");
+    expect(d).not.toContain("at least 150 characters");
   });
 
   it("surfaces concrete care services in the ask and sweeps the rest once", () => {
@@ -159,7 +159,12 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("transportation");
     // one sweep, not a recited list
     expect(d).toContain("sweep the rest once");
-    expect(d).toContain("never read all ten back like a form");
+    // the website's onboarding services step offers exactly these eight — no
+    // hospice care / post-surgery recovery / etc. (2026-09-26, confirmed against
+    // the live "What services do you offer?" screen).
+    expect(d).toContain("exactly these eight");
+    expect(d).not.toContain("hospice care?");
+    expect(d).not.toContain("post-surgery recovery?");
   });
 
   it("asks availability in the webapp's parts-of-day vocabulary and echoes what it saved", () => {

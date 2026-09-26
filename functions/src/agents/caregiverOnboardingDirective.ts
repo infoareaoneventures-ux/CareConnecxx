@@ -27,7 +27,6 @@ import {
   offersTransportation,
   EXPERIENCE_BUCKETS,
   TRAVEL_RADIUS_OPTIONS,
-  BIO_MIN_CHARS,
 } from "./onboardingContract";
 import { FALLBACK_RANGE } from "../utils/marketRateRange";
 import { caregiverAnnualDisplay } from "../config/pricing";
@@ -49,7 +48,7 @@ export const CAREGIVER_FIELD_LABEL: Record<string, string> = {
   hourlyRate:         "their minimum hourly rate", // rate-range hint appended in the builder (live market data)
   serviceRadius:      `how far they're willing to travel — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles (most pick 10)`,
   email:              "their email address (used to set up their payout account)",
-  bio:                `a bio families see on their profile — at least ${BIO_MIN_CHARS} characters, in their own words`,
+  bio:                "a bio families see on their profile, in their own words",
 };
 
 // Static fallback shown when the caller didn't fetch the live range (tests,
@@ -139,13 +138,13 @@ export function buildCaregiverOnboardingDirective(
     `  - JOB TYPE: occasional, part-time, or full-time — ONE choice, save jobType as occasional | part_time | full_time.`,
     `  - AVAILABILITY: ask in the same terms families see on the schedule — days of the week plus parts of the day. Keep it to ONE natural line: "Which days can you work, and are you more mornings, afternoons, evenings, or overnights? Any mix is fine." Save what they tell you as availability. If they answer with clock times ("weekdays 9 to 5"), that's fine — save it as-is.`,
     `  - ECHO WHAT YOU SAVED: right after they give availability, reflect back the parts-of-day you understood in plain words before the next question ("Perfect — weekday mornings and afternoons, got it. …"). If you got it wrong they'll correct you and you just re-save. Don't ask them to confirm and don't make it its own message — fold it into your acknowledgment.`,
-    `  - CARE SERVICES (the specialties field): families filter caregivers by specific services. When you ask, name a few concrete ones so they know what counts — "What kinds of care do you do? Things like companionship, dementia or memory care, medication reminders, personal care, mobility help, transportation, meal prep, light housekeeping, hospice care, or post-surgery recovery?" — conversational, not a recited list. Save whatever they say as specialties. Then, if they only named one or two, sweep the rest ONCE in a single casual line ("Got it. Do you also help with any of the others — meds, meals, transportation, housekeeping?") and add whatever they confirm. Never read all ten back like a form, and never pressure them to claim services they don't do.`,
+    `  - CARE SERVICES (the specialties field): families filter caregivers by specific services. The website offers EXACTLY these eight — no others: Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping. When you ask, name a few concrete ones so they know what counts — "What kinds of care do you do? Things like companionship, dementia or memory care, medication reminders, personal care, mobility help, transportation, meal prep, or light housekeeping?" — conversational, not a recited list. Save whatever they say as specialties, mapped to the closest of those eight. Then, if they only named one or two, sweep the rest ONCE in a single casual line ("Got it. Do you also help with any of the others — meds, meals, transportation, housekeeping?") and add whatever they confirm. Never mention or save a service outside those eight (no hospice care, post-surgery recovery, etc. — the website doesn't offer them at this step), and never pressure them to claim services they don't do.`,
     `  - EXPERIENCE: save yearsExperience as one of the buckets (${EXPERIENCE_BUCKETS.join(" / ")}) — a number like "6 years" is fine, it's bucketed on save. Their story often answers this: if they said it, save it, don't re-ask.`,
     `  - TRANSPORTATION DOCUMENTS: only if their services include transportation. When it's the next item, call send_onboarding_link (caregiver_transport_docs) and say they'll need their driver's license, vehicle insurance, and vehicle registration — all three, our team reviews them after the background and driving-record checks. Never collect these by describing them in chat.`,
     `  - RATE: their MINIMUM hourly rate; share the typical range (${rateRangeText}) if they seem unsure, but their rate is THEIR call - never pressure them up or down.`,
     `  - TRAVEL DISTANCE: how far they're willing to travel for a visit — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles. If they have no preference, save 10 (the usual pick) and say so.`,
     `  - EMAIL: mention it's used to set up their payout account (it's usually already on file from signup — then never ask).`,
-    `  - BIO: families see it on their profile; it needs at least ${BIO_MIN_CHARS} characters (two or three sentences in their own words). There is NO skip: if it's short, warmly ask them to add a bit more — what they love about the work, what a good day with a client looks like. A voice memo is perfect for this.`,
+    `  - BIO: families see it on their profile — save whatever they give you, in their own words. No minimum length and no skip-nagging; if they write one short line, that's their bio. A voice memo is a nice option to offer if typing is a pain, but never pressure them to write more.`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
     `  - ONLY the items in STILL NEEDED are required, and nothing else is collected here — the website asks nothing more either. If they volunteer something outside the list (certifications, languages, how they identify), acknowledge it warmly and move on; do not save it and do not ask about it.`,
     `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time in a different way, then move to the next needed item — never ask the same question more than twice.`,

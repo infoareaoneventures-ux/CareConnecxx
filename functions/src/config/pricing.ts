@@ -11,8 +11,12 @@
 
 // One constant per price — every display variant derives from these.
 const CLIENT_MONTHLY = "$29.95";
-const CAREGIVER_ANNUAL = "$54.99";
-const MVR_ONE_TIME = "$11.50";
+// Flat annual membership (founder decision 2026-09-25): covers the required
+// Checkr background check AND, when Transportation is offered, the MVR check
+// bundled in — see CLAUDE.md. Replaces the old $54.99 base + $11.50 MVR
+// add-on, which is retired (no more separate "Become an Approved Driver"
+// checkout, so there is no separate MVR display string either).
+const CAREGIVER_ANNUAL = "$69.99";
 
 /** Family membership, bare amount — "$29.95". */
 export function clientMonthlyAmount(): string {
@@ -24,17 +28,12 @@ export function clientMonthlyDisplay(): string {
   return `${CLIENT_MONTHLY}/month`;
 }
 
-/** Caregiver membership, bare amount — "$54.99". */
+/** Caregiver membership, bare amount — "$69.99". */
 export function caregiverAnnualAmount(): string {
   return CAREGIVER_ANNUAL;
 }
 
-/** Caregiver membership with period — "$54.99/year". */
+/** Caregiver membership with period — "$69.99/year". */
 export function caregiverAnnualDisplay(): string {
   return `${CAREGIVER_ANNUAL}/year`;
-}
-
-/** Optional MVR (Approved Driver) add-on, one-time — "$11.50". */
-export function mvrDisplay(): string {
-  return MVR_ONE_TIME;
 }

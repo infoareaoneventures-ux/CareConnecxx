@@ -52,7 +52,7 @@ const PROMPT_EXEMPT = new Set<string>([
   // Onboarding-loop plumbing: described per-turn by the onboarding directive
   // (buildOnboardingDirective / caregiverOnboardingDirective), not by the static
   // system prompts this guard scans — the directive is the authoritative doc.
-  "save_onboarding_field", "complete_collection", "request_location",
+  "save_onboarding_field", "complete_collection",
 ]);
 
 const NEW_AGENT_NATIVE_TOOLS = [

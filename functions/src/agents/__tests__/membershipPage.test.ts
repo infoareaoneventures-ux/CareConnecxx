@@ -36,6 +36,6 @@ describe("shapeMembershipPage", () => {
   });
 
   it("caregiver role → the caregiver plan card", () => {
-    expect(shapeMembershipPage({ status: "active", current_period_end: END }, "caregiver").plan.price).toBe("$54.99/year");
+    expect(shapeMembershipPage({ status: "active", current_period_end: END }, "caregiver").plan.price).toBe("$69.99/year");
   });
 });

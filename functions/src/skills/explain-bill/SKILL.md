@@ -11,7 +11,7 @@ When the family asks about a charge, they want the answer in **one short paragra
 
 1. `get_invoice_history` — last 3-5 invoices. Pick the one the family is asking about (most recent if they don't specify; match the dollar amount if they mention one).
 2. `get_invoice_details` on that invoice — to see the line items.
-3. Only call `get_billing_summary` if the family asks about the SUBSCRIPTION amount specifically (the monthly $29.95 or the caregiver $54.99 annual — legacy caregiver subscriptions from before 2026-07-14 bill $66.49). <!-- amounts mirror functions/src/config/pricing.ts (the display-price source of truth) — update both together -->
+3. Only call `get_billing_summary` if the family asks about the SUBSCRIPTION amount specifically (the monthly $29.95 or the caregiver $69.99 flat annual — legacy caregiver subscriptions predating the 2026-09-25 flat-fee redesign bill $54.99 or, before 2026-07-14, $66.49). <!-- amounts mirror functions/src/config/pricing.ts (the display-price source of truth) — update both together -->
 
 ## Explaining rules
 

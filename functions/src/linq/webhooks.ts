@@ -1779,6 +1779,47 @@ const handleInboundInner = traceable(
         console.info("webhooks: pre-turn absorber captured fields before loop", { phone, fields: Object.keys(preAbsorbed) });
       }
 
+      // Deterministic upload-gate backstop (2026-09-26): profilePhoto and
+      // transportDocuments are "never typed" fields — the ONLY valid action
+      // while one is next-missing is to (re)send its upload link, per the
+      // directive. Live-caught: the agent-tier model was NOT reliably calling
+      // send_onboarding_link here — it repeatedly claimed the tool "isn't
+      // available in this chat" or hallucinated having already sent a link,
+      // even on a turn whose system prompt explicitly told it to call the tool.
+      // Rather than depend on that call landing, handle it deterministically
+      // (same philosophy as the scripted gate/awaiting steps) — this reuses the
+      // existing gate-link cooldown so a repeat ping resends at most once per
+      // window instead of spamming.
+      if (loopRole === "caregiver" && text.trim() !== "") {
+        const gateData = { ...preData, ...preAbsorbed } as Record<string, unknown>;
+        const gateNext = missingRequiredFields("caregiver", gateData)[0];
+        if (gateNext === "profilePhoto" || gateNext === "transportDocuments") {
+          const linkType = gateNext === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs";
+          const { runSendOnboardingLinkAction } = await import("../agents/actions/sendOnboardingLinkAction");
+          const result = await runSendOnboardingLinkAction(
+            { phone, linkType },
+            { caller: "webhook", role: "caregiver", phone },
+          ).catch((err) => {
+            console.error("webhooks: deterministic upload-gate send failed", err instanceof Error ? err.message : err);
+            return null;
+          });
+          if (result?.throttled) {
+            const mins = result.minutesSinceLastSend ?? 1;
+            await sendMessage(chatId, `That link already went out about ${mins} minute${mins === 1 ? "" : "s"} ago — give it a moment to arrive. Still nothing? Just say so and I'll resend it.`);
+          } else if (result?.sent) {
+            await sendMessage(chatId, gateNext === "profilePhoto"
+              ? "Here's your secure upload link — tap it to add a photo, that helps families choose you."
+              : "Here's your secure upload link — please add your driver's license, vehicle insurance, and vehicle registration there.");
+          }
+          if (result) {
+            await pushOnboardingStepToZep(step);
+            return;
+          }
+          // Send failed outright (result is null) — fall through to the loop so
+          // the user still gets SOME reply rather than silence.
+        }
+      }
+
       let loopReplied = false;
       const loopToolCalls: string[] = [];
       try {

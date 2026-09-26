@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractLocationPart, reverseGeocode, canRequestNativeLocation } from "./locationShare";
+import { extractLocationPart, reverseGeocode } from "./locationShare";
 
 describe("locationShare", () => {
   describe("extractLocationPart", () => {
@@ -62,27 +62,6 @@ describe("locationShare", () => {
     it("returns null for invalid coordinates without calling the network", async () => {
       const r = await reverseGeocode(NaN, NaN);
       expect(r).toBeNull();
-    });
-  });
-
-  describe("canRequestNativeLocation", () => {
-    it("allows 1:1 iMessage", () => {
-      expect(canRequestNativeLocation({ service: "iMessage" })).toBe(true);
-    });
-
-    it("rejects RCS and SMS", () => {
-      expect(canRequestNativeLocation({ service: "RCS" })).toBe(false);
-      expect(canRequestNativeLocation({ service: "SMS" })).toBe(false);
-    });
-
-    it("rejects iMessage group chats (groupChatId present)", () => {
-      expect(canRequestNativeLocation({ service: "iMessage", groupChatId: "grp_1" })).toBe(false);
-    });
-
-    it("rejects a missing/unknown service (safe default to typed ask)", () => {
-      expect(canRequestNativeLocation({})).toBe(false);
-      expect(canRequestNativeLocation(null)).toBe(false);
-      expect(canRequestNativeLocation(undefined)).toBe(false);
     });
   });
 });

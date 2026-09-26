@@ -209,17 +209,13 @@ vi.mock("../mcp/server", () => {
       if (!isAllowedField(role, fieldName)) return { _toolError: true, error: `'${fieldName}' is not a collectable field for a ${role}.` };
       if (fieldValue === undefined || fieldValue === null || fieldValue === "") return { _toolError: true, error: "fieldValue is required" };
       // Caregiver wizard rules (2026-09-25), mirrored from mcp/server.ts so the
-      // eval's feedback matches production: uploads are never typed, bio ≥ 150,
-      // experience/radius/state coerced to the wizard's shapes.
+      // eval's feedback matches production: uploads are never typed,
+      // experience/radius/state coerced to the wizard's shapes. Bio has NO
+      // minimum length on Evia's side (2026-09-26) — the website keeps its own
+      // separate 150-char minimum independently.
       const contract = await import("./onboardingContract");
       if (role === "caregiver" && (fieldName === "profilePhoto" || fieldName === "transportDocuments" || fieldName === "transportDocs")) {
         return { ok: true, saved: false, invalidValue: true, guidance: `${fieldName} is never typed — call send_onboarding_link (${fieldName === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"}) instead.` };
-      }
-      if (role === "caregiver" && fieldName === "bio") {
-        const bioText = typeof fieldValue === "string" ? fieldValue.trim() : "";
-        if (bioText.length < contract.BIO_MIN_CHARS) {
-          return { ok: true, saved: false, invalidValue: true, guidance: `Their bio is ${bioText.length} characters; it needs at least ${contract.BIO_MIN_CHARS} and there is no skip.` };
-        }
       }
       const normalized = contract.normalizeOnboardingFieldValue(fieldName, fieldValue);
       if (role === "caregiver" && fieldName === "yearsExperience" && !contract.EXPERIENCE_BUCKETS.includes(normalized as string)) {
@@ -573,10 +569,11 @@ describe("eval harness tool engine (no spend)", () => {
     const typedPhoto: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "profilePhoto", fieldValue: "a selfie" }, false);
     expect(typedPhoto.saved).toBe(false);
     expect(typedPhoto.guidance).toContain("caregiver_photo");
-    // A short bio is refused with the wizard's 150-character rule (no skip).
+    // Bio has no minimum length on Evia's side (2026-09-26) — the website
+    // keeps its own separate 150-char minimum independently, so even a short
+    // bio saves here.
     const shortBio: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "bio", fieldValue: "I care." }, false);
-    expect(shortBio.saved).toBe(false);
-    expect(shortBio.guidance).toContain("150");
+    expect(shortBio.saved).toBe(true);
 
     for (const [fieldName, fieldValue] of [
       ["street", "12 Oak St"], ["city", "San Jose"], ["state", "ca"],

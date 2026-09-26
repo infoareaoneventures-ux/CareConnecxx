@@ -162,7 +162,6 @@ export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
 export { flushFamilyVisitUpdates } from './scheduled/flushFamilyVisitUpdates';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
 export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminder';
-export { sendLocationRequestNudges } from './scheduled/locationRequestNudge';
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 export { processDndQueue } from './scheduled/dndQueueProcessor';
 export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';

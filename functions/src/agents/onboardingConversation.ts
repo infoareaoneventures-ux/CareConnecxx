@@ -70,24 +70,15 @@ import {
   stampGateLinkResent,
 } from "./gateLinkCooldown";
 
-/** iMessage/RCS can share a location pin; plain SMS cannot. */
-function isRichService(service?: string): boolean {
-  const s = (service ?? "").toLowerCase();
-  return s === "imessage" || s === "rcs";
-}
-
 /**
- * The "where are you" question. On iMessage/RCS, invite the one-tap location
- * share; on SMS keep the plain typed prompt (location-sharing is impossible there).
+ * The "where are you" question. The site has no location-pin/GPS affordance
+ * anywhere (every address form is plain typed fields) — Evia must not offer
+ * one either (2026-09-26: dropped the ➕ → Location invite, which also could
+ * never satisfy the caregiver's required street field anyway; `service` is
+ * kept as a param only for call-site compatibility).
  */
-function locationPrompt(base: string, service?: string): string {
-  // NOTE: only a one-time dropped PIN (➕ → Location → "Send My Current Location")
-  // reaches us with coordinates. Apple's "Share My Location" (continuous live
-  // share) does NOT deliver coordinates to the webhook, so don't promise it —
-  // typing the city/zip is the reliable path.
-  return isRichService(service)
-    ? `${base}\n\n(Or tap ➕ → Location → "Send My Current Location" to drop a pin.)`
-    : base;
+function locationPrompt(base: string, _service?: string): string {
+  return base;
 }
 
 /** Options threaded from the inbound webhook into the onboarding dispatcher. */
@@ -572,17 +563,6 @@ export async function ensureCaregiverDocForOnboarding(phone: string): Promise<st
   }, { merge: true });
   await db.collection("agent_sessions").doc(phone).update({ caregiverId: authUid });
   return authUid;
-}
-
-// ── Native location request (1:1 iMessage) ────────────────────────────────────
-// Marker persisted on the session when EVIA fires Linq's native location prompt.
-// The scheduled nudge job (scheduled/locationRequestNudge.ts) reads it; the
-// onboarding location handlers clear it once a pin OR a typed city/zip arrives.
-export interface PendingLocationRequest {
-  source:    "onboarding" | "mcp";
-  sentAt:    string;   // ISO — when the prompt was fired
-  nudgeSent: boolean;  // true once the single follow-up nudge has gone out
-  reason?:   string;
 }
 
 // Local single-shot parser used by onboarding step handlers. Powered by
@@ -1213,7 +1193,7 @@ export async function handleOnboardingStep(
         client_ask_location:   "What city and zip code are you in?",
         client_ask_schedule:   "How many days a week and what hours do you need care?",
         caregiver_ask_name:    "What's your name?",
-        caregiver_ask_location:"What city and zip code are you based in?",
+        caregiver_ask_location:"What's your street address, city, and zip code? (Families only ever see the city.)",
         caregiver_ask_experience: "How many years of caregiving experience do you have?",
         caregiver_ask_specialties: "What types of care do you specialize in?",
         caregiver_ask_availability: "What days and hours are you available to work?",
@@ -3016,8 +2996,8 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg = await generateCaraMessage({
       audience: "caregiver",
-      context: `Evia just corrected the caregiver's name to ${correctedName}. Briefly acknowledge the fix, then ask what city and zip code they work in.`,
-      fallback: `Got it — thanks, ${correctedName}. What city and zip code do you work in?`,
+      context: `Evia just corrected the caregiver's name to ${correctedName}. Briefly acknowledge the fix, then ask for their street address, city, and zip code (mention families only ever see the city).`,
+      fallback: `Got it — thanks, ${correctedName}. What's your street address, city, and zip code? (Families only ever see the city.)`,
       maxTokens: 80,
     });
     await sendMessage(chatId, locationPrompt(msg, service));
@@ -3035,8 +3015,8 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg = await generateCaraMessage({
       audience: "caregiver",
-      context: `The caregiver just confirmed ${seeded} is the name they go by. You already greeted them one message ago — this is mid-conversation, so do NOT greet again and do NOT open with "Hi"/"Hey"/"Hello". Acknowledge briefly, then ask what city and zip code they work in.`,
-      fallback: `Great to meet you, ${seeded}. What city and zip code do you work in?`,
+      context: `The caregiver just confirmed ${seeded} is the name they go by. You already greeted them one message ago — this is mid-conversation, so do NOT greet again and do NOT open with "Hi"/"Hey"/"Hello". Acknowledge briefly, then ask for their street address, city, and zip code (mention families only ever see the city).`,
+      fallback: `Great to meet you, ${seeded}. What's your street address, city, and zip code? (Families only ever see the city.)`,
       maxTokens: 80,
     });
     await sendMessage(chatId, locationPrompt(msg, service));
@@ -3061,8 +3041,8 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg = await generateCaraMessage({
       audience: "caregiver",
-      context: `Evia is moving on with the name ${seeded}. Ask what city and zip code they work in. One short sentence.`,
-      fallback: `Now — what city and zip code do you work in?`,
+      context: `Evia is moving on with the name ${seeded}. Ask for their street address, city, and zip code. One short sentence.`,
+      fallback: `Now — what's your street address, city, and zip code?`,
       maxTokens: 80,
     });
     await sendMessage(chatId, locationPrompt(msg, service));

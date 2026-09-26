@@ -726,23 +726,12 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId", "message", "clientId"],
     },
   },
-  {
-    name: "request_location",
-    description:
-      "Ask the user to share their current location via the native one-tap prompt. " +
-      "Works on 1:1 iMessage only — on SMS or RCS the prompt can't fire, and this tool " +
-      "tells you to instead ask the user to type their city and zip code. The shared pin " +
-      "arrives later as a separate message; this tool only sends the prompt. " +
-      "Session context (phone, chatId) is injected automatically — do NOT ask the user for these. " +
-      "Tell the user you're requesting their location before calling this.",
-    input_schema: {
-      type: "object",
-      properties: {
-        reason: { type: "string", description: "Optional short reason for logs (e.g. 'find nearby caregivers', 'update address')" },
-      },
-      required: [],
-    },
-  },
+  // request_location (native one-tap location pin) REMOVED 2026-09-26 — the
+  // website has no GPS/pin affordance anywhere (every address field is a plain
+  // typed form), so this tool had no site equivalent and was actively
+  // misleading Evia into inviting caregivers to "drop a pin" for their home
+  // address, which could never satisfy the site's required street field
+  // anyway. See feedback_evia_follows_site_only (memory) — remove, don't adapt.
   {
     name: "react_to_message",
     description:
@@ -4252,44 +4241,6 @@ async function executeToolCall(
         };
       }
 
-      case "request_location": {
-        const { phone, chatId, reason } = input;
-        if (!phone || !chatId) return toolError("INVALID_INPUT", "phone and chatId are required");
-        const sessionSnap = await db.collection("agent_sessions").doc(phone as string).get();
-        const session = sessionSnap.data();
-        const { canRequestNativeLocation } = await import("../utils/locationShare");
-        const typedAskFallback = {
-          success: true,
-          nativePromptSent: false,
-          fallback: "ask_typed_city_zip",
-          message: "Native location prompt unavailable on this chat — ask the user to type their city and zip code.",
-        };
-        // Gate: 1:1 iMessage only. SMS/RCS/group → fall back to a typed ask.
-        if (!canRequestNativeLocation(session as { service?: string; groupChatId?: string })) {
-          return typedAskFallback;
-        }
-        const { requestLocation } = await import("../linq/client");
-        const result = await requestLocation(chatId as string);
-        // Stale-iMessage or any non-2xx (e.g. 409) → same typed-ask fallback.
-        if (!result.requested) return typedAskFallback;
-        // Persist the pending request so the scheduled nudge job (and onboarding)
-        // can fall back to a typed ask if no pin arrives. TTL bounds the wait.
-        await db.collection("agent_sessions").doc(phone as string).set({
-          pendingLocationRequest: {
-            source:    "mcp",
-            reason:    (reason as string) ?? "",
-            sentAt:    new Date().toISOString(),
-            nudgeSent: false,
-          },
-          stateExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        }, { merge: true });
-        return {
-          success: true,
-          nativePromptSent: true,
-          message: "Sent the native location prompt. The user's shared location will arrive as a separate message.",
-        };
-      }
-
       case "react_to_message": {
         const { phone, type, customEmoji } = input;
         if (!phone || !type) return toolError("INVALID_INPUT", "phone and type are required");
@@ -6916,19 +6867,14 @@ async function executeToolCall(
         }
       }
       // Wizard value rules for the caregiver profile (CaregiverOnboardingWizard.tsx,
-      // 2026-09-25): bio ≥ 150 chars with no skip; experience is one of five
-      // buckets; travel distance one of five options; photo/documents never typed.
+      // 2026-09-25): experience is one of five buckets; travel distance one of
+      // five options; photo/documents never typed. Bio has NO minimum length on
+      // Evia's side (founder, 2026-09-26) — the website's own BioStep keeps its
+      // separate 150-char minChars (CaregiverOnboardingWizard.tsx:1073), an
+      // independent hardcoded value, not this constant, so this is a deliberate,
+      // scoped divergence, not an accidental one.
       if (role === "caregiver" && fieldName === "bio") {
-        const { BIO_MIN_CHARS } = await import("../agents/onboardingContract");
         const bioText = typeof fieldValue === "string" ? fieldValue.trim() : "";
-        if (bioText.length < BIO_MIN_CHARS) {
-          return {
-            ok: true,
-            saved: false,
-            invalidValue: true,
-            guidance: `Their bio is ${bioText.length} characters; it needs at least ${BIO_MIN_CHARS} (about two or three sentences) and there is no skip — the website requires the same. Warmly ask them to add a bit more: what they love about the work, what a good day with a client looks like, the kind of care they're best at. Offer a voice memo if they'd rather talk it out.`,
-          };
-        }
         onboardingDataPatch = { bio: bioText };
       }
       if (role === "caregiver" && fieldName === "yearsExperience") {
@@ -7034,9 +6980,24 @@ async function executeToolCall(
       const emailGuidance = fieldName === "email"
         ? ` Confirm this back to them using this EXACT string, unmodified: "${normalizedValue}" — never abbreviate, truncate, or drop the domain.`
         : "";
+      // The system-prompt onboarding directive is built ONCE at the start of this
+      // turn — it does NOT refresh mid-turn as saves land, so when a save (like
+      // this one) makes an UPLOAD field the new next-missing item, the model's
+      // system prompt still reflects the pre-save state and never tells it to
+      // call send_onboarding_link. Without this, the model was reliably either
+      // claiming the tool "isn't available" or hallucinating that a link had
+      // already gone out (live-caught 2026-09-26: caregiver_photo and
+      // caregiver_transport_docs both stalled this exact way). The tool RESULT
+      // (unlike the system prompt) is always fresh, so give the instruction here.
+      const nextField = role === "caregiver" ? missing[0] : undefined;
+      const nextIsUpload = nextField === "profilePhoto" || nextField === "transportDocuments";
+      const uploadGuidance = nextIsUpload
+        ? ` The next required item is an UPLOAD (${nextField}). Call send_onboarding_link RIGHT NOW, this same turn, with linkType ${nextField === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"} — do not ask a question, do not say a link is coming, and do not claim the tool is unavailable; call it, then send one short line saying what to upload.`
+        : "";
+      const combinedGuidance = `${emailGuidance}${uploadGuidance}`.trim();
       return {
         ok: true, fieldName, saved: true, missing, collectionComplete: missing.length === 0,
-        ...(emailGuidance ? { guidance: emailGuidance.trim() } : {}),
+        ...(combinedGuidance ? { guidance: combinedGuidance } : {}),
       };
     }
 

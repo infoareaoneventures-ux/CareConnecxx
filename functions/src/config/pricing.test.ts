@@ -11,19 +11,17 @@ import {
   clientMonthlyDisplay,
   caregiverAnnualAmount,
   caregiverAnnualDisplay,
-  mvrDisplay,
 } from "./pricing";
 
 describe("display pricing accessors (R7)", () => {
-  it("returns the three canonical display strings", () => {
+  it("returns the canonical display strings", () => {
     expect(clientMonthlyDisplay()).toBe("$29.95/month");
-    expect(caregiverAnnualDisplay()).toBe("$54.99/year");
-    expect(mvrDisplay()).toBe("$11.50");
+    expect(caregiverAnnualDisplay()).toBe("$69.99/year");
   });
 
   it("derives bare amounts from the same constants as the period forms", () => {
     expect(clientMonthlyAmount()).toBe("$29.95");
-    expect(caregiverAnnualAmount()).toBe("$54.99");
+    expect(caregiverAnnualAmount()).toBe("$69.99");
     expect(clientMonthlyDisplay()).toBe(`${clientMonthlyAmount()}/month`);
     expect(caregiverAnnualDisplay()).toBe(`${caregiverAnnualAmount()}/year`);
   });

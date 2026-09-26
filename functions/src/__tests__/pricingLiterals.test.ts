@@ -1,7 +1,7 @@
 // U5 — source-scan guard for display-price and bg-check-timing literals (R7, R8).
 //
 // Mirrors the parity.test.ts technique: read the source text directly so a
-// re-typed "$54.99" or a resurrected "1–3 days" promise fails the build
+// re-typed "$69.99" or a resurrected "1–3 days" promise fails the build
 // instead of drifting silently into a prompt. Display prices come ONLY from
 // config/pricing.ts; background-check timing is never promised ("Evia texts
 // you the moment it clears" is the sanctioned shape).
@@ -21,7 +21,9 @@ const PRICE_GUARDED_FILES = [
   "mcp/server.ts",
   "scheduled/staleSessionNudge.ts",
 ];
-const PRICE_LITERALS = ["$29.95", "$54.99", "$11.50"];
+// $11.50 (the retired MVR add-on) is deliberately excluded — that display
+// string no longer exists anywhere, canonical or otherwise.
+const PRICE_LITERALS = ["$29.95", "$69.99"];
 
 // Both hyphen forms, built by join so this file never matches its own scan.
 const TIMING_PHRASES = [

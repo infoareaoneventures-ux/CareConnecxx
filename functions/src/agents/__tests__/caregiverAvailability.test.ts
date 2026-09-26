@@ -172,13 +172,13 @@ describe("normalizeAvailabilityInput — save-time shape coercion", () => {
   });
   it("LLM-parses free text into the canonical object", async () => {
     const llm = async () => '{"days":["every day"],"hours":"mornings and evenings"}';
-    await expect(normalizeAvailabilityInput("mornings and evenings", llm))
+    await expect(normalizeAvailabilityInput("every day, mornings and evenings", llm))
       .resolves.toEqual({ days: ["every day"], hours: "mornings and evenings" });
   });
-  it("defaults days to ['every day'] when the LLM returns only hours", async () => {
+  it("keeps days EMPTY when the LLM returns only hours — never fabricates 'every day' (2026-09-26)", async () => {
     const llm = async () => '{"hours":"9am-5pm"}';
     await expect(normalizeAvailabilityInput("9 to 5", llm))
-      .resolves.toEqual({ days: ["every day"], hours: "9am-5pm" });
+      .resolves.toEqual({ days: [], hours: "9am-5pm" });
   });
   it("falls back to raw text in both fields when the LLM fails", async () => {
     await expect(normalizeAvailabilityInput("weekends only", llmDown))

@@ -13,7 +13,7 @@
 // own) so the webhook can import it without touching the legacy runner.
 
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { isFieldFilled, toExperienceBucket, toServiceRadius } from "./onboardingContract";
+import { isFieldFilled, toExperienceBucket, toServiceRadius, availabilityComplete, CAREGIVER_RATE_MIN, CAREGIVER_RATE_MAX } from "./onboardingContract";
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 const JOB_TYPES = new Set(["occasional", "part_time", "full_time"]);
@@ -87,7 +87,8 @@ export async function absorbCaregiverFields(
   if (typeof parsed.jobType === "string" && JOB_TYPES.has(parsed.jobType)) {
     candidates.jobType = parsed.jobType;
   }
-  if (typeof parsed.hourlyRate === "number" && parsed.hourlyRate >= 5 && parsed.hourlyRate <= 200) {
+  // Wizard rate rule: $15–$200/hr (handleSaveRates) — nothing outside is ever stored.
+  if (typeof parsed.hourlyRate === "number" && parsed.hourlyRate >= CAREGIVER_RATE_MIN && parsed.hourlyRate <= CAREGIVER_RATE_MAX) {
     candidates.hourlyRate = parsed.hourlyRate;
   }
   if (typeof parsed.email === "string" && EMAIL_RE.test(parsed.email.trim().toLowerCase())) {
@@ -101,10 +102,38 @@ export async function absorbCaregiverFields(
   // Nothing the site's wizard doesn't collect is absorbed (certifications,
   // gender, languages, canDrive were removed 2026-09-25).
 
+  // Zip → city/state exactly like the wizard's zippopotam.us lookup (the same
+  // derivation save_onboarding_field does), so a front-loaded "20 descanso dr
+  // san jose 95134" lands as "San Jose", not the caregiver's lowercase typing
+  // (live 2026-09-26: the profile read "Lives in san jose"). Best-effort.
+  if (typeof candidates.zipCode === "string") {
+    try {
+      const { lookupZipPlace } = await import("../utils/geocode");
+      const place = await lookupZipPlace(candidates.zipCode);
+      if (place?.city) {
+        candidates.city = place.city;
+        if (place.state) candidates.state = place.state;
+      }
+    } catch { /* keep what they typed */ }
+  }
+
   // Only return fields that are actually new (never touch a model-saved value).
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(candidates)) {
     if (!isFieldFilled(v)) continue;
+    // Availability is two pieces (days + parts of the day). A saved HALF is not
+    // "filled" — merge the other half onto it instead of skipping it.
+    if (k === "availability" && isFieldFilled(existing.availability) && !availabilityComplete(existing.availability)) {
+      const cur = (existing.availability && typeof existing.availability === "object" && !Array.isArray(existing.availability)
+        ? existing.availability : {}) as Record<string, unknown>;
+      const add = v as { days: string[]; hours: string };
+      const curDays  = cleanStringArray(cur.days);
+      const curHours = typeof cur.hours === "string" ? cur.hours : "";
+      const days  = unionCI(curDays, add.days) ?? curDays;
+      const hours = add.hours || curHours;
+      if (days.length !== curDays.length || hours !== curHours) out.availability = { days, hours };
+      continue;
+    }
     if (isFieldFilled(existing[k])) continue;
     out[k] = v;
   }

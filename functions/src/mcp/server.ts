@@ -6861,10 +6861,38 @@ async function executeToolCall(
         try {
           const { normalizeAvailabilityInput } = await import("../agents/caregiverAvailability");
           const canonical = await normalizeAvailabilityInput(normalizedValue);
-          if (canonical) onboardingDataPatch = { availability: canonical };
+          if (canonical) {
+            // The wizard's availability is two pickers (days + parts of the day)
+            // and the caregiver often answers them across two messages — merge
+            // onto whatever half is already saved instead of replacing it
+            // (2026-09-26: a second save of just "mornings" wiped the days).
+            const prevSnap = await db.collection("agent_sessions").doc(phone as string).get();
+            const prev = ((prevSnap.data()?.onboardingData ?? {}) as Record<string, unknown>).availability;
+            const p = (prev && typeof prev === "object" && !Array.isArray(prev) ? prev : {}) as { days?: unknown; hours?: unknown };
+            const prevDays = Array.isArray(p.days) ? (p.days as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0) : [];
+            const seen = new Set(prevDays.map((s) => s.toLowerCase()));
+            const days = [...prevDays, ...canonical.days.filter((s) => !seen.has(s.toLowerCase()))];
+            const hours = canonical.hours || (typeof p.hours === "string" ? p.hours : "");
+            onboardingDataPatch = { availability: { days, hours } };
+          }
         } catch (err) {
           console.error("save_onboarding_field: availability normalization failed (keeping raw):", err);
         }
+      }
+      // Wizard rate rule (handleSaveRates): "$15 to $200" — anything else is not
+      // saved and the model re-asks (live 2026-09-26: "$3/hr" was accepted).
+      if (role === "caregiver" && fieldName === "hourlyRate") {
+        const { coerceCaregiverRate, CAREGIVER_RATE_MIN, CAREGIVER_RATE_MAX } = await import("../agents/onboardingContract");
+        const rate = coerceCaregiverRate(fieldValue);
+        if (rate === null) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `"${String(fieldValue)}" isn't a rate the website accepts — it has to be a dollar amount from $${CAREGIVER_RATE_MIN} to $${CAREGIVER_RATE_MAX} an hour. Say that plainly (no judgment about the number) and ask for their minimum hourly rate again.`,
+          };
+        }
+        onboardingDataPatch = { hourlyRate: rate };
       }
       // Wizard value rules for the caregiver profile (CaregiverOnboardingWizard.tsx,
       // 2026-09-25): experience is one of five buckets; travel distance one of
@@ -6994,7 +7022,25 @@ async function executeToolCall(
       const uploadGuidance = nextIsUpload
         ? ` The next required item is an UPLOAD (${nextField}). Call send_onboarding_link RIGHT NOW, this same turn, with linkType ${nextField === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"} — do not ask a question, do not say a link is coming, and do not claim the tool is unavailable; call it, then send one short line saying what to upload.`
         : "";
-      const combinedGuidance = `${emailGuidance}${uploadGuidance}`.trim();
+      // Availability is two pieces (days + parts of the day); a half answer is
+      // saved but NOT complete — tell the model exactly which half is still
+      // needed so it asks for that and nothing else.
+      let availabilityGuidance = "";
+      if (role === "caregiver" && fieldName === "availability") {
+        const { availabilityComplete } = await import("../agents/onboardingContract");
+        const { normalizeDays, hasTimeOfDaySignal } = await import("../agents/caregiverAvailability");
+        const a = (data.availability ?? {}) as { days?: unknown; hours?: unknown };
+        if (!availabilityComplete(data.availability)) {
+          const hasDays  = normalizeDays(a.days).length > 0;
+          const hasTimes = hasTimeOfDaySignal(a.hours);
+          availabilityGuidance = hasDays && !hasTimes
+            ? " Saved their days, but availability is TWO pieces and you don't have their parts of the day yet — ask whether they're more mornings, afternoons, evenings, or overnights (any mix), then call save_onboarding_field for availability again with that. Do NOT move to the next item first."
+            : !hasDays && hasTimes
+              ? " Saved their parts of the day, but availability is TWO pieces and you don't have their days yet — ask which days of the week they can work, then call save_onboarding_field for availability again with that. Do NOT move to the next item first."
+              : " Nothing usable was found in that for availability — ask which days of the week they can work AND whether they're more mornings, afternoons, evenings, or overnights.";
+        }
+      }
+      const combinedGuidance = `${emailGuidance}${uploadGuidance}${availabilityGuidance}`.trim();
       return {
         ok: true, fieldName, saved: true, missing, collectionComplete: missing.length === 0,
         ...(combinedGuidance ? { guidance: combinedGuidance } : {}),

@@ -54,7 +54,7 @@ import {
 import { coerceClientRate } from "./onboardingContract";
 import { businessTodayStr, formatDateForDisplay } from "../utils/scheduledTime";
 import { canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "./careNeedsTaxonomy";
-import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, toExperienceBucket, offersTransportation, transportDocumentsComplete } from "./onboardingContract";
+import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, toExperienceBucket, offersTransportation, transportDocumentsComplete, availabilityComplete } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { describeSharedProfile } from "./profileBriefing";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
@@ -339,9 +339,13 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   }
   copy("availability", d.availability);
   // Structured map read by ai/scoring.ts availabilityOverlap and the web
-  // profile modal. Missing map scores as 0% available — derive it.
-  const weekly = deriveWeeklyAvailability(d.availability);
-  if (weekly) out.weeklyAvailability = weekly;
+  // profile grid. Derived only once BOTH halves are stated — a partial answer
+  // ("Monday" alone) must not paint parts of the day the caregiver never chose
+  // onto the website grid (live 2026-09-26).
+  if (availabilityComplete(d.availability)) {
+    const weekly = deriveWeeklyAvailability(d.availability);
+    if (weekly) out.weeklyAvailability = weekly;
+  }
   copy("hourlyRate", d.hourlyRate);
   // Wizard rates step: travel distance (5/10/15/25/50 miles).
   if (typeof d.serviceRadius === "number" && d.serviceRadius > 0) out.serviceRadius = d.serviceRadius;
@@ -365,7 +369,7 @@ export function wizardStepForDraft(d: Record<string, unknown>): string | null {
   const has = (k: string) => isFieldFilled(d[k]);
   if (!(has("street") && has("zipCode") && has("city") && has("state"))) return "location";
   if (!has("profilePhoto")) return "photo";
-  if (!(has("jobType") && has("availability"))) return "availability";
+  if (!(has("jobType") && availabilityComplete(d.availability))) return "availability";
   if (!(has("specialties") && has("yearsExperience"))) return "services";
   if (offersTransportation(d) && !transportDocumentsComplete(d)) return "transport-docs";
   if (!(has("hourlyRate") && has("serviceRadius"))) return "rates";
@@ -1781,20 +1785,27 @@ async function dispatchOnboardingToLoop(
   text:    string,
   session: AgentSession,
   role:    "client" | "caregiver",
+  opts:    { absorb?: boolean } = {},
 ): Promise<void> {
   const existing = (session.onboardingData ?? {}) as Record<string, unknown>;
-  const absorbed = role === "caregiver"
-    ? await (await import("./caregiverFieldAbsorber")).absorbCaregiverFields(text, existing).catch(() => ({}))
-    : await absorbClientFields(text, existing).catch(() => ({}));
+  // A synthetic system note (upload resume) carries no caregiver answer — skip
+  // the absorber so nothing in the note can be misread as a field.
+  const absorbed = opts.absorb === false
+    ? {}
+    : role === "caregiver"
+      ? await (await import("./caregiverFieldAbsorber")).absorbCaregiverFields(text, existing).catch(() => ({}))
+      : await absorbClientFields(text, existing).catch(() => ({}));
   if (Object.keys(absorbed).length > 0) {
     await mergeOnboardingData(phone, absorbed);
     session.onboardingData = { ...existing, ...absorbed };
   }
   const { runQaAgent } = await import("./qaAgent");
+  const toolCalls: string[] = [];
   await runQaAgent({
     text,
     phone,
     chatId,
+    _toolCallsOut: toolCalls,
     userId:      (session as any).userId ?? "",
     seniorId:    (session as any).seniorId ?? "",
     userType:    role,
@@ -1804,6 +1815,11 @@ async function dispatchOnboardingToLoop(
     onboardingRole: role,
     intent:      null,
   });
+  if (role === "caregiver") {
+    const afterData = ((await db.collection("agent_sessions").doc(phone).get()).data()?.onboardingData ?? {}) as Record<string, unknown>;
+    await sendUploadLinkIfBlocked(phone, chatId, afterData, { toolCallsThisTurn: toolCalls })
+      .catch((err) => console.error("dispatchOnboardingToLoop: upload backstop failed", err instanceof Error ? err.message : err));
+  }
   // Collection may have completed on this handed-off turn — e.g. the user
   // front-loaded every remaining field in the same message that also confirmed
   // their name. Drive the post-collection handoff so the next phase actually
@@ -1834,18 +1850,71 @@ async function dispatchOnboardingToLoop(
 //      "that's everything I need".
 // Idempotent and non-fatal: a no-op unless collection is (now) complete, and any
 // handoff failure is logged, never thrown.
+
 // An upload (photo / transport documents) landed while the caregiver is
-// mid-collection: pick the conversation back up with the next question. The
-// loop rebuilds "what's still needed" from the fresh session + the live
-// caregiver record, so it simply asks the next item (2026-09-25).
-export async function resumeCaregiverCollection(phone: string, chatId: string): Promise<void> {
+// mid-collection: pick the conversation back up with the next question.
+//
+// 2026-09-26: this used to re-enter the scripted runner with the "__RESUME__"
+// sentinel — but collection steps have no scripted handler any more (loop-only),
+// so every upload fell into the runner's defensive default and texted "I didn't
+// catch that last part, can you send it again?" instead of continuing. The loop
+// owns collection, so hand it the turn directly with a system note (never
+// absorbed as an answer); its directive sees the upload as ✓ and asks the next
+// STILL NEEDED item.
+export async function resumeCaregiverCollection(
+  phone: string,
+  chatId: string,
+  uploaded: "photo" | "documents" = "photo",
+): Promise<void> {
   try {
     const fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as AgentSession | undefined;
     if (!fresh) return;
-    await handleOnboardingStep(phone, chatId, "__RESUME__", { ...fresh, chatId } as AgentSession);
+    const note = uploaded === "photo"
+      ? "[System note — this is NOT a message from the caregiver: they just uploaded their profile photo through the secure link and it is saved. In ONE short warm line say the photo is in, then ask the next STILL NEEDED item. Never ask them to resend or repeat anything.]"
+      : "[System note — this is NOT a message from the caregiver: they just uploaded all three transportation documents through the secure link and they are saved. In ONE short warm line say the documents are in, then ask the next STILL NEEDED item. Never ask them to resend or repeat anything.]";
+    await dispatchOnboardingToLoop(phone, chatId, note, { ...fresh, chatId } as AgentSession, "caregiver", { absorb: false });
   } catch (err) {
     console.error("resumeCaregiverCollection failed:", err instanceof Error ? err.message : err);
   }
+}
+
+/**
+ * Deterministic upload-link backstop. profilePhoto and transportDocuments are
+ * "never typed" — while one is the next missing item, the ONLY correct action
+ * is to (re)send its upload link. The agent-tier model was live-caught (2026-09-26)
+ * declaring the tool "unavailable in this chat" or narrating "using the secure
+ * link" without ever calling send_onboarding_link, so the link is sent here
+ * whenever the model didn't send it this turn. Reuses the gate-link cooldown:
+ * a repeat ping resends at most once per window. Returns true when it acted.
+ */
+export async function sendUploadLinkIfBlocked(
+  phone: string,
+  chatId: string,
+  data: Record<string, unknown>,
+  opts: { toolCallsThisTurn?: string[] } = {},
+): Promise<boolean> {
+  const next = missingRequiredFields("caregiver", data)[0];
+  if (next !== "profilePhoto" && next !== "transportDocuments") return false;
+  if (opts.toolCallsThisTurn?.includes("send_onboarding_link")) return false;
+  const linkType = next === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs";
+  const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
+  const result = await runSendOnboardingLinkAction(
+    { phone, linkType },
+    { caller: "webhook", role: "caregiver", phone },
+  ).catch((err) => {
+    console.error("sendUploadLinkIfBlocked: send failed", err instanceof Error ? err.message : err);
+    return null;
+  });
+  if (!result) return false;
+  if (result.throttled) {
+    const mins = result.minutesSinceLastSend ?? 1;
+    await sendMessage(chatId, `That link already went out about ${mins} minute${mins === 1 ? "" : "s"} ago — give it a moment to arrive. Still nothing? Just say so and I'll resend it.`);
+  } else if (result.sent) {
+    await sendMessage(chatId, next === "profilePhoto"
+      ? "Here's your secure upload link — tap it to add a photo, that helps families choose you."
+      : "Here's your secure upload link — please add your driver's license, vehicle insurance, and vehicle registration there.");
+  }
+  return true;
 }
 
 export async function drivePostCollectionHandoff(
@@ -4433,7 +4502,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       if (taskData) await mergeOnboardingData(phone, { profilePhoto: taskData });
       const photoStep = session.onboardingStep ?? "";
       if (collectionStepsForRole("caregiver").includes(photoStep)) {
-        await resumeCaregiverCollection(phone, chatId);
+        await resumeCaregiverCollection(phone, chatId, "photo");
       } else {
         // Post-onboarding photo UPDATE (caregiverProfileHandler's UPDATE_PHOTO
         // flow reuses this token task) — confirm, never re-enter onboarding.
@@ -4458,7 +4527,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       const data = (fresh?.onboardingData ?? {}) as Record<string, unknown>;
       const step = fresh?.onboardingStep ?? "";
       if (collectionStepsForRole("caregiver").includes(step) && transportDocumentsComplete(data)) {
-        await resumeCaregiverCollection(phone, chatId);
+        await resumeCaregiverCollection(phone, chatId, "documents");
       }
       break;
     }

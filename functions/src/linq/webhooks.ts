@@ -19,6 +19,8 @@ import {
   absorbClientFields,
   drivePostCollectionHandoff,
   createFirebaseAuthAccount,
+  mergeOnboardingData,
+  sendUploadLinkIfBlocked,
 } from "../agents/onboardingConversation";
 import { absorbCaregiverFields } from "../agents/caregiverFieldAbsorber";
 import { runQaAgent } from "../agents/qaAgent";
@@ -1770,8 +1772,10 @@ const handleInboundInner = traceable(
       // reads session.onboardingData). Skipped when nothing new was extracted so a
       // pure question-turn writes nothing.
       if (Object.keys(preAbsorbed).length > 0) {
-        await db.collection("agent_sessions").doc(phone)
-          .set({ onboardingData: preAbsorbed }, { merge: true });
+        // Through mergeOnboardingData, not a raw set: that is what mirrors the
+        // draft onto caregivers/{uid} the way the site reads it. A raw write
+        // here left absorbed fields (live 2026-09-26: the bio) off the profile.
+        await mergeOnboardingData(phone, preAbsorbed);
         (session as any).onboardingData = { ...preData, ...preAbsorbed };
         // Tell the directive which fields THIS message just answered (qaAgent →
         // buildOnboardingDirective) so the model never files the same text twice.
@@ -1792,32 +1796,14 @@ const handleInboundInner = traceable(
       // window instead of spamming.
       if (loopRole === "caregiver" && text.trim() !== "") {
         const gateData = { ...preData, ...preAbsorbed } as Record<string, unknown>;
-        const gateNext = missingRequiredFields("caregiver", gateData)[0];
-        if (gateNext === "profilePhoto" || gateNext === "transportDocuments") {
-          const linkType = gateNext === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs";
-          const { runSendOnboardingLinkAction } = await import("../agents/actions/sendOnboardingLinkAction");
-          const result = await runSendOnboardingLinkAction(
-            { phone, linkType },
-            { caller: "webhook", role: "caregiver", phone },
-          ).catch((err) => {
-            console.error("webhooks: deterministic upload-gate send failed", err instanceof Error ? err.message : err);
-            return null;
-          });
-          if (result?.throttled) {
-            const mins = result.minutesSinceLastSend ?? 1;
-            await sendMessage(chatId, `That link already went out about ${mins} minute${mins === 1 ? "" : "s"} ago — give it a moment to arrive. Still nothing? Just say so and I'll resend it.`);
-          } else if (result?.sent) {
-            await sendMessage(chatId, gateNext === "profilePhoto"
-              ? "Here's your secure upload link — tap it to add a photo, that helps families choose you."
-              : "Here's your secure upload link — please add your driver's license, vehicle insurance, and vehicle registration there.");
-          }
-          if (result) {
-            await pushOnboardingStepToZep(step);
-            return;
-          }
-          // Send failed outright (result is null) — fall through to the loop so
-          // the user still gets SOME reply rather than silence.
+        const handled = await sendUploadLinkIfBlocked(phone, chatId, gateData)
+          .catch((err) => { console.error("webhooks: pre-turn upload backstop failed", err instanceof Error ? err.message : err); return false; });
+        if (handled) {
+          await pushOnboardingStepToZep(step);
+          return;
         }
+        // Not blocked on an upload (or the send failed outright) — run the loop
+        // so the user still gets a reply rather than silence.
       }
 
       let loopReplied = false;
@@ -1881,8 +1867,10 @@ const handleInboundInner = traceable(
             }
           }
           if (Object.keys(absorbed).length > 0) {
-            await db.collection("agent_sessions").doc(phone)
-              .set({ onboardingData: absorbed }, { merge: true });
+            // mergeOnboardingData (not a raw set) so the net's captures reach
+            // caregivers/{uid} like every other save — the bio captured here
+            // never showed on the website profile before (live 2026-09-26).
+            await mergeOnboardingData(phone, absorbed);
             curData = { ...curData, ...absorbed };
             console.info("webhooks: persistence net captured fields the loop skipped", { phone, fields: Object.keys(absorbed) });
 
@@ -1912,6 +1900,16 @@ const handleInboundInner = traceable(
               }
             }
           }
+        }
+
+        // Same-turn upload backstop: a save THIS turn may have made an upload the
+        // next required item (address → photo, experience → transport docs). The
+        // model's system prompt was built before that save and reliably failed to
+        // call send_onboarding_link on the same turn (live 2026-09-26, both
+        // uploads) — send the link now if it didn't. No-op otherwise.
+        if (loopRole === "caregiver") {
+          await sendUploadLinkIfBlocked(phone, chatId, curData, { toolCallsThisTurn: loopToolCalls })
+            .catch((err) => console.error("webhooks: post-loop upload backstop failed", err instanceof Error ? err.message : err));
         }
 
         // A loop that just SAVED a field is still working (the wizard's optional

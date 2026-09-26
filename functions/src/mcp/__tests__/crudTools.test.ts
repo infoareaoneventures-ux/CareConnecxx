@@ -587,6 +587,36 @@ describe("save_onboarding_field client wizard-parity values (rate / startDate / 
     expect(onboardingData().rate).toBeUndefined();
   });
 
+  it("caregiver hourlyRate outside the wizard's $15–$200 is NOT saved — re-ask with the range (2026-09-26: '$3/hr' was accepted)", async () => {
+    const low = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "hourlyRate", fieldValue: "3",
+    }) as any;
+    expect(low.saved).toBe(false);
+    expect(low.invalidValue).toBe(true);
+    expect(low.guidance).toMatch(/\$15 to \$200/);
+    expect(onboardingData().hourlyRate).toBeUndefined();
+    const ok = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "hourlyRate", fieldValue: "$23/hr",
+    }) as any;
+    expect(ok.saved).toBe(true);
+    expect(onboardingData().hourlyRate).toBe(23);
+  });
+
+  it("caregiver availability merges across two messages and says which half is still needed", async () => {
+    const daysOnly = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "availability", fieldValue: { days: ["Monday"], hours: "" },
+    }) as any;
+    expect(daysOnly.saved).toBe(true);
+    expect(daysOnly.missing).toContain("availability");
+    expect(daysOnly.guidance).toMatch(/parts of the day/i);
+    const timesToo = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "availability", fieldValue: { days: [], hours: "mornings" },
+    }) as any;
+    expect(timesToo.saved).toBe(true);
+    expect(timesToo.missing).not.toContain("availability");
+    expect(onboardingData().availability).toEqual({ days: ["Monday"], hours: "mornings" });
+  });
+
   it("a numeric-string rate is saved as a number", async () => {
     const r = await handleToolCall("save_onboarding_field", {
       phone: PHONE, role: "client", fieldName: "rate", fieldValue: "$26/hr",

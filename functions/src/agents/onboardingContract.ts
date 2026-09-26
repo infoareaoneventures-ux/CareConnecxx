@@ -22,6 +22,9 @@
 // CAREGIVER_COLLECTION_STEPS, and complete_collection hands off to
 // CAREGIVER_FIRST_GATE_STEP. Gate/awaiting steps are never routed to the loop.
 
+// Pure helpers only (no I/O) — caregiverAvailability is itself a leaf module.
+import { normalizeDays, hasTimeOfDaySignal } from "./caregiverAvailability";
+
 export type OnboardingRole = "client" | "caregiver";
 
 // Mirror of CLIENT_STEP_ORDER in onboardingConversation.ts — the conversational
@@ -476,6 +479,34 @@ export function caregiverJobTypesToWebIds(
   return order.filter((o) => mapped.has(o));
 }
 
+/**
+ * The website's availability step is TWO pickers — days of the week AND parts
+ * of the day — so Evia's `availability` counts as collected only when both are
+ * actually stated (2026-09-26: "Monday" alone was being accepted, then mirrored
+ * as Monday morning + afternoon — times the caregiver never chose).
+ */
+export function availabilityComplete(value: unknown): boolean {
+  if (!value) return false;
+  if (typeof value === "string") {
+    return normalizeDays([value]).length > 0 && hasTimeOfDaySignal(value);
+  }
+  if (Array.isArray(value)) return false; // a bare day list has no parts of the day
+  if (typeof value !== "object") return false;
+  const a = value as { days?: unknown; hours?: unknown };
+  return normalizeDays(a.days).length > 0 && hasTimeOfDaySignal(a.hours);
+}
+
+// The wizard's rate rule (CaregiverOnboardingWizard.tsx handleSaveRates):
+// "Hourly rate must be between $15 and $200".
+export const CAREGIVER_RATE_MIN = 15;
+export const CAREGIVER_RATE_MAX = 200;
+
+/** Caregiver hourly rate → a number inside the wizard's $15–$200 range, else null (caller re-asks). */
+export function coerceCaregiverRate(value: unknown): number | null {
+  const n = coerceClientRate(value);
+  return n !== null && n >= CAREGIVER_RATE_MIN && n <= CAREGIVER_RATE_MAX ? n : null;
+}
+
 // Required fields still missing from the collected data, in flow order.
 export function missingRequiredFields(
   role: OnboardingRole,
@@ -488,6 +519,8 @@ export function missingRequiredFields(
     if (role === "caregiver" && f === "transportDocuments") {
       return offersTransportation(d) && !transportDocumentsComplete(d);
     }
+    // Availability needs BOTH days and parts of the day (the wizard's two pickers).
+    if (role === "caregiver" && f === "availability") return !availabilityComplete(d.availability);
     // Wizard canAdvanceAt(6): `selectedDays.length > 0 || daysFlexible` — a
     // family whose days are flexible with no fixed days is complete.
     if (role === "client" && f === "selectedDays" && d.daysFlexible === true) return false;

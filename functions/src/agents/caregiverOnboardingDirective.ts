@@ -27,7 +27,10 @@ import {
   offersTransportation,
   EXPERIENCE_BUCKETS,
   TRAVEL_RADIUS_OPTIONS,
+  CAREGIVER_RATE_MIN,
+  CAREGIVER_RATE_MAX,
 } from "./onboardingContract";
+import { normalizeDays, hasTimeOfDaySignal } from "./caregiverAvailability";
 import { FALLBACK_RANGE } from "../utils/marketRateRange";
 import { caregiverAnnualDisplay } from "../config/pricing";
 
@@ -69,11 +72,25 @@ export function buildCaregiverOnboardingDirective(
   rateRangeText: string = DEFAULT_RATE_RANGE_TEXT,
   capturedThisTurn?: string[],
 ): string {
+  const data    = onboardingData ?? {};
   const labelFor = (field: string): string => {
-    if (field === "hourlyRate") return `their minimum hourly rate (most caregivers charge ${rateRangeText})`;
+    if (field === "hourlyRate") return `their minimum hourly rate — $${CAREGIVER_RATE_MIN} to $${CAREGIVER_RATE_MAX}/hr (most caregivers charge ${rateRangeText})`;
+    if (field === "availability") {
+      // Two pickers on the website: say exactly which half is still needed so
+      // a half-answered availability never gets re-asked from scratch.
+      const a = (data.availability && typeof data.availability === "object" && !Array.isArray(data.availability)
+        ? data.availability : {}) as { days?: unknown; hours?: unknown };
+      const days = normalizeDays(a.days);
+      const hasTimes = hasTimeOfDaySignal(a.hours);
+      if (days.length && !hasTimes) {
+        return `which parts of the day they can work (mornings/afternoons/evenings/overnight) — you ALREADY have their days (${days.join(", ")}); ask only about the parts of the day, do not re-ask the days`;
+      }
+      if (!days.length && hasTimes) {
+        return `which days of the week they can work — you ALREADY have their parts of the day ("${String(a.hours)}"); ask only about the days, do not re-ask the times`;
+      }
+    }
     return CAREGIVER_FIELD_LABEL[field] ?? field;
   };
-  const data    = onboardingData ?? {};
   const missing = missingRequiredFields("caregiver", data);
   // transportDocuments only ever counts when they offer transportation.
   const required = CAREGIVER_REQUIRED_FIELDS.filter((f) => f !== "transportDocuments" || offersTransportation(data));
@@ -136,12 +153,12 @@ export function buildCaregiverOnboardingDirective(
     `  - ADDRESS: ask for their home address in one natural line (street, city, ZIP). Save street and zipCode; city and state fill in from the ZIP automatically (save them too if they said them). Families never see the street — mention that if they hesitate.`,
     `  - PHOTO: when the photo is the next item, do NOT ask them to describe or text one — call send_onboarding_link (caregiver_photo) and say a clear, friendly headshot helps families choose. If they text a photo instead, that works too (it's saved the same way).`,
     `  - JOB TYPE: occasional, part-time, or full-time — ONE choice, save jobType as occasional | part_time | full_time.`,
-    `  - AVAILABILITY: ask in the same terms families see on the schedule — days of the week plus parts of the day. Keep it to ONE natural line: "Which days can you work, and are you more mornings, afternoons, evenings, or overnights? Any mix is fine." Save what they tell you as availability. If they answer with clock times ("weekdays 9 to 5"), that's fine — save it as-is.`,
-    `  - ECHO WHAT YOU SAVED: right after they give availability, reflect back the parts-of-day you understood in plain words before the next question ("Perfect — weekday mornings and afternoons, got it. …"). If you got it wrong they'll correct you and you just re-save. Don't ask them to confirm and don't make it its own message — fold it into your acknowledgment.`,
+    `  - AVAILABILITY is TWO pieces, exactly like the website's picker: (1) the days of the week and (2) the parts of the day. Ask for both in ONE natural line: "Which days can you work, and are you more mornings, afternoons, evenings, or overnights? Any mix is fine." Save what they give as availability. If they answer only ONE piece (just "Monday", or just "mornings"), save it and ask for the OTHER piece before anything else — never assume days or times they didn't state, and never move on until both are saved (the save result tells you which half is still missing). Clock times ("weekdays 9 to 5") count as parts of the day.`,
+    `  - ECHO WHAT YOU SAVED: right after they give availability, reflect back the days and parts of day you understood in plain words before the next question ("Perfect — Monday and Wednesday mornings and afternoons, got it. …"). If you got it wrong they'll correct you and you just re-save. Don't ask them to confirm and don't make it its own message — fold it into your acknowledgment.`,
     `  - CARE SERVICES (the specialties field): families filter caregivers by specific services. The website offers EXACTLY these eight — no others: Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping. When you ask, name a few concrete ones so they know what counts — "What kinds of care do you do? Things like companionship, dementia or memory care, medication reminders, personal care, mobility help, transportation, meal prep, or light housekeeping?" — conversational, not a recited list. Save whatever they say as specialties, mapped to the closest of those eight. Then, if they only named one or two, sweep the rest ONCE in a single casual line ("Got it. Do you also help with any of the others — meds, meals, transportation, housekeeping?") and add whatever they confirm. Never mention or save a service outside those eight (no hospice care, post-surgery recovery, etc. — the website doesn't offer them at this step), and never pressure them to claim services they don't do.`,
     `  - EXPERIENCE: save yearsExperience as one of the buckets (${EXPERIENCE_BUCKETS.join(" / ")}) — a number like "6 years" is fine, it's bucketed on save. Their story often answers this: if they said it, save it, don't re-ask.`,
     `  - TRANSPORTATION DOCUMENTS: only if their services include transportation. When it's the next item, call send_onboarding_link (caregiver_transport_docs) and say they'll need their driver's license, vehicle insurance, and vehicle registration — all three, our team reviews them after the background and driving-record checks. Never collect these by describing them in chat.`,
-    `  - RATE: their MINIMUM hourly rate; share the typical range (${rateRangeText}) if they seem unsure, but their rate is THEIR call - never pressure them up or down.`,
+    `  - RATE: their MINIMUM hourly rate as a dollar amount. The website only accepts $${CAREGIVER_RATE_MIN} to $${CAREGIVER_RATE_MAX} an hour — a number outside that is not saved; say the site needs it in that range and ask again. Share the typical range (${rateRangeText}) if they seem unsure, but within the range the number is THEIR call - never pressure them up or down.`,
     `  - TRAVEL DISTANCE: how far they're willing to travel for a visit — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles. If they have no preference, save 10 (the usual pick) and say so.`,
     `  - EMAIL: mention it's used to set up their payout account (it's usually already on file from signup — then never ask).`,
     `  - BIO: families see it on their profile — save whatever they give you, in their own words. No minimum length and no skip-nagging; if they write one short line, that's their bio. A voice memo is a nice option to offer if typing is a pain, but never pressure them to write more.`,

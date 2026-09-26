@@ -8,15 +8,47 @@ const parseWithClaude = vi.fn(async (..._a: unknown[]) => "{}");
 vi.mock("../../utils/parseWithClaude", () => ({
   parseWithClaude: (...a: unknown[]) => parseWithClaude(...a),
 }));
+// Zip → city/state lookup (the wizard's zippopotam.us call) — null unless a test says otherwise.
+const lookupZipPlace = vi.fn(async (_zip: string): Promise<{ city: string; state: string; lat: number; lng: number } | null> => null);
+vi.mock("../../utils/geocode", () => ({
+  lookupZipPlace: (...a: unknown[]) => lookupZipPlace(...(a as [string])),
+}));
 
 import { absorbCaregiverFields, absorbCaregiverProfileUpdate } from "../caregiverFieldAbsorber";
 
 beforeEach(() => {
   parseWithClaude.mockReset();
   parseWithClaude.mockResolvedValue("{}");
+  lookupZipPlace.mockReset();
+  lookupZipPlace.mockResolvedValue(null);
 });
 
 describe("absorbCaregiverFields", () => {
+  it("derives city/state from a captured zip exactly like the wizard (2026-09-26: 'san jose' → 'San Jose')", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ street: "20 Descanso Dr", city: "san jose", zipCode: "95134" }));
+    lookupZipPlace.mockResolvedValueOnce({ city: "San Jose", state: "CA", lat: 37.4, lng: -121.9 });
+    const out = await absorbCaregiverFields("20 descanso dr san jose 95134", {});
+    expect(out).toMatchObject({ street: "20 Descanso Dr", city: "San Jose", state: "CA", zipCode: "95134" });
+    expect(lookupZipPlace).toHaveBeenCalledWith("95134");
+  });
+
+  it("merges the missing half onto a half-saved availability instead of skipping it (days + parts of the day)", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ availability: { days: [], hours: "mornings" } }));
+    const out = await absorbCaregiverFields("mornings", { availability: { days: ["Monday"], hours: "" } });
+    expect(out).toEqual({ availability: { days: ["Monday"], hours: "mornings" } });
+  });
+
+  it("never touches a COMPLETE availability the model already saved", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ availability: { days: ["Friday"], hours: "evenings" } }));
+    const out = await absorbCaregiverFields("msg", { availability: { days: ["Monday"], hours: "mornings" } });
+    expect(out).toEqual({});
+  });
+
+  it("drops an hourly rate below the wizard's $15 floor", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ hourlyRate: 3 }));
+    expect(await absorbCaregiverFields("3", {})).toEqual({});
+  });
+
   it("captures a front-loaded multi-field message", async () => {
     parseWithClaude.mockResolvedValueOnce(JSON.stringify({
       name: "Maria", street: "12 Oak St", city: "San Jose", state: "ca", zipCode: "95134", yearsExperience: 6,

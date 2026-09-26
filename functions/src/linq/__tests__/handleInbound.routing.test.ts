@@ -191,6 +191,15 @@ vi.mock("../../agents/onboardingConversation", () => ({
   // routing under test is unaffected.
   ensureCaregiverDocForOnboarding: vi.fn(async () => null),
   createFirebaseAuthAccount: (...a: any[]) => createFirebaseAuthAccount(...a),
+  // The absorber nets write through mergeOnboardingData (it mirrors the draft
+  // onto caregivers/{uid}); here it just merges into the harness session doc.
+  mergeOnboardingData: vi.fn(async (phone: string, data: Record<string, unknown>) => {
+    const path = `agent_sessions/${phone}`;
+    const cur = (hoisted.docState.get(path) ?? {}) as Record<string, any>;
+    hoisted.docState.set(path, { ...cur, onboardingData: { ...(cur.onboardingData ?? {}), ...data } });
+  }),
+  // Deterministic upload-link backstop — never blocked in these routing tests.
+  sendUploadLinkIfBlocked: vi.fn(async () => false),
 }));
 
 const absorbCaregiverFields = vi.fn(async (..._a: any[]) => ({}));

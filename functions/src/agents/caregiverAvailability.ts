@@ -58,6 +58,25 @@ const KEYWORD_BLOCKS: Array<{ re: RegExp; block: BlockId }> = [
   { re: /overnight|over night|graveyard/i, block: "overnight" },
 ];
 
+const ANY_TIME_RE   = /any\s*time|flexible|24\/7|24-7|whenever|all day|open/i;
+const CLOCK_RANGE_RE = /(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)\s*(?:-|–|—|to|until|till|thru|through)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)/i;
+
+/**
+ * Did the caregiver actually STATE a part of the day (or clock range, or "any
+ * time")? The website's availability picker has two separate inputs — days of
+ * the week and parts of the day — and Evia must collect both rather than
+ * fabricate one (live 2026-09-26: "Monday" alone became Monday morning +
+ * afternoon on the profile, times the caregiver never chose). Deterministic
+ * check of an already-collected value, not intent parsing.
+ */
+export function hasTimeOfDaySignal(hours: unknown): boolean {
+  if (typeof hours !== "string") return false;
+  const t = hours.trim();
+  if (!t) return false;
+  if (ANY_TIME_RE.test(t) || CLOCK_RANGE_RE.test(t)) return true;
+  return KEYWORD_BLOCKS.some(({ re }) => re.test(t));
+}
+
 // "9am" → 540, "5:30pm" → 1050, "17" → 1020. Returns null when not a time.
 function parseClockToMin(raw: string): number | null {
   const m = raw.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/i);
@@ -239,18 +258,20 @@ export async function normalizeAvailabilityInput(
   const text = value.trim();
   try {
     const parse = llmParse ?? (await import("../utils/parseWithClaude")).parseWithClaude;
+    // Never invent the half they didn't state: days stay [] when they only gave
+    // times (and vice versa) so the loop asks for the missing piece, exactly like
+    // the website's two-part picker (2026-09-26).
     const raw = await parse(
       "Extract a caregiver's work availability from their message. Reply with raw JSON only: " +
-        '{"days":["Monday"],"hours":"9am-5pm"}. days = the day names they stated; use ["weekdays"], ' +
-        '["weekends"], or ["every day"] when they speak in those terms, and ["every day"] when they ' +
-        'name times but no days. hours = their stated time window or time-of-day words ' +
-        '("mornings and evenings"); "" if none stated.',
+        '{"days":["Monday"],"hours":"9am-5pm"}. days = ONLY the day names they actually stated; use ["weekdays"], ' +
+        '["weekends"], or ["every day"] when they speak in those terms; [] when they name no days at all. ' +
+        'hours = their stated time window or time-of-day words ("mornings and evenings"); "" if none stated.',
       text,
     );
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const days = cleanDays(parsed.days);
     const hours = typeof parsed.hours === "string" ? parsed.hours.trim() : "";
-    if (days.length || hours) return { days: days.length ? days : ["every day"], hours };
+    if (days.length || hours) return { days, hours };
   } catch (err) {
     console.warn("[normalizeAvailabilityInput] LLM parse failed, using raw-text fallback:", err);
   }

@@ -174,6 +174,22 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("reflect back");
   });
 
+  it("availability is two pieces: a half answer stays STILL NEEDED and names only the missing half (2026-09-26)", () => {
+    const daysOnly = buildCaregiverOnboardingDirective({ availability: { days: ["Monday"], hours: "" } }).toLowerCase();
+    expect(daysOnly).toContain("already have their days (monday)");
+    expect(daysOnly).toContain("do not re-ask the days");
+    const timesOnly = buildCaregiverOnboardingDirective({ availability: { days: [], hours: "mornings" } }).toLowerCase();
+    expect(timesOnly).toContain("already have their parts of the day");
+    expect(timesOnly).toContain("do not re-ask the times");
+    const both = buildCaregiverOnboardingDirective({ availability: { days: ["Monday"], hours: "mornings" } }).toLowerCase();
+    expect(both).toContain("✓ which days, and which parts of the day");
+  });
+
+  it("states the wizard's $15–$200 rate rule", () => {
+    const d = buildCaregiverOnboardingDirective({}).toLowerCase();
+    expect(d).toContain("$15 to $200");
+  });
+
   it("job type is a single choice, like the wizard's picker", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
     expect(d).toContain("job type");

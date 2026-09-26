@@ -55,7 +55,7 @@ const FIELD_LABEL: Record<string, string> = {
   // Step 10
   emergencyContactName:         "the emergency contact's full name",
   emergencyContactPhone:        "the emergency contact's phone number",
-  emergencyContactRelationship: "the emergency contact's relationship (e.g. son, neighbor)",
+  emergencyContactRelationship: "how the emergency contact is related to the person needing care (their son, daughter, sibling, neighbor, friend…) — the family is telling you about their OWN contact; just ask plainly, there is no privacy concern here and no other client involved",
   // Step 11
   careNeeds:      "what kind of help is needed day to day — save the site's CATEGORY names only: Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care (bathing, dressing, toileting, feeding, grooming), Companionship, Transportation, Meal Preparation, Light Housekeeping (e.g. 'help with bathing' → 'Personal Care')",
   petsInHome:       "whether there are pets in the home",
@@ -133,8 +133,11 @@ export function buildOnboardingDirective(
   const required = requiredFieldsForRole(role);
   const known   = required.filter((f) => !missing.includes(f));
 
+  // Every line names the save_onboarding_field KEY first, then the plain
+  // label — the model was inventing keys from the labels ('smoking', 'pets',
+  // 'description' — live 2026-09-26, three answers rejected and lost).
   const knownLines = known.length
-    ? known.map((f) => `  ✓ ${labelFor(f)} — already have it, do NOT ask again`).join("\n")
+    ? known.map((f) => `  ✓ ${f} — ${labelFor(f)} — already have it, do NOT ask again`).join("\n")
     : "  (nothing yet)";
 
   // Single ordered checklist — required AND optional fields interleaved in
@@ -154,7 +157,7 @@ export function buildOnboardingDirective(
   });
 
   const missingLines = stillNeeded.length
-    ? stillNeeded.map((f) => `  • ${labelFor(f)}${required.includes(f) ? "" : " (optional for THEM to skip — never for you to skip asking)"}`).join("\n")
+    ? stillNeeded.map((f) => `  • ${f} — ${labelFor(f)}${required.includes(f) ? "" : " (optional for THEM to skip — never for you to skip asking)"}`).join("\n")
     : "  (all items collected)";
 
   // Only the client reaches this point (caregiver delegated above).
@@ -236,6 +239,10 @@ export function buildOnboardingDirective(
     `HOW TO TALK:`,
     `  - You are mid-conversation. You already greeted them. NEVER greet again, never re-introduce yourself, never open with "Hi"/"Hey <name>". Reply directly.`,
     `  - EVERY turn: first call save_onboarding_field for whatever they just told you, THEN reply. A short or one-word answer to your last question IS that field's value — save it immediately.`,
+    `  - fieldName is ALWAYS the exact key shown before the dash in the lists above (smokingHousehold, petsInHome, jobDescription, emergencyContactRelationship, careNeeds…) — never a word of your own like "smoking", "pets" or "description". If the tool rejects a key, retry at once with one from the list it gives you; never tell the family you "hit a snag" over a field name.`,
+    `  - Pets and smoking are two saves: save_onboarding_field("petsInHome", true/false) and save_onboarding_field("smokingHousehold", true/false). The note for caregivers is save_onboarding_field("jobDescription", their words).`,
+    `  - Every item on this list is the family's OWN information about their own household. There is never a privacy reason to decline asking or recording one, and no other client or family is ever involved — never say you "can't share details about other clients" or anything like it.`,
+    `  - careNeeds is the KIND of help (bathing, meals, rides, medication reminders, company…), saved as the site's category names. How OFTEN care is needed (occasional / part-time / full-time) is careFrequency, never a care need — do not save "occasional" or similar into careNeeds, and do not treat the "what kind of help" question as answered because the frequency was.`,
     `  - Acknowledge what they just said before you ask the next thing. Reflect the story back when it's heavy — then ask.`,
     `  - One question per message. Never send a numbered list or ask for several things at once.`,
     `  - For selectedDays: save as an array of uppercase 3-letter codes e.g. ['MON','WED','FRI']. If they say "weekdays" save ['MON','TUE','WED','THU','FRI']; "weekends" → ['SAT','SUN']; "every day" → ['SUN','MON','TUE','WED','THU','FRI','SAT'].`,

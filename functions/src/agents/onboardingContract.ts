@@ -208,6 +208,9 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "emergencyContactRelationship",
   "jobDescription",
   "petsInHome", "smokingHousehold",
+  // Sub-tasks under each careNeeds category (the Care Plan page's two-level
+  // model) — written alongside careNeeds by the canonicalizer, never asked.
+  "careNeedDetails",
   "careRecipientLastName", "lastName",
   // Backward-compat absorber field kept from the pre-wizard contract (the
   // wizard-less `preferences`/`budget` fields were retired with the legacy
@@ -263,6 +266,75 @@ export function allowedFieldsForRole(role: OnboardingRole): ReadonlySet<string> 
 
 export function isAllowedField(role: OnboardingRole, fieldName: string): boolean {
   return allowedFieldsForRole(role).has(fieldName);
+}
+
+// Near-miss field NAMES the model has actually used for save_onboarding_field
+// (live 2026-09-26: a family's smoking, pets and description answers were all
+// rejected — 'smoking', 'pets', 'description' are not fields — and never saved,
+// so the Care Plan lost them). This resolves the model's tool ARGUMENT (a
+// field key, never the family's words) onto the contract key. Anything not
+// here and not an exact allowed key is still rejected, with the allowed list
+// echoed back so the model can self-correct (see save_onboarding_field).
+const CLIENT_FIELD_ALIASES: Record<string, string> = {
+  smoking: "smokingHousehold", smoker: "smokingHousehold", smokers: "smokingHousehold",
+  smokinghome: "smokingHousehold", smokinginhome: "smokingHousehold", smokes: "smokingHousehold",
+  householdsmoking: "smokingHousehold", anyonesmokes: "smokingHousehold",
+  pets: "petsInHome", pet: "petsInHome", haspets: "petsInHome", petsathome: "petsInHome", petsinhousehold: "petsInHome",
+  description: "jobDescription", note: "jobDescription", notes: "jobDescription", caredescription: "jobDescription",
+  jobdescription: "jobDescription", situation: "jobDescription", caresituation: "jobDescription",
+  notesforcaregivers: "jobDescription", caregivernote: "jobDescription", caregivernotes: "jobDescription",
+  aboutcare: "jobDescription", careneedsdescription: "jobDescription",
+  emergencyname: "emergencyContactName", emergencycontact: "emergencyContactName",
+  emergencyphone: "emergencyContactPhone", emergencycontactnumber: "emergencyContactPhone",
+  emergencyrelationship: "emergencyContactRelationship", emergencycontactrelation: "emergencyContactRelationship",
+  emergencyrelation: "emergencyContactRelationship",
+  careneed: "careNeeds", needs: "careNeeds", caretype: "careNeeds", caretypes: "careNeeds", helpneeded: "careNeeds",
+  frequency: "careFrequency", howoften: "careFrequency",
+  days: "selectedDays", daysofweek: "selectedDays", weekdays: "selectedDays",
+  time: "timeOfDay", times: "timeOfDay", timeofservice: "timeOfDay",
+  hourlyrate: "rate", budget: "rate", payrate: "rate",
+  start: "startDate", startingdate: "startDate",
+  numberofcaregivers: "caregiversNeeded", caregivercount: "caregiversNeeded",
+  seniorage: "age", recipientage: "age",
+  recipientname: "seniorName", carerecipientname: "seniorName", lovedonename: "seniorName",
+  emailaddress: "email",
+  homeaddress: "homeStreet", homestreetaddress: "homeStreet", homezip: "homeZipCode", homezipcode: "homeZipCode",
+  careaddress: "street", carestreet: "street", carezip: "zipCode", carezipcode: "zipCode", zip: "zipCode",
+  sameaddress: "sameAsHomeAddress", samehomeaddress: "sameAsHomeAddress",
+};
+
+const CAREGIVER_FIELD_ALIASES: Record<string, string> = {
+  fullname: "name", firstname: "name",
+  address: "street", streetaddress: "street", zip: "zipCode",
+  photo: "profilePhoto", profilephotourl: "profilePhoto", photourl: "profilePhoto",
+  services: "specialties", skills: "specialties", careservices: "specialties",
+  experience: "yearsExperience", yearsofexperience: "yearsExperience",
+  rate: "hourlyRate", hourly: "hourlyRate", payrate: "hourlyRate",
+  radius: "serviceRadius", traveldistance: "serviceRadius", travelradius: "serviceRadius", distance: "serviceRadius",
+  documents: "transportDocuments", transportdocs: "transportDocuments", drivingdocuments: "transportDocuments",
+  emailaddress: "email", about: "bio", aboutme: "bio", description: "bio",
+};
+
+/**
+ * Resolve a field name the model passed to save_onboarding_field onto the
+ * contract key: exact keys pass through; otherwise a case/punctuation-
+ * insensitive match against the allowed keys, then the alias table. Returns
+ * null when nothing matches (the caller rejects with the allowed list).
+ */
+export function resolveOnboardingFieldName(role: OnboardingRole, fieldName: string): string | null {
+  const allowed = allowedFieldsForRole(role);
+  if (allowed.has(fieldName)) return fieldName;
+  const key = fieldName.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!key) return null;
+  for (const f of allowed) if (f.toLowerCase() === key) return f;
+  const aliases = role === "caregiver" ? CAREGIVER_FIELD_ALIASES : CLIENT_FIELD_ALIASES;
+  const hit = aliases[key];
+  return hit && allowed.has(hit) ? hit : null;
+}
+
+/** The allowed field keys for a role, in contract order — echoed in the unknown-field tool error. */
+export function allowedFieldNamesForRole(role: OnboardingRole): string[] {
+  return [...allowedFieldsForRole(role)];
 }
 
 // The canonical jobType enum the downstream world (caregiver doc, matching,

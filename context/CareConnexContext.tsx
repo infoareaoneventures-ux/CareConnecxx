@@ -71,23 +71,44 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     // Auth Listener - fetches user profile from Firestore to get userType
     useEffect(() => {
         let cancelled = false;
-        const delays = [0, 1000, 3000];
+        // A brand-new signup: the phone code signs the user in a moment BEFORE
+        // createWebOnboardingSession has written users/{uid} — a cold function
+        // can take 10s+. The old 0/1/3s retry ladder gave up first and put the
+        // "Account connection problem" screen over /start almost every time
+        // (founder, live, 2026-09-26). Now: one read, then LISTEN for the record
+        // for up to a minute; genuine failures (permission, offline) still fail fast.
+        const PROFILE_WAIT_MS = 60_000;
+        const notFound = () => Object.assign(new Error('Profile not found'), { code: 'not-found' });
         const fetchProfileWithRetry = async (uid: string) => {
-            let lastError: unknown = new Error('Profile unavailable');
-            for (const delayMs of delays) {
-                if (delayMs) await new Promise(r => setTimeout(r, delayMs));
-                try {
-                    const profile = await Promise.race([
-                        dbService.getUser(uid),
-                        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Profile request timed out')), 3000)),
-                    ]);
-                    if (profile) return profile;
-                    lastError = Object.assign(new Error('Profile not found'), { code: 'not-found' });
-                } catch (error) {
-                    lastError = error;
-                }
-            }
-            throw lastError;
+            const first = await Promise.race([
+                dbService.getUser(uid),
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Profile request timed out')), 8000)),
+            ]).catch((error) => {
+                if (String((error as any)?.code ?? '').includes('permission-denied')) throw error;
+                return null;
+            });
+            if (first) return first;
+            if (!db) throw notFound();
+            const usersRef = db;
+            return await new Promise<any>((resolve, reject) => {
+                let done = false;
+                let unsub: () => void = () => {};
+                const finish = (fn: () => void) => { if (done) return; done = true; clearTimeout(timer); unsub(); fn(); };
+                const timer = setTimeout(() => finish(() => reject(notFound())), PROFILE_WAIT_MS);
+                unsub = usersRef.collection('users').doc(uid).onSnapshot(
+                    (snap) => {
+                        if (snap.exists && snap.data()?.userType) {
+                            // Re-read through getUser so the merged profile shape is identical.
+                            finish(() => {
+                                dbService.getUser(uid)
+                                    .then((p) => (p ? resolve(p) : reject(notFound())))
+                                    .catch(reject);
+                            });
+                        }
+                    },
+                    (error) => finish(() => reject(error)),
+                );
+            });
         };
 
         const recoveryFor = (error: unknown): AuthRecoveryState => {

@@ -91,7 +91,7 @@ describe("buildOnboardingDirective", () => {
     });
     expect(d).toContain("not yet gotten a value for");
     expect(d).toContain("their age");
-    expect(d).toContain("the emergency contact's relationship");
+    expect(d).toContain("how the emergency contact is related");
     expect(d).toContain("whether their days are flexible");
   });
 

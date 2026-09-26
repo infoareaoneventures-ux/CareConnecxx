@@ -6719,18 +6719,28 @@ async function executeToolCall(
     // merges one field into agent_sessions/{phone}.onboardingData and returns the
     // required fields still missing for that role.
     if (name === "save_onboarding_field") {
-      const { phone, role, fieldName } = input as Record<string, unknown>;
+      const { phone, role } = input as Record<string, unknown>;
+      const fieldNameInput = (input as Record<string, unknown>).fieldName;
       const fieldValue = (input as Record<string, unknown>).fieldValue;
       if (!phone) return toolError("INVALID_INPUT", "phone is required");
       if (role !== "client" && role !== "caregiver") {
         return toolError("INVALID_INPUT", "role must be 'client' or 'caregiver'");
       }
-      if (typeof fieldName !== "string" || !fieldName.trim()) {
+      if (typeof fieldNameInput !== "string" || !fieldNameInput.trim()) {
         return toolError("INVALID_INPUT", "fieldName is required");
       }
-      const { isAllowedField, missingRequiredFields, normalizeOnboardingFieldValue, isNumericOnboardingField, coerceNumericOnboardingField, CAREGIVER_JOB_TYPES } = await import("../agents/onboardingContract");
-      if (!isAllowedField(role, fieldName)) {
-        return toolError("INVALID_INPUT", `'${fieldName}' is not a collectable onboarding field for a ${role}.`);
+      const { resolveOnboardingFieldName, allowedFieldNamesForRole, missingRequiredFields, normalizeOnboardingFieldValue, isNumericOnboardingField, coerceNumericOnboardingField, CAREGIVER_JOB_TYPES } = await import("../agents/onboardingContract");
+      // Near-miss keys ('smoking', 'pets', 'description') resolve onto the
+      // contract key; a real unknown is rejected WITH the allowed list so the
+      // model can retry with the right key instead of telling the family
+      // "I hit a snag" (live 2026-09-26: three answers lost this way).
+      const fieldName = resolveOnboardingFieldName(role, fieldNameInput.trim());
+      if (!fieldName) {
+        return toolError(
+          "INVALID_INPUT",
+          `'${fieldNameInput}' is not a collectable onboarding field for a ${role}. Retry with exactly one of: ` +
+          `${allowedFieldNamesForRole(role).join(", ")}. (Smoking → smokingHousehold, pets → petsInHome, the note/description for caregivers → ${role === "client" ? "jobDescription" : "bio"}.)`,
+        );
       }
       if (fieldValue === undefined || fieldValue === null || (fieldValue === "" && !(role === "caregiver" && fieldName === "bio"))) {
         return toolError("INVALID_INPUT", "fieldValue is required");
@@ -6845,6 +6855,36 @@ async function executeToolCall(
         console.info("save_onboarding_field: jobType value not canonical after normalization — keeping raw", { phone, raw: fieldValue });
       }
       let onboardingDataPatch: Record<string, unknown> = { [fieldName]: normalizedValue };
+      // Client care needs = the Care Plan page's fixed category pills (site
+      // taxonomy, careNeedsTaxonomy.ts) — never the family's raw words. Live
+      // 2026-09-26: "Occasional" (the frequency answer) was stored as the care
+      // need "occasional help", which counted as answered, so the "what kind
+      // of help" question was skipped entirely and the Care Plan showed a
+      // bogus pill. Canonicalize at save time; if NOTHING maps, the answer is
+      // not a care need at all — refuse it and steer the model back.
+      if (role === "client" && fieldName === "careNeeds") {
+        const rawTerms = (Array.isArray(fieldValue) ? fieldValue : [fieldValue])
+          .map((t) => String(t ?? "").trim()).filter(Boolean);
+        const { canonicalizeCareNeeds, CARE_NEED_CATEGORIES } = await import("../agents/careNeedsTaxonomy");
+        let canon: Awaited<ReturnType<typeof canonicalizeCareNeeds>> | null = null;
+        try { canon = rawTerms.length ? await canonicalizeCareNeeds(rawTerms) : null; }
+        catch (err) { console.error("save_onboarding_field: care-needs canonicalization failed:", err); }
+        if (canon && canon.careNeeds.length === 0) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `"${rawTerms.join(", ")}" doesn't describe a kind of day-to-day help — it isn't one of the site's care needs (${CARE_NEED_CATEGORIES.join(", ")}). ` +
+              `If they were answering how OFTEN care is needed, that belongs in careFrequency, not careNeeds. Save nothing for careNeeds now; when you reach that step, ask what kind of help their loved one needs day to day (bathing, meals, rides, medication reminders, company…) and save the matching category names.`,
+          };
+        }
+        if (canon) {
+          onboardingDataPatch = { careNeeds: canon.careNeeds, careNeedDetails: canon.careNeedDetails };
+          if (canon.unmapped.length) {
+            console.info("save_onboarding_field: care-need terms left unmapped (kept out of careNeeds)", { phone, unmapped: canon.unmapped });
+          }
+        }
+      }
       // Care-services canonicalization: keep the caregiver's RAW specialties as
       // profile flavor, and also write the canonical skills/services enum the
       // webapp checkboxes + matching engine read. Never let a canonicalization

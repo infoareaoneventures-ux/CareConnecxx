@@ -586,7 +586,10 @@ describe("cold inbound (no prior session) — consent gate", () => {
     seedColdConsentSession();
     createFirebaseAuthAccount.mockResolvedValueOnce("cg-uid-1");
     hoisted.docState.set("users/cg-uid-1", { phone: PHONE, userType: "caregiver" });
-    hoisted.docState.set("caregivers/cg-uid-1", { name: "Test Caregiver" });
+    // A pre-existing caregiver profile carries real progress (here: an
+    // approved account) — a bare status-less doc is the in-progress wizard
+    // shell the web bridge pre-creates and is NOT a returning user (2026-09-26).
+    hoisted.docState.set("caregivers/cg-uid-1", { name: "Test Caregiver", status: "active" });
     parseWithClaude.mockResolvedValueOnce("yes");
 
     await handleInbound(makeEvent("Yes please"));
@@ -1409,10 +1412,36 @@ describe("userHasRealOnboardingProgress", () => {
     })).toBe(true);
   });
 
-  it("caregiver with caregivers/{uid} profile doc → true", async () => {
+  it("caregiver with a caregivers/{uid} doc that progressed (pending_review) → true", async () => {
     hoisted.docState.set("caregivers/uid-4", { phone: PHONE, status: "pending_review" });
     expect(await userHasRealOnboardingProgress("uid-4", {
       uid: "uid-4", userType: "caregiver", name: "Imran",
+    })).toBe(true);
+  });
+
+  // 2026-09-26 live: the web bridge pre-creates caregivers/{uid} on the first
+  // "Hey Evia" (status onboarding / in_progress), so a bare doc is NOT progress —
+  // treating it as such marked a brand-new caregiver "complete" on their second
+  // text and skipped the whole questionnaire.
+  it("caregiver whose caregivers/{uid} doc is still the in-progress wizard shell → false", async () => {
+    hoisted.docState.set("caregivers/uid-7", {
+      phone: PHONE, uid: "uid-7", name: "Hamse Mahad", status: "onboarding",
+      onboardingStatus: "in_progress", wizardStep: "location", emailVerified: true,
+    });
+    expect(await userHasRealOnboardingProgress("uid-7", {
+      uid: "uid-7", userType: "caregiver", name: "Hamse Mahad",
+    })).toBe(false);
+  });
+
+  it.each([
+    ["wizard finished", { onboardingStatus: "profile_complete", status: "onboarding" }],
+    ["membership paid", { onboardingStatus: "profile_complete", membershipPaid: true }],
+    ["background check submitted", { verificationStatus: "submitted" }],
+    ["active", { status: "active" }],
+  ])("caregiver doc past the wizard (%s) → true", async (_label, doc) => {
+    hoisted.docState.set("caregivers/uid-8", { phone: PHONE, uid: "uid-8", ...doc });
+    expect(await userHasRealOnboardingProgress("uid-8", {
+      uid: "uid-8", userType: "caregiver", name: "Imran",
     })).toBe(true);
   });
 

@@ -284,7 +284,13 @@ const AppContent: React.FC = () => {
 
   const activeColor = isClientFlow ? 'text-teal-600' : 'text-orange-500';
 
-  if (!authResolved) {
+  // /start and /login run their own sign-in and never need the resolved
+  // profile — the signup step must stay on screen while the account record is
+  // still being created (2026-09-26), so neither the connecting spinner nor
+  // the recovery screen may replace them.
+  const isSelfServingAuthPage = path === '/start' || path === '/login';
+
+  if (!authResolved && !isSelfServingAuthPage) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-[var(--color-neutral-50)]">
         <Loader2 className="w-10 h-10 text-[var(--color-primary-600)] animate-spin mb-4" />
@@ -293,7 +299,7 @@ const AppContent: React.FC = () => {
     );
   }
 
-  if (authRecovery) {
+  if (authRecovery && !isSelfServingAuthPage) {
     return (
       <main className="min-h-screen bg-paper-50 flex items-center justify-center px-6">
         <section className="w-full max-w-md text-center" role="alert" aria-live="assertive">

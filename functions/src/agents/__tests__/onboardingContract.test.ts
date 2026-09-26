@@ -8,6 +8,8 @@ import {
   collectionStepsForRole,
   requiredFieldsForRole,
   isAllowedField,
+  resolveOnboardingFieldName,
+  allowedFieldNamesForRole,
   missingRequiredFields,
   firstGateStep,
   isOnboardingTool,
@@ -149,6 +151,35 @@ describe("onboardingContract", () => {
       expect(isAllowedField("client", "conditions")).toBe(false);
       expect(isAllowedField("client", "budget")).toBe(false);
       expect(isAllowedField("client", "preferences")).toBe(false);
+    });
+  });
+
+  // 2026-09-26: the model's near-miss keys ('smoking', 'pets', 'description')
+  // must resolve onto the contract key instead of losing the answer.
+  describe("resolveOnboardingFieldName", () => {
+    it("passes exact keys through and resolves case/punctuation variants", () => {
+      expect(resolveOnboardingFieldName("client", "smokingHousehold")).toBe("smokingHousehold");
+      expect(resolveOnboardingFieldName("client", "Smoking Household")).toBe("smokingHousehold");
+      expect(resolveOnboardingFieldName("caregiver", "hourly_rate")).toBe("hourlyRate");
+    });
+    it("maps the live near-misses", () => {
+      expect(resolveOnboardingFieldName("client", "smoking")).toBe("smokingHousehold");
+      expect(resolveOnboardingFieldName("client", "pets")).toBe("petsInHome");
+      expect(resolveOnboardingFieldName("client", "description")).toBe("jobDescription");
+      expect(resolveOnboardingFieldName("client", "notes")).toBe("jobDescription");
+      expect(resolveOnboardingFieldName("client", "hourlyRate")).toBe("rate");
+      expect(resolveOnboardingFieldName("caregiver", "description")).toBe("bio");
+      expect(resolveOnboardingFieldName("caregiver", "rate")).toBe("hourlyRate");
+    });
+    it("still rejects unknown / out-of-scope keys", () => {
+      expect(resolveOnboardingFieldName("client", "favoriteColor")).toBeNull();
+      expect(resolveOnboardingFieldName("client", "conditions")).toBeNull();
+      expect(resolveOnboardingFieldName("caregiver", "certifications")).toBeNull();
+      expect(resolveOnboardingFieldName("client", "")).toBeNull();
+    });
+    it("lists the allowed keys for the tool error", () => {
+      expect(allowedFieldNamesForRole("client")).toContain("smokingHousehold");
+      expect(allowedFieldNamesForRole("caregiver")).toContain("bio");
     });
   });
 

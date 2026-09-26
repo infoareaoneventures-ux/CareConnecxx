@@ -807,7 +807,7 @@ export async function absorbClientFields(text: string, existing: Record<string, 
       `"additionalRecipients":[{"name":"...","relationship":"...","age":number}] — ` +
       `ONLY when care is for MORE THAN ONE person (e.g. "both mom and dad"); every person after the first goes here,` +
       `"age":number (the FIRST care recipient's age),` +
-      `"careNeeds":["short need phrase — day-to-day help, never a diagnosis"],` +
+      `"careNeeds":["short need phrase — the KIND of day-to-day help (bathing, meals, rides, medication reminders, company); never a diagnosis, and NEVER a frequency word like occasional/part-time/full-time — how often is not a care need"],` +
       `"city":"city name",` +
       `"zipCode":"5-digit US zip code",` +
       `"daysPerWeek":number of days per week care is needed,` +
@@ -834,9 +834,29 @@ export async function absorbClientFields(text: string, existing: Record<string, 
       out[k] = n;
       continue;
     }
+    // careNeeds must land as the Care Plan's category names or not at all —
+    // live 2026-09-26 the frequency answer "Occasional" was absorbed here as
+    // the care need "occasional help", which marked the field answered, so
+    // the "what kind of help" question was never asked. Same canonicalizer
+    // save_onboarding_field and persistClientCareRecords use; an answer that
+    // maps to no category is not a care need and is dropped.
+    if (k === "careNeeds") {
+      const canon = await canonicalAbsorbedCareNeeds(v);
+      if (canon) { out.careNeeds = canon.careNeeds; out.careNeedDetails = canon.careNeedDetails; }
+      continue;
+    }
     out[k] = v;
   }
   return out;
+}
+
+/** Absorbed care-need terms → site categories (+ sub-tasks), or null when none map. */
+async function canonicalAbsorbedCareNeeds(v: unknown): Promise<{ careNeeds: string[]; careNeedDetails: Record<string, string[]> } | null> {
+  const terms = (Array.isArray(v) ? v : [v]).map((t) => String(t ?? "").trim()).filter(Boolean);
+  if (!terms.length) return null;
+  const canon = await canonicalizeCareNeeds(terms).catch(() => null);
+  if (!canon || !canon.careNeeds.length) return null;
+  return { careNeeds: canon.careNeeds, careNeedDetails: canon.careNeedDetails };
 }
 
 // Update-mode client absorber (2026-07-15): additive merge for list-shaped
@@ -868,9 +888,17 @@ export async function absorbClientProfileUpdate(
     const added = cleanArr(parsed[key]);
     if (!added.length) continue;
     const base = cleanArr(existing[key]);
+    // Canonicalize the additions the same way collection does (category
+    // names only); anything that maps to no category is not a care need.
+    const canon = await canonicalAbsorbedCareNeeds(added);
+    if (!canon) continue;
     const seen = new Set(base.map((s) => s.toLowerCase()));
-    const freshItems = added.filter((s) => !seen.has(s.toLowerCase()));
-    if (freshItems.length) out[key] = [...base, ...freshItems];
+    const freshItems = canon.careNeeds.filter((s) => !seen.has(s.toLowerCase()));
+    if (freshItems.length) {
+      out[key] = [...base, ...freshItems];
+      const baseDetails = (existing.careNeedDetails as Record<string, string[]> | undefined) ?? {};
+      out.careNeedDetails = { ...baseDetails, ...canon.careNeedDetails };
+    }
   }
   return out;
 }
@@ -2246,11 +2274,15 @@ export async function persistClientCareRecords(
   // raw words ("bathing" → Personal Care › Bathing). Written back onto the draft
   // so the job_postings mirror and the summary use the same names.
   const canon = rawCareNeeds.length ? await canonicalizeCareNeeds(rawCareNeeds).catch(() => null) : null;
-  const careNeeds = canon && canon.careNeeds.length ? canon.careNeeds : rawCareNeeds;
-  const careNeedDetails = canon && canon.careNeeds.length
+  // When the taxonomy ran and placed nothing, the draft held no real care
+  // need (live 2026-09-26: "occasional help") — write NO pills rather than the
+  // raw words; the unmapped text still lands in the Notes below. Raw is kept
+  // only when the canonicalizer itself failed.
+  const careNeeds = canon ? canon.careNeeds : rawCareNeeds;
+  const careNeedDetails = canon
     ? canon.careNeedDetails
     : ((d.careNeedDetails as Record<string, string[]> | undefined) ?? {});
-  if (canon && canon.careNeeds.length && (!isCanonicalCareNeeds(rawCareNeeds) || !d.careNeedDetails)) {
+  if (canon && (!isCanonicalCareNeeds(rawCareNeeds) || !d.careNeedDetails)) {
     d = { ...d, careNeeds, careNeedDetails };
     await mergeOnboardingData(phone, { careNeeds, careNeedDetails }).catch(() => {});
   }

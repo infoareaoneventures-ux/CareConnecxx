@@ -884,7 +884,10 @@ describe("client gate absorb — volunteered details at awaiting steps", () => {
 
     await handleOnboardingStep(PHONE, CHAT, "mom also needs help with bathing", session);
 
-    expect(stored().onboardingData.careNeeds).toEqual(["companionship", "bathing"]);
+    // The volunteered task lands as the Care Plan CATEGORY (+ sub-task), never
+    // the raw word — same canonicalizer as collection (2026-09-26).
+    expect(stored().onboardingData.careNeeds).toEqual(["companionship", "Personal Care"]);
+    expect(stored().onboardingData.careNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
     const last = String(JSON.stringify(sentMessages.at(-1)?.text));
     expect(last).toMatch(/care plan|added/i);       // specific ack
     expect(last).toMatch(/membership|ready|link/i); // gate reminder still present
@@ -903,12 +906,13 @@ describe("client gate absorb — volunteered details at awaiting steps", () => {
 
   it("does not double-add a case-insensitive duplicate detail", async () => {
     const session = seed("client_awaiting_identity",
-      { seniorName: "Rosy", careNeeds: ["Bathing"] }, { userType: "client" });
+      { seniorName: "Rosy", careNeeds: ["Personal Care"] }, { userType: "client" });
     stepAnswer = '{"careNeeds":["bathing"]}';
 
     await handleOnboardingStep(PHONE, CHAT, "she needs help with bathing please", session);
 
-    expect(stored().onboardingData.careNeeds).toEqual(["Bathing"]);
+    // "bathing" canonicalizes to the category already on file — no duplicate.
+    expect(stored().onboardingData.careNeeds).toEqual(["Personal Care"]);
   });
 });
 

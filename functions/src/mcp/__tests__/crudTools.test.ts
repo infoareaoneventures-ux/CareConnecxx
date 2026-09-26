@@ -556,8 +556,17 @@ describe("save_onboarding_field zip → city/state auto-derivation", () => {
 // start date and emergency phone are validated/canonicalized exactly as the
 // site's ClientJobPostingWizard would store them (canAdvanceAt + createJobPosting).
 vi.mock("../../utils/openaiClient", () => ({
-  quickComplete: vi.fn(async (_sys: string, text: string) =>
-    /next monday/i.test(text) ? "2099-06-07" : "UNKNOWN"),
+  quickComplete: vi.fn(async (_sys: string, text: string) => {
+    // careNeedsTaxonomy's canonicalizer sends the unresolved terms as a JSON
+    // array — answer like the real model: a task maps, a frequency word doesn't.
+    if (text.trim().startsWith("[")) {
+      const terms = JSON.parse(text) as string[];
+      const out: Record<string, unknown> = {};
+      for (const t of terms) out[t] = /meal/i.test(t) ? { category: "Meal Preparation", sub: null } : null;
+      return JSON.stringify(out);
+    }
+    return /next monday/i.test(text) ? "2099-06-07" : "UNKNOWN";
+  }),
   getOpenAIClient: vi.fn(),
 }));
 import { businessTodayStr } from "../../utils/scheduledTime";
@@ -635,5 +644,59 @@ describe("save_onboarding_field client wizard-parity values (rate / startDate / 
     }) as any;
     expect(r._toolError).toBe(true);
     expect(onboardingData().conditions).toBeUndefined();
+  });
+});
+
+// 2026-09-26 live client signup: the model saved the frequency answer as the
+// care need "occasional help" (skipping the "what kind of help" step and
+// putting a bogus pill on the Care Plan), and lost the smoking / pets /
+// description answers by inventing field keys ('smoking', 'pets',
+// 'description') the tool rejected. Both are closed at the save site.
+describe("save_onboarding_field client care needs + field-name aliases (2026-09-26)", () => {
+  const PHONE = "+15555550004";
+  beforeEach(() => { hoisted.reset(); });
+  const onboardingData = () => hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData ?? {};
+
+  it("careNeeds are stored as the site's category names (+ sub-tasks), never the raw words", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "careNeeds", fieldValue: ["Bathing", "help with meals"],
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().careNeeds).toEqual(["Personal Care", "Meal Preparation"]);
+    expect(onboardingData().careNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
+  });
+
+  it("a frequency answer is NOT a care need — refused with guidance, nothing stored", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "careNeeds", fieldValue: "occasional help",
+    }) as any;
+    expect(r.ok).toBe(true);
+    expect(r.saved).toBe(false);
+    expect(r.invalidValue).toBe(true);
+    expect(r.guidance).toMatch(/careFrequency/);
+    expect(onboardingData().careNeeds).toBeUndefined();
+  });
+
+  it.each([
+    ["smoking", true, "smokingHousehold"],
+    ["pets", false, "petsInHome"],
+    ["description", "Looking for a kind caregiver for my son", "jobDescription"],
+    ["Emergency Contact Relationship", "sibling", "emergencyContactRelationship"],
+  ])("near-miss key %o resolves onto the contract key", async (key, value, canonical) => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: key, fieldValue: value,
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(r.fieldName).toBe(canonical);
+    expect(onboardingData()[canonical]).toBe(value);
+  });
+
+  it("a genuinely unknown key is rejected WITH the allowed list so the model can retry", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "favoriteColor", fieldValue: "blue",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.message).toMatch(/smokingHousehold/);
+    expect(onboardingData().favoriteColor).toBeUndefined();
   });
 });

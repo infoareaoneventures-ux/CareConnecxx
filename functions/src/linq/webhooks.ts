@@ -122,6 +122,23 @@ function verifySignature(
 // caregiver flow never started). Real progress = client finished intake
 // (seniorId/seniorIds are written only at the payment step) or a caregivers/{uid}
 // profile doc exists (created at the bg-check gate).
+// A caregivers/{uid} doc no longer proves a finished signup either: since the
+// site-parity pass (2026-09-23/25) the web bridge pre-creates it on the very
+// first "Hey Evia" (status "onboarding", onboardingStatus "in_progress") so the
+// site's wizard has somewhere to land. Live 2026-09-26: the founder's fresh
+// caregiver signup was marked "complete" on its SECOND text ("I go by Hamse")
+// because that just-created doc existed — Evia answered "What do you need help
+// with right now?" and the questionnaire never ran. Real progress = the wizard
+// finished (the site's own dashboard gate) or any step past it.
+export function caregiverDocHasRealProgress(cg: Record<string, unknown>): boolean {
+  if (cg.onboardingStatus === "profile_complete") return true;
+  if (["active", "pending_review"].includes(String(cg.status ?? ""))) return true;
+  if (["submitted", "verified", "approved"].includes(String(cg.verificationStatus ?? ""))) return true;
+  if (cg.membershipPaid === true) return true;
+  if (["active", "trialing"].includes(String(cg.membershipStatus ?? ""))) return true;
+  return false;
+}
+
 export async function userHasRealOnboardingProgress(
   userId: string,
   userData: Record<string, unknown>,
@@ -129,7 +146,7 @@ export async function userHasRealOnboardingProgress(
   const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
   if ((userData.seniorId as string | undefined) || seniorIds.length > 0) return true;
   const cg = await db.collection("caregivers").doc(userId).get().catch(() => null);
-  if (cg?.exists) return true;
+  if (cg?.exists && caregiverDocHasRealProgress(cg.data() ?? {})) return true;
   // A client who finished the website wizard has jobPostingCompleted:true
   // (services/api.ts's createJobPosting) with no seniorId/seniorIds set for
   // the PRIMARY recipient (only additional household recipients append to

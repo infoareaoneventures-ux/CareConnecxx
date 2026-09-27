@@ -3,8 +3,6 @@ import {
   claimInboundProcessing,
   releaseInboundProcessing,
   INBOUND_LOCK_TTL_MS,
-  isJobInviteStale,
-  JOB_INVITE_TTL_MS,
   isFlowStale,
 } from "./sessionState";
 
@@ -92,34 +90,3 @@ describe("isFlowStale", () => {
   });
 });
 
-describe("isJobInviteStale", () => {
-  const NOW_MS = Date.parse("2026-07-15T12:00:00Z");
-  const iso = (msAgo: number) => new Date(NOW_MS - msAgo).toISOString();
-
-  it("false when no job flags are set", () => {
-    expect(isJobInviteStale({}, NOW_MS)).toBe(false);
-    expect(isJobInviteStale(null, NOW_MS)).toBe(false);
-  });
-
-  it("false for a fresh invite", () => {
-    expect(isJobInviteStale(
-      { awaitingJobResponse: true, pendingJobSentAt: iso(60 * 60 * 1000) }, NOW_MS,
-    )).toBe(false);
-  });
-
-  it("true past the TTL", () => {
-    expect(isJobInviteStale(
-      { awaitingJobResponse: true, pendingJobSentAt: iso(JOB_INVITE_TTL_MS + 1000) }, NOW_MS,
-    )).toBe(true);
-  });
-
-  it("true when the flag is set with NO sent stamp (never-expires guard)", () => {
-    expect(isJobInviteStale({ awaitingAvailabilityConfirmation: true }, NOW_MS)).toBe(true);
-  });
-
-  it("false just inside the TTL boundary", () => {
-    expect(isJobInviteStale(
-      { awaitingAvailabilityConfirmation: true, pendingJobSentAt: iso(JOB_INVITE_TTL_MS - 1000) }, NOW_MS,
-    )).toBe(false);
-  });
-});

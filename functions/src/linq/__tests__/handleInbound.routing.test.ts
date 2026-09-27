@@ -239,11 +239,6 @@ vi.mock("../../mcp/server", () => ({
 }));
 
 // ── Inert collaborators (must load, never fire in these scenarios) ──────────
-vi.mock("../../agents/permissionsConversation", () => ({
-  handleCaregiverPermissionsReply: vi.fn(async () => {}),
-  updatePermissionFromText:        vi.fn(async () => true),
-  getPermissions:                  vi.fn(async () => ({})),
-}));
 vi.mock("../../triggers/triggerEngine", () => ({ cancelTriggerIfUserReplied: vi.fn(async () => {}) }));
 vi.mock("../../observability/auditLog", () => ({ logCrisisDetected: vi.fn(async () => {}) }));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
@@ -280,11 +275,6 @@ vi.mock("../../utils/sessionState", () => ({
   staleConfirmFlags: vi.fn(() => []),
   HIGH_STAKES_CONFIRM_FLAGS: [],
   CONFIRM_FLAG_TTL_MS: 60 * 60 * 1000,
-  // Job-invite + multi-step flow freshness (2026-07-15). Default to fresh so
-  // existing routing assertions are unaffected.
-  isJobInviteStale: vi.fn(() => false),
-  JOB_INVITE_FLAGS: ["awaitingJobResponse", "awaitingAvailabilityConfirmation", "pendingJobId", "pendingJobSentAt"],
-  JOB_INVITE_TTL_MS: 48 * 60 * 60 * 1000,
   isFlowStale: vi.fn(() => false),
   MULTI_STEP_FLOW_TTL_MS: 24 * 60 * 60 * 1000,
   CREDENTIAL_FLOW_TTL_MS: 30 * 60 * 1000,
@@ -295,10 +285,6 @@ vi.mock("../../utils/caraMessage", () => ({
 }));
 vi.mock("../../utils/dndGuard", () => ({ sendIfNotDND: vi.fn(async () => {}) }));
 vi.mock("../../ai/feedback", () => ({ writeFeedbackSignal: vi.fn(async () => {}) }));
-vi.mock("../../triggers/jobNotifications", () => ({
-  handleJobResponse:            vi.fn(async () => {}),
-  handleAvailabilityConfirmation: vi.fn(async () => {}),
-}));
 vi.mock("../../memory/zepClient", () => ({
   initializeZepOnFirstContact: vi.fn(async () => {}),
   addUserMessageToZep:         vi.fn(async () => {}),

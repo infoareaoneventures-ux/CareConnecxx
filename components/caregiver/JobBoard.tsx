@@ -114,7 +114,15 @@ const CHIP = (selected: boolean) =>
     `px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${selected ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`;
 
 export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobAccepted, hideApplicationsTab = false }) => {
-    const { blockedIds, setMembershipModalOpen } = useCareConnex();
+    const { blockedIds, setMembershipModalOpen, caregiverProfile } = useCareConnex();
+    // Hidden jobs live on caregivers/{uid}.hiddenJobIds (live via context) so the
+    // website and Evia share one list — before 2026-09-27 they sat in this
+    // browser's localStorage only, invisible to Evia and to other devices.
+    const hiddenJobIds = React.useMemo(
+        () => new Set<string>(Array.isArray((caregiverProfile as any)?.hiddenJobIds) ? (caregiverProfile as any).hiddenJobIds : []),
+        [caregiverProfile],
+    );
+    const hiddenKey = Array.from(hiddenJobIds).sort().join('|');
     const { blockReason, transportBlockReason } = useCaregiverGate();
     const navigate = useNavigate();
     const [jobs, setJobs] = useState<JobPost[]>([]);
@@ -205,14 +213,14 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     useEffect(() => {
         if (activeTab !== 'hidden') return;
         setHiddenJobsLoading(true);
-        const hiddenIds: string[] = JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]');
-        if (hiddenIds.length === 0) { setHiddenJobs([]); setHiddenJobsLoading(false); return; }
+        if (hiddenJobIds.size === 0) { setHiddenJobs([]); setHiddenJobsLoading(false); return; }
         if (!db) { setHiddenJobsLoading(false); return; }
         db.collection('job_posts').where('status', '==', 'open').get().then(snap => {
             const all = snap.docs.map(d => normalizeJobPost({ id: d.id, ...d.data() }));
-            setHiddenJobs(all.filter(j => hiddenIds.includes(j.id)));
+            setHiddenJobs(all.filter(j => hiddenJobIds.has(j.id)));
         }).catch(() => {}).finally(() => setHiddenJobsLoading(false));
-    }, [activeTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, hiddenKey]);
 
     useEffect(() => {
         if (activeTab !== 'available') return;
@@ -224,7 +232,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             .onSnapshot(
                 (snapshot) => {
                     const appliedJobIds = new Set(applications.map(a => a.jobId));
-                    const hidden = new Set<string>(JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]'));
+                    const hidden = hiddenJobIds;
                     // normalizeJobPost: legacy Evia-written docs carry location
                     // as an OBJECT (crashes JSX) / summary instead of title —
                     // coerce to the render contract before anything touches them.
@@ -239,7 +247,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                 }
             );
         return unsubscribe;
-    }, [activeTab, applications, onShowToast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, applications, onShowToast, hiddenKey]);
 
     // Resolve caregiver coords from profile — used for instant distance math against job.lat/job.lng
     // Falls back to p.lat/p.lng for accounts created before the field-name standardisation
@@ -783,7 +792,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                         className="mt-4 flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 transition-colors w-full"
                                     >
                                         <EyeOff className="w-3.5 h-3.5" />
-                                        View hidden jobs{(() => { const ids = JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]'); return ids.length > 0 ? ` (${ids.length})` : ''; })()}
+                                        View hidden jobs{hiddenJobIds.size > 0 ? ` (${hiddenJobIds.size})` : ''}
                                     </button>
                                 )}
                                 {(activeTab as string) === 'hidden' && (
@@ -908,11 +917,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        const stored = JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]');
-                                                        if (!stored.includes(job.id)) stored.push(job.id);
-                                                        localStorage.setItem('careconnex.hiddenJobs', JSON.stringify(stored));
+                                                        if (!profile?.uid) return;
                                                         setJobs(prev => prev.filter(j => j.id !== job.id));
-                                                        onShowToast('Job hidden', 'info');
+                                                        dbService.setJobHidden(profile.uid, job.id, true)
+                                                            .then(() => onShowToast('Job hidden', 'info'))
+                                                            .catch(() => onShowToast('Could not hide this job. Please try again.', 'error'));
                                                     }}
                                                     className="px-3 py-1.5 text-[var(--color-neutral-500)] hover:text-[var(--color-neutral-700)] text-xs flex items-center gap-1"
                                                     title="Hide this job"
@@ -1392,10 +1401,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                 </div>
                                 <button
                                     onClick={() => {
-                                        const stored: string[] = JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]');
-                                        localStorage.setItem('careconnex.hiddenJobs', JSON.stringify(stored.filter(id => id !== job.id)));
+                                        if (!profile?.uid) return;
                                         setHiddenJobs(prev => prev.filter(j => j.id !== job.id));
-                                        onShowToast('Job unhidden', 'success');
+                                        dbService.setJobHidden(profile.uid, job.id, false)
+                                            .then(() => onShowToast('Job unhidden', 'success'))
+                                            .catch(() => onShowToast('Could not unhide this job. Please try again.', 'error'));
                                     }}
                                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 shrink-0"
                                 >
@@ -1420,7 +1430,17 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                 <h2 className="text-xl font-bold text-[var(--color-neutral-900)] leading-tight">{viewingJob.title}</h2>
                                 <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full shrink-0">{rateLabel(viewingJob)}</span>
                             </div>
-                            <p className="text-[var(--color-neutral-500)] text-sm mt-1">Posted by {viewingJob.clientName}</p>
+                            {/* The family's name is not public: it shows once this caregiver has
+                                been accepted for the job (accepted application, or an interview
+                                the family requested that's accepted / confirmed / completed) —
+                                founder, 2026-09-27. Evia's get_job_details applies the same rule. */}
+                            {(() => {
+                                const acceptedApp = applications.some(a => a.jobId === viewingJob.id && a.status === 'accepted');
+                                const acceptedIv = interviews.some(iv => iv.jobId === viewingJob.id && ['accepted', 'confirmed', 'completed'].includes(iv.status));
+                                return (acceptedApp || acceptedIv) && viewingJob.clientName
+                                    ? <p className="text-[var(--color-neutral-500)] text-sm mt-1">Posted by {viewingJob.clientName}</p>
+                                    : null;
+                            })()}
                             {viewingJob.location && (
                                 <p className="text-[var(--color-neutral-400)] text-xs mt-0.5 flex items-center gap-1">
                                     <MapPin className="w-3 h-3" />{viewingJob.location}

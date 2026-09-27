@@ -3,7 +3,7 @@ import {
   readFlag, isStateExpired, setFlags, clearFlags, staleConfirmFlags,
   CONFIRM_FLAG_TTL_MS, HIGH_STAKES_CONFIRM_FLAGS,
   hasActiveSmsFlow, GUARDED_SMS_FLAGS, PASSIVE_SMS_FLAGS, STATE_MACHINE_FLAGS,
-  JOB_INVITE_TTL_MS, MULTI_STEP_FLOW_TTL_MS,
+  MULTI_STEP_FLOW_TTL_MS,
   PENDING_MATCHES_TTL_MS, INSTANT_PAYOUT_CONFIRM_TTL_MS, CREDENTIAL_FLOW_TTL_MS,
 } from "../sessionState";
 
@@ -155,13 +155,6 @@ describe("hasActiveSmsFlow (U2 web guard)", () => {
       { collectingCredential: true, collectingCredentialSetAt: iso(NOW - 45 * 60 * 1000) }, NOW,
     )).toBe(false);
     expect(CREDENTIAL_FLOW_TTL_MS).toBe(30 * 60 * 1000);
-  });
-
-  it("invite flag: fresh (within 48h) defers, past-TTL does not", () => {
-    const freshInvite = iso(NOW - 60 * 1000);
-    const staleInvite = iso(NOW - JOB_INVITE_TTL_MS - 60 * 1000);
-    expect(hasActiveSmsFlow({ awaitingJobResponse: true, pendingJobSentAt: freshInvite }, NOW)).toBe(true);
-    expect(hasActiveSmsFlow({ awaitingJobResponse: true, pendingJobSentAt: staleInvite }, NOW)).toBe(false);
   });
 
   it("generic stamp-less flow: future stateExpiresAt defers, past does not, absent defers (deny-by-default)", () => {

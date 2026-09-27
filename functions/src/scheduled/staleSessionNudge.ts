@@ -93,52 +93,10 @@ export const sendStaleSessionNudges = functions.pubsub
       }
     }
 
-    // ── Auto-complete sessions stuck at a permissions step for 7+ days ────────
-    // The permission questions are optional yes/no setup that runs AFTER the
-    // real caregiver onboarding is done (bg check cleared + payouts live; the
-    // client questions were removed 2026-09-23) — but the router consumes EVERY inbound text
-    // while onboardingStep is a permissions step, so a session stuck here
-    // blocks all of Evia's normal features indefinitely. After 7 days: default
-    // the unanswered permissions OFF, mark complete, and tell them they're set.
-    const PERMISSION_STEPS = [
-      "caregiver_permissions_decline", "caregiver_permissions_arrival",
-    ];
-    const permSnap = await db.collection("agent_sessions")
-      .where("onboardingStep", "in", PERMISSION_STEPS)
-      .get();
-
-    for (const doc of permSnap.docs) {
-      const session = doc.data();
-      if (session.optedOut) continue;
-      const updatedAt = (session.updatedAt ?? session.createdAt ?? "") as string;
-      if (!updatedAt || updatedAt > sevenDaysAgo) continue;
-      if (!session.chatId) continue;
-
-      try {
-        const step     = session.onboardingStep as string;
-        const userType = "caregiver" as const;
-        const userId   = (session.caregiverId ?? doc.id) as string;
-        const { finalizePermissionsWithDefaults } = await import("../agents/permissionsConversation");
-        await finalizePermissionsWithDefaults(doc.id, session.chatId as string, userType, userId, step);
-
-        const message = await generateCaraMessage({
-          audience: "caregiver",
-          language: session.preferredLanguage === "es" ? "es" : "en",
-          context: "This caregiver's profile is complete and live, but they never answered the optional yes/no setup questions, so Evia has left those auto-settings OFF and finished setup for them. Tell them warmly: they're all set, their profile is live, and they can turn on auto-declining jobs or arrival notifications anytime by texting. Never claim anything is missing or unfinished.",
-          fallback: "You're all set — your profile is live! I've left the optional auto-settings off for now; text me anytime to change them.",
-          maxTokens: 120,
-        });
-        await sendViaInteractionAgent(doc.id, {
-          content:     message,
-          urgency:     "low",
-          sourceAgent: "stale_nudge",
-          canDrop:     true,
-        });
-        console.log(`[staleSessionNudge] auto-completed stale permissions for ${doc.id} (step: ${step})`);
-      } catch (err) {
-        console.error(`[staleSessionNudge] permissions auto-complete failed for ${doc.id}:`, err);
-      }
-    }
+    // (The 7-day auto-complete for sessions parked at the caregiver permissions
+    // questions went with those questions, 2026-09-27 — the website has no such
+    // step; webhooks.ts finishes any legacy session still parked there on its
+    // next text.)
 
     // Sessions that started onboarding but never completed
     const snap = await db.collection("agent_sessions")
@@ -241,16 +199,6 @@ export const sendStaleSessionNudges = functions.pubsub
           } else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
             context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their ${caregiverAnnualDisplay()} membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
             fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour ${caregiverAnnualDisplay()} membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
-          } else if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
-            // Their PROFILE is finished at this point — never imply otherwise
-            // (founder report 2026-07-10: the generic branch below told a fully
-            // live caregiver their profile was "almost there"). But do NOT assert
-            // payouts are live or the background check cleared here: a caregiver
-            // reaches the permissions questions before Stripe Connect / Checkr
-            // actually finish (founder report 2026-07-14), so those claims can be
-            // false. Keep the nudge to the profile + the optional yes/no.
-            context = `${firstName || "This caregiver"}'s profile is COMPLETE — NOTHING is missing from their profile; never say it's unfinished or invent missing profile fields. Do NOT claim their payout setup or background check is finished (those may still be processing). All that's left on THIS step is one optional yes/no question Evia already asked (${step === "caregiver_permissions_arrival" ? "auto-notifying the family when they arrive at a visit" : "auto-declining job requests outside their availability"}). Warmly invite a quick yes or no — one word finishes this step, and they can change it anytime. Never write a stiff "Reply YES or NO" instruction.`;
-            fallback = `${greeting} Good news — your profile is complete and live. A quick yes or no to my last question and you're all set (you can change it anytime).`;
           } else {
             context = `${firstName || "This caregiver"} stalled partway through profile setup. Send a short, warm nudge inviting them to reply whenever they're ready to continue.`;
             fallback = `${greeting} Your caregiver profile is almost done.\n\nReply here whenever you're ready to continue.`;

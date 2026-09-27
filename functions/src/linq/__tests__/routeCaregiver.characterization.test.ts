@@ -129,14 +129,6 @@ vi.mock("../../observability/actionLedger", () => ({ logAgentAction: vi.fn(async
 vi.mock("../../agents/caregiverCancelShiftHandler", () => ({ handleCaregiverCancelShift: vi.fn(async () => {}) }));
 vi.mock("../../agents/caregiverProfileHandler", () => ({ handleCaregiverProfileUpdate: vi.fn(async () => {}) }));
 
-const handleJobResponse = vi.fn(async () => {});
-const handleAvailabilityConfirmation = vi.fn(async () => {});
-vi.mock("../../triggers/jobNotifications", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handleJobResponse: (...a: any[]) => (handleJobResponse as Function).apply(null, a),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handleAvailabilityConfirmation: (...a: any[]) => (handleAvailabilityConfirmation as Function).apply(null, a),
-}));
 
 import { routeCaregiverMessage } from "../routeCaregiver";
 
@@ -330,33 +322,11 @@ describe("characterization — caregiver state-machine dispatch", () => {
     expect(referralDocs()).toHaveLength(0);
   });
 
-  it("a FRESH pending job-response state routes to handleJobResponse and exits early", async () => {
-    seed({ awaitingJobResponse: true, pendingJobSentAt: new Date().toISOString() });
-
-    const outcome = await routeCaregiverMessage(ctx("yes I can take it"));
-
-    expect(outcome).toBe("handled");
-    expect(handleJobResponse).toHaveBeenCalledOnce();
-  });
-
-  it("a STALE job invite (3 days old) is cleared and does NOT own the reply", async () => {
-    seed({
-      awaitingJobResponse: true,
-      pendingJobId:        "job1",
-      pendingJobSentAt:    new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    });
+  it("a legacy job-invite flag left on a session no longer owns the reply (invite flow removed 2026-09-27)", async () => {
+    seed({ awaitingJobResponse: true, pendingJobId: "job1", pendingJobSentAt: new Date().toISOString() });
 
     const outcome = await routeCaregiverMessage(ctx("just saying hi, how are you?"));
 
-    expect(handleJobResponse).not.toHaveBeenCalled();
-    expect(outcome).toBe("fallthrough"); // text routes normally after the clear
-  });
-
-  it("a job-invite flag with NO sent stamp is treated as stale (never-expires guard)", async () => {
-    seed({ awaitingAvailabilityConfirmation: true, pendingJobId: "job1" });
-
-    await routeCaregiverMessage(ctx("just saying hi, how are you?"));
-
-    expect(handleAvailabilityConfirmation).not.toHaveBeenCalled();
+    expect(outcome).toBe("fallthrough");
   });
 });

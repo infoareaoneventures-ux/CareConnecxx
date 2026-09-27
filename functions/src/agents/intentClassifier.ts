@@ -16,7 +16,6 @@ export type Intent =
   | "HELP"
   | "TASK_REPLY"
   | "QUESTION"
-  | "PERMISSION_UPDATE"
   | "REBOOK_REQUEST"
   | "CANCEL_REQUEST"
   | "MEMORY_QUERY"
@@ -27,7 +26,6 @@ export type Intent =
   | "BOOKING_CONFIRM"
   | "BOOKING_DECLINE"
   | "HIRE_CAREGIVER"
-  | "CAREGIVER_DECLINE_JOB"
   | "SCHEDULE_REQUEST"
   | "TRIGGER_MANAGEMENT"
   | "CREDENTIAL_MANAGEMENT"
@@ -59,10 +57,10 @@ export type Intent =
   | "UPDATE_ONBOARDING";
 
 const VALID_INTENTS = new Set<Intent>([
-  "STOP", "HELP", "TASK_REPLY", "PERMISSION_UPDATE", "REBOOK_REQUEST",
+  "STOP", "HELP", "TASK_REPLY", "REBOOK_REQUEST",
   "CANCEL_REQUEST", "MEMORY_QUERY",
   "FACT_CORRECTION", "FIND_CAREGIVER", "PAUSE_SCHEDULE", "CANCEL_SCHEDULE", "QUESTION",
-  "BOOKING_CONFIRM", "BOOKING_DECLINE", "HIRE_CAREGIVER", "CAREGIVER_DECLINE_JOB",
+  "BOOKING_CONFIRM", "BOOKING_DECLINE", "HIRE_CAREGIVER",
   "SCHEDULE_REQUEST", "TRIGGER_MANAGEMENT", "CREDENTIAL_MANAGEMENT",
   "POST_JOB", "VIEW_MY_JOBS", "VIEW_APPLICANTS", "VIEW_JOURNAL",
   "VIEW_EARNINGS", "UPDATE_AVAILABILITY", "BROWSE_JOB_BOARD",
@@ -121,14 +119,12 @@ export async function classifyIntentDetailed(
   try {
     const raw = await quickComplete(
         "You classify a message sent to a care coordinator named Evia. " +
-        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, FIND_REPLACEMENT, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, UPDATE_ONBOARDING, QUESTION.\n" +
+        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, FIND_REPLACEMENT, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, UPDATE_ONBOARDING, QUESTION.\n" +
         "STOP = opting out of all messages.\n" +
         "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
         "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
         "BOOKING_DECLINE = declining or rejecting a booking, schedule, or action (e.g. 'no', 'never mind', 'cancel that', 'don't book', 'skip it', 'not right now', 'actually no', 'forget it', 'nope').\n" +
         "HIRE_CAREGIVER = wanting to hire or proceed with a specific caregiver after an interview (e.g. 'hire Maria', 'let's go with James', 'I want to book Sarah', 'she was great, let's hire her').\n" +
-        "CAREGIVER_DECLINE_JOB = a caregiver declining or passing on a job offer (e.g. 'I can\\'t take that', 'I\\'m not available', 'pass on that one', 'not interested', 'I\\'m unavailable that day', 'can\\'t do it').\n" +
-        "PERMISSION_UPDATE = asking to stop/start/change a setting (e.g. 'stop weekly summaries').\n" +
         "REBOOK_REQUEST = asking to rebook or RESEND a booking with a caregiver they already have a request or booking with (e.g. 'book Maria again next week', 'can you resend the booking', 'send the booking to Basra again', 'rebook her').\n" +
         "CANCEL_REQUEST = asking to cancel an upcoming visit (e.g. 'cancel Wednesday', 'cancel tomorrow\\'s visit').\n" +
         "MEMORY_QUERY = asking what Evia knows or remembers (e.g. 'what do you know about mom', 'what have you remembered', 'what\\'s in my file').\n" +

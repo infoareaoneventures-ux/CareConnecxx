@@ -1190,14 +1190,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "apply_to_job",
     description:
-      "Apply to an open job post. Optionally include a proposed hourly rate and a short cover note.",
+      "The Jobs page's Apply Now: apply to an open job post, with an optional cover letter (the only thing the site's Apply form asks). " +
+      "Gated exactly like the site — while membership / background check / transport docs are pending it returns the gate instead.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId:  { type: "string", description: "Your caregiver document ID" },
         jobId:        { type: "string", description: "The job_posts document ID" },
-        proposedRate: { type: "number", description: "Your proposed hourly rate" },
-        coverNote:    { type: "string", description: "Brief cover note to the client" },
+        coverLetter:  { type: "string", description: "Optional cover letter to the family (the Apply form's one field)" },
       },
       required: ["caregiverId", "jobId"],
     },
@@ -1734,26 +1734,71 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "browse_job_board",
     description:
-      "Show open care jobs that a caregiver can apply to. Returns up to 5 matching jobs with care needs, schedule, and rate.",
+      "The caregiver's Jobs page (Available Jobs tab), exactly as the website lists it: every open job, newest first, minus the ones they already " +
+      "applied to or hid, within their travel distance when set. No fit or skills ranking — the site has none. Each entry is one card (title, location, " +
+      "distance, rate or Flexible, frequency, Day/Night, date, hours) plus the button the site would show (Apply Now, or the gate that replaces it). " +
+      "Pass sort 'nearest' with limit 4 for the dashboard's Nearby Jobs; pass filters to mirror the sidebar (search, pay range, time of day, days, seniors, care type). " +
+      "total = the page's 'N jobs found'.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        limit:       { type: "number", description: "Max jobs to return (default 5, max 10)" },
+        sort:        { type: "string", enum: ["newest", "nearest"], description: "newest = the Jobs page order (default); nearest = the dashboard's Nearby Jobs order" },
+        limit:       { type: "number", description: "Optional cap (the dashboard shows 4); omit for the whole list like the Jobs page" },
+        filters: {
+          type: "object",
+          description: "The page's sidebar filters — only when the caregiver asked for them",
+          properties: {
+            search:    { type: "string", description: "Area or skill text (matches title, location, requirements)" },
+            payMin:    { type: "number" },
+            payMax:    { type: "number" },
+            timeOfDay: { type: "array", items: { type: "string", enum: ["morning", "afternoon", "evening", "overnight"] } },
+            days:      { type: "array", items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] } },
+            seniors:   { type: "array", items: { type: "string", enum: ["1", "2", "3+"] } },
+            careTypes: { type: "array", items: { type: "string" }, description: "Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping" },
+          },
+        },
       },
       required: ["caregiverId"],
     },
   },
   {
-    name: "get_job_recommendations",
+    name: "get_job_details",
     description:
-      "Get ranked job recommendations for a caregiver — sorted by match percentage based on their skills, " +
-      "availability, and rate. Better than browse_job_board when the caregiver wants personalized suggestions.",
+      "The Jobs page's Details modal for ONE job: title, rate, location, frequency, care types, starting date, days, time, seniors, hours/week, " +
+      "description, and the footer the site shows (their interview or application status for it, or Apply Now / the gate). " +
+      "The family's name is NOT shown until the family has accepted them — say so if asked. Use before describing a job in depth.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        limit:       { type: "number", description: "Number of recommendations (default 5, max 10)" },
+        jobId:       { type: "string", description: "The job_posts document ID (from browse_job_board)" },
+      },
+      required: ["caregiverId", "jobId"],
+    },
+  },
+  {
+    name: "hide_job",
+    description:
+      "The Jobs page's Hide button: hide a job from their board (shared with the website's 'View hidden jobs'). Never applies or declines anything.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        jobId:       { type: "string", description: "The job_posts document ID" },
+      },
+      required: ["caregiverId", "jobId"],
+    },
+  },
+  {
+    name: "unhide_job",
+    description:
+      "The 'View hidden jobs' tab's Unhide button: put a hidden job back on their board. Omit jobId to LIST their hidden jobs (title, location, rate) like that tab.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        jobId:       { type: "string", description: "The job_posts document ID to unhide; omit to list hidden jobs" },
       },
       required: ["caregiverId"],
     },
@@ -1791,7 +1836,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_my_applications",
     description:
-      "Get a caregiver's submitted job applications and their current status (pending, accepted, rejected).",
+      "The Jobs page's My Applications tab, exactly as the site shows it: every application (Pending / Closed sub-tabs; accepted ones appear in neither), " +
+      "each with the job title, location, rate, status label, any linked interview's status, frequency, care types, days, cover letter, applied date, " +
+      "and canWithdraw (the site's Withdraw button: pending AND no pending/accepted/confirmed interview).",
     input_schema: {
       type: "object",
       properties: {
@@ -2380,6 +2427,9 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_caregiver_earnings",
   "update_caregiver_availability",
   "browse_job_board",
+  "get_job_details",
+  "hide_job",
+  "unhide_job",
   "get_my_applications",
   "respond_to_interview_request",
   "send_client_message",
@@ -2387,7 +2437,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_recent_messages",
   "delete_conversation",
   "mark_messages_read",
-  "get_job_recommendations",
   "submit_gps_checkin",
   "get_tax_summary",
   "send_onboarding_link",
@@ -2453,11 +2502,13 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "get_caregiver_earnings",
   "update_caregiver_availability",
   "browse_job_board",
+  "get_job_details",
+  "hide_job",
+  "unhide_job",
   "get_my_applications",
   "respond_to_interview_request",
   "send_client_message",
   "get_payout_history",
-  "get_job_recommendations",
   "submit_gps_checkin",
   "get_tax_summary",
   "get_background_check_status",
@@ -2880,8 +2931,8 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_care_journal_client", "get_care_plan",
   "get_recent_messages",
   "read_memory_file", "search_memory",
-  "list_client_jobs", "list_job_applicants", "browse_job_board",
-  "get_job_recommendations", "get_my_applications", "get_background_check_status",
+  "list_client_jobs", "list_job_applicants", "browse_job_board", "get_job_details",
+  "get_my_applications", "get_background_check_status",
   "get_payout_status", "get_signup_completeness",
   // CRUD/parity gap closures (agent-native audit 2026-07) — pure reads only
   "list_interviews", "list_blocked_users",
@@ -4979,7 +5030,8 @@ async function executeToolCall(
 
 
     if (name === "apply_to_job") {
-      const { caregiverId, jobId, proposedRate, coverNote } = input as Record<string, unknown>;
+      const { caregiverId, jobId, coverLetter: coverLetterIn, coverNote } = input as Record<string, unknown>;
+      const coverLetter = String((coverLetterIn ?? coverNote ?? "") as string);
       if (!caregiverId || !jobId) return toolError("INVALID_INPUT", "caregiverId and jobId are required");
       const jobSnap = await db.collection("job_posts").doc(jobId as string).get();
       if (!jobSnap.exists) return toolError("NOT_FOUND", "Job post not found");
@@ -4998,16 +5050,20 @@ async function executeToolCall(
       const { jobApplicationSnapshot } = await import("../utils/jobApplicationDoc");
       const applicantSnap = await db.collection("caregivers").doc(caregiverId as string).get().catch(() => null);
       const applicant = applicantSnap?.exists ? applicantSnap.data()! : {};
+      // Same document the site's Apply form writes (hooks/useJobApplications.ts
+      // applyToJob): caregiver snapshot (name, photo, experience, rating, skills),
+      // the cover letter, proposedRate null (the form has no rate field), and the
+      // job snapshot the cards render from.
       const appRef = await db.collection("job_applications").add({
         jobId, caregiverId, clientId: job.clientId,
-        caregiverName: (applicant.name as string) ?? "",
-        ...(applicant.photo ? { caregiverPhoto: applicant.photo } : {}),
-        rating: typeof applicant.rating === "number" ? applicant.rating : null,
+        caregiverName:  (applicant.name as string) ?? "",
+        caregiverPhoto: (applicant.photo as string) || (applicant.imageUrl as string) || "",
+        experience:     typeof applicant.experience === "number" ? applicant.experience : (Number(applicant.experience) || 0),
+        rating:         typeof applicant.rating === "number" ? applicant.rating : null,
+        skills:         Array.isArray(applicant.skills) ? applicant.skills : [],
         ...jobApplicationSnapshot(job),
-        proposedRate: proposedRate ?? null,
-        // coverLetter is the canonical key the web reads; coverNote kept for SMS-side readers.
-        coverLetter: (coverNote as string | undefined) ?? "",
-        coverNote: coverNote ?? "",
+        coverLetter,
+        proposedRate: null,
         status: "pending", appliedAt: nowIso, source: "cara_sms",
       });
       // onJobApplicationCreate (notificationTriggers.ts) is the single source
@@ -5317,6 +5373,14 @@ async function executeToolCall(
       // Idempotent: already withdrawn → success-shaped no-op.
       if (app.status === "withdrawn") return { success: true, applicationId, status: "withdrawn", alreadyWithdrawn: true };
       if (app.status !== "pending") return toolError("INVALID_INPUT", `Application can no longer be withdrawn (status: ${app.status})`);
+      // JobBoard.tsx: no Withdraw button once an interview for that job is pending / accepted / confirmed.
+      {
+        const ivSnap = await db.collection("video_interviews").where("caregiverId", "==", caregiverId).where("jobId", "==", app.jobId).limit(1).get();
+        const ivStatus = ivSnap.docs[0]?.data()?.status as string | undefined;
+        if (ivStatus && ["pending", "requested", "scheduled", "accepted", "confirmed"].includes(ivStatus)) {
+          return toolError("INVALID_INPUT", "This application can't be withdrawn while an interview for it is pending or scheduled — respond to the interview instead");
+        }
+      }
       await appSnap.ref.update({ status: "withdrawn", withdrawnAt: nowIso, withdrawReason: reason ?? "" });
       logAudit({ eventType: "job_application_withdrawn", userId: caregiverId as string, data: { source: "mcp:withdraw_job_application", applicationId, jobId: app.jobId } }).catch(() => {});
       return { success: true, applicationId, status: "withdrawn" };
@@ -6519,81 +6583,96 @@ async function executeToolCall(
     }
 
     // ── browse_job_board ────────────────────────────────────────────────────
+    // The Jobs page, as data (agents/jobBoardPage.ts mirrors JobBoard.tsx).
     if (name === "browse_job_board") {
-      const { caregiverId } = input as Record<string, unknown>;
+      const { caregiverId, sort, limit, filters } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const cgSnap7 = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap7.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const cg7 = cgSnap7.data() || {};
-      const limit7 = Math.min((input.limit as number) ?? 5, 10);
-      const RADIUS_MILES = 25; // match the push-notification radius (jobNotifications.ts)
-
-      const cgLat = (cg7.latitude ?? cg7.location?.latitude ?? cg7.location?.lat) as number | undefined;
-      const cgLng = (cg7.longitude ?? cg7.location?.longitude ?? cg7.location?.lng) as number | undefined;
-      const hasCoords = typeof cgLat === "number" && typeof cgLng === "number";
-
-      const alreadyApplied = await db.collection("job_applications").where("caregiverId", "==", caregiverId).get();
-      const appliedJobIds = new Set(alreadyApplied.docs.map((d) => d.data().jobId as string));
-      // Pull a wider window since we filter by distance below.
-      const jobsSnap = await db.collection("job_posts").where("status", "==", "open").orderBy("createdAt", "desc").limit(50).get();
-
-      const { haversineMiles } = await import("../ai/scoring");
-      const scoped = jobsSnap.docs
-        .filter((d) => !appliedJobIds.has(d.id))
-        .map((d) => {
-          const data = d.data();
-          const jLat = data.location?.lat ?? data.location?.latitude;
-          const jLng = data.location?.lng ?? data.location?.longitude;
-          const dist = (hasCoords && typeof jLat === "number" && typeof jLng === "number")
-            ? haversineMiles(cgLat as number, cgLng as number, jLat, jLng)
-            : undefined;
-          return {
-            jobId:      d.id,
-            summary:    data.summary ?? "Care job",
-            careNeeds:  data.careTypes ?? [],
-            schedule:   data.schedule  ?? {},
-            hourlyRate: data.hourlyRate ?? null,
-            location:   data.location?.city ?? "Nearby",
-            distanceMiles: dist !== undefined ? Math.round(dist) : null,
-          };
-        })
-        // Geo-scope only when we can compute distance for the job. Jobs without
-        // coordinates are kept (can't determine), but out-of-radius jobs are dropped.
-        .filter((j) => j.distanceMiles === null || j.distanceMiles <= RADIUS_MILES)
-        .sort((a, b) => (a.distanceMiles ?? 9999) - (b.distanceMiles ?? 9999))
-        .slice(0, limit7);
-
-      return {
-        success:   true,
-        jobs:      scoped,
-        total:     scoped.length,
-        geoScoped: hasCoords,
-        radiusMiles: RADIUS_MILES,
-      };
+      const { loadAvailableJobs } = await import("../agents/jobBoardPage");
+      const page = await loadAvailableJobs(caregiverId as string, {
+        sort:    sort === "nearest" ? "nearest" : "newest",
+        limit:   typeof limit === "number" && limit > 0 ? Math.floor(limit) : undefined,
+        filters: (filters && typeof filters === "object") ? (filters as Record<string, unknown>) : undefined,
+      });
+      if (!page) return toolError("NOT_FOUND", "Caregiver not found");
+      return { success: true, ...page, page: "/caregiver/jobs" };
     }
 
-    // ── get_my_applications ─────────────────────────────────────────────────
+    if (name === "get_job_details") {
+      const { caregiverId, jobId } = input as Record<string, unknown>;
+      if (!caregiverId || !jobId) return toolError("INVALID_INPUT", "caregiverId and jobId are required");
+      const { loadJobDetails } = await import("../agents/jobBoardPage");
+      const r = await loadJobDetails(caregiverId as string, jobId as string);
+      if (!r.ok) {
+        if (r.reason === "no_caregiver") return toolError("NOT_FOUND", "Caregiver not found");
+        if (r.reason === "not_found") return toolError("NOT_FOUND", "Job details not available");
+        return toolError("NOT_FOUND", "This job is no longer available");
+      }
+      return { success: true, job: r.details, page: `/caregiver/jobs?job=${jobId}` };
+    }
+
+    if (name === "hide_job") {
+      const { caregiverId, jobId } = input as Record<string, unknown>;
+      if (!caregiverId || !jobId) return toolError("INVALID_INPUT", "caregiverId and jobId are required");
+      const jobSnap = await db.collection("job_posts").doc(jobId as string).get();
+      if (!jobSnap.exists) return toolError("NOT_FOUND", "Job post not found");
+      const { setJobHidden } = await import("../agents/jobBoardPage");
+      await setJobHidden(caregiverId as string, jobId as string, true);
+      return { success: true, jobId, hidden: true, message: "Job hidden" };
+    }
+
+    if (name === "unhide_job") {
+      const { caregiverId, jobId } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { setJobHidden, loadHiddenJobs } = await import("../agents/jobBoardPage");
+      if (!jobId) {
+        const hidden = await loadHiddenJobs(caregiverId as string);
+        if (!hidden) return toolError("NOT_FOUND", "Caregiver not found");
+        return { success: true, hiddenJobs: hidden, total: hidden.length };
+      }
+      await setJobHidden(caregiverId as string, jobId as string, false);
+      return { success: true, jobId, hidden: false, message: "Job unhidden" };
+    }
+
+    // ── get_my_applications — JobBoard.tsx My Applications tab ──────────────
     if (name === "get_my_applications") {
       const { caregiverId } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const myAppSnap = await db.collection("job_applications").where("caregiverId", "==", caregiverId).orderBy("appliedAt", "desc").limit(10).get();
-      const applications = await Promise.all(
-        myAppSnap.docs.map(async (d) => {
-          const app = d.data();
-          const jpSnap3 = await db.collection("job_posts").doc(app.jobId as string).get().catch(() => null);
-          const jp3 = jpSnap3?.data() ?? {};
-          return {
-            applicationId: d.id,
-            jobId:         app.jobId,
-            jobSummary:    jp3.summary ?? `Care job`,
-            jobStatus:     jp3.status  ?? "unknown",
-            status:        app.status  ?? "pending",
-            appliedAt:     app.appliedAt,
-            proposedRate:  app.proposedRate ?? null,
-          };
-        })
-      );
-      return { success: true, applications, total: applications.length };
+      const { rateLabel: rateLabelFor } = await import("../agents/jobBoardPage");
+      const [myAppSnap, ivSnap] = await Promise.all([
+        db.collection("job_applications").where("caregiverId", "==", caregiverId).orderBy("appliedAt", "desc").get(),
+        db.collection("video_interviews").where("caregiverId", "==", caregiverId).get(),
+      ]);
+      const interviewsByJob = new Map<string, Record<string, unknown>>();
+      for (const d of ivSnap.docs) { const iv = d.data(); if (iv.jobId) interviewsByJob.set(iv.jobId as string, iv); }
+      const STATUS_LABEL: Record<string, string> = { pending: "Pending", accepted: "Accepted", rejected: "Declined by client", withdrawn: "Withdrawn by you" };
+      const IV_LABEL: Record<string, string> = { pending: "Interview Pending", requested: "Interview Pending", scheduled: "Interview Pending", accepted: "Interview Confirmed", confirmed: "Interview Confirmed", completed: "Interview Completed", declined: "Interview Declined", cancelled: "Interview Cancelled" };
+      const applications = myAppSnap.docs.map((d) => {
+        const app = d.data();
+        const iv = interviewsByJob.get(app.jobId as string);
+        const ivStatus = (iv?.status as string | undefined) ?? null;
+        const status = (app.status as string) ?? "pending";
+        const appliedAt = app.appliedAt;
+        return {
+          applicationId: d.id,
+          jobId:         app.jobId,
+          jobTitle:      app.jobTitle ?? "Care needed",
+          jobLocation:   app.jobLocation ?? null,
+          // The tab shows the family's name only once an interview is linked.
+          clientName:    iv ? (app.clientName ?? null) : null,
+          rate:          rateLabelFor({ rate: app.jobRate, rateFlexible: app.jobRateFlexible }),
+          status,
+          statusLabel:   STATUS_LABEL[status] ?? status,
+          tab:           status === "pending" ? "Pending" : (status === "rejected" || status === "withdrawn") ? "Closed" : null,
+          interviewStatus: ivStatus ? (IV_LABEL[ivStatus] ?? "Interview Scheduled") : null,
+          jobFrequency:  app.jobFrequency ?? null,
+          jobCareTypes:  Array.isArray(app.jobCareTypes) ? app.jobCareTypes : [],
+          jobDaysOfWeek: Array.isArray(app.jobDaysOfWeek) ? app.jobDaysOfWeek : [],
+          coverLetter:   app.coverLetter ?? "",
+          appliedAt:     typeof appliedAt?.toDate === "function" ? appliedAt.toDate().toISOString() : (appliedAt ?? null),
+          canWithdraw:   status === "pending" && !(ivStatus && ["pending", "requested", "scheduled", "accepted", "confirmed"].includes(ivStatus)),
+        };
+      });
+      return { success: true, applications, total: applications.length, page: "/caregiver/jobs?tab=applications" };
     }
 
     // ── get_pending_timesheets ──────────────────────────────────────────────
@@ -7164,17 +7243,6 @@ async function executeToolCall(
     }
 
 
-
-    // ── get_job_recommendations ─────────────────────────────────────────────
-    if (name === "get_job_recommendations") {
-      const { getJobRecommendationsForCaregiver } = await import("../agents/jobMatchRecommender");
-      const caregiverId = input.caregiverId as string;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const limit = Math.min((input.limit as number) ?? 5, 10);
-      const recs = await getJobRecommendationsForCaregiver(caregiverId, limit);
-      if (!recs.length) return { recommendations: [], message: "No open jobs matching your profile right now." };
-      return { recommendations: recs };
-    }
 
     // ── submit_gps_checkin ──────────────────────────────────────────────────
     if (name === "submit_gps_checkin") {

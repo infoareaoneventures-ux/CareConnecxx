@@ -6,7 +6,6 @@ import { sendIfNotDND } from "../utils/dndGuard";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate } from "../agents/caregiverProfileHandler";
-import { handleJobResponse, handleAvailabilityConfirmation } from "../triggers/jobNotifications";
 import { logAudit } from "../observability/auditLog";
 import { logAgentAction } from "../observability/actionLedger";
 import {
@@ -18,7 +17,6 @@ import { answerHumanQuestionOnly } from "../agents/humanReply";
 import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 import { bookedWindowMillis, createValidatedShiftHours } from "../billing/createValidatedShiftHours";
-import { isJobInviteStale, JOB_INVITE_FLAGS } from "../utils/sessionState";
 import { getVisitDoc } from "../utils/visitQuery";
 
 const db = admin.firestore();
@@ -1136,40 +1134,8 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (offerOutcome === "handled") return "handled";
     }
 
-    // ── Job alert: staleness gate ────────────────────────────────────────────
-    // These flags sit at the top of routing, so WITHOUT a TTL a week-old
-    // unanswered invite would intercept everything — including ARRIVED at a
-    // shift. Stale (or unstamped) invites clear silently and the text routes
-    // normally; the QA agent can still answer job questions from context.
-    if (isJobInviteStale(session as unknown as Record<string, unknown>)) {
-      await db.collection("agent_sessions").doc(phone).update(
-        Object.fromEntries(JOB_INVITE_FLAGS.map((f) => [f, admin.firestore.FieldValue.delete()])),
-      ).catch(() => {});
-      for (const f of JOB_INVITE_FLAGS) (session as any)[f] = undefined;
-      // fall through to normal routing
-    }
-
-    // ── Job alert: YES/NO/natural-language response ────────────────────────
-    // Checked BEFORE the referral flow: a job alert is always the most recent
-    // ask when these flags are set (same rationale as the permissions-step
-    // bypass in webhooks.ts). Seen live 07-14: a bare "Yes" answering the
-    // availability-confirmation question was misclassified by the referral
-    // intent LLM ("yes" to "do you want to refer someone?") — Evia replied
-    // "Who should I invite?" and the job application was never submitted.
-    if ((session as any).awaitingJobResponse === true) {
-      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-      try { await handleJobResponse(phone, text, chatId, session as any); }
-      finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
-      return "handled";
-    }
-
-    // ── Job alert: availability confirmation (any text) ─────────────────────
-    if ((session as any).awaitingAvailabilityConfirmation === true) {
-      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-      try { await handleAvailabilityConfirmation(phone, text, chatId, session as any); }
-      finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
-      return "handled";
-    }
+    // (The texted job-invite yes/no state machine that used to own every reply
+    // here for 48h was removed 2026-09-27 — the website has no such flow.)
 
     const pendingReferral = (session as any).pendingCaregiverReferral as PendingCaregiverReferral | undefined;
     if (pendingReferral) {

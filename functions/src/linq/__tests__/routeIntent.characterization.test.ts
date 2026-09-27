@@ -165,9 +165,6 @@ vi.mock("../../memory/learnedFacts", () => ({
   classifyReRememberReply: vi.fn(async () => "other"),
   confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
 }));
-vi.mock("../../agents/permissionsConversation", () => ({
-  updatePermissionFromText: vi.fn(async () => true),
-}));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../agents/jobPostingFlow", () => ({ startJobPostingFlow: vi.fn(async () => {}) }));
 const startRescheduleFlow = vi.fn(async (..._a: any[]) => ({ started: true }));
@@ -192,7 +189,6 @@ vi.mock("../../agents/caregiverProfileHandler", () => ({
   profileFieldFromIntent: vi.fn(() => null),
 }));
 vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg") }));
-vi.mock("../../triggers/jobNotifications", () => ({ handleJobResponse: vi.fn(async () => {}) }));
 vi.mock("../../memory/zepClient", () => ({
   addUserMessageToZep: vi.fn(async () => {}), addAssistantMessageToZep: vi.fn(async () => {}),
   searchZepMemory: vi.fn(async () => ""), getZepUserId: (p: string) => `zep-${p}`,

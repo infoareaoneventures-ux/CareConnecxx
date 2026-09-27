@@ -305,7 +305,7 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   copy("city",    d.city);
   copy("zipCode", d.zipCode);
   // Coords — from a shared location pin OR geocoded from city/zip (see
-  // ensureCaregiverCoords). latitude/longitude is what notifyAreaCaregivers
+  // ensureCaregiverCoords). latitude/longitude is what the Jobs board radius rule
   // and caregiverJobMatch actually read (cg.latitude ?? cg.location?.lat).
   // NEVER write `location` as a {lat,lng} OBJECT here: the webapp renders
   // caregiver `location` as a display string, and an object crashes the page
@@ -3214,30 +3214,6 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
  * value is fresh and concrete at the moment we ask for payment. Never fabricates
  * — an empty result means there genuinely are no open jobs in that city.
  */
-async function getLocalJobTeaser(city: string): Promise<{ count: number; lines: string }> {
-  if (!city) return { count: 0, lines: "" };
-  try {
-    const openSnap = await db.collection("job_posts").where("status", "==", "open").limit(50).get();
-    const cityLower = city.toLowerCase();
-    const localJobs = openSnap.docs.filter((doc) => {
-      const c = doc.data().location?.city;
-      return c && String(c).toLowerCase() === cityLower;
-    }).slice(0, 3);
-
-    const lines = localJobs.map((doc, i) => {
-      const j = doc.data();
-      const needs = (j.careTypes ?? []).join(", ") || "general care";
-      const rate  = j.hourlyRate ? ` · $${j.hourlyRate}/hr` : "";
-      return `${i + 1}. ${needs}${rate}`;
-    }).join("\n");
-
-    return { count: localJobs.length, lines };
-  } catch (err) {
-    console.error("[getLocalJobTeaser] failed:", err);
-    return { count: 0, lines: "" };
-  }
-}
-
 async function handleCaregiverSendMembership(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const d       = session.onboardingData ?? {};
   // Flat membership: the MVR rides along whenever their services include
@@ -3310,12 +3286,6 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     }).catch(() => {});
   }
 
-  // Re-cite the live local demand the caregiver saw at the location step — fresh
-  // at the moment of payment — so the ask is anchored to concrete, current jobs
-  // rather than a generic "jobs near you". Honest if supply has since dried up.
-  const city = (d.city as string | undefined) ?? "";
-  const { count: openJobCount } = await getLocalJobTeaser(city);
-
   // Store URL on session so we can resend it
   await updateSession(phone, {
     onboardingStep:        "caregiver_awaiting_membership",
@@ -3329,12 +3299,9 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
       `it's ${caregiverAnnualDisplay()}, it INCLUDES the background check every caregiver completes (the next step right after payment — no separate charge for it), ` +
       "and it unlocks applying to jobs, getting booked, and Evia's scheduling + payout tools. Once their background check comes back clear, they're approved to care for clients" +
       (mvrCharged ? ". Their order also includes the driving-record (MVR) check they asked for" : "") +
-      (openJobCount > 0
-        ? `. Anchor it to the real demand: there ${openJobCount === 1 ? "is" : "are"} currently ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} waiting`
-        : "") +
       ". End leading into the activation link you're sending right after this message. Do NOT include any URL.",
     fallback:
-      `${openJobCount > 0 ? `The ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} ${openJobCount === 1 ? "is" : "are"} still waiting — ` : ""}you're almost ready to apply! ` +
+      `You're almost ready to apply! ` +
       `Activate your membership (${caregiverAnnualDisplay()}) — it includes your background check and unlocks applying to jobs near you, getting booked, and my scheduling + payout tools. ` +
       `Once your background check clears, you're approved to care for clients.` +
       `${mvrCharged ? " Your order includes the membership + MVR driver check." : ""} Tap to activate:`,
@@ -5088,13 +5055,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         console.error("notifyWaitlistedFamilies error:", err)
       );
 
-      // U10 — reverse of the job→caregiver fan-out (notifyNewCaregiverOfJobs)
-      // now fires when the PERMISSIONS flow completes (permissionsConversation.ts)
-      // instead of here: firing it moments before the permissions questions made
-      // two competing "Reply YES or NO" prompts race, and while onboardingStep
-      // was a permissions step the router fed the caregiver's YES to the
-      // permissions machine — silently dropping the job application.
-
       // Notify admin
       notifyAdminNewCaregiverSignup({
         caregiverId,
@@ -5151,14 +5111,14 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           `Caregiver first name: ${firstName}. ` +
           `Their background check came back clear and they just finished setting up payouts — they're now fully approved and active. ` +
           `${specialties ? `Their specialties: ${specialties}. ` : ""}` +
-          `Write a warm 3-4 sentence "you're approved" celebration message. Reassure them their profile is live, ` +
-          `mention they'll start getting matched with families soon, and that I'll text them as new jobs come in. ` +
+          `Write a warm 3-4 sentence "you're approved" celebration message. Reassure them their profile is live and families can now book them, ` +
+          `and that open jobs near them are on their Jobs page — they can also just ask me what's open. ` +
           `Then, in one natural closing sentence (plain prose - no list, no menu, no numbering), let them know ` +
           `they can text me anytime to ${recipeList}. ` +
           `Sound genuinely happy for them.`,
         fallback:
-          `🎉 You're approved, ${firstName}! Your profile is live and I'll start matching you with families that need help. ` +
-          `Watch for job alerts here — reply YES to any that interest you. ` +
+          `🎉 You're approved, ${firstName}! Your profile is live and families can now book you. ` +
+          `Open jobs near you are on your Jobs page — or just ask me what's open. ` +
           `And I'm your coordinator from here on: text me anytime to ${recipeList}. Welcome to Evia!`,
         maxTokens: 220,
       });
@@ -5173,8 +5133,25 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         `You can see your balance and payment history anytime at ${APP_URL}/caregiver/payments`
       );
 
-      const { sendCaregiverPermissionsFlow } = await import("./permissionsConversation");
-      await sendCaregiverPermissionsFlow(phone, chatId, session, d.name as string);
+      // Setup is finished here, exactly where the website's progress bar
+      // completes (the former yes/no "permissions" questions were removed
+      // 2026-09-27 — the site has no such settings). The session leaves the
+      // onboarding machine; the capability note tells them what to text for.
+      await db.collection("agent_sessions").doc(phone).update({
+        onboardingStep: "complete",
+        optedIn:        true,
+      });
+      await sendMessage(chatId, buildHelpSmsReply("caregiver", undefined,
+        languageFromSession(session as unknown as Record<string, unknown>)));
+      await db.collection("admin_alerts").add({
+        type:        "caregiver_onboarding_complete",
+        caregiverId,
+        name:        d.name,
+        phone,
+        note:        "Caregiver completed onboarding — profile is live and ready to match.",
+        createdAt:   new Date().toISOString(),
+        resolved:    false,
+      });
       break;
     }
   }

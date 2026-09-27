@@ -19,7 +19,7 @@ import { formatCaregiverSnapshot, formatClientSnapshot } from "../situationSnaps
 const cg = (over: Partial<Parameters<typeof formatCaregiverSnapshot>[0]> = {}) =>
   formatCaregiverSnapshot({
     pendingApplications: 0, hasShiftOffer: false,
-    hasJobInvite: false, upcomingVisits: 0, nextVisit: null, ...over,
+    upcomingVisits: 0, nextVisit: null, ...over,
   });
 
 const client = (over: Partial<Parameters<typeof formatClientSnapshot>[0]> = {}) =>
@@ -30,10 +30,9 @@ describe("formatCaregiverSnapshot", () => {
     expect(cg()).toBe("");
   });
 
-  it("surfaces a pending shift offer and job invite as YES/NO prompts", () => {
-    const out = cg({ hasShiftOffer: true, hasJobInvite: true });
+  it("surfaces a pending shift offer as a YES/NO prompt", () => {
+    const out = cg({ hasShiftOffer: true });
     expect(out).toContain("shift offer is awaiting your YES/NO");
-    expect(out).toContain("job invite is awaiting your YES/NO");
   });
 
   it("pluralizes applications correctly", () => {

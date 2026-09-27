@@ -27,7 +27,6 @@ const db = admin.firestore();
 export interface CaregiverSnapshotInput {
   pendingApplications: number;
   hasShiftOffer:      boolean;
-  hasJobInvite:       boolean;
   upcomingVisits:     number;
   nextVisit:          { date: string; startTime?: string } | null;
 }
@@ -60,8 +59,6 @@ export function formatCaregiverSnapshot(s: CaregiverSnapshotInput): string {
   const lines: string[] = [];
   if (s.hasShiftOffer)
     lines.push("- A shift offer is awaiting your YES/NO.");
-  if (s.hasJobInvite)
-    lines.push("- A job invite is awaiting your YES/NO.");
   if (s.nextVisit) {
     const at = s.nextVisit.startTime ? ` at ${formatHHMMForDisplay(s.nextVisit.startTime)}` : "";
     const more = s.upcomingVisits > 1 ? ` (+${s.upcomingVisits - 1} more in the next 7 days)` : "";
@@ -138,7 +135,6 @@ export async function buildCaregiverSnapshot(
     return formatCaregiverSnapshot({
       pendingApplications,
       hasShiftOffer:       !!session?.pendingShiftOfferId,
-      hasJobInvite:        !!(session?.awaitingJobResponse && session?.pendingJobId),
       upcomingVisits:      visitDocs.length,
       nextVisit,
     });

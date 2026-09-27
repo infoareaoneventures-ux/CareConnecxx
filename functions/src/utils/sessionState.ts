@@ -6,8 +6,6 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingLateMinutes",
   "awaitingIssueDescription",
   "caregiverRescheduling",
-  "awaitingJobResponse",
-  "awaitingAvailabilityConfirmation",
   "pendingShiftApproval",
   "collectingCredential",
   "collectingCredentialSetAt",
@@ -111,40 +109,9 @@ export function staleConfirmFlags(
   return stale;
 }
 
-// ── Job-invite freshness ─────────────────────────────────────────────────────
-// awaitingJobResponse / awaitingAvailabilityConfirmation are checked at the
-// TOP of routeCaregiverMessage (and in the webhooks permissions-step bypass),
-// so a stale invite would intercept EVERYTHING — including ARRIVED at a shift
-// (hazard created when the 07-15 reorder fixed the referral hijack). The
-// senders stamp pendingJobSentAt; nothing read it until this gate. Missing
-// stamp counts as stale — the dangerous never-expires case, same semantics as
-// staleConfirmFlags.
-export const JOB_INVITE_TTL_MS = 48 * 60 * 60 * 1000;
-
-/**
- * True when the session's job-invite state should no longer own inbound
- * replies: either flag is set and the pendingJobSentAt stamp is missing or
- * older than JOB_INVITE_TTL_MS. Pure — the caller clears the flags and falls
- * through to normal routing.
- */
-export function isJobInviteStale(
-  session: Record<string, unknown> | undefined | null,
-  nowMs: number = Date.now(),
-): boolean {
-  if (!session) return false;
-  if (!session.awaitingJobResponse && !session.awaitingAvailabilityConfirmation) return false;
-  const sentAt = session.pendingJobSentAt as string | undefined;
-  if (!sentAt) return true;
-  return sentAt < new Date(nowMs - JOB_INVITE_TTL_MS).toISOString();
-}
-
-/** The full field set to delete when a stale job invite is cleared. */
-export const JOB_INVITE_FLAGS = [
-  "awaitingJobResponse",
-  "awaitingAvailabilityConfirmation",
-  "pendingJobId",
-  "pendingJobSentAt",
-] as const;
+// (The texted job-invite flags — awaitingJobResponse /
+// awaitingAvailabilityConfirmation / pendingJobId / pendingJobSentAt — and
+// their 48h TTL were removed 2026-09-27 with the invite flow itself.)
 
 // ── Multi-step flow freshness ────────────────────────────────────────────────
 // Flows that collect over several turns (credentials, shift approvals) stamp a
@@ -272,14 +239,13 @@ export function isStateExpired(
 // or as a data companion below — so money flags (pendingInstantPayoutConfirm,
 // pendingShiftApproval) and any FUTURE flag defer by
 // default rather than fall through an allow-list. Each guarded flag is composed
-// with its staleness helper (confirm/invite/stamped-step/generic), so a stale
+// with its staleness helper (confirm/stamped-step/generic), so a stale
 // flag never defers a web turn. The web path NEVER clears or stamps flags —
 // flag lifecycle stays SMS-router-owned. A drift test (sessionState.test.ts)
 // asserts GUARDED_SMS_FLAGS and PASSIVE_SMS_FLAGS partition STATE_MACHINE_FLAGS,
 // so a newly-added flag fails the build until it is categorized here.
 type WebGuardStrategy =
   | "confirm"
-  | "invite"
   | "stampedStep"
   | "generic"
   // Per-flag explicit stamp: the flag was set alongside `setAtField` (an ISO
@@ -304,7 +270,6 @@ export const INSTANT_PAYOUT_CONFIRM_TTL_MS = 10 * 60 * 1000;
  * Guarded primary flags → the staleness strategy used to decide whether an
  * instance of the flag is still "active" (defers a web turn) or stale (ignored):
  *  - "confirm":     staleConfirmFlags (1h TTL; missing stamp = stale)
- *  - "invite":      isJobInviteStale (48h TTL on pendingJobSentAt)
  *  - "stampedStep": isFlowStale on `${flag}SetAt` (24h MULTI_STEP TTL)
  *  - {setAtField, ttlMs}: isFlowStale on an EXPLICIT stamp field + TTL
  *                   (missing stamp = stale) — used where the SMS side already
@@ -324,8 +289,6 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["awaitingLateMinutes", "generic"],
   ["awaitingIssueDescription", "generic"],
   ["caregiverRescheduling", "generic"],
-  ["awaitingJobResponse", "invite"],
-  ["awaitingAvailabilityConfirmation", "invite"],
   // Set by approvalNoticeDispatcher.ts alongside pendingShiftApprovalSetAt.
   ["pendingShiftApproval", { setAtField: "pendingShiftApprovalSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
   // SMS router parity: credentialCollector.ts clears this flow after
@@ -414,9 +377,6 @@ export function hasActiveSmsFlow(
     switch (strategy) {
       case "confirm":
         if (!staleConfirmFlags(session, nowMs).includes(flag)) return true;
-        break;
-      case "invite":
-        if (!isJobInviteStale(session, nowMs)) return true;
         break;
       case "stampedStep":
         if (!isFlowStale(session, flag, `${flag}SetAt`, MULTI_STEP_FLOW_TTL_MS, nowMs)) return true;

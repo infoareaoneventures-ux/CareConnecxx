@@ -1,5 +1,4 @@
 import * as admin from "firebase-admin";
-import { notifyAreaCaregivers } from "../triggers/jobNotifications";
 import { recipientPlanKey, resolveRecipientKey, normalizeAdditionalRecipients, allCareRecipients, CareRecipient } from "./careRecipients";
 import { buildWebJobPostDoc, defaultJobTitle } from "./jobPostContract";
 import { geocodeZip, geocodeCity } from "../utils/geocode";
@@ -337,14 +336,9 @@ export async function buildAndSaveJobPost(params: {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
-  // ── Notify area caregivers ────────────────────────────────────────────────
-  // Awaited (was fire-and-forget) so the caller can tell the family the REAL
-  // outcome instead of unconditionally claiming caregivers were notified. The
-  // marketplace is small enough that the added latency is a few seconds; each
-  // notify is a single plain-text send (no link, no inter-part delay).
-  const notifiedCount = await notifyAreaCaregivers(jobPostRef.id, jobPostDoc, uid)
-    .catch((err) => { console.error("[buildAndSaveJobPost] notifyAreaCaregivers error:", err); return 0; });
-
-  console.log(`[buildAndSaveJobPost] Job posted: ${jobPostRef.id} for uid=${uid} (notified ${notifiedCount})`);
-  return { jobId: jobPostRef.id, notifiedCount };
+  // No caregiver fan-out (2026-09-27): the website's Post Job submit notifies
+  // nobody — caregivers find the post on their Jobs board / dashboard Nearby
+  // Jobs, exactly as Evia's browse_job_board now shows it.
+  console.log(`[buildAndSaveJobPost] Job posted: ${jobPostRef.id} for uid=${uid}`);
+  return { jobId: jobPostRef.id, notifiedCount: 0 };
 }

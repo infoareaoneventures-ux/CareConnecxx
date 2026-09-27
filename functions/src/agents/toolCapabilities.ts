@@ -53,7 +53,9 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   edit_job_post:                ["booking"],
   list_job_applicants:          ["booking"],
   browse_job_board:             ["booking"],
-  get_job_recommendations:      ["booking"],
+  get_job_details:              ["booking"],
+  hide_job:                     ["booking"],
+  unhide_job:                   ["booking"],
   get_my_applications:          ["booking"],
   withdraw_job_application:     ["booking"],
   respond_to_booking_request:   ["booking", "messaging"],
@@ -208,7 +210,6 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   TASK_REPLY:           [],
   QUESTION:             [],
   UPDATE_ONBOARDING:    [],
-  PERMISSION_UPDATE:    ["messaging"],
 
 
   // Booking & matching
@@ -218,7 +219,6 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   BOOKING_CONFIRM:       ["booking", "messaging"],
   BOOKING_DECLINE:       ["booking", "messaging"],
   HIRE_CAREGIVER:        ["booking", "messaging"],
-  CAREGIVER_DECLINE_JOB: ["booking", "messaging"],
   RESCHEDULE_REQUEST:    ["booking", "scheduling", "messaging"],
   FIND_REPLACEMENT:      ["booking", "scheduling", "messaging"],
   CANCEL_SHIFT:          ["booking", "scheduling", "messaging"],

@@ -155,7 +155,6 @@ vi.mock("../../notifications", () => ({ notifyAdminNewClientSignup: vi.fn(async 
 vi.mock("../buildJobPost", () => ({ buildAndSaveJobPost: vi.fn(async () => {}) }));
 vi.mock("../tokenService", () => ({ generateToken: vi.fn(() => "test-token"), verifyToken: vi.fn(() => ({ phone: "+15555550100" })) }));
 // Dynamic import() in the stripe_connect finalize branch — stub so it resolves cheaply.
-vi.mock("../../triggers/caregiverJobMatch", () => ({ notifyNewCaregiverOfJobs: vi.fn(async () => {}) }));
 
 const sentMessages: Array<{ chatId: string; text: any }> = [];
 vi.mock("../../linq/client", () => ({

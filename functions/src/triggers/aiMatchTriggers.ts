@@ -6,7 +6,7 @@ import {
 } from "../ai/matchJob";
 import { composeCaregiverText, hashText } from "../ai/embeddings";
 import { writeMatchOutcome } from "../ai/matchOutcomes";
-import { createJobPost, notifyAreaCaregivers } from "./jobNotifications";
+import { createJobPost } from "./jobNotifications";
 
 const CAREGIVER_EMBED_FIELDS = [
     "skills",
@@ -127,7 +127,6 @@ export const onIntakeAiMatch = functions.firestore
                 const paid = u.subscriptionActive === true || u.membershipStatus === "active";
                 if (paid) {
                     await createJobPost(intakeId, data, result.clientId);
-                    await notifyAreaCaregivers(intakeId, data, result.clientId);
                 } else {
                     console.log(`[onIntakeAiMatch] intake ${intakeId}: client not subscribed yet — job post deferred to payment`);
                 }

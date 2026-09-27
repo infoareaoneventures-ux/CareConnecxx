@@ -13,7 +13,6 @@ import { handleReviewPromptReply } from "../agents/reviewPrompt";
 import { handleEmailChangeReply } from "../agents/emailChangeReply";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
-import { updatePermissionFromText } from "../agents/permissionsConversation";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
 import { handleEarningsView } from "../agents/earningsHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
@@ -21,7 +20,6 @@ import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandle
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTodayStr } from "../utils/scheduledTime";
-import { handleJobResponse } from "../triggers/jobNotifications";
 import {
   searchZepMemory,
   getZepUserId,
@@ -116,22 +114,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     }
 
 
-    // ── CAREGIVER_DECLINE_JOB — natural language job decline from caregiver ──
-    if (intent === "CAREGIVER_DECLINE_JOB" && session.userType === "caregiver") {
-      if ((session as any).pendingJobId) {
-        await handleJobResponse(phone, "NO", chatId, session as any);
-      } else {
-        const noJobMsg = await generateCaraMessage({
-          audience: "caregiver",
-          context: "Caregiver responded to a job offer but there was no pending job in session. Evia acknowledges and lets them know it will reach out when something comes up.",
-          fallback: "No worries — I'll reach out when something comes up.",
-          maxTokens: 60,
-        });
-        await sendMessage(chatId, noJobMsg);
-      }
-      return;
-    }
-
 
     // ── Caregiver selection (numbers after match presentation) ────────────────
     // 2026-09-07 (Hamse decision): a bare-number/name reply picking a caregiver
@@ -221,16 +203,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         (session as any).pendingMatches = undefined;
       }
       // Otherwise fall through to normal intent routing.
-    }
-
-    // ── Permission update (caregivers only — the client permission questions
-    // were removed 2026-09-23; clients fall through to the QA agent) ─────────
-    if (intent === "PERMISSION_UPDATE" && session.userType === "caregiver") {
-      const userId  = session.caregiverId ?? session.userId ?? phone;
-      const handled = await updatePermissionFromText(userId, "caregiver", phone, chatId, text);
-      if (handled) return;
-      // Classifier/parser failures fall through to the QA agent so the user
-      // still gets a response instead of a silent terminal turn.
     }
 
     if (intent === "MEMORY_QUERY") {

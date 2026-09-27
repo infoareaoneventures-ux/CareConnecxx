@@ -205,6 +205,7 @@ export * from './triggers/carePlanHistory';
 
 // JOB POST GEOCODING — writes lat/lng back when a job_posts doc has an address but no coords
 export { geocodeJobPost } from './triggers/jobPostGeocode';
+export { onJobPostCreatedNotifyCaregivers } from './triggers/newJobNotice';
 
 // CLIENT INTAKE GEOCODING — writes lat/lng to users/{uid} when clientIntakes is saved
 export { geocodeClientIntake } from './triggers/clientIntakeGeocode';
@@ -246,7 +247,6 @@ export const getMatchPatterns = functions.https.onCall(async (_data, context) =>
 });
 
 // JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)
-export { sendJobMatchNotifications } from './scheduled/jobMatchNotifications';
 
 // STALE APPLICANT NUDGE (daily 4pm — follows up with families sitting on unreviewed applicants)
 export { sendStaleApplicantNudges } from './scheduled/staleApplicantNudge';

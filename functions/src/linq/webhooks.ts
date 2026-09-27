@@ -32,7 +32,6 @@ import {
   collectionStepsForRole,
   type OnboardingRole,
 } from "../agents/onboardingContract";
-import { handleCaregiverPermissionsReply } from "../agents/permissionsConversation";
 import { detectCrisis, isLikelyRealCrisis, classifyCrisisMultilingual } from "../safety/crisisDetector";
 import { isPhoneAllowed } from "../config/phoneAllowlist";
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
@@ -47,7 +46,7 @@ import {
   sendOnboardingOffer,
   shouldReoffer,
 } from "../agents/profileCompleteness";
-import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing, isJobInviteStale } from "../utils/sessionState";
+import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing } from "../utils/sessionState";
 import { generateCaraMessage } from "../utils/caraMessage";
 import {
   initializeZepOnFirstContact,
@@ -1542,7 +1541,7 @@ const handleInboundInner = traceable(
     if (reconciled.onboardingStep !== session.onboardingStep) (session as any).onboardingStep = reconciled.onboardingStep;
   }
 
-  const step = session.onboardingStep ?? "";
+  let step = session.onboardingStep ?? "";
   if (step && step !== "complete") {
     // Soft-resume ack REMOVED (founder, 2026-07-14): the old 10–30-min-gap
     // "Welcome back — picking up where we left off." line fired absurdly —
@@ -1565,44 +1564,14 @@ const handleInboundInner = traceable(
     // (No else: a missing thread is self-healed by the widened Zep lazy-init
     // earlier in handleInbound — one call site, no double-create race.)
 
-    // Permissions steps
-    const atPermissionsStep =
-      step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival";
-
-    // Job-alert replies take precedence over a parked permissions question.
-    // notifyAreaCaregivers targets ACTIVE caregivers, and an active caregiver
-    // can still be parked at these optional yes/no steps — where the router
-    // used to consume their reply as the (days-old) permissions answer instead
-    // of the job alert Evia JUST sent (seen live 07-14: job text delivered to a
-    // caregiver at caregiver_permissions_arrival, whose "yes" would have
-    // toggled arrival notifications). The job question is always the most
-    // recent ask when these flags are set, so it owns the reply; the
-    // permissions step stays parked and re-nudges / auto-defaults later.
-    // Staleness gate mirrors routeCaregiverMessage: a stale/unstamped invite
-    // must not consume the permissions answer — clear it and let the
-    // permissions step own the reply.
-    if (atPermissionsStep && isJobInviteStale(session as unknown as Record<string, unknown>)) {
-      const { JOB_INVITE_FLAGS } = await import("../utils/sessionState");
-      await db.collection("agent_sessions").doc(phone).update(
-        Object.fromEntries(JOB_INVITE_FLAGS.map((f) => [f, admin.firestore.FieldValue.delete()])),
-      ).catch(() => {});
-      for (const f of JOB_INVITE_FLAGS) (session as any)[f] = undefined;
-    }
-    if (atPermissionsStep && (session as any).awaitingJobResponse === true) {
-      const { handleJobResponse } = await import("../triggers/jobNotifications");
-      await handleJobResponse(phone, text, chatId, session as any);
-      return;
-    }
-    if (atPermissionsStep && (session as any).awaitingAvailabilityConfirmation === true) {
-      const { handleAvailabilityConfirmation } = await import("../triggers/jobNotifications");
-      await handleAvailabilityConfirmation(phone, text, chatId, session as any);
-      return;
-    }
-
+    // Legacy permissions steps (removed 2026-09-27 — the website has no
+    // auto-decline / arrival setting, so Evia asks nothing after payouts). A
+    // session still parked there from before is simply finished: the record is
+    // complete, and the text routes like any other caregiver turn.
     if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
-      const caregiverId = session.caregiverId ?? phone;
-      await handleCaregiverPermissionsReply(phone, chatId, text, session, caregiverId);
-      return;
+      await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "complete", optedIn: true }).catch(() => {});
+      (session as any).onboardingStep = "complete";
+      step = "complete";
     }
     // U4: agent-native onboarding collapse (loop-only as of 2026-07-08). For a
     // user in the conversational collection phase, the turn runs inside the

@@ -138,8 +138,12 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   const hasLocation = cgLat != null && cgLng != null;
   const radius: number = (profile as any).serviceRadius || (profile as any).travelRadius || 0;
 
+  // Same drops as the Jobs page list: applied, hidden (caregivers/{uid}.hiddenJobIds,
+  // shared with Evia), and deactivated clients — so Nearby Jobs is that list's
+  // four nearest, not a different list.
+  const hiddenJobIds = new Set<string>(Array.isArray((profile as any).hiddenJobIds) ? (profile as any).hiddenJobIds : []);
   const openJobs = (() => {
-    let filtered = rawJobs.filter((j: any) => !appliedJobIds.has(j.id));
+    let filtered = rawJobs.filter((j: any) => !appliedJobIds.has(j.id) && !hiddenJobIds.has(j.id) && j.clientActive !== false);
     if (hasLocation && radius > 0) {
       filtered = filtered.filter((j: any) => {
         if (j.lat == null || j.lng == null) return true;

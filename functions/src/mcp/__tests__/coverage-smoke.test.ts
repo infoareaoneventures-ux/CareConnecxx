@@ -185,10 +185,6 @@ vi.mock("../../billing/taxDocuments", () => ({
   getCaregiverTaxSummary: vi.fn().mockResolvedValue({ year: 2025, totalEarnings: 30000 }),
 }));
 
-vi.mock("../../agents/jobMatchRecommender", () => ({
-  recommendJobsForCaregiver: vi.fn().mockResolvedValue([{ jobId: "j1", score: 0.9 }]),
-}));
-
 vi.mock("../checkrMcpClient", () => ({
   isCheckrMcpConfigured:   vi.fn().mockReturnValue(true),
   initializeCheckrSession: vi.fn().mockResolvedValue("mcp-sess-1"),

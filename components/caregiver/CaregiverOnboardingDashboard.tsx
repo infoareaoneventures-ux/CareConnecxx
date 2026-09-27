@@ -404,9 +404,15 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                   const isNight = times.some((t: string) => ['evening','overnight'].includes(t));
                   const needsTransport = ((job as any).careTypes || (job as any).requirements || []).some((r: string) => /transport/i.test(r));
                   const seniors = (job as any).recipientsCount || (job as any).numberOfSeniors;
-                  const dateStr = (job as any).date
-                    ? new Date((job as any).date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-                    : null;
+                  // Same date rule as the Jobs page card: Today/Tomorrow as-is, a real
+                  // date formatted, anything else ("ASAP") shown raw — never "Invalid Date".
+                  const dateStr = (() => {
+                    const raw = (job as any).date as string | undefined;
+                    if (!raw) return null;
+                    if (raw === 'Today' || raw === 'Tomorrow') return raw;
+                    const d = new Date(raw + 'T12:00:00');
+                    return isNaN(d.getTime()) ? raw : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+                  })();
                   const timeStr = (() => {
                     const s = (job as any).startTime, e = (job as any).endTime;
                     if (s && e) return `${s} – ${e}`;
@@ -414,6 +420,8 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                     return labels.join(', ') || null;
                   })();
                   const isOffline = !((job as any).paymentMethod) || isOfflinePaymentMethod((job as any).paymentMethod);
+                  // Jobs page rateLabel: a flexible job stores rate 0 + rateFlexible → "Flexible", never "$0/hr".
+                  const rateStr = ((job as any).rateFlexible || !job.rate || job.rate <= 0) ? 'Flexible' : `${job.rate}/hr`;
                   return (
                     <div key={job.id} className="bg-white rounded-2xl p-5 hover:shadow-md shadow-sm transition-all">
                       {/* Header: title + rate */}
@@ -427,13 +435,11 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                           </div>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          {job.rate != null && (
-                            <span className="text-sm font-bold text-green-700 bg-green-100 px-2.5 py-1 rounded-full">${job.rate}/hr</span>
-                          )}
+                          <span className="text-sm font-bold text-green-700 bg-green-100 px-2.5 py-1 rounded-full">{rateStr}</span>
                           {(job as any).paymentMethod && (
                             <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-0.5">
                               {isOffline ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
-                              via {isOffline ? paymentMethodLabel((job as any).paymentMethod || 'cash').toLowerCase() : 'card'}
+                              via {isOffline ? paymentMethodLabel((job as any).paymentMethod || 'cash').toLowerCase() : (job as any).paymentMethod}
                             </p>
                           )}
                         </div>
@@ -515,11 +521,11 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
             <div className="pr-8 mb-1">
               <div className="flex items-start justify-between gap-3">
                 <h2 className="text-xl font-bold text-slate-900 leading-tight">{viewingJob.title}</h2>
-                {viewingJob.rate != null && (
-                  <span className="bg-green-100 text-green-700 text-sm font-bold px-3 py-1 rounded-full shrink-0">${viewingJob.rate}/hr</span>
-                )}
+                <span className="bg-green-100 text-green-700 text-sm font-bold px-3 py-1 rounded-full shrink-0">{((viewingJob as any).rateFlexible || !viewingJob.rate || viewingJob.rate <= 0) ? 'Flexible' : `${viewingJob.rate}/hr`}</span>
               </div>
-              <p className="text-slate-500 text-sm mt-1">Posted by {viewingJob.clientName}</p>
+              {/* No "Posted by": the family's name isn't public until they accept this
+                  caregiver, and nothing on this dashboard list has been applied to yet
+                  (founder, 2026-09-27). */}
               {viewingJob.location && (
                 <p className="text-slate-400 text-xs mt-0.5 flex items-center gap-1"><MapPin className="w-3 h-3" />{viewingJob.location}</p>
               )}
@@ -642,11 +648,9 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                   </div>
                 </div>
 
-                {applyingJob.rate != null && (
-                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-800">
-                    <strong>Client's budget:</strong> ${applyingJob.rate}/hr
-                  </div>
-                )}
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-800">
+                  <strong>Client's budget:</strong> {((applyingJob as any).rateFlexible || !applyingJob.rate || applyingJob.rate <= 0) ? 'Flexible' : `${applyingJob.rate}/hr`}
+                </div>
               </form>
             </div>
 

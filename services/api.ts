@@ -551,6 +551,16 @@ export const dbService = {
         });
     },
 
+    // Jobs board Hide / Unhide (2026-09-27): stored on caregivers/{uid}.hiddenJobIds
+    // so the website and Evia (hide_job / unhide_job) share one list.
+    setJobHidden: async (caregiverUid: string, jobId: string, hidden: boolean): Promise<void> => {
+        if (!isConfigured || !db) return;
+        const op = hidden
+            ? firebase.firestore.FieldValue.arrayUnion(jobId)
+            : firebase.firestore.FieldValue.arrayRemove(jobId);
+        await db.collection('caregivers').doc(caregiverUid).set({ hiddenJobIds: op }, { merge: true });
+    },
+
     getOpenJobs: async (): Promise<JobPost[]> => {
         if (isConfigured && db) {
             try {

@@ -273,7 +273,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
     const content = (call[1] as any).content as string;
     expect(content).toContain('A Family requested an interview with you for "Senior care in San Jose" on');
     expect(content).toContain("(Video). Note: \"requesting interview\"");
-    expect(content).toContain("Reply here to accept or propose a different time.");
+    expect(content).toContain("Reply ACCEPT or DECLINE, or PROPOSE a different time.");
     // The bell carries the same details.
     expect(hoisted.addMock).toHaveBeenCalledWith(`users/${CAREGIVER}/notifications`, expect.objectContaining({ type: "interview_request", body: expect.stringContaining('Note: "requesting interview"') }));
   });

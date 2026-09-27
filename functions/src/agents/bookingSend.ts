@@ -169,22 +169,6 @@ export async function sendBookingRequest(
     createdAt: now,
   });
 
-  // 2026-09-27 (founder): a recipient's note on the booking IS the Care Plan's
-  // note for that recipient — write it back to carePlans/{uid}, the same
-  // field the site's modal pre-fills from and writes back to.
-  try {
-    const { recipientPlanKeyForFullName } = await import("./careRecipients");
-    const patch: Record<string, string> = {};
-    for (const r of input.careRecipients ?? []) {
-      const notes = typeof r.notes === "string" ? r.notes.trim() : "";
-      const key = typeof r.recipientKey === "string" && r.recipientKey ? r.recipientKey
-        : (typeof r.name === "string" && r.name ? recipientPlanKeyForFullName(r.name) : "");
-      if (notes && key) patch[`recipientPlans.${key}.notes`] = notes;
-    }
-    if (Object.keys(patch).length) await db.collection("carePlans").doc(input.clientId).update(patch);
-  } catch (err) {
-    console.warn("[bookingSend] care-plan note write-back skipped:", err instanceof Error ? err.message : err);
-  }
 
   await db.collection("hire_decisions").add({
     clientId:      input.clientId,

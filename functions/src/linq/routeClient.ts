@@ -332,5 +332,18 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     return "handled";
   }
 
+  // ── Decision notices (agents/decisionNotices.ts, 2026-09-27) ──────────────
+  // "Yes confirm" to a proposed interview time runs the page's accept here,
+  // never through the agent's guess at an interview id.
+  if ((session as any).pendingDecision) {
+    const { handlePendingDecisionReply } = await import("../agents/decisionNotices");
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      if ((await handlePendingDecisionReply(phone, chatId, text, session as any)) === "handled") return "handled";
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+  }
+
   return "fallthrough";
 }

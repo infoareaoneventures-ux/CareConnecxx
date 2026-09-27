@@ -810,6 +810,24 @@ export const PostsPage: React.FC = () => {
         ? prevSchedule.dayShiftTimes
         : null;
 
+      // Resend: the recipient section shows what THAT booking carried (its
+      // notes, care needs, lifestyle), not a fresh copy of the Care Plan —
+      // 2026-09-27 (founder): the note typed for the original booking vanished
+      // from the resend modal. Matched by recipient name; anything the booking
+      // didn't carry keeps the Care Plan value.
+      if (Array.isArray(prevBookingData?.careRecipients)) {
+        for (const r of recipients) {
+          const prev = prevBookingData.careRecipients.find((c: any) => typeof c === 'object' && c?.name === r.name);
+          if (!prev) continue;
+          const draft = recipientDrafts[r.key];
+          if (!draft) continue;
+          if (typeof prev.notes === 'string') draft.notes = prev.notes;
+          if (Array.isArray(prev.careNeeds)) draft.careNeeds = prev.careNeeds;
+          if (prev.careNeedDetails && typeof prev.careNeedDetails === 'object') draft.careNeedDetails = prev.careNeedDetails;
+          if (prev.lifestyle && typeof prev.lifestyle === 'object') draft.lifestyle = { ...draft.lifestyle, ...prev.lifestyle };
+        }
+      }
+
       setBookingDraft({
         selectedRecipientKeys: allKeys,
         recipientDrafts,
@@ -907,21 +925,6 @@ export const PostsPage: React.FC = () => {
           };
         });
 
-      // 2026-09-27 (founder): a note typed for a recipient here is the Care
-      // Plan's note for that recipient — write it back to carePlans so the
-      // Care Plan page shows it too (same field the modal pre-filled from).
-      for (const r of loadedPlan?.recipients || []) {
-        if (!bookingDraft.selectedRecipientKeys.includes(r.key)) continue;
-        const typed = bookingDraft.recipientDrafts[r.key]?.notes;
-        const planNote = loadedPlan?.recipientPlans[r.key]?.notes ?? '';
-        if (typeof typed !== 'string' || !typed.trim() || typed === planNote) continue;
-        const cpRef = fdb.collection('carePlans').doc(user.uid);
-        try {
-          await cpRef.update({ [`recipientPlans.${r.key}.notes`]: typed });
-        } catch (e: any) {
-          if (e?.code === 'not-found') await cpRef.set({ recipientPlans: { [r.key]: { notes: typed } } }, { merge: true });
-        }
-      }
 
       const bookingData = {
         clientId: user.uid,

@@ -15,6 +15,7 @@
 // exactly as when the button is clicked on the site.
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
+import { parkedDecision } from "./decisionNotices";
 
 const db = admin.firestore();
 
@@ -224,8 +225,16 @@ export const EMPTY_TEXT = "No pending requests. When a family sends you a bookin
 export const PAGE_SIZE = 2;
 // Founder (2026-09-27): no "details" step over text — every request is texted
 // whole (the card AND what "View full details" expands to).
-const LIST_FOOTER = `Reply "accept 1" or "decline 1".`;
+// One request → the plain words (the notice parks the decision, so "accept"
+// runs the page's button); several → the number says which one.
+const footerFor = (count: number, gate: GateLabel, firstNumber: number) => {
+  if (count === 1) return gate ? GATE_FOOTER_ONE(gate) : "Reply ACCEPT or DECLINE.";
+  return gate ? GATE_FOOTER(gate, firstNumber) : `Reply ACCEPT or DECLINE with the number, e.g. "accept ${firstNumber}".`;
+};
 export type GateLabel = "membership" | "background" | null;
+const GATE_FOOTER_ONE = (gate: GateLabel) =>
+  gate === "membership" ? `To accept you'll need to: Activate Membership. You can still reply DECLINE.`
+  : `To accept you'll need to: Complete Verification. You can still reply DECLINE.`;
 const GATE_FOOTER = (gate: GateLabel, n: number) =>
   gate === "membership" ? `To accept you'll need to: Activate Membership. You can still reply "decline ${n}".`
   : `To accept you'll need to: Complete Verification. You can still reply "decline ${n}".`;
@@ -259,7 +268,7 @@ export function requestListText(input: BookingRequest[] | RequestsTabItem[], opt
     const details = requestDetailsLines(it.req);
     return [`${from + i + 1}. ${head}`, ...rest, ...(details.length ? ["", ...details] : [])].join("\n").replace(/\n{3,}/g, "\n\n");
   });
-  const footer = `${opts.gate ? GATE_FOOTER(opts.gate, from + 1) : LIST_FOOTER}${remaining > 0 ? " Reply MORE to see more." : ""}`;
+  const footer = `${footerFor(items.length, opts.gate ?? null, from + 1)}${remaining > 0 ? " Reply MORE to see more." : ""}`;
   return { text: [from === 0 ? "Booking requests:" : "More requests:", "", blocks.join("\n\n"), "", footer].join("\n"), shown, remaining };
 }
 
@@ -278,8 +287,16 @@ export async function sendBookingRequestList(phone: string, chatId: string, care
     ? { number: from + i + 1, kind: "amendment" as const, bookingRequestId: it.amendment.id, clientName: it.amendment.clientName }
     : { number: from + i + 1, kind: "request" as const, bookingRequestId: it.req.id, clientName: it.req.clientName });
   const items = from > 0 && prev ? [...prev.items.filter((it) => it.number <= from), ...newItems] : newItems;
+  // One request on the tab → park it so a plain "accept" / "decline" runs the
+  // page's button (decisionNotices.ts); several → the number says which one.
+  const only = all.length === 1 ? all[0] : null;
+  const pendingDecision = only
+    ? (only.kind === "amendment"
+        ? parkedDecision("amendment", only.amendment.id, `a schedule change from ${only.amendment.clientName || "a family"}`, "caregiver")
+        : parkedDecision("booking_request", only.req.id, `a booking request from ${only.req.clientName || "a family"}`, "caregiver"))
+    : admin.firestore.FieldValue.delete();
   await db.collection("agent_sessions").doc(phone).set(
-    { lastBookingRequestList: { at: new Date().toISOString(), items, offset: from + shown.length, total: all.length } satisfies LastRequestList },
+    { lastBookingRequestList: { at: new Date().toISOString(), items, offset: from + shown.length, total: all.length } satisfies LastRequestList, pendingDecision },
     { merge: true },
   ).catch(() => {});
   return { sent: true, count: shown.length, total: all.length, remaining, items };

@@ -1164,6 +1164,20 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       return "handled";
     }
 
+    // ── Decision notices (agents/decisionNotices.ts, 2026-09-27) ────────────
+    // A notice that ended in "Reply ACCEPT or DECLINE" parked the expected
+    // decision; a plain reply runs the page's own write here — no tool choice,
+    // no id, no guessing. Anything else falls through with the decision parked.
+    if ((session as any).pendingDecision) {
+      const { handlePendingDecisionReply } = await import("../agents/decisionNotices");
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        if ((await handlePendingDecisionReply(phone, chatId, text, session as any)) === "handled") return "handled";
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+    }
+
     const pendingReferral = (session as any).pendingCaregiverReferral as PendingCaregiverReferral | undefined;
     if (pendingReferral) {
       const referralExpiry = (session as any).stateExpiresAt as string | undefined;

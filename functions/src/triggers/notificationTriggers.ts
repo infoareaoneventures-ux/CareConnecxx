@@ -59,6 +59,18 @@ async function stampSession(phone: string, patch: Record<string, unknown> | unde
   try { await db.collection('agent_sessions').doc(phone).set(patch, { merge: true }); } catch { /* best effort */ }
 }
 export const noticedInterview = (interviewId: string) => ({ lastNoticedInterviewId: interviewId, lastNoticedInterviewAt: new Date().toISOString() });
+// Decision notices park the expected reply (agents/decisionNotices.ts).
+import { parkedDecision, parkDecision } from '../agents/decisionNotices';
+import { normalizeBookingRequest, requestCardLines, requestDetailsLines, amendmentCardLines } from '../agents/caregiverBookingRequests';
+
+// The caregiver's Requests-tab card, whole, in the notice itself (founder,
+// 2026-09-27: "why didn't I get the full details of the booking") — the tab
+// shows the card the moment it appears; the text does too. No DETAILS step.
+function bookingRequestText(id: string, doc: Record<string, unknown>, lead: string): string {
+  const req = normalizeBookingRequest(id, doc);
+  const lines = [...requestCardLines(req), ...(() => { const d = requestDetailsLines(req); return d.length ? ["", ...d] : []; })()];
+  return `${lead}\n\n${lines.join("\n").replace(/\n{3,}/g, "\n\n")}\n\nReply ACCEPT or DECLINE.`;
+}
 
 async function sendTransactionalText(phone: string, message: string, sourceAgent: string, stamp?: Record<string, unknown>): Promise<void> {
   const sessSnap = await db.collection('agent_sessions').doc(phone).get().catch(() => null);
@@ -125,7 +137,10 @@ export const onVideoInterviewWrite = functions.firestore
           body,
           data: { interviewId: context.params.interviewId },
         });
-        await notifyCaregiverByText(after.caregiverId, `${body} Reply here to accept or propose a different time.`, noticedInterview(context.params.interviewId));
+        await notifyCaregiverByText(after.caregiverId, `${body} Reply ACCEPT or DECLINE, or PROPOSE a different time.`, {
+          ...noticedInterview(context.params.interviewId),
+          ...parkDecision(parkedDecision("interview_request", context.params.interviewId, `an interview request from ${after.clientName || 'a family'}`, "caregiver")),
+        });
         return;
       }
 
@@ -161,8 +176,9 @@ export const onVideoInterviewWrite = functions.firestore
           // itself and stamps rescheduledViaAgent — skip to avoid a double text.
           if (!after.rescheduledViaAgent) {
             await notifyClientByText(after.clientId,
-              `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`,
-              noticedInterview(context.params.interviewId));
+              `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply CONFIRM, or suggest another time.`,
+              { ...noticedInterview(context.params.interviewId),
+                ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.caregiverName || 'your caregiver'} proposed (${displayTime})`, "client")) });
           }
         } else if (after.caregiverId) {
           await addNotification(after.caregiverId, {
@@ -173,8 +189,9 @@ export const onVideoInterviewWrite = functions.firestore
           });
           if (!after.rescheduledViaAgent) {
             await notifyCaregiverByText(after.caregiverId,
-              `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`,
-              noticedInterview(context.params.interviewId));
+              `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply CONFIRM, or PROPOSE another time.`,
+              { ...noticedInterview(context.params.interviewId),
+                ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.clientName || 'the family'} proposed (${displayTime})`, "caregiver")) });
           }
         }
         return;
@@ -394,7 +411,8 @@ export const onBookingRequestWrite = functions.firestore
         // plain booking_requests doc and gets this one text.
         if (!after.agentTaskId) {
           await notifyCaregiverByText(after.caregiverId,
-            `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request. Reply here for the details, or "accept" / "decline".`);
+            bookingRequestText(context.params.bookingId, after as Record<string, unknown>, `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request.`),
+            parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver")));
         }
         return;
       }
@@ -414,7 +432,8 @@ export const onBookingRequestWrite = functions.firestore
         });
         if (!after.agentTaskId) {
           await notifyCaregiverByText(after.caregiverId,
-            `${after.clientName || 'A client'} resent their booking request. Reply here for the details, or "accept" / "decline".`);
+            bookingRequestText(context.params.bookingId, after as Record<string, unknown>, `${after.clientName || 'A client'} resent their booking request.`),
+            parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver")));
         }
         return;
       }
@@ -492,9 +511,14 @@ export const onBookingAmendmentWrite = functions.firestore
         // Single source of truth for this text — request_schedule_amendment
         // (mcp/server.ts) deliberately does not also send it, to avoid a
         // double text when a family requests this through Evia.
-        await notifyCaregiverByText(after.caregiverId, isOneDay
-          ? `${after.clientName || 'A family'} would like to add a visit on ${formatDateForDisplay(after.startDate)}. Reply here to accept or decline.`
-          : `${after.clientName || 'A family'} would like to add ${days} to your regular schedule. Reply here to accept or decline.`);
+        // The tab's schedule-change card, whole, in the notice (same rule as booking requests).
+        await notifyCaregiverByText(after.caregiverId,
+          `${isOneDay
+            ? `${after.clientName || 'A family'} would like to add a visit on ${formatDateForDisplay(after.startDate)}.`
+            : `${after.clientName || 'A family'} would like to add ${days} to your regular schedule.`}\n\n${
+            amendmentCardLines({ ...(after as Record<string, unknown>), id: context.params.amendmentId } as Parameters<typeof amendmentCardLines>[0]).join("\n")
+          }\n\nReply ACCEPT or DECLINE.`,
+          parkDecision(parkedDecision("amendment", context.params.amendmentId, `a schedule change from ${after.clientName || 'a family'}`, "caregiver")));
         return;
       }
 

@@ -126,8 +126,9 @@ describe("View full details", () => {
     expect(t).toContain("Notes\nMom likes her tea at 3.");
   });
   it("the list footer is the buttons: accept/decline, or the gate button with decline still available", () => {
-    expect(requestListText([req()]).text.endsWith('Reply "accept 1" or "decline 1".')).toBe(true);
-    expect(requestListText([req()], { gate: "membership" }).text.endsWith(`To accept you'll need to: Activate Membership. You can still reply "decline 1".`)).toBe(true);
+    expect(requestListText([req()]).text.endsWith("Reply ACCEPT or DECLINE.")).toBe(true);
+    expect(requestListText([req(), req({ id: "br2" })]).text.endsWith('Reply ACCEPT or DECLINE with the number, e.g. "accept 1".')).toBe(true);
+    expect(requestListText([req()], { gate: "membership" }).text.endsWith("To accept you'll need to: Activate Membership. You can still reply DECLINE.")).toBe(true);
     expect(requestListText([req()], { gate: "background" }).text).toContain("Complete Verification");
   });
 });
@@ -145,7 +146,7 @@ describe("the list", () => {
     expect(p1.text).toContain("Emergency Contact\nLinh Nguyen (Daughter) · (408) 555-0100");
     expect(p1.text).toContain("\n\n2. Family 2");
     expect(p1.text).not.toContain("3. Family 3");
-    expect(p1.text.endsWith('Reply "accept 1" or "decline 1". Reply MORE to see more.')).toBe(true);
+    expect(p1.text.endsWith('Reply ACCEPT or DECLINE with the number, e.g. "accept 1". Reply MORE to see more.')).toBe(true);
     const p2 = requestListText(reqs, { from: 2 });
     expect(p2.text.startsWith("More requests:\n\n3. Family 3")).toBe(true);
   });
@@ -163,6 +164,8 @@ describe("the list", () => {
     expect(r).toMatchObject({ sent: true, count: 1, total: 1, remaining: 0 });
     expect(hoisted.sent[0]).toContain("1. The Nguyen Family");
     expect(hoisted.sessionWrites[0].data.lastBookingRequestList.items).toEqual([{ number: 1, kind: "request", bookingRequestId: "br1", clientName: "The Nguyen Family" }]);
+    // the only request is parked, so a plain "accept" runs the page's button
+    expect(hoisted.sessionWrites[0].data.pendingDecision).toMatchObject({ kind: "booking_request", recordId: "br1", options: ["ACCEPT", "DECLINE", "DETAILS"] });
   });
 });
 

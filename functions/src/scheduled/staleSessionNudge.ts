@@ -8,6 +8,33 @@ import { LIVE_GATE_FACT_BUILDERS } from "../agents/liveGateFacts";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { AgentSession } from "../linq/client";
 import { gateOptionalSend } from "./engineGate";
+import { writeUserNotification } from "../notifications/userNotification";
+import { humanLabelForStep } from "./onboardingStepLabels";
+
+// The same reminder in the website's notification bell (founder, 2026-09-26:
+// "add it to the notification bell" — both doors see the same thing at the
+// same moment). Idempotent per session per day; a session with no account yet
+// has no bell to write. Non-fatal: the text still went out.
+async function writeReminderBell(
+  phone: string,
+  session: Record<string, unknown>,
+  kind: "stale_nudge" | "stuck_gate_resend",
+  title: string,
+  body: string,
+): Promise<void> {
+  const uid = (session.caregiverId ?? session.userId) as string | undefined;
+  if (!uid) return;
+  await writeUserNotification({
+    sourcePath:     `agent_sessions/${phone}`,
+    eventId:        `${kind}:${new Date().toISOString().slice(0, 10)}`,
+    recipientId:    uid,
+    transitionType: kind,
+    type:           "onboarding_reminder",
+    title,
+    body,
+    data:           { step: session.onboardingStep ?? "" },
+  }).catch((err) => console.error(`[staleSessionNudge] bell write failed (non-fatal) for …${phone.slice(-4)}:`, err));
+}
 
 const db = admin.firestore();
 
@@ -56,6 +83,9 @@ export const sendStaleSessionNudges = functions.pubsub
           const step = session.onboardingStep as string;
           const { isGateLinkKeywordStep, stampGateLinkResent } = await import("../agents/gateLinkCooldown");
           if (isGateLinkKeywordStep(step)) await stampGateLinkResent(doc.id, step);
+          await writeReminderBell(doc.id, session, "stuck_gate_resend",
+            "One step left to finish",
+            `Your ${humanLabelForStep(step)} is still waiting — open your dashboard to finish it.`);
           console.log(`[staleSessionNudge] Re-sent stuck step for ${doc.id} (step: ${session.onboardingStep})`);
         }
       } catch (err) {
@@ -282,6 +312,9 @@ export const sendStaleSessionNudges = functions.pubsub
           sourceAgent: "stale_nudge",
           canDrop:     true,
         });
+        await writeReminderBell(doc.id, session, "stale_nudge",
+          userType === "caregiver" ? "Finish your caregiver setup" : "Finish setting up care",
+          `You stopped at ${humanLabelForStep(step)} — pick up on your dashboard whenever you're ready.`);
         await doc.ref.update({
           nudgeSentAt: new Date().toISOString(),
           nudgeCount:  admin.firestore.FieldValue.increment(1),

@@ -52,6 +52,9 @@ vi.mock("../../utils/caraMessage", () => ({
 
 const sendSpy = vi.fn(async (..._a: unknown[]) => {});
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unknown[]) => sendSpy(...a) }));
+// The website bell copy of every nudge (2026-09-26).
+const bellSpy = vi.fn(async (_input: unknown) => true);
+vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: (i: unknown) => bellSpy(i) }));
 
 vi.mock("../../linq/webhooks", () => ({
   userHasRealOnboardingProgress: vi.fn(async (_userId: string, userData: Record<string, unknown>) =>
@@ -75,6 +78,7 @@ beforeEach(() => {
   store.users.clear();
   store.updates.length = 0;
   sendSpy.mockClear();
+  bellSpy.mockClear();
 });
 
 describe("sendOnboardingReengagement", () => {
@@ -103,6 +107,29 @@ describe("sendOnboardingReengagement", () => {
     await (sendOnboardingReengagement as any)();
 
     expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("the same reminder lands in the website bell for the account (both doors, same moment) — 2026-09-26", async () => {
+    seedSession("+15551110002", { userType: "caregiver", caregiverId: "cg1", onboardingStep: "caregiver_awaiting_membership", onboardingData: { name: "Sam" } });
+
+    await (sendOnboardingReengagement as any)();
+
+    expect(bellSpy).toHaveBeenCalledTimes(1);
+    const bell = bellSpy.mock.calls[0][0] as any;
+    expect(bell).toMatchObject({ recipientId: "cg1", type: "onboarding_reminder", transitionType: "onboarding_reengagement", sourcePath: "agent_sessions/+15551110002" });
+    expect(bell.body).toContain("completing your membership payment");
+    // The text never tells them to reply with a keyword — the website has no "RESUME".
+    const text = String((sendSpy.mock.calls[0] as any[])[1]?.content ?? "");
+    expect(text).not.toMatch(/RESUME/);
+  });
+
+  it("no bell for a session that has no account yet (cold SMS, pre-uid) — the text still goes out", async () => {
+    seedSession("+15551110009", { userType: "caregiver", onboardingStep: "caregiver_ask_rate", onboardingData: { name: "Lee" } });
+
+    await (sendOnboardingReengagement as any)();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(bellSpy).not.toHaveBeenCalled();
   });
 
   it("fails soft and still nudges when the client has no users doc at all", async () => {

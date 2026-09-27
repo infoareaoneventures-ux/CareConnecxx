@@ -64,7 +64,7 @@ import {
 const db = admin.firestore();
 
 // Shared literal union for structured tool failures (see toolError below).
-type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED" | "RATE_LIMITED";
+type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED" | "BACKGROUND_REQUIRED" | "TRANSPORT_DOCS_REQUIRED" | "RATE_LIMITED";
 
 // Legacy prod caregiver docs can carry hourlyRate as a STRING ("25", "$25"):
 // the onboarding correction path stored the raw user text whenever Number()
@@ -2650,6 +2650,35 @@ async function checkClientAccessGate(
     : `This family's membership isn't active — they need an active membership before ${doing}. Offer to send the membership payment link.`);
 }
 
+// The website's caregiver gate (hooks/useCaregiverGate.tsx) for Evia's caregiver
+// ACTION tools — the site never gates viewing, so read tools never call this.
+// Order: membership → background check → (transport jobs only) transport
+// documents + MVR; `membershipOnly` = the site's gateMembership (messaging).
+// On a block the caregiver is texted the modal's copy + the same CTA link the
+// site's button gives, and the tool returns a structured error telling the
+// model to add nothing.
+async function checkCaregiverAccessGate(
+  caregiverId: string | undefined,
+  doing: string,
+  opts: { phone?: unknown; transport?: boolean; membershipOnly?: boolean } = {},
+): Promise<ReturnType<typeof toolError> | null> {
+  if (!caregiverId) return toolError("PERMISSION_DENIED", "Cannot verify who this is for — caregiverId is required.");
+  const { checkCaregiverAccess, textCaregiverGateBlock, findCaregiverSession } = await import("../agents/caregiverAccessGate");
+  const res = await checkCaregiverAccess(caregiverId, { transport: opts.transport, membershipOnly: opts.membershipOnly });
+  if (res.ok) return null;
+  const code: ToolErrorCode = res.block === "membership" ? "MEMBERSHIP_REQUIRED"
+    : res.block === "background" ? "BACKGROUND_REQUIRED" : "TRANSPORT_DOCS_REQUIRED";
+  const need = res.block === "membership" ? "needs an active membership"
+    : res.block === "background" ? "needs a cleared background check"
+    : "needs approved transportation documents and a cleared driving-record check";
+  const conv = await findCaregiverSession(caregiverId, opts.phone).catch(() => null);
+  if (conv) {
+    await textCaregiverGateBlock(conv.phone, conv.chatId, res.block, res.caregiver);
+    return toolError(code, `This caregiver ${need} before ${doing} — the website blocks it the same way. Evia has ALREADY texted them the step and its link — send NOTHING else this turn.`);
+  }
+  return toolError(code, `This caregiver ${need} before ${doing} — the website blocks it the same way. Tell them that in one line and offer the link (send_onboarding_link ${res.block === "membership" ? "caregiver_membership" : res.block === "background" ? "caregiver_background_check" : "caregiver_transport_docs"}).`);
+}
+
 // Ownership gate for senior PHI reads. The owning client is recorded on
 // senior_profiles as `userId` (new direct-onboarding docs) OR `clientId` (the
 // household back-reference written by migrateSeniorsToHousehold — those docs
@@ -4064,6 +4093,12 @@ async function executeToolCall(
         const am = amSnap.data()!;
         if (am.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Amendment does not belong to this caregiver");
         if (am.status !== "pending") return toolError("INVALID_INPUT", `Amendment already decided: ${am.status}`);
+        // CaregiverBookingsPage: Accept on a schedule change is replaced by the
+        // gate button while blocked; Decline stays available.
+        if (decision !== "decline") {
+          const amGate = await checkCaregiverAccessGate(caregiverId as string, "accepting a schedule change", { phone: (input as Record<string, unknown>).phone });
+          if (amGate) return amGate;
+        }
 
         if (decision === "decline") {
           await amSnap.ref.update({ status: "declined", respondedAt: nowIso });
@@ -4950,6 +4985,14 @@ async function executeToolCall(
       if (!jobSnap.exists) return toolError("NOT_FOUND", "Job post not found");
       const job = jobSnap.data()!;
       if (job.status !== "open") return toolError("INVALID_INPUT", "This job post is no longer accepting applications");
+      // JobBoard.tsx Apply: gate (transport-aware for transport jobs) — the
+      // "Activate Membership" / "Complete Verification" button in place of Apply.
+      {
+        const { jobRequiresTransport } = await import("../agents/caregiverAccessGate");
+        const applyGate = await checkCaregiverAccessGate(caregiverId as string, "applying to a job",
+          { phone: (input as Record<string, unknown>).phone, transport: jobRequiresTransport(job) });
+        if (applyGate) return applyGate;
+      }
       const dupSnap2 = await db.collection("job_applications").where("jobId", "==", jobId).where("caregiverId", "==", caregiverId).limit(1).get();
       if (!dupSnap2.empty) return toolError("INVALID_INPUT", "You have already applied to this job");
       const { jobApplicationSnapshot } = await import("../utils/jobApplicationDoc");
@@ -5151,6 +5194,14 @@ async function executeToolCall(
     }
 
     if (name === "submit_shift_hours") {
+      // Bookings › Past: "Log hours" is replaced by the gate button while blocked.
+      {
+        const hoursGateCg = (input as Record<string, unknown>).caregiverId as string | undefined;
+        if (hoursGateCg) {
+          const hoursGate = await checkCaregiverAccessGate(hoursGateCg, "logging shift hours", { phone: (input as Record<string, unknown>).phone });
+          if (hoursGate) return hoursGate;
+        }
+      }
       return runActionNativeMcpWrite(name, input, async () => {
         const { caregiverId, appointmentId, clockInTime, clockOutTime, breakMinutes } = input as Record<string, unknown>;
         if (!caregiverId || !appointmentId || !clockInTime || !clockOutTime) {
@@ -5273,6 +5324,15 @@ async function executeToolCall(
 
     // ── respond_to_booking_request (U2 — AE1) ───────────────────────────────────
     if (name === "respond_to_booking_request") {
+      // CaregiverBookingsPage Requests tab: Accept is replaced by the gate
+      // button while blocked; Decline stays available (site: RequestCard).
+      {
+        const { caregiverId: brGateCg, decision: brGateDecision } = input as Record<string, unknown>;
+        if (brGateCg && brGateDecision === "accept") {
+          const brGate = await checkCaregiverAccessGate(brGateCg as string, "accepting a booking request", { phone: (input as Record<string, unknown>).phone });
+          if (brGate) return brGate;
+        }
+      }
       return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, decision, message: brMsg } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
@@ -5319,6 +5379,14 @@ async function executeToolCall(
 
     // ── start_shift (U2) ────────────────────────────────────────────────────────
     if (name === "start_shift") {
+      // Calendar / Bookings "Start Shift" is replaced by the gate button while blocked.
+      {
+        const startGateCg = (input as Record<string, unknown>).caregiverId as string | undefined;
+        if (startGateCg) {
+          const startGate = await checkCaregiverAccessGate(startGateCg, "starting a shift", { phone: (input as Record<string, unknown>).phone });
+          if (startGate) return startGate;
+        }
+      }
       return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, shiftId } = input as Record<string, unknown>;
       if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
@@ -5356,6 +5424,10 @@ async function executeToolCall(
 
     // ── complete_shift (U2 — AE7, idempotent) ───────────────────────────────────
     if (name === "complete_shift") {
+      // Deliberately NOT gated: the website shows End Shift on any in-progress
+      // shift with no membership/background check (Calendar, Dashboard,
+      // Bookings) — a shift started while active can always be ended, even if
+      // the membership lapsed or the yearly check is re-running mid-visit.
       return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, shiftId, notes: completeNotes } = input as Record<string, unknown>;
       if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
@@ -5604,6 +5676,10 @@ async function executeToolCall(
     if (name === "respond_to_interview_request") {
       const { caregiverId, interviewId, decision, proposedDate, proposedTime, message: ivMsg } = input as Record<string, unknown>;
       if (!caregiverId || !interviewId || !decision) return toolError("INVALID_INPUT", "caregiverId, interviewId, and decision are required");
+      // JobBoard.tsx Interviews tab: a pending interview's Accept/Decline (and
+      // the reschedule form) are replaced by the gate button while blocked.
+      const ivGate = await checkCaregiverAccessGate(caregiverId as string, "responding to an interview request", { phone: (input as Record<string, unknown>).phone });
+      if (ivGate) return ivGate;
       const { respondToInterviewRequest, InterviewResponseError } = await import("../agents/interviewResponse");
       try {
         const result = await respondToInterviewRequest({
@@ -7079,19 +7155,10 @@ async function executeToolCall(
       // write exactly what the wizard writes so the dashboard, FindCaregivers
       // and the admin queue see the same record either way (2026-09-25).
       if (role === "caregiver") {
-        const caregiverId = snap.data()?.caregiverId as string | undefined;
-        if (caregiverId) {
-          const cgRef = db.collection("caregivers").doc(caregiverId);
-          const cgSnap = await cgRef.get();
-          const currentV = cgSnap.data()?.verificationStatus as string | undefined;
-          const TERMINAL = ["submitted", "approved", "rejected", "pre_adverse_action", "checkr_clear", "pending", "info_requested"];
-          await cgRef.set({
-            onboardingStep: 2,
-            onboardingStatus: "profile_complete",
-            wizardStep: "done",
-            ...(!currentV || !TERMINAL.includes(currentV) ? { verificationStatus: "profile_complete" } : {}),
-          }, { merge: true }).catch((err) => console.error("complete_collection: caregiver profile_complete write failed:", err));
-        }
+        // ONE writer for the wizard-finished stamp (shared with the stuck-signup
+        // nets, which previously skipped it — 2026-09-26).
+        const { stampCaregiverProfileComplete } = await import("../agents/onboardingConversation");
+        await stampCaregiverProfileComplete((snap.data()?.caregiverId ?? snap.data()?.userId) as string | undefined);
       }
       return { ok: true, complete: true, nextStep, status: "collection_complete" };
     }

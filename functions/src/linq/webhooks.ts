@@ -21,6 +21,7 @@ import {
   createFirebaseAuthAccount,
   mergeOnboardingData,
   sendUploadLinkIfBlocked,
+  stampCaregiverProfileComplete,
 } from "../agents/onboardingConversation";
 import { absorbCaregiverFields } from "../agents/caregiverFieldAbsorber";
 import { runQaAgent } from "../agents/qaAgent";
@@ -1923,6 +1924,12 @@ const handleInboundInner = traceable(
           await db.collection("agent_sessions").doc(phone).update({ onboardingStep: firstGateStep(loopRole) });
           curStep = firstGateStep(loopRole);
           console.info("webhooks: stuck-signup net advanced cursor to gate", { phone, from: step });
+          // The website's wizard-finished stamp (onboardingStatus profile_complete
+          // + wizardStep done) — same write complete_collection makes. Without it
+          // the record stays 'in_progress' and the website re-opens the wizard.
+          if (loopRole === "caregiver") {
+            await stampCaregiverProfileComplete(((after as Record<string, unknown>).caregiverId ?? (after as Record<string, unknown>).userId) as string | undefined);
+          }
         }
         // Proactive post-collection handoff: collection just finished this turn
         // (cursor sits at the first gate step). The loop already sent its closing

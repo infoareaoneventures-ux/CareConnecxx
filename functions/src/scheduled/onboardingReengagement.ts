@@ -3,6 +3,8 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { gateOptionalSend } from "./engineGate";
+import { writeUserNotification } from "../notifications/userNotification";
+import { humanLabelForStep } from "./onboardingStepLabels";
 
 const db = admin.firestore();
 
@@ -102,22 +104,25 @@ export const sendOnboardingReengagement = functions.pubsub
         const stepLabel = humanLabelForStep(onboardingStep);
         const isCaregiver = session.userType === "caregiver";
 
+        // Copy rule (2026-09-26): a reminder is a factual report of where they are
+        // — never a text-only protocol ("reply RESUME"), which the website has no
+        // equivalent of. Replying here is simply how the text door continues.
         const msg = await generateCaraMessage({
           audience: isCaregiver ? "caregiver" : "family",
           context: isCaregiver
             ? `Caregiver first name: ${firstName.split(" ")[0]}. ` +
               `They started signing up but stalled at: "${stepLabel}". ` +
-              "Send a short warm reminder (1-2 sentences) inviting them to pick up where they left off. " +
-              "Mention that they're close to being able to take jobs. Don't be pushy."
+              "Send a short warm reminder (1-2 sentences) inviting them to pick up where they left off — just by replying here, or on their dashboard. " +
+              "Mention that they're close to being able to take jobs. Don't be pushy. Never tell them to reply with a keyword."
             : `Family member first name: ${firstName.split(" ")[0]}. ` +
               `They started getting care set up but stalled at: "${stepLabel}". ` +
-              "Send a short warm reminder (1-2 sentences) inviting them to pick up where they left off. " +
-              "Mention they're close to seeing their caregiver matches. Don't be pushy.",
+              "Send a short warm reminder (1-2 sentences) inviting them to pick up where they left off — just by replying here, or on their dashboard. " +
+              "Mention they're close to seeing their caregiver matches. Don't be pushy. Never tell them to reply with a keyword.",
           fallback: isCaregiver
-            ? `Hey ${firstName.split(" ")[0]}, you're just a step or two away from being able to take jobs on Evia. ` +
-              `Want to pick up where you left off? Reply RESUME to continue.`
-            : `Hi ${firstName.split(" ")[0]}, you're just a step or two away from seeing your caregiver matches. ` +
-              `Want to pick up where you left off? Reply RESUME to continue.`,
+            ? `Hey ${firstName.split(" ")[0]}, you're just a step or two away from being able to take jobs on Evia — you stopped at ${stepLabel}. ` +
+              `Reply here whenever you're ready and we'll pick up right where you left off.`
+            : `Hi ${firstName.split(" ")[0]}, you're just a step or two away from seeing your caregiver matches — you stopped at ${stepLabel}. ` +
+              `Reply here whenever you're ready and we'll pick up right where you left off.`,
           maxTokens: 100,
         });
 
@@ -127,6 +132,26 @@ export const sendOnboardingReengagement = functions.pubsub
           sourceAgent: "onboarding_reengagement",
           canDrop:     true,
         }).catch(() => {});
+
+        // The same reminder in the website's notification bell (founder,
+        // 2026-09-26: "add it to the notification bell" — both doors see the
+        // same thing at the same moment). Idempotent per session per day; a
+        // session with no account yet (cold SMS, pre-uid) has no bell to write.
+        const bellUid = (session.caregiverId ?? session.userId) as string | undefined;
+        if (bellUid) {
+          await writeUserNotification({
+            sourcePath:     `agent_sessions/${phone}`,
+            eventId:        `reengagement:${new Date(now).toISOString().slice(0, 10)}`,
+            recipientId:    bellUid,
+            transitionType: "onboarding_reengagement",
+            type:           "onboarding_reminder",
+            title:          isCaregiver ? "Finish your caregiver setup" : "Finish setting up care",
+            body:           isCaregiver
+              ? `You're a step or two away from being able to take jobs — you stopped at ${stepLabel}.`
+              : `You're a step or two away from seeing your caregiver matches — you stopped at ${stepLabel}.`,
+            data:           { step: onboardingStep },
+          }).catch((err) => console.error("[onboardingReengagement] bell write failed (non-fatal):", err));
+        }
 
         await sessionDoc.ref.update({
           lastReengagementNudgeAt: new Date().toISOString(),
@@ -142,48 +167,3 @@ export const sendOnboardingReengagement = functions.pubsub
     console.log(`[onboardingReengagement] Done. Nudges sent: ${nudgesSent}, skipped: ${skipped}`);
   });
 
-function humanLabelForStep(step: string): string {
-  const map: Record<string, string> = {
-    verify_phone:                       "verifying your phone number",
-    ask_role:                           "picking a role",
-    // Client steps
-    client_ask_name:                    "sharing your name",
-    client_ask_senior:                  "telling me who needs care",
-    client_ask_needs:                   "describing the care needs",
-    client_ask_location:                "sharing the location",
-    client_ask_schedule:                "setting the schedule",
-    client_ask_start:                   "choosing a start date",
-    client_ask_preferences:             "sharing caregiver preferences",
-    client_ask_budget:                  "sharing a budget",
-    client_confirm_intake:              "confirming the details",
-    client_ask_plan:                    "choosing your membership",
-    client_send_payment:                "starting your membership",
-    client_awaiting_identity:           "verifying your identity",
-    client_awaiting_payment:            "starting your membership",
-    job_confirm_prefill:                "posting your care request",
-    // Caregiver steps
-    caregiver_ask_name:                 "sharing your name",
-    caregiver_ask_location:             "telling me your city",
-    caregiver_ask_experience:           "sharing your experience",
-    caregiver_ask_specialties:          "listing your specialties",
-    caregiver_ask_profile:              "a couple profile details",
-    caregiver_ask_availability:         "sharing your availability",
-    caregiver_ask_job_type:             "choosing job type",
-    caregiver_ask_rate:                 "setting your rate",
-    caregiver_ask_email:                "sharing your email",
-    caregiver_ask_bio:                  "writing your bio",
-    caregiver_send_photo:               "uploading your photo",
-    caregiver_awaiting_photo:           "uploading your photo",
-    caregiver_send_documents:           "uploading certifications",
-    caregiver_awaiting_documents:       "uploading certifications",
-    caregiver_ask_mvr:                  "the MVR question",
-    caregiver_send_membership:          "completing your membership payment",
-    caregiver_awaiting_membership:      "completing your membership payment",
-    caregiver_send_bgcheck:             "authorizing your background check",
-    caregiver_awaiting_bgcheck_consent: "authorizing your background check",
-    caregiver_awaiting_bgcheck:         "finishing your background check",
-    caregiver_send_stripe_connect:      "setting up your payout account",
-    caregiver_awaiting_stripe:          "setting up your payout account",
-  };
-  return map[step] ?? "finishing your profile";
-}

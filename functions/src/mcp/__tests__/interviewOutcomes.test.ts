@@ -198,7 +198,9 @@ describe("respond_to_interview_request", () => {
     hoisted.docState.set(`video_interviews/${IV_ID}`, {
       clientId: CLIENT, caregiverId: "cg1", clientName: "A Family", caregiverName: "Alice", status: "requested",
     });
-    hoisted.docState.set("caregivers/cg1", { name: "Alice" });
+    // Cleared caregiver — the website's action gate (membership → background
+    // check) now runs inside respond_to_interview_request too.
+    hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active", verified: true });
     // agent_sessions are phone-keyed — the handler reads clientSess.docs[0].id as the phone.
     hoisted.collState.set("agent_sessions", [{ id: "+15551234567", data: { userId: CLIENT } }]);
   });
@@ -248,6 +250,8 @@ describe("respond_to_interview_request", () => {
   });
 
   it("refuses when the interview doesn't belong to this caregiver", async () => {
+    // Cleared too, so the ownership refusal (not the membership gate) is what fires.
+    hoisted.docState.set("caregivers/someone_else", { name: "Bob", membershipStatus: "active", verified: true });
     const r = await handleToolCall("respond_to_interview_request", {
       caregiverId: "someone_else", interviewId: IV_ID, decision: "accept",
     }) as any;

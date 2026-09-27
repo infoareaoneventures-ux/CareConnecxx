@@ -769,7 +769,10 @@ export const AdminCaregiverManager: React.FC = () => {
                           >Approved</button>
                           <button
                             onClick={async () => {
-                              const patch: any = { membershipPaid: false, membershipStatus: 'inactive', onboardingStatus: 'in_progress' };
+                              // Revoking a GATE must not un-finish the PROFILE: onboardingStatus is the
+                              // wizard's "questionnaire done" flag, and CaregiverRoute re-opens the
+                              // wizard whenever it isn't 'profile_complete' (founder, 2026-09-26).
+                              const patch: any = { membershipPaid: false, membershipStatus: 'inactive' };
                               await adminService.updateCaregiver(selected.uid, patch);
                               setSelected(p => p ? { ...p, ...patch } as any : p);
                               showToast('Membership revoked', 'success');
@@ -795,7 +798,8 @@ export const AdminCaregiverManager: React.FC = () => {
                           >Approved</button>
                           <button
                             onClick={async () => {
-                              const patch: any = { backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'pending', onboardingStatus: 'in_progress' };
+                              // Same as the membership revoke: gate state only, never onboardingStatus.
+                              const patch: any = { backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'pending' };
                               await adminService.updateCaregiver(selected.uid, patch);
                               setSelected(p => p ? { ...p, ...patch } as any : p);
                               showToast('Background check revoked', 'success');

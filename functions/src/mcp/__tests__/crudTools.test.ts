@@ -571,6 +571,51 @@ vi.mock("../../utils/openaiClient", () => ({
 }));
 import { businessTodayStr } from "../../utils/scheduledTime";
 
+describe("caregiver action tools enforce the website's gate (hooks/useCaregiverGate.tsx) — 2026-09-26", () => {
+  beforeEach(() => { hoisted.reset(); });
+  const openJob = (extra: Record<string, unknown> = {}) =>
+    hoisted.docState.set("job_posts/job1", { status: "open", clientId: "client1", careTypes: ["Companionship"], ...extra });
+
+  it("apply_to_job: no membership → MEMBERSHIP_REQUIRED, nothing written", async () => {
+    openJob();
+    hoisted.docState.set("caregivers/cg1", { name: "Maria" });
+    const r = await handleToolCall("apply_to_job", { caregiverId: "cg1", jobId: "job1" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("MEMBERSHIP_REQUIRED");
+    expect(hoisted.adds.filter((a) => a.path === "job_applications")).toHaveLength(0);
+  });
+
+  it("apply_to_job: paid but background check not cleared → BACKGROUND_REQUIRED", async () => {
+    openJob();
+    hoisted.docState.set("caregivers/cg1", { name: "Maria", membershipStatus: "active" });
+    const r = await handleToolCall("apply_to_job", { caregiverId: "cg1", jobId: "job1" }) as any;
+    expect(r.code).toBe("BACKGROUND_REQUIRED");
+  });
+
+  it("apply_to_job: a TRANSPORT job also needs approved documents + a cleared driving record", async () => {
+    openJob({ careTypes: ["Transportation"] });
+    hoisted.docState.set("caregivers/cg1", { name: "Maria", membershipStatus: "active", backgroundCheckStatus: "clear", services: ["Transportation"] });
+    const r = await handleToolCall("apply_to_job", { caregiverId: "cg1", jobId: "job1" }) as any;
+    expect(r.code).toBe("TRANSPORT_DOCS_REQUIRED");
+  });
+
+  it("apply_to_job: fully cleared caregiver passes the gate and the application is written", async () => {
+    openJob();
+    hoisted.docState.set("caregivers/cg1", { name: "Maria", membershipStatus: "active", verified: true });
+    const r = await handleToolCall("apply_to_job", { caregiverId: "cg1", jobId: "job1" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.adds.filter((a) => a.path === "job_applications")).toHaveLength(1);
+  });
+
+  it("respond_to_booking_request: Decline is never gated (the site keeps Decline available); Accept is", async () => {
+    hoisted.docState.set("caregivers/cg1", { name: "Maria" });
+    const accept = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", appointmentId: "bk1", decision: "accept" }) as any;
+    expect(accept.code).toBe("MEMBERSHIP_REQUIRED");
+    const decline = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", appointmentId: "bk1", decision: "decline" }) as any;
+    expect(decline.code).not.toBe("MEMBERSHIP_REQUIRED");
+  });
+});
+
 describe("save_onboarding_field client wizard-parity values (rate / startDate / emergency phone)", () => {
   const PHONE = "+15555550003";
   beforeEach(() => { hoisted.reset(); });

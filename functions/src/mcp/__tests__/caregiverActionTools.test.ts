@@ -195,6 +195,9 @@ setCaraActionExecutionStoreForTest({
 describe("U2 caregiver action tools", () => {
   beforeEach(() => {
     hoisted.reset();
+    // The acting caregiver is fully cleared — the website's action gate
+    // (membership → background check) now runs inside these tools too.
+    hoisted.docState.set("caregivers/cg1", { name: "Test Caregiver", membershipStatus: "active", verified: true });
     trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
     sendToPhone.mockClear(); sendToPhone.mockResolvedValue(undefined);
     payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });
@@ -528,6 +531,9 @@ describe("U2 caregiver action tools", () => {
 describe("U11 payment auditing & safety", () => {
   beforeEach(() => {
     hoisted.reset();
+    // The acting caregiver is fully cleared — the website's action gate
+    // (membership → background check) now runs inside these tools too.
+    hoisted.docState.set("caregivers/cg1", { name: "Test Caregiver", membershipStatus: "active", verified: true });
     trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
     sendToPhone.mockClear(); sendToPhone.mockResolvedValue(undefined);
     payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });

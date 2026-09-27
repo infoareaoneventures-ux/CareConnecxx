@@ -75,6 +75,9 @@ vi.mock("../../utils/caraMessage", () => ({
 
 const sendSpy = vi.fn(async (..._a: unknown[]) => {});
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unknown[]) => sendSpy(...a) }));
+// The website bell copy of every nudge (2026-09-26).
+const bellSpy = vi.fn(async (_input: unknown) => true);
+vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: (i: unknown) => bellSpy(i) }));
 
 // The stuck-recovery sweep dynamically imports resendStuckStep — mock it so the
 // tests control whether a link actually went out (true) or not (false), without
@@ -111,6 +114,7 @@ beforeEach(() => {
   store.updates.length = 0;
   genCalls.length = 0;
   sendSpy.mockClear();
+  bellSpy.mockClear();
   resendStuckStep.mockClear();
   resendStuckStep.mockResolvedValue(true);
 });
@@ -192,6 +196,36 @@ describe("staleSessionNudge grounding", () => {
     expect(isNaN(Date.parse(stampValue))).toBe(false);
     // The recovery bookkeeping still happened too.
     expect(store.updates.some((u) => u.id === "+15550005555" && typeof u.data.stuckRecoverySentAt === "string")).toBe(true);
+  });
+
+  it("stuck-recovery link resend ALSO lands in the website bell for the account (2026-09-26)", async () => {
+    seedStuckSession("+15550005556", "caregiver_awaiting_membership", { userType: "caregiver", caregiverId: "cg-bell" });
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(resendStuckStep).toHaveBeenCalledWith("+15550005556");
+    const bell = bellSpy.mock.calls.map((c) => c[0] as any).find((b) => b.recipientId === "cg-bell");
+    expect(bell).toMatchObject({ transitionType: "stuck_gate_resend", type: "onboarding_reminder" });
+    expect(bell.body).toContain("completing your membership payment");
+  });
+
+  it("48h text nudge ALSO lands in the website bell; a session with no account yet gets no bell", async () => {
+    seedSession("+15550008889", {
+      onboardingStep: "caregiver_awaiting_stripe", userType: "caregiver", caregiverId: "cg-48",
+      onboardingData: { name: "Ana" },
+    });
+    seedSession("+15550008890", {
+      onboardingStep: "caregiver_ask_rate", userType: "caregiver", // no uid yet
+      onboardingData: { name: "Bo" },
+    });
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    const bells = bellSpy.mock.calls.map((c) => c[0] as any);
+    expect(bells).toHaveLength(1);
+    expect(bells[0]).toMatchObject({ recipientId: "cg-48", transitionType: "stale_nudge" });
+    expect(bells[0].body).toContain("setting up your payout account");
   });
 
   it("stuck-recovery that could NOT resend (resendStuckStep false) writes no stamp", async () => {

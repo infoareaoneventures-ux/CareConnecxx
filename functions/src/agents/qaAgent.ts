@@ -2560,6 +2560,16 @@ export async function runQaAgent(params: {
     );
   }
 
+  // A caregiver texting from a setup gate (membership / background check /
+  // payouts pending) runs this normal tool-bearing loop — the website lets them
+  // browse everything while unpaid and gates only ACTIONS, and the action tools
+  // enforce that gate themselves. The gate handler that dispatched this turn
+  // sets `__gateContext` (live status + what they already shared) so the reply
+  // is grounded and never re-promises a link (2026-09-26).
+  if (typeof (session as any)?.__gateContext === "string" && (session as any).__gateContext) {
+    systemPrompt += "\n\n" + (session as any).__gateContext;
+  }
+
   // Unconfirmed-identity short-circuits: skip all per-phone task/goal/agent
   // context — they may reference work on behalf of a different linked person.
   const skipCrossEntity = !!(session as any)?.__unconfirmedIdentity || onboardingMode;

@@ -156,6 +156,10 @@ vi.mock("../emotionalContext", () => ({
   buildEmotionalContextDirective: vi.fn(() => undefined),
   EMOTIONAL_CONTEXT_TTL_MS: 1,
 }));
+// Site parity (2026-09-26): a question / `other` at a caregiver gate step runs the
+// real tool-bearing agent instead of re-blasting the link — stubbed here.
+const runQaAgent = vi.hoisted(() => vi.fn(async (_p: any) => {}));
+vi.mock("../qaAgent", () => ({ runQaAgent: (p: any) => runQaAgent(p) }));
 
 // ── Single-shot LLM router (caraGateWalk pattern) ──────────────────────────────
 let questionMode   = false;   // isQuestionOrOther → YES when true
@@ -378,28 +382,34 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
 describe("U9 — membership / MVR checkout resends", () => {
   const MEMBERSHIP_STEP = "caregiver_awaiting_membership";
 
-  it("first `other` resends the stored checkout link and stamps the window", async () => {
+  // Site parity (2026-09-26): the website never re-opens the membership modal
+  // because you typed something — it blocks ACTIONS only. So an `other` reply
+  // at the membership gate now runs the real agent (tools + the gate inside the
+  // action tools) instead of re-blasting the checkout link; only the LINK
+  // keyword, a broken-link report and the stale-session nudge resend it.
+  it("`other` at the membership gate runs the agent — the checkout link is NOT re-blasted, no window stamped", async () => {
     const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership" });
     awaitingKind = "other";
+    runQaAgent.mockClear();
 
     await handleOnboardingStep(PHONE, CHAT, "hey", session);
 
-    expect(linkParts()).toContain("https://pay/membership");
-    expect(typeof stored()?.gateLinkResentAt?.[MEMBERSHIP_STEP]).toBe("string");
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(linkParts()).toHaveLength(0);
+    expect(stored()?.gateLinkResentAt?.[MEMBERSHIP_STEP]).toBeUndefined();
   });
 
-  it("second `other` inside the window: deterministic copy, checkout link NOT re-blasted", async () => {
-    const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, {
-      membershipCheckoutUrl: "https://pay/membership",
-      gateLinkResentAt: { [MEMBERSHIP_STEP]: minutesAgo(5) },
-    });
+  it("a broken-link report at the membership gate resends the checkout link and stamps the window", async () => {
+    const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership" });
     awaitingKind = "other";
+    wantsLink = "YES";
+    runQaAgent.mockClear();
 
-    await handleOnboardingStep(PHONE, CHAT, "hey", session);
+    await handleOnboardingStep(PHONE, CHAT, "the link doesn't work, send it again", session);
 
-    expect(linkParts()).toHaveLength(0);
-    expect(sentText()).toContain("reply LINK");
-    expect(sentText()).not.toContain("just sent");
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(linkParts()).toContain("https://pay/membership");
+    expect(typeof stored()?.gateLinkResentAt?.[MEMBERSHIP_STEP]).toBe("string");
   });
 
   it("already-paid short-circuit beats the cooldown — confirms, never links, never cooldown-copies", async () => {

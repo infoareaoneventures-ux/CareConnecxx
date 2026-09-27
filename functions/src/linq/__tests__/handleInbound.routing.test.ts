@@ -200,6 +200,8 @@ vi.mock("../../agents/onboardingConversation", () => ({
   }),
   // Deterministic upload-link backstop — never blocked in these routing tests.
   sendUploadLinkIfBlocked: vi.fn(async () => false),
+  // The website's wizard-finished stamp the stuck-signup net now writes.
+  stampCaregiverProfileComplete: vi.fn(async () => {}),
 }));
 
 const absorbCaregiverFields = vi.fn(async (..._a: any[]) => ({}));

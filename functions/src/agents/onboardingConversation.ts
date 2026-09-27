@@ -1392,41 +1392,27 @@ export async function handleOnboardingStep(
           "Anytime! I'll text you the moment your results are in.");
         return;
       }
-      if (bgReplyKind === "question") {
-        // The step's own copy promises "I can text the link too — just ask" —
-        // honor it: a link ask or a missing/broken-link report gets the stored
-        // Checkr invitation (or the consent page pre-authorization) for real.
-        const bgAnswer = await answerQuestionMidFlow(text, session, phone);
-        await sendMessage(chatId, bgAnswer);
-        if (await wantsGateLinkResend(text)) {
-          if (await resendGateLink(phone, chatId, "caregiver_awaiting_bgcheck", "caregiver_background_check",
-            "Here's your background-check link:")) return;
-        }
-        await runGateLinkNet(phone, chatId, session, bgAnswer);
-        return;
-      }
-      if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
-        "finishing the background-check form Checkr emailed you")) return;
-      if (await wantsGateLinkResend(text)) {
-        if (await resendGateLink(phone, chatId, "caregiver_awaiting_bgcheck", "caregiver_background_check",
-          "Here's your background-check link:", { throttled: true })) return;
-      }
+      // Live fact next: a check that cleared while the step never advanced
+      // (Checkr webhook missed / admin override unreachable) drives the same
+      // path as the Checkr webhook — before any reply is composed.
       const liveBgFact = await buildLiveBgcheckFact(session);
       if (liveBgFact.includes("CLEARED")) {
-        // Check cleared but step never advanced (Checkr webhook missed or admin
-        // override callable unreachable). Drive the same path as the Checkr webhook.
         await advanceOnboardingStep(phone, "background_check", "clear");
         return;
       }
-      const msgBgcheck = await generateCaraMessage({
-        audience: "caregiver",
-        context: `The caregiver just texted: "${text}". ` + (liveBgFact ? `${liveBgFact} ` : "") +
-          "A caregiver texted Evia while their background check is with Checkr. Ground your reply in the live status above if present; otherwise: if they haven't finished Checkr's form yet, the secure link is in their email from Checkr (Checkr re-sends it daily, and they can ask Evia to text the link too); once they've finished, Evia will text them the moment their results are in. Never promise a specific turnaround time.",
-        fallback: "Your background check is with Checkr now. If you haven't finished their form, the secure link is in your email (I can text it to you too — just ask). Once you're done, I'll text you the moment your results are in.",
-        maxTokens: 100,
-      });
-      await sendMessage(chatId, msgBgcheck);
-      await runGateLinkNet(phone, chatId, session, msgBgcheck);
+      // The step's own copy promises "I can text the link too — just ask" —
+      // honor it: a link ask or a missing/broken-link report gets the stored
+      // Checkr invitation (or the consent page pre-authorization) for real.
+      if (await wantsGateLinkResend(text)) {
+        if (await resendGateLink(phone, chatId, "caregiver_awaiting_bgcheck", "caregiver_background_check",
+          "Here's your background-check link:", bgReplyKind === "question" ? {} : { throttled: true })) return;
+      }
+      if (bgReplyKind !== "question" && await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+        "finishing the background-check form Checkr emailed you")) return;
+      // Site parity (2026-09-26): everything else runs the real agent with its
+      // tools — the website lets them browse jobs and ask anything while Checkr
+      // works; the live status rides along in the gate context.
+      await dispatchGateTurnToQaAgent(phone, chatId, text, session, "caregiver_awaiting_bgcheck");
       return;
     }
     case "caregiver_send_stripe_connect": return handleCaregiverSendStripeConnect(phone, chatId, session);
@@ -1438,38 +1424,19 @@ export async function handleOnboardingStep(
           "Sounds good — I'm here when it's done!");
         return;
       }
-      if (stripeReplyKind === "question") {
-        // Connect links expire fast — a "link doesn't work / never got it"
-        // report earns a re-minted link right now (sendOnboardingLink re-mints;
-        // expired links must never strand a caregiver until the 7-day nudge).
-        // Status questions stay answer-only: they may have finished and Stripe
-        // is reviewing.
-        const stripeAnswer = await answerQuestionMidFlow(text, session, phone);
-        await sendMessage(chatId, stripeAnswer);
-        if (await wantsGateLinkResend(text)) {
-          if (await resendGateLink(phone, chatId, "caregiver_awaiting_stripe", "caregiver_payouts",
-            "Here's a fresh payout-setup link:")) return;
-        }
-        await runGateLinkNet(phone, chatId, session, stripeAnswer);
-        return;
-      }
-      if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
-        "setting up your payout account via the link I sent")) return;
+      // Connect links expire fast — a "link doesn't work / never got it"
+      // report earns a re-minted link right now (sendOnboardingLink re-mints;
+      // expired links must never strand a caregiver until the 7-day nudge).
       if (await wantsGateLinkResend(text)) {
         if (await resendGateLink(phone, chatId, "caregiver_awaiting_stripe", "caregiver_payouts",
-          "Here's a fresh payout-setup link:", { throttled: true })) return;
+          "Here's a fresh payout-setup link:", stripeReplyKind === "question" ? {} : { throttled: true })) return;
       }
-      const livePayoutFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_stripe(phone, session);
-      const stripeNudge = await generateCaraMessage({
-        audience: "caregiver",
-        language: session.preferredLanguage === "es" ? "es" : "en",
-        context: `The caregiver just texted: "${text}". ` + (livePayoutFact ? `${livePayoutFact} ` : "") +
-          "Ground your reply in the live status above if present — if payouts are already LIVE, congratulate them and do NOT nudge them to finish setup; if Stripe is still reviewing, reassure them it's almost done; otherwise warmly nudge them to tap the link you already sent so they can get paid after each visit.",
-        fallback: "Tap the link I sent to set up your payout account so you can get paid after each visit.",
-        maxTokens: 70,
-      });
-      await sendMessage(chatId, stripeNudge);
-      await runGateLinkNet(phone, chatId, session, stripeNudge);
+      if (stripeReplyKind !== "question" && await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+        "setting up your payout account via the link I sent")) return;
+      // Site parity (2026-09-26): everything else runs the real agent with its
+      // tools; the live payout status (LIVE / Stripe reviewing / not started)
+      // rides along in the gate context so the reply is grounded.
+      await dispatchGateTurnToQaAgent(phone, chatId, text, session, "caregiver_awaiting_stripe");
       return;
     }
     default:
@@ -1829,6 +1796,91 @@ async function dispatchOnboardingToLoop(
   await drivePostCollectionHandoff(phone, chatId, role);
 }
 
+// ── Profile-complete stamp — the site wizard's bio-save moment, as data ────────
+// ONE writer for what the website writes when its wizard finishes:
+// onboardingStatus 'profile_complete' + wizardStep 'done' (+ verificationStatus
+// 'profile_complete' unless a terminal state is already recorded). The website
+// shows the setup wizard whenever onboardingStatus !== 'profile_complete'
+// (App.tsx CaregiverRoute), so every path that ends Evia's collection must
+// write this — complete_collection did, but the stuck-signup nets (the model
+// collected everything and never called complete_collection) only moved the
+// session cursor, leaving the record on 'in_progress' and the website re-opening
+// the wizard for a caregiver who had finished by text (founder, 2026-09-26).
+export async function stampCaregiverProfileComplete(caregiverId: string | undefined | null): Promise<void> {
+  if (!caregiverId) return;
+  if (isOnboardingDryRun()) {
+    recordSideEffect("firestore.set:caregivers.profile_complete", { caregiverId });
+    return;
+  }
+  const cgRef = db.collection("caregivers").doc(caregiverId);
+  const currentV = (await cgRef.get()).data()?.verificationStatus as string | undefined;
+  const TERMINAL = ["submitted", "approved", "rejected", "pre_adverse_action", "checkr_clear", "pending", "info_requested"];
+  await cgRef.set({
+    onboardingStep: 2,
+    onboardingStatus: "profile_complete",
+    wizardStep: "done",
+    ...(!currentV || !TERMINAL.includes(currentV) ? { verificationStatus: "profile_complete" } : {}),
+  }, { merge: true }).catch((err) => console.error("stampCaregiverProfileComplete: write failed (non-fatal):", err));
+}
+
+// ── Gate-step turn → the normal tool-bearing agent ────────────────────────────
+// "Evia acts like the site" (founder, 2026-09-26): the website lets a caregiver
+// whose membership / background check / payouts are still pending browse
+// EVERYTHING (Nearby Jobs, the Jobs board, applications, profile) and blocks
+// only actions, via hooks/useCaregiverGate.tsx. Before this, a caregiver parked
+// at a gate step got tool-less canned answers ("I'll match you once your
+// payment goes through") and the gate link re-blasted on every question. Now
+// anything that isn't an ack / a LINK ask / a profile addition runs the real
+// agent with its tools; the caregiver action tools enforce the site's gate
+// themselves (caregiverAccessGate.ts) and text the modal copy + link on a block.
+async function dispatchGateTurnToQaAgent(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession,
+  step:    string,
+): Promise<void> {
+  const liveBuilder = LIVE_GATE_FACT_BUILDERS[step];
+  const liveFact = liveBuilder ? await liveBuilder(phone, session).catch(() => "") : "";
+  const staticFacts = STEP_QUESTION_FACTS[step] ?? "";
+  const cgId = ((session as any).caregiverId ?? session.userId) as string | undefined;
+  let canonicalProfile: Record<string, unknown> | null = null;
+  if (cgId) {
+    try {
+      const cgDoc = await db.collection("caregivers").doc(cgId).get();
+      canonicalProfile = cgDoc.exists ? (cgDoc.data() as Record<string, unknown>) : null;
+    } catch { /* fail-soft — the session snapshot still grounds the reply */ }
+  }
+  const shared = describeSharedProfile(session, canonicalProfile);
+  (session as any).__gateContext = [
+    `CAREGIVER MID-SETUP (${step}). Their profile is done; what's left is the website dashboard's three cards, in order: ` +
+      `membership → background check → payouts. Exactly like the website, they can browse and ask about anything right now — ` +
+      `nearby jobs, their applications, their profile, how things work — so use your tools. The actions the website blocks until ` +
+      `setup is done (applying, accepting an interview or booking, starting or logging a shift, messaging a family) are blocked ` +
+      `by the tools themselves: when a tool returns MEMBERSHIP_REQUIRED / BACKGROUND_REQUIRED / TRANSPORT_DOCS_REQUIRED, ` +
+      `Evia has ALREADY texted them that step and its link — add nothing about it.`,
+    liveFact    ? `LIVE STATUS RIGHT NOW: ${liveFact}` : "",
+    staticFacts ? `HOW THIS STEP WORKS: ${staticFacts}` : "",
+    shared,
+    `Never say a link is coming or that you'll send one — if they want their setup link, call send_onboarding_link ` +
+      `(caregiver_membership / caregiver_background_check / caregiver_payouts / caregiver_transport_docs) and then confirm. ` +
+      `Don't nag about the pending step unless they ask about it or try something it blocks.`,
+  ].filter(Boolean).join("\n");
+  const { runQaAgent } = await import("./qaAgent");
+  await runQaAgent({
+    text,
+    phone,
+    chatId,
+    userId:      cgId ?? "",
+    seniorId:    "",
+    userType:    "caregiver",
+    caregiverId: cgId,
+    zepThreadId: (session as any).zepThreadId as string | undefined,
+    session:     session as unknown as Record<string, unknown>,
+    intent:      null,
+  });
+}
+
 // ── Post-collection handoff (loop-only) ───────────────────────────────────────
 // Canonical "conversational collection just finished → drive the next phase"
 // step, shared by the cold loop-entry paths: dispatchOnboardingToLoop (the
@@ -1930,6 +1982,10 @@ export async function drivePostCollectionHandoff(
     await db.collection("agent_sessions").doc(phone).update({ onboardingStep: firstGateStep(role) });
     curStep = firstGateStep(role);
     console.info("onboarding: stuck-signup net advanced cursor to gate", { phone, role });
+    // The website's wizard-finished stamp, same as complete_collection writes.
+    if (role === "caregiver") {
+      await stampCaregiverProfileComplete((after.caregiverId ?? after.userId) as string | undefined);
+    }
   }
 
   if (curStep !== firstGateStep(role)) return;
@@ -3468,32 +3524,10 @@ async function handleCaregiverResendMembership(
   text?:   string,
   opts:    { bypassSpent?: boolean } = {},
 ): Promise<boolean> {
-  // If the caregiver replied with a question while waiting on Stripe, answer it
-  // before resending the link. A pure "thanks / sounds good" gets a brief ack
-  // WITHOUT re-blasting the link.
-  // Only an `other`-classified inbound is cooldown-gated (U9); question-path
-  // resends and no-text callers (stale-nudge repair) stay unthrottled.
-  let throttled = false;
-  if (text) {
-    const kind = await classifyAwaitingReply(text, "finish their membership payment via the link Evia sent");
-    if (kind === "ack") {
-      await sendAwaitingAck(chatId, session,
-        "The caregiver just acknowledged your membership-payment ask (a thanks or 'will do') — you're here when it's done.",
-        "Sounds good — I'm here when it's done!");
-      return false;
-    }
-    if (kind === "question") {
-      await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
-    } else if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
-      "finishing your membership payment via the link I sent")) {
-      return false;
-    } else {
-      throttled = true; // `other` fell through to the resend below
-    }
-  }
   // A webhook may have processed the payment between the inbound and this reply —
   // re-blasting the checkout link at someone who already paid reads as not
-  // listening. Fresh-read the completion flag; if it's paid, confirm instead.
+  // listening. Fresh-read the completion flag FIRST, before any reply
+  // classification; if it's paid, confirm instead.
   let membershipPaid = false;
   let freshMembershipData: Record<string, unknown> | undefined;
   try {
@@ -3519,6 +3553,40 @@ async function handleCaregiverResendMembership(
     }));
     return false;
   }
+  // An inbound text at the gate (not paid yet). A pure "thanks / sounds good"
+  // gets a brief ack WITHOUT re-blasting the link; a profile addition is
+  // absorbed; everything else — questions, requests, browsing — runs the real
+  // agent with its tools, exactly like the website, which lets an unpaid
+  // caregiver look at everything and only blocks actions (the action tools
+  // enforce that gate and text the membership step themselves). The checkout
+  // link is never re-blasted at a question any more (2026-09-26); the LINK
+  // keyword, the stale-session nudge and a broken-link report still resend it.
+  if (text) {
+    const kind = await classifyAwaitingReply(text, "finish their membership payment via the link Evia sent");
+    if (kind === "ack") {
+      await sendAwaitingAck(chatId, session,
+        "The caregiver just acknowledged your membership-payment ask (a thanks or 'will do') — you're here when it's done.",
+        "Sounds good — I'm here when it's done!");
+      return false;
+    }
+    if (await wantsGateLinkResend(text)) {
+      const askedUrl = (session as any).membershipCheckoutUrl as string | undefined;
+      if (askedUrl) {
+        await sendMessage(chatId, "Tap the link below to complete your membership payment:");
+        await sendMessage(chatId, { parts: [{ type: "link", value: askedUrl }] });
+      } else {
+        await handleCaregiverSendMembership(phone, chatId, session);
+      }
+      await stampGateLinkResent(phone, "caregiver_awaiting_membership");
+      return true;
+    }
+    if (kind !== "question" && await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+      "finishing your membership payment via the link I sent")) {
+      return false;
+    }
+    await dispatchGateTurnToQaAgent(phone, chatId, text, session, "caregiver_awaiting_membership");
+    return false;
+  }
   // LINK-keyword caller with this window's bypass already spent (checked AFTER
   // the paid short-circuit above so a paid user never sees cooldown copy):
   // truthful deterministic copy, no resend.
@@ -3527,14 +3595,7 @@ async function handleCaregiverResendMembership(
     await sendMessage(chatId, gateLinkBypassSpentCopy(mins, gateLinkCooldownResetMinutes(freshMembershipData, "caregiver_awaiting_membership")));
     return false;
   }
-  // U9 cooldown — `other`-branch resends only; paid short-circuit above wins.
-  if (throttled) {
-    const mins = gateLinkCooldownMinutes(freshMembershipData, "caregiver_awaiting_membership");
-    if (mins !== null) {
-      await sendMessage(chatId, gateLinkInCooldownReplyCopy(freshMembershipData, "caregiver_awaiting_membership", mins));
-      return false;
-    }
-  }
+  // No text: the LINK keyword / stale-session nudge re-deliver the checkout link.
   const url = (session as any).membershipCheckoutUrl as string | undefined;
   if (url) {
     await sendMessage(chatId, "Tap the link below to complete your membership payment:");
@@ -3543,7 +3604,6 @@ async function handleCaregiverResendMembership(
     // Re-generate if URL was lost
     await handleCaregiverSendMembership(phone, chatId, session);
   }
-  if (throttled) await stampGateLinkResent(phone, "caregiver_awaiting_membership");
   return true;
 }
 
@@ -3740,13 +3800,24 @@ async function handleCaregiverResendBgcheckConsent(phone: string, chatId: string
         "Sounds good — I'm here when it's done!");
       return;
     }
-    if (kind === "question") {
-      await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
-    } else if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+    // An explicit "link doesn't work / send it again" gets the consent page again.
+    if (await wantsGateLinkResend(text)) {
+      const token      = generateToken({ phone, task: "bgcheck_consent" });
+      const consentUrl = `${APP_URL}/bgcheck?t=${token}`;
+      await sendMessage(chatId, "Review & authorize your background check here:");
+      await sendMessage(chatId, { parts: [{ type: "link", value: consentUrl }] });
+      return;
+    }
+    if (kind !== "question" && await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
       "reviewing and authorizing your background check via the link I sent")) {
       return;
     }
+    // Site parity (2026-09-26): anything else runs the real agent — browsing
+    // and questions work exactly as on the website while the check is pending.
+    await dispatchGateTurnToQaAgent(phone, chatId, text, session, "caregiver_awaiting_bgcheck_consent");
+    return;
   }
+  // No text: the stale-session nudge / LINK keyword re-deliver the consent page.
   const token      = generateToken({ phone, task: "bgcheck_consent" });
   const consentUrl = `${APP_URL}/bgcheck?t=${token}`;
   await sendMessage(chatId, "Review & authorize your background check here:");

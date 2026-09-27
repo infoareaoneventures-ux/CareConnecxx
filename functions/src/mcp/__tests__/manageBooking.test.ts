@@ -429,7 +429,9 @@ describe("request_schedule_amendment", () => {
 });
 
 describe("respond_to_schedule_amendment", () => {
-  beforeEach(() => hoisted.reset());
+  // Cleared caregiver — Accept runs the website's action gate (membership →
+  // background check); Decline never does, exactly like the Bookings page.
+  beforeEach(() => { hoisted.reset(); hoisted.docState.set(`caregivers/${CAREGIVER}`, { membershipStatus: "active", verified: true }); });
 
   it("decline just marks the amendment declined — no shifts created", async () => {
     hoisted.docState.set("booking_amendments/am1", { caregiverId: CAREGIVER, status: "pending" });

@@ -80,7 +80,8 @@ describe('Validation Utilities', () => {
       hourlyRate: 25,
       bio: 'Experienced caregiver with 5 years in senior care. I specialize in dementia care and mobility assistance.',
       skills: ['Driving', 'Meal Preparation'],
-      certifications: ['CPR', 'First Aid'],
+      // certifications were removed from the caregiver signup schema on 2026-09-25
+      // (the site's wizard never asks for them); the schema now rejects the key.
       backgroundCheckData: {
         legalFirstName: 'John',
         legalLastName: 'Doe',

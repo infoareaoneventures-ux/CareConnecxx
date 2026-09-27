@@ -163,6 +163,12 @@ vi.mock("../../linq/client", () => ({
   signalThinking: vi.fn(async () => {}),
   createChat:     vi.fn(async () => ({ chat_id: "chat", service: "SMS" })),
 }));
+// Site parity (2026-09-26): a question / request at a caregiver gate step runs the
+// real tool-bearing agent (dispatchGateTurnToQaAgent) instead of a tool-less
+// canned answer. Stubbed here; the tests assert on the gate context it is handed.
+const runQaAgent = vi.hoisted(() => vi.fn(async (_p: any) => {}));
+vi.mock("../qaAgent", () => ({ runQaAgent: (p: any) => runQaAgent(p) }));
+const gateContextOf = (): string => String(runQaAgent.mock.calls.at(-1)?.[0]?.session?.__gateContext ?? "");
 vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async (opts: any) => opts.fallback) }));
 vi.mock("../emotionalContext", () => ({
   classifyEmotionalContext: vi.fn(async () => "calm"),
@@ -401,9 +407,11 @@ describe("bg-check status questions are grounded in live backgroundCheckData", (
   // Braces matter: mockClear() returns the mock, and a function returned from
   // beforeEach is invoked by vitest as a no-arg cleanup hook (which crashed the
   // prompt-matching mock body).
-  beforeEach(() => { vi.mocked(quickComplete).mockClear(); });
+  beforeEach(() => { vi.mocked(quickComplete).mockClear(); runQaAgent.mockClear(); });
 
-  it("injects the LIVE submitted/in-progress state into the mid-flow answer prompt", async () => {
+  // Site parity (2026-09-26): a status question at the bg-check gate runs the
+  // real agent; the live backgroundCheckData fact rides along in its gate context.
+  it("injects the LIVE submitted/in-progress state into the agent's gate context", async () => {
     const session = seed("caregiver_awaiting_bgcheck", { ...FULL_DATA }, { caregiverId: "cg-uid" });
     hoisted.docState.set("caregivers/cg-uid", {
       backgroundCheckData: {
@@ -416,16 +424,14 @@ describe("bg-check status questions are grounded in live backgroundCheckData", (
 
     await handleOnboardingStep(PHONE, CHAT, "Can you tell my background status?", session);
 
-    const answerCall = vi.mocked(quickComplete).mock.calls.find(([p]) =>
-      p.includes("LIVE STATUS RIGHT NOW"));
-    expect(answerCall, "mid-flow answer prompt should carry the live status fact").toBeTruthy();
-    expect(answerCall![0]).toContain("Checkr HAS their finished form");
-    expect(answerCall![0]).toContain("submitted 2026-07-08");
-    // The answer itself was sent to the caregiver.
-    expect(sentMessages.length).toBeGreaterThan(0);
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    const ctx = gateContextOf();
+    expect(ctx, "gate context should carry the live status fact").toContain("LIVE STATUS RIGHT NOW");
+    expect(ctx).toContain("Checkr HAS their finished form");
+    expect(ctx).toContain("submitted 2026-07-08");
   });
 
-  it("says the check CLEARED when backgroundCheckData.status is clear", async () => {
+  it("a check that already CLEARED advances the step (webhook-missed recovery) instead of answering", async () => {
     const session = seed("caregiver_awaiting_bgcheck", { ...FULL_DATA }, { caregiverId: "cg-uid" });
     hoisted.docState.set("caregivers/cg-uid", {
       backgroundCheckData: { status: "clear", checkrCandidateId: "cand-1" },
@@ -434,10 +440,8 @@ describe("bg-check status questions are grounded in live backgroundCheckData", (
 
     await handleOnboardingStep(PHONE, CHAT, "any update on my check?", session);
 
-    const answerCall = vi.mocked(quickComplete).mock.calls.find(([p]) =>
-      p.includes("LIVE STATUS RIGHT NOW"));
-    expect(answerCall).toBeTruthy();
-    expect(answerCall![0]).toContain("CLEARED");
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(stored()?.onboardingStep).not.toBe("caregiver_awaiting_bgcheck");
   });
 
   it("fails soft to the static facts when there is no caregiver doc", async () => {
@@ -446,15 +450,10 @@ describe("bg-check status questions are grounded in live backgroundCheckData", (
 
     await handleOnboardingStep(PHONE, CHAT, "what's my status?", session);
 
-    // No live fact injected, but the static step facts still ground the answer
-    // and a reply still goes out.
-    const liveCall = vi.mocked(quickComplete).mock.calls.find(([p]) =>
-      p.includes("LIVE STATUS RIGHT NOW"));
-    expect(liveCall).toBeFalsy();
-    const staticCall = vi.mocked(quickComplete).mock.calls.find(([p]) =>
-      p.includes("Their background check is with Checkr now"));
-    expect(staticCall).toBeTruthy();
-    expect(sentMessages.length).toBeGreaterThan(0);
+    // No live fact injected, but the static step facts still ground the agent.
+    const ctx = gateContextOf();
+    expect(ctx).not.toContain("LIVE STATUS RIGHT NOW");
+    expect(ctx).toContain("Their background check is with Checkr now");
   });
 });
 
@@ -463,22 +462,21 @@ describe("bg-check status questions are grounded in live backgroundCheckData", (
 // "I don't have your zip showing" even though it was saved on the session — the
 // mid-flow answer prompt carried no shared-profile facts) ──────────────────────
 describe("gate questions are grounded in what the user already shared", () => {
-  beforeEach(() => { vi.mocked(quickComplete).mockClear(); });
+  beforeEach(() => { vi.mocked(quickComplete).mockClear(); runQaAgent.mockClear(); });
 
-  const sharedPrompt = (): string | undefined =>
-    vi.mocked(quickComplete).mock.calls.find(([p]) => p.includes("THEY'VE ALREADY SHARED"))?.[0];
-
-  it("membership gate: the answer prompt carries the saved city/zip/rate", async () => {
-    const session = seed("caregiver_awaiting_membership", { ...FULL_DATA });
+  it("membership gate: the agent turn carries the saved city/zip/rate (site parity: real agent, no link re-blast)", async () => {
+    const session = seed("caregiver_awaiting_membership", { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership" });
     awaitingKind = "question";
 
     await handleOnboardingStep(PHONE, CHAT, "What zip code did I share with you?", session);
 
-    const p = sharedPrompt();
-    expect(p, "mid-flow answer prompt should carry the shared-profile briefing").toBeTruthy();
-    expect(p).toContain("San Jose (ZIP 95110)");
-    expect(p).toContain("rate: $22/hr");
-    expect(sentMessages.length).toBeGreaterThan(0);
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    const ctx = gateContextOf();
+    expect(ctx, "gate context should carry the shared-profile briefing").toContain("San Jose (ZIP 95110)");
+    expect(ctx).toContain("rate: $22/hr");
+    // The checkout link is NOT re-blasted at a question (the website doesn't
+    // pop the membership modal when you ask something).
+    expect(JSON.stringify(sentMessages)).not.toContain("https://pay/membership");
   });
 
   it("presents a bare-ZIP city (Hamse data shape) as a ZIP, not a city name", async () => {
@@ -488,9 +486,18 @@ describe("gate questions are grounded in what the user already shared", () => {
 
     await handleOnboardingStep(PHONE, CHAT, "So what was the city I shared with you", session);
 
-    const p = sharedPrompt();
-    expect(p).toBeTruthy();
-    expect(p).toContain("location: ZIP 95130");
+    expect(gateContextOf()).toContain("location: ZIP 95130");
+  });
+
+  it("an `other` reply at the membership gate ALSO runs the agent — the site blocks actions, not conversation", async () => {
+    const session = seed("caregiver_awaiting_membership", { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership" });
+    awaitingKind = "other";
+
+    await handleOnboardingStep(PHONE, CHAT, "are there jobs close to my area", session);
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(gateContextOf()).toContain("CAREGIVER MID-SETUP (caregiver_awaiting_membership)");
+    expect(JSON.stringify(sentMessages)).not.toContain("https://pay/membership");
   });
 });
 
@@ -500,23 +507,19 @@ describe("gate questions are grounded in what the user already shared", () => {
 describe("gate status questions are grounded in live state (all builders)", () => {
   // See the gotcha above: mockClear() returns the mock, so use braces here or
   // vitest invokes the returned mock as a cleanup hook.
-  beforeEach(() => { vi.mocked(quickComplete).mockClear(); });
+  beforeEach(() => { vi.mocked(quickComplete).mockClear(); runQaAgent.mockClear(); });
 
-  // The mid-flow answer prompt (the one carrying the injected live fact), if any.
-  const answerPrompt = (): string | undefined =>
-    vi.mocked(quickComplete).mock.calls.find(([p]) => p.includes("LIVE STATUS RIGHT NOW"))?.[0];
-
-  it("membership: says the payment WENT THROUGH when the subscription id is on the session", async () => {
+  it("membership: a payment that already WENT THROUGH is confirmed deterministically — before any reply classification, no agent turn", async () => {
     const session = seed("caregiver_awaiting_membership", { ...FULL_DATA }, { caregiverSubscriptionId: "sub_live" });
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "did my membership payment go through?", session);
-    expect(answerPrompt(), "live membership fact should be injected").toContain("WENT THROUGH");
-    expect(sentMessages.length).toBeGreaterThan(0);
+    expect(JSON.stringify(sentMessages).toLowerCase()).toContain("came through");
+    expect(runQaAgent).not.toHaveBeenCalled();
   });
 
   it("membership: fresh-read wins — stale in-hand session (no sub id) but the fresh doc shows paid", async () => {
     // The webhook stamped caregiverSubscriptionId AFTER this turn's session was
-    // loaded; the builder's fresh read must see it (the race the fix targets).
+    // loaded; the handler's fresh read must see it (the race the fix targets).
     seed("caregiver_awaiting_membership", { ...FULL_DATA }, { caregiverSubscriptionId: "sub_fresh" });
     const stale: any = {
       chatId: CHAT, service: "SMS", optedOut: false, createdAt: "now",
@@ -524,26 +527,26 @@ describe("gate status questions are grounded in live state (all builders)", () =
     };
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "any word on my payment?", stale);
-    expect(answerPrompt()).toContain("WENT THROUGH");
+    expect(JSON.stringify(sentMessages).toLowerCase()).toContain("came through");
+    expect(runQaAgent).not.toHaveBeenCalled();
   });
 
-  it("payouts: says payouts are LIVE when the caregiver doc is onboarding-complete", async () => {
+  it("payouts: the agent turn is told payouts are LIVE when the caregiver doc is onboarding-complete", async () => {
     const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA }, { caregiverId: "cg-uid" });
     hoisted.docState.set("caregivers/cg-uid", { stripeAccountId: "acct_1", stripeOnboardingComplete: true, payoutsEnabled: true });
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "am I set up to get paid?", session);
-    expect(answerPrompt()).toContain("payouts are LIVE");
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(gateContextOf()).toContain("payouts are LIVE");
   });
 
   it("payouts: fails soft to the static facts when there is no caregiver doc", async () => {
     const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA }); // no caregiverId
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "how do payouts work?", session);
-    expect(answerPrompt(), "no live fact without a caregiver doc").toBeUndefined();
-    const staticCall = vi.mocked(quickComplete).mock.calls.find(([p]) =>
-      p.includes("payout link sets up their Stripe account"));
-    expect(staticCall, "static payout facts still ground the answer").toBeTruthy();
-    expect(sentMessages.length).toBeGreaterThan(0);
+    const ctx = gateContextOf();
+    expect(ctx).not.toContain("LIVE STATUS RIGHT NOW");
+    expect(ctx, "static payout facts still ground the agent").toContain("payout link sets up their Stripe account");
   });
 
   it("bgcheck consent: fresh read reveals consent already authorized (composite falls to the consent builder)", async () => {
@@ -559,7 +562,7 @@ describe("gate status questions are grounded in live state (all builders)", () =
     };
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "do I still need to authorize the check?", stale);
-    expect(answerPrompt()).toContain("ALREADY reviewed");
+    expect(gateContextOf()).toContain("ALREADY reviewed");
   });
 
   it("client payment: auto-advances (webhook-missed recovery) instead of answering WENT THROUGH and stopping", async () => {

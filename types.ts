@@ -683,17 +683,6 @@ export const CAREGIVER_SKILLS = [
 
 export type CaregiverSkill = typeof CAREGIVER_SKILLS[number];
 
-// --- EMERGENCY ALERT ---
-export interface EmergencyAlert {
-  id: string;
-  initiatorId: string;
-  initiatorType: 'client' | 'caregiver';
-  timestamp: string;
-  location?: { lat: number; lng: number };
-  status: 'active' | 'resolved';
-  notifiedContacts: string[];
-}
-
 // --- VIDEO INTERVIEW TYPES ---
 // 'confirmed'/'declined' are written by the MCP respond_to_interview_request tool
 export type VideoInterviewStatus = 'requested' | 'accepted' | 'scheduled' | 'confirmed' | 'declined' | 'in-progress' | 'completed' | 'cancelled' | 'missed';

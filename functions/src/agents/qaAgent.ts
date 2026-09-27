@@ -70,6 +70,7 @@ import {
   type GroundingVerdict,
   shouldHandOffToHuman,
   isHandoffActive,
+  handoffRoomNote,
 } from "./humanHandoff";
 import {
   classifyGroundingClaims,
@@ -806,7 +807,6 @@ export function buildClientSystemPrompt(
     `  · start_visit_request_flow — ADDING A VISIT (non-negotiable): "add Thursdays", "can Basra also come Saturday 9 to 1", "one more day next week" → call this with initialText = the family's message (caregiverId if named). It is the website's Calendar "+ Request Visit" button step for step (which caregiver/booking, days, per-day times with the site's own availability checks, start, ongoing/end, note, recap, YES → the caregiver's accept request) and ALREADY TEXTS THE FAMILY — send NOTHING else this turn. Never collect these fields yourself.`,
     `  · get_calendar — the website's My Calendar page for a date range: every visit with the page's display status (scheduled / in-progress / overdue / completed / cancelled) and its click-through details (address, recipients, care needs vs tasks completed, actual start/end, completion notes) plus every interview the page shows (with its Meet link and job banner), each with 'actions' = the popover's buttons. Use for "what's on my calendar this week / next week", "how many visits in October", "what happened last week". Adding a visit = start_visit_request_flow (the page's "+ Request Visit"); cancelling one = start_cancel_flow; an interview's cancel = cancel_interview.`,
     `  · request_schedule_amendment — low-level write behind start_visit_request_flow; prefer the flow. Only for a request already fully resolved outside the conversation. To move an EXISTING already-scheduled visit to a different day/time instead, use manage_booking's propose_reschedule — do not cancel_visit + request_schedule_amendment for that, it loses the original visit instead of just moving it. Confirm the date/time with the family, then call; the caregiver gets a YES/NO text.`,
-    `  · trigger_emergency_alert — ONLY for a genuine urgent safety situation (a fall, medical emergency). Confirm it's real first; for life-threatening events also tell them to call 911.`,
     `  · start_replacement_flow — THE way to handle a visit that shows "Needs Replacement" (the caregiver cancelled it): first get_upcoming_appointments to find that visit's id (status "needs_replacement") if you don't have it, then call start_replacement_flow with that shiftId. It runs Evia's own scripted flow matching the website's Find Replacement modal step for step (texts each candidate's profile card, asks which one and whether to keep or change the visit's day/time, shows a recap, and only on the family's YES sends the replacement booking request) and ALREADY TEXTS THE FAMILY ITSELF — send NOTHING else this turn. Never start_interview_flow here: there is no interview step in a replacement.`,
     `  · get_callout_backups / select_callout_backup — the same two steps as individual tools, only for a replacement already mid-conversation outside the flow. get_callout_backups finds candidates ranked the same way the website's own Find Replacement picker does (Care Team first, then nearby matches) and ALREADY TEXTS THE FAMILY each one's real profile card itself (tappable photo-preview link, same as find_nearby_caregivers) — send NOTHING else this turn beyond following its own instruction (which one they'd like). The candidates also land in pendingMatches, so a later "send me Maria's profile again" works via resend_caregiver_profile exactly like any other caregiver search. select_callout_backup then sends a NEW booking request to the family's chosen candidate (they get the normal accept/decline text — this does not reassign the visit outright). If the family decides they don't need a replacement, use manage_booking's cancel_visit on that same shift instead (matches the website's Skip button) — there is no refund tool; refunds are handled separately, not through this flow.`,
     `  · react_to_message — add an iMessage tapback (heart, thumbs-up, laugh, or any custom emoji) to the family's most recent message. Use it the way a person texting would: heart a photo of ${seniorName}, thumbs-up a quick "sounds good", laugh at a joke. It's silent — a reaction alone is often the whole answer, so don't follow it with a redundant text. If the tool reports a fallback (SMS chat), express the sentiment briefly in your reply instead.`,
@@ -1018,10 +1018,10 @@ export function buildCaregiverSystemPrompt(
     `- complete_task: when you've finished (or are blocked), call this with a status and your reply message instead of plain text. Never mark 'done' while an action is still awaiting a YES/NO confirmation.`,
     `- create_care_journal_entry: log notes, mood, and medications for a completed visit`,
     `- update_care_journal_entry: amend a journal entry you already submitted (typo, forgot a med)`,
-    `- browse_job_board: the Jobs page's Available Jobs list, exactly as the site shows it — every open job (no fit ranking; the site has none), each as one card: title, location + distance, rate or Flexible, frequency, Day/Night, date, hours, and the button the site shows (Apply Now, or Activate Membership / Complete Verification / Transportation Badge Required). Call it whenever they ask about jobs, work, openings, or what's near them; read the cards back as a NUMBERED list (each job's \`number\`, one line per job: title · location · distance · rate · frequency · date · hours) and end with "Reply with a number for the details, or 'apply to 2'" — never summarize to "one job" when total is higher. sort 'nearest' + limit 4 = the dashboard's Nearby Jobs; filters = the sidebar.`,
-    `- get_job_details: the Details modal for one job (posted-by name only after the family accepted them, starting date, days, time, seniors, hours/week, description, their own status for it). Use before answering questions about a specific job.`,
+    `- browse_job_board: the Jobs page's Available Jobs list — it TEXTS the numbered list itself (each line = one card: title, location + distance, rate or Flexible, frequency, Day/Night, date, hours, and the gate button when one replaces Apply Now). Call it whenever they ask what's available / near them, then send NOTHING else that turn. They answer with a number.`,
+    `- get_job_details: the Details modal for one job — it TEXTS the details itself. Pass the number they said ("2", "details on 3", "yes details" after a one-job list = number 1); with no number it shows the job just noticed / just discussed. Send nothing else that turn. Never guess a job id.`,
     `- hide_job / unhide_job: the Hide button and the 'View hidden jobs' tab (unhide_job with no jobId lists them).`,
-    `- start_apply_flow: the Apply Now button — the ONLY way to apply. Call it the moment they name a job ("apply to 2", "the $25 one"); it texts the modal (Your Profile, Client's budget, optional cover letter, then SUBMIT / CANCEL) itself, so send nothing else that turn. Never apply any other way.`,
+    `- start_apply_flow: the Apply Now button — the ONLY way to apply. Call it the moment they want to apply: pass the number they said ("apply to 2"); for "apply" / "I'd like to apply to this job" pass no number (it uses the job just shown or just noticed). It texts the modal (Your Profile, Client's budget, optional cover letter, then SUBMIT / CANCEL) itself, so send nothing else that turn. Never apply any other way, never guess a job id.`,
     `- withdraw_job_application: the My Applications tab's Withdraw — only while pending and no interview is pending or scheduled for it`,
     `- get_my_applications: the My Applications tab (Pending / Closed), each with title, location, rate, status, linked interview status, applied date, and canWithdraw`,
     `- respond_to_booking_request: accept or decline a direct booking request a family sent you`,
@@ -2802,6 +2802,9 @@ export async function runQaAgent(params: {
       "start_booking_flow", "start_interview_flow", "start_replacement_flow",
       "start_reschedule_flow", "start_resend_booking_flow", "start_visit_request_flow", "start_cancel_flow",
       "start_correction_flow",
+      // Caregiver Jobs page (2026-09-27): the list, the Details modal, the
+      // Apply flow and the interview reschedule flow all text themselves.
+      "browse_job_board", "get_job_details", "start_apply_flow", "start_interview_reschedule_flow",
     ]);
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early
@@ -3215,7 +3218,11 @@ export async function runQaAgent(params: {
     // path schedules its own retry via proactive_triggers and must not resume.
     const loopProducedReply = !!reply;
 
-    if (!reply) {
+    // A self-sending tool already texted the whole answer; an empty model
+    // reply here is correct, not "exhausted" (2026-09-27 live: the apply flow
+    // had texted, the model said nothing, and the caregiver got "I'm checking
+    // that now" plus a 30s retry that re-ran the turn).
+    if (!reply && !selfSendingFlowStartedThisTurn) {
       console.warn("qaAgent: tool-use loop exhausted without text reply", { userId, isRetry, preview: text.slice(0, 80), deliveredToUser });
 
       if (deliveredToUser) {
@@ -3674,7 +3681,7 @@ export async function runQaAgent(params: {
           userId,
           role: userType === "caregiver" ? "caregiver" : "client",
           source: "evia_handoff",
-          note: `Evia wasn't confident enough to answer this and told them a teammate would follow up. Their message: "${String(text).slice(0, 500)}"`,
+          note: handoffRoomNote(String(text)),
         })).catch((err) => console.warn("handoff escalateToTeam failed (non-fatal)", err instanceof Error ? err.message : err));
         db.collection("agent_uncertainty_log").add({
           userId,

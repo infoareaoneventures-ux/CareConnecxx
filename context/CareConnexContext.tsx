@@ -5,8 +5,7 @@ import { pushNotificationService } from '../services/pushNotificationService';
 import { setSentryUser } from '../lib/sentry';
 import { isConfigured, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
-import { Caregiver, EmergencyAlert, ToastMessage, ToastType, User, UserProfile } from '../types';
-import { EmergencyAlertBanner } from '../components/EmergencyAlertBanner';
+import { Caregiver, ToastMessage, ToastType, User, UserProfile } from '../types';
 
 /**
  * Extended user with profile data from Firestore
@@ -65,8 +64,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
     const [blockedUserProfiles, setBlockedUserProfiles] = useState<Record<string, { name: string; photo: string }>>({});
     const [membershipModalOpen, setMembershipModalOpen] = useState(false);
-    const [emergencyAlerts, setEmergencyAlerts] = useState<EmergencyAlert[]>([]);
-    const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
 
     // Auth Listener - fetches user profile from Firestore to get userType
     useEffect(() => {
@@ -353,24 +350,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         return () => unsubscribe();
     }, [currentUser?.uid]);
 
-    // Live emergency_alerts listener. Both the EmergencySOS UI and the agent's
-    // trigger_emergency_alert MCP tool write this collection; this surfaces an
-    // active alert as an in-app banner (see EmergencyAlertBanner below) instead
-    // of relying solely on the push/SMS fan-out. Scope note: the subscription
-    // (and the firestore.rules read rule) is initiator-scoped. Household members
-    // are notified via server fan-out (notifiedContacts holds phone numbers, not
-    // uids), so a household-wide client query is not supportable by the current
-    // rules/data shape.
-    useEffect(() => {
-        if (!currentUser?.uid) {
-            setEmergencyAlerts([]);
-            setDismissedAlertIds(new Set());
-            return;
-        }
-        const unsubscribe = dbService.subscribeToEmergencyAlerts(currentUser.uid, setEmergencyAlerts);
-        return () => unsubscribe();
-    }, [currentUser?.uid]);
-
     // Subscribe to blocked users list
     useEffect(() => {
         if (!currentUser?.uid || !db) { setBlockedIds(new Set()); setBlockedUserProfiles({}); return; }
@@ -429,14 +408,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             membershipModalOpen,
             setMembershipModalOpen,
         }}>
-            <EmergencyAlertBanner
-                alerts={emergencyAlerts.filter(a => !dismissedAlertIds.has(a.id))}
-                onDismiss={(alertId) => setDismissedAlertIds(prev => {
-                    const next = new Set(prev);
-                    next.add(alertId);
-                    return next;
-                })}
-            />
             {children}
         </CareConnexContext.Provider>
     );

@@ -45,17 +45,6 @@ export const resolveAdminAlert = functions.https.onCall(async (data, context) =>
     resolvedNote: note,
   });
 
-  // A family emergency (functions/src/emergency.ts) also keeps an active
-  // emergency_alerts doc that drives the red banner on the family's site pages.
-  // Resolving the team's alert is the ONLY place it gets cleared — do it here.
-  const a = snap.data() ?? {};
-  const linkedAlertId = typeof a.alertId === "string" ? a.alertId : "";
-  if (linkedAlertId && (a.type === "family_emergency" || a.type === "emergency_alert")) {
-    await db.collection("emergency_alerts").doc(linkedAlertId)
-      .update({ status: "resolved", resolvedAt, resolvedBy: adminUid })
-      .catch((err) => console.error("resolveAdminAlert: emergency_alerts update failed", err));
-  }
-
   return { success: true };
 });
 

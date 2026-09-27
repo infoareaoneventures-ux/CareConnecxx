@@ -25,7 +25,9 @@ export interface ProactiveTrigger {
   id?:               string;
   userId:            string;
   phone:             string;
-  type:              "appointment_reminder" | "weekly_checkin" | "medication_reminder" | "custom"
+  // (weekly_checkin / medication_reminder and the health_* types were removed
+  // 2026-09-27: nothing ever scheduled them and the website has no such thing.)
+  type:              "appointment_reminder" | "custom"
                    | "qa_retry" | "caregiver_checkin" | "caregiver_checkin_escalation"
                    | "issue_escalation" | "issue_escalation_final" | "issue_followup";
   scheduledAt:       string;   // ISO
@@ -204,7 +206,6 @@ export async function shouldFireTrigger(
 // turn and the commitment tracker backstops the promised answer.
 const REPLY_EXEMPT_TYPES = new Set([
   "appointment_reminder",
-  "medication_reminder",
 ]);
 const REPLY_EXEMPT_MESSAGE_PREFIXES = [
   "issue_escalation:", "issue_escalation_final:", "issue_followup:",
@@ -212,6 +213,18 @@ const REPLY_EXEMPT_MESSAGE_PREFIXES = [
 export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): boolean {
   if (REPLY_EXEMPT_TYPES.has(t.type)) return true;
   return REPLY_EXEMPT_MESSAGE_PREFIXES.some((p) => t.message?.startsWith(p));
+}
+
+// How the engine hands a fired trigger to the send layer. Transactional
+// reminders (the reply-exempt types: the 1h interview reminder, issue
+// directives) are NEVER droppable — no LLM SEND/WAIT judge, no 3/day
+// proactive cap — exactly like the shift reminders (thirtyMinShiftReminder,
+// clientDayBeforeReminder send canDrop: false). 2026-09-27 live: the 1h
+// interview reminder reached the family while the caregiver's was silently
+// dropped by the send layer, so the two sides didn't match. Discretionary
+// triggers (weekly check-ins, Evia-scheduled follow-ups) stay droppable.
+export function triggerSendOptions(t: Pick<ProactiveTrigger, "type" | "message">): { urgency: "standard"; canDrop: boolean } {
+  return { urgency: "standard", canDrop: !isReplyExempt(t) };
 }
 
 // U8 engine gate (KTD15): classify a DISCRETIONARY trigger's content into a
@@ -343,8 +356,6 @@ export async function checkIgnoredTriggers(): Promise<void> {
 
       const triggerFriendlyNames: Record<string, string> = {
         appointment_reminder: "appointment reminders",
-        weekly_checkin:       "weekly check-ins",
-        medication_reminder:  "medication reminders",
         custom:               "these messages",
       };
       const friendlyName = triggerFriendlyNames[trigger.type] ?? "these messages";
@@ -446,17 +457,16 @@ export const runTriggerEngine = functions.pubsub
         continue;
       }
 
-      const isHealthTrigger = ["health_alert", "health_check", "medication_reminder", "fall_risk", "wellness_check"]
-        .includes(trigger.type ?? "");
+      const sendOpts = triggerSendOptions(trigger);
       const isDirective = isSystemDirectiveMessage(trigger.message);
-      if (!isDirective && degraded && (trigger.source === "claude" || !isHealthTrigger)) {
+      if (!isDirective && degraded) {
         continue;
       }
 
       // U8 engine gate (KTD15): non-safety DISCRETIONARY trigger sends
-      // (weekly check-ins, custom nudges, Claude-scheduled follow-ups) submit
-      // a PolicyCandidate before claiming. Directives, health triggers, and
-      // transactional reminder types keep their direct path untouched. The
+      // (custom nudges, Claude-scheduled follow-ups) submit a PolicyCandidate
+      // before claiming. Directives and transactional reminder types keep
+      // their direct path untouched. The
       // gate runs BEFORE claimProactiveTrigger — the claim consumes the
       // trigger (sets firedAt), so a deferred candidate must stay unclaimed to
       // re-enter naturally on a later 5-min pass. A suppressed disposition is
@@ -464,8 +474,8 @@ export const runTriggerEngine = functions.pubsub
       // context-resolved suppression below) rather than left to clog the
       // bounded queue retrying forever.
       const isDiscretionary =
-        !isDirective && !isHealthTrigger && !REPLY_EXEMPT_TYPES.has(trigger.type) &&
-        (trigger.source === "claude" || trigger.type === "weekly_checkin" || trigger.type === "custom");
+        !isDirective && !REPLY_EXEMPT_TYPES.has(trigger.type) &&
+        (trigger.source === "claude" || trigger.type === "custom");
       if (isDiscretionary) {
         const category = discretionaryCategory(`${trigger.intent ?? ""} ${trigger.message ?? ""}`);
         const intentName = trigger.source === "claude" && trigger.intent ? trigger.intent : trigger.type;
@@ -567,16 +577,14 @@ export const runTriggerEngine = functions.pubsub
 
           delivered = await sendViaInteractionAgent(trigger.phone, {
             content,
-            urgency:     isHealthTrigger ? "immediate" : "standard",
+            ...sendOpts,
             sourceAgent: "trigger_engine",
-            canDrop:     !isHealthTrigger,
           });
         } else {
           delivered = await sendViaInteractionAgent(trigger.phone, {
             content:     trigger.message,
-            urgency:     isHealthTrigger ? "immediate" : "standard",
+            ...sendOpts,
             sourceAgent: "trigger_engine",
-            canDrop:     !isHealthTrigger,
           });
         }
         if (trigger.bell?.recipientId) {
@@ -624,7 +632,7 @@ export const runTriggerEngine = functions.pubsub
           error:       (err instanceof Error ? err.message : String(err)).slice(0, 500),
           createdAt:   new Date().toISOString(),
           resolved:    false,
-          priority:    isHealthTrigger ? "critical" : "high",
+          priority:    "high",
         }).catch((alertError) => {
           console.error("triggerEngine: failed to raise admin alert for", doc.id, alertError);
         });

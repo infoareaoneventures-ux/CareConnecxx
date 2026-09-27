@@ -508,26 +508,6 @@ service cloud.firestore {
     }
     
     // ==========================================
-    // EMERGENCY ALERTS COLLECTION
-    // ==========================================
-    match /emergency_alerts/{alertId} {
-      // Only initiator or admin can read
-      allow read: if isAuthenticated() && (
-        resource.data.initiatorId == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Authenticated users can create
-      allow create: if isAuthenticated() && 
-        request.resource.data.initiatorId == request.auth.uid;
-      
-      // Only admin can update (resolve)
-      allow update: if isAdmin();
-      
-      allow delete: if isAdmin();
-    }
-    
-    // ==========================================
     // APPOINTMENT CARE PLANS COLLECTION
     // ==========================================
     match /appointment_care_plans/{planId} {

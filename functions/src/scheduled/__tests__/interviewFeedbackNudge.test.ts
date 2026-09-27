@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const store = {
   interviews:     new Map<string, any>(),
   sessions:       new Map<string, any>(),
+  bookings:       new Map<string, any>(),
   updates:        [] as Array<{ id: string; data: any }>,
   sessionUpdates: [] as Array<{ id: string; data: any }>,
 };
@@ -40,6 +41,7 @@ vi.mock("firebase-admin", () => {
     // interview a fit-decision reply concerns (2026-09-13, same fix as
     // interviewCompletionNudge.ts's pendingCompletionNudgeInterviewId).
     if (name === "agent_sessions")   return makeQueryCollection(store.sessions, store.sessionUpdates);
+    if (name === "booking_requests") return makeQueryCollection(store.bookings, null);
     return { where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }) };
   };
   const firestore = () => ({ collection });
@@ -61,7 +63,9 @@ vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unkno
 import {
   sendInterviewFeedbackNudges,
   shouldNudgeInterviewFeedback,
-  NUDGE_DELAY_MS, RENUDGE_COOLDOWN_MS,
+  interviewHasBooking,
+  completedAtMs,
+  NUDGE_DELAY_MS, RENUDGE_COOLDOWN_MS, NUDGE_WINDOW_MS,
 } from "../interviewFeedbackNudge";
 
 const NOW = 1_000_000_000_000;
@@ -105,6 +109,28 @@ describe("shouldNudgeInterviewFeedback", () => {
     })).toBe(true);
   });
 
+  // 2026-09-27 (founder): a month on, nobody is still deciding.
+  it("stops after the 30-day window even with the cooldown elapsed", () => {
+    expect(shouldNudgeInterviewFeedback({
+      status: "completed", fitLevel: undefined, completedMs: NOW - (NUDGE_WINDOW_MS + 1),
+      lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS + 1), nowMs: NOW,
+    })).toBe(false);
+    expect(shouldNudgeInterviewFeedback({
+      status: "completed", fitLevel: undefined, completedMs: NOW - (NUDGE_WINDOW_MS - 1),
+      lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS + 1), nowMs: NOW,
+    })).toBe(true);
+  });
+
+  it("reads completedAt however it was written: the site's server timestamp, Evia's old ISO string, or nothing", () => {
+    const ms = NOW - 5000;
+    expect(completedAtMs({ toMillis: () => ms })).toBe(ms);                 // admin SDK Timestamp
+    expect(completedAtMs({ seconds: Math.floor(ms / 1000), nanoseconds: 0 })).toBe(Math.floor(ms / 1000) * 1000);
+    expect(completedAtMs({ _seconds: 12, _nanoseconds: 0 })).toBe(12000);   // serialized form
+    expect(completedAtMs(new Date(ms).toISOString())).toBe(ms);
+    expect(completedAtMs(undefined)).toBeNull();
+    expect(completedAtMs("not a date")).toBeNull();
+  });
+
   it("does not fire with no parseable completedAt", () => {
     expect(shouldNudgeInterviewFeedback({
       status: "completed", fitLevel: undefined, completedMs: null, lastNudgedMs: null, nowMs: NOW,
@@ -144,7 +170,7 @@ describe("sendInterviewFeedbackNudges — only counts a nudge when it actually s
     store.interviews.set(id, {
       status:              "completed",
       feedbackSubmitted:   false,
-      completedAt:         new Date(NOW - NUDGE_DELAY_MS - 1000).toISOString(),
+      completedAt:         new Date(Date.now() - NUDGE_DELAY_MS - 1000).toISOString(), // real clock: the job uses Date.now() and the 30-day window
       feedbackNudgeCount:  0,
       feedbackNudgedAt:    null,
       clientId:            "client-1",
@@ -166,9 +192,49 @@ describe("sendInterviewFeedbackNudges — only counts a nudge when it actually s
   beforeEach(() => {
     store.interviews.clear();
     store.sessions.clear();
+    store.bookings.clear();
     store.updates.length = 0;
     store.sessionUpdates.length = 0;
     sendSpy.mockReset();
+  });
+
+  // 2026-09-27 live: booking sent AND accepted, family still nudged every 48h.
+  // Before 2026-09-27 the job parsed completedAt as text, so an interview the
+  // family completed on the SITE (server timestamp) was never nudged at all.
+  it("nudges an interview completed on the site (timestamp completedAt), not only one completed through Evia", async () => {
+    seedInterview("iv-site", { completedAt: { toMillis: () => Date.now() - NUDGE_DELAY_MS - 1000 } });
+    seedSession("+15550000012");
+    await (sendInterviewFeedbackNudges as any)();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("never nudges once a booking exists under the interview's key — the site's card no longer shows Send Booking", async () => {
+    seedInterview("iv-booked", { caregiverId: "cg-1", jobId: "job-1" });
+    seedSession("+15550000010");
+    for (const status of ["pending", "accepted", "declined", "cancelled"]) {
+      store.bookings.clear();
+      store.bookings.set("bk", { clientId: "client-1", caregiverId: "cg-1", jobId: "job-1", interviewId: "iv-booked", status });
+      await (sendInterviewFeedbackNudges as any)();
+    }
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(store.updates).toHaveLength(0);
+  });
+
+  it("a booking for a different caregiver or job does not count; keys fall back to the interview id when there is no job", async () => {
+    seedInterview("iv-open", { caregiverId: "cg-1", jobId: null });
+    seedSession("+15550000011");
+    store.bookings.set("other-cg",  { clientId: "client-1", caregiverId: "cg-2", jobId: null, interviewId: "iv-open" });
+    store.bookings.set("other-job", { clientId: "client-1", caregiverId: "cg-1", jobId: "job-9", interviewId: null });
+    store.bookings.set("replacement", { clientId: "client-1", caregiverId: "cg-1", replacementForShiftId: "s1" });
+    await (sendInterviewFeedbackNudges as any)();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    expect(interviewHasBooking({ id: "iv-open", caregiverId: "cg-1", jobId: null },
+      [{ caregiverId: "cg-1", jobId: null, interviewId: "iv-open" }])).toBe(true);
+    expect(interviewHasBooking({ id: "iv-open", caregiverId: "cg-1", jobId: "job-1" },
+      [{ caregiverId: "cg-1", jobId: "job-1", interviewId: null }])).toBe(true);
+    expect(interviewHasBooking({ id: "iv-open", caregiverId: "cg-1", jobId: "job-1" },
+      [{ caregiverId: "cg-1", jobId: null, interviewId: "iv-open" }])).toBe(false); // the site keys by job when the interview has one
   });
 
   it("does not touch the interview doc when the send is suppressed (cap/opt-out/wait-tool)", async () => {

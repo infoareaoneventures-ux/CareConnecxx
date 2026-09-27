@@ -236,20 +236,6 @@ export const notificationAPI = {
       type: 'system',
       isRead: false
     });
-  },
-
-  async notifyEmergencyAlert(
-    userId: string,
-    alertType: string,
-    location?: string
-  ): Promise<string> {
-    return this.createNotification({
-      userId,
-      title: 'Emergency Alert',
-      body: `Emergency ${alertType} triggered${location ? ` at ${location}` : ''}`,
-      type: 'alert',
-      isRead: false
-    });
   }
 };
 

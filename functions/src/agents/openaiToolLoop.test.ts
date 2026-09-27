@@ -120,16 +120,16 @@ describe("openaiToolLoop", () => {
       description: `d-${name}`,
       input_schema: { type: "object", properties: {} },
     }) as any;
-    // 150 filler tools with trigger_emergency_alert (core) buried at the END —
+    // 150 filler tools with send_onboarding_link (core) buried at the END —
     // naive truncation would drop it.
     const tools = [
       ...Array.from({ length: 149 }, (_, i) => makeTool(`filler_tool_${i}`)),
-      makeTool("trigger_emergency_alert"),
+      makeTool("send_onboarding_link"),
     ];
 
     const capped = __test__.capToolsForOpenAi(tools);
     expect(capped.length).toBe(__test__.OPENAI_MAX_TOOLS);
-    expect(capped.map((t: any) => t.name)).toContain("trigger_emergency_alert");
+    expect(capped.map((t: any) => t.name)).toContain("send_onboarding_link");
   });
 
   it("leaves tool arrays at or under the cap untouched", () => {

@@ -12,7 +12,7 @@ const OPENAI_MAX_TOOLS = 128;
 
 /**
  * Trim the tool list to OpenAI's 128-tool cap. Core tools (always-bound
- * universal reads plus safety-critical tools like trigger_emergency_alert)
+ * universal reads plus always-bound tools like send_onboarding_link)
  * are kept unconditionally; the remainder keep their original order and the
  * tail is dropped. Deterministic for a given input so OpenAI's automatic
  * prompt caching still gets a stable prefix across iterations.

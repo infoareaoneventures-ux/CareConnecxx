@@ -147,7 +147,6 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   cash_payment_confirmed:             { included: false },
   memory_fact_corrected:              { included: false },
   memory_fact_forgotten:              { included: false },
-  emergency_alert_raised:             { included: false },
   callout_backup_selected:            { included: false },
   callout_refund_requested:           { included: false },
   // A person's message to the team (or Evia's handoff note) — internal, never in the family feed.

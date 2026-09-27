@@ -97,7 +97,6 @@ beforeEach(() => {
 describe("isReplyExempt", () => {
   it("exempts time-critical reminder types", () => {
     expect(isReplyExempt({ type: "appointment_reminder", message: "Interview in an hour" })).toBe(true);
-    expect(isReplyExempt({ type: "medication_reminder", message: "meds" })).toBe(true);
   });
 
   it("exempts system-directive messages", () => {
@@ -107,7 +106,7 @@ describe("isReplyExempt", () => {
   });
 
   it("keeps nudges and qa_retry reply-cancellable (twin-trigger + commitment tracker semantics)", () => {
-    expect(isReplyExempt({ type: "weekly_checkin", message: "How was the week?" })).toBe(false);
+    expect(isReplyExempt({ type: "custom", message: "How was the week?" })).toBe(false);
     expect(isReplyExempt({ type: "custom", message: "Just checking in about caregivers" })).toBe(false);
     expect(isReplyExempt({ type: "qa_retry", message: "qa_retry:{}" })).toBe(false);
   });
@@ -131,7 +130,7 @@ describe("cancelTriggerIfUserReplied", () => {
     // NOTE: the pending-triggers query matches `== null`, mirroring prod docs
     // that carry explicit nulls; the fake treats missing as null too.
     hoisted.docs.set("nudge", {
-      userId: "u1", phone: "+1", type: "weekly_checkin", message: "check in",
+      userId: "u1", phone: "+1", type: "custom", message: "check in",
       cancelledAt: null, firedAt: null,
     });
     hoisted.docs.set("reminder", {

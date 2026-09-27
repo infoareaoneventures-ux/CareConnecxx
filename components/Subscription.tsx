@@ -42,7 +42,6 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         "Secure messaging & scheduling",
         "Evia text support, 24/7",
         "Care plan management tools",
-        "Emergency alert button during visits",
         "Family manager access"
     ];
 

@@ -438,18 +438,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "trigger_emergency_alert",
-    description: "Raise an emergency alert for the family/account when they report an urgent safety situation (a fall, medical emergency, caregiver no-show with the senior alone, etc.). Creates an active alert + notifies staff. clientId is injected automatically. Use ONLY for genuine urgent situations — confirm it's a real emergency first. For life-threatening events also tell them to call 911.",
-    input_schema: {
-      type: "object",
-      properties: {
-        note:     { type: "string", description: "Short description of the emergency (what's happening)" },
-        location: { type: "object", description: "Optional { lat, lng } if known", properties: { lat: { type: "number" }, lng: { type: "number" } } },
-      },
-      required: [],
-    },
-  },
-  {
     name: "get_callout_backups",
     description: "THE tool for a visit marked 'Needs Replacement' (the caregiver cancelled it): find and TEXT the family replacement candidates — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating, and it EXCLUDES the caregiver who cancelled. The family's pick then goes to select_callout_backup, which sends that candidate a real replacement booking request for this visit — no interview step, exactly like the website's Request button. Get the shiftId from get_upcoming_appointments (the visit whose status is 'needs_replacement') if you don't already have it. This tool ALREADY SENDS each candidate's profile card itself (same tappable photo-preview link format as find_nearby_caregivers) — do not repeat their names/rates yourself, just follow the instruction in its result. clientId and phone are injected automatically — only the visit's owner may view its candidates.",
     input_schema: {
@@ -1717,7 +1705,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "browse_job_board",
     description:
-      "The caregiver's Jobs page (Available Jobs tab), exactly as the website lists it: every open job, newest first, minus the ones they already " +
+      "The caregiver's Jobs page (Available Jobs tab), exactly as the website lists it — this tool TEXTS THE NUMBERED LIST ITSELF, say nothing else this turn. Every open job, newest first, minus the ones they already " +
       "applied to or hid, within their travel distance when set. No fit or skills ranking — the site has none. Each entry is one card (title, location, " +
       "distance, rate or Flexible, frequency, Day/Night, date, hours) plus the button the site would show (Apply Now, or the gate that replaces it). " +
       "Pass sort 'nearest' with limit 4 for the dashboard's Nearby Jobs; pass filters to mirror the sidebar (search, pay range, time of day, days, seniors, care type). " +
@@ -1750,14 +1738,16 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "The Jobs page's Details modal for ONE job: title, rate, location, frequency, care types, starting date, days, time, seniors, hours/week, " +
       "description, and the footer the site shows (their interview or application status for it, or Apply Now / the gate). " +
-      "The family's name is NOT shown until the family has accepted them — say so if asked. Use before describing a job in depth.",
+      "The family's name is NOT shown until the family has accepted them — say so if asked. This tool TEXTS THE DETAILS ITSELF — say nothing else this turn. " +
+      "Pass the number they said; with no number or id it shows the job just noticed / just discussed.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        jobId:       { type: "string", description: "The job_posts document ID (from browse_job_board)" },
+        number:      { type: "number", description: "The job's number in the list browse_job_board texted ('2', 'details on 3'). Preferred." },
+        jobId:       { type: "string", description: "The job_posts document ID — only when you already have it." },
       },
-      required: ["caregiverId", "jobId"],
+      required: ["caregiverId"],
     },
   },
   {
@@ -1822,14 +1812,16 @@ export const MCP_TOOLS: McpTool[] = [
       "The Jobs page's Apply Now button, as Evia's scripted step-by-step flow — the ONLY way a caregiver applies to a job. " +
       "It shows them the Apply modal's contents (Your Profile, Client's budget), asks for the optional cover letter, then asks them to " +
       "reply SUBMIT or CANCEL, and submits the site's exact application. This tool TEXTS THE FIRST STEP ITSELF — say nothing else this turn. " +
-      "They can back out at any step. Call it as soon as they name a job to apply to (by number from browse_job_board, or by description).",
+      "They can back out at any step. Call it as soon as they want to apply: pass the number they said ('apply to 2'); with no number or id " +
+      "(\"apply\", \"I'd like to apply to this job\") it applies to the job just shown / just noticed. Never guess a job id.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        jobId:       { type: "string", description: "The job_posts document ID (from browse_job_board)" },
+        number:      { type: "number", description: "The job's number in the list browse_job_board texted. Preferred." },
+        jobId:       { type: "string", description: "The job_posts document ID — only when you already have it." },
       },
-      required: ["caregiverId", "jobId"],
+      required: ["caregiverId"],
     },
   },
   {
@@ -3716,25 +3708,6 @@ async function executeToolCall(
         };
       }
 
-      case "trigger_emergency_alert": {
-        return runActionNativeMcpWrite(name, input, async () => {
-        // ONE path with the website's red Emergency button (v1-triggerFamilyEmergency):
-        // functions/src/emergency.ts writes the banner's emergency_alerts doc, texts the
-        // caregiver on the current visit, and pages the team. clientId is session-injected.
-        const { clientId, note, location } = input;
-        if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
-        const { raiseFamilyEmergency } = await import("../emergency");
-        const result = await raiseFamilyEmergency({
-          clientId: clientId as string,
-          note: typeof note === "string" ? note : null,
-          location: location && typeof location === "object" ? (location as { lat: number; lng: number }) : null,
-          source: "cara",
-        });
-        if (!result.deduped) logAudit({ eventType: "emergency_alert_raised", userId: clientId as string, data: { source: "mcp:trigger_emergency_alert", alertId: result.alertId } }).catch(() => {});
-        return { success: true, alertId: result.alertId, status: "active", advise911: true, deduped: result.deduped, caregiverNotified: result.caregiverNotified };
-        });
-      }
-
       // 2026-09-14 (Hamse's call): rebuilt against the REAL data model. The
       // old implementation queried `appointments` — a legacy collection no
       // current visit (site or Evia) is written to anymore; a "Needs
@@ -5134,7 +5107,8 @@ async function executeToolCall(
         if (typeof iv.scheduledTime === "string" && parseScheduledTimeMs(iv.scheduledTime) > Date.now()) {
           return toolError("INVALID_INPUT", `That interview hasn't happened yet (${formatInterviewTime(parseScheduledTimeMs(iv.scheduledTime))}) — a fit decision comes after it`);
         }
-        ivUpdate.status = "completed"; ivUpdate.completedAt = nowIso;
+        // Same write as the site's Mark as Completed (a server timestamp, not an ISO string) — 2026-09-27.
+        ivUpdate.status = "completed"; ivUpdate.completedAt = admin.firestore.FieldValue.serverTimestamp();
       }
       if (fitLevel === "strong") {
         // NOTE: this only records the decision (hire_decisions) — it does
@@ -5187,7 +5161,7 @@ async function executeToolCall(
       // Terminal status — clear any leftover reschedule proposal, exactly as
       // the site's handleMarkInterviewComplete does (2026-09-16).
       await ivSnap.ref.update({
-        status: "completed", completedAt: nowIso,
+        status: "completed", completedAt: admin.firestore.FieldValue.serverTimestamp(), // the site's exact write
         reschedulePendingTime: admin.firestore.FieldValue.delete(),
         rescheduledBy:         admin.firestore.FieldValue.delete(),
       });
@@ -6571,41 +6545,59 @@ async function executeToolCall(
       const session = { ...sessionDoc, caregiverId, chatId: sess.chatId } as unknown as import("../linq/client").AgentSession;
       const flows = await import("../agents/caregiverJobFlows");
       if (name === "start_apply_flow") {
-        if (!jobId) return toolError("INVALID_INPUT", "jobId is required");
-        const r = await flows.startApplyFlow(sess.phone, sess.chatId, session, { caregiverId: caregiverId as string, jobId: jobId as string });
-        return { success: r.started, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the caregiver — send nothing else this turn." : "The caregiver was already told why it didn't start — send nothing else." };
+        // Numbers from the last texted list, else the job just shown / just
+        // noticed — the model never guesses an id (2026-09-27 live: it did, the
+        // flow said "no longer open" about a job the board was showing).
+        const { resolveJobRef, sendJobList } = await import("../agents/jobBoardText");
+        const resolved = resolveJobRef(sessionDoc as Record<string, unknown>, { jobId, number: (input as Record<string, unknown>).number });
+        if (!resolved) {
+          await (await import("../linq/client")).sendMessage(sess.chatId, "Which job? Here's what's open near you:");
+          await sendJobList(sess.phone, sess.chatId, caregiverId as string);
+          return { success: true, started: false, reason: "no_job_ref", note: "The list was texted so they can answer with a number — send nothing else." };
+        }
+        const r = await flows.startApplyFlow(sess.phone, sess.chatId, session, { caregiverId: caregiverId as string, jobId: resolved });
+        return { success: true, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the caregiver — send nothing else this turn." : "The caregiver was already told why it didn't start — send nothing else." };
       }
       if (!interviewId) return toolError("INVALID_INPUT", "interviewId is required");
       const r = await flows.startInterviewRescheduleFlow(sess.phone, sess.chatId, session, { caregiverId: caregiverId as string, interviewId: interviewId as string });
-      return { success: r.started, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the caregiver — send nothing else this turn." : "The caregiver was already told why it didn't start — send nothing else." };
+      return { success: true, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the caregiver — send nothing else this turn." : "The caregiver was already told why it didn't start — send nothing else." };
     }
 
     // The Jobs page, as data (agents/jobBoardPage.ts mirrors JobBoard.tsx).
     if (name === "browse_job_board") {
-      const { caregiverId, sort, limit, filters } = input as Record<string, unknown>;
+      const { caregiverId, sort, limit, filters, phone: bPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const { loadAvailableJobs } = await import("../agents/jobBoardPage");
-      const page = await loadAvailableJobs(caregiverId as string, {
+      // Self-sending (2026-09-27): the list goes out verbatim from the tool —
+      // the reply post-processor used to rewrite the model's list into "I
+      // found a few options, which one?" and the caregiver never saw a job.
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, bPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const { sendJobList } = await import("../agents/jobBoardText");
+      const r = await sendJobList(sess.phone, sess.chatId, caregiverId as string, {
         sort:    sort === "nearest" ? "nearest" : "newest",
         limit:   typeof limit === "number" && limit > 0 ? Math.floor(limit) : undefined,
         filters: (filters && typeof filters === "object") ? (filters as Record<string, unknown>) : undefined,
       });
-      if (!page) return toolError("NOT_FOUND", "Caregiver not found");
-      // Numbered like a list the caregiver can answer by number ("apply to 2").
-      return { success: true, ...page, jobs: page.jobs.map((j, i) => ({ number: i + 1, ...j })), page: "/caregiver/jobs" };
+      return { success: r.sent, sent: r.sent, count: r.count, total: r.total, jobs: r.items, note: "The numbered list was texted to the caregiver — send nothing else this turn. They answer with a number." };
     }
 
     if (name === "get_job_details") {
-      const { caregiverId, jobId } = input as Record<string, unknown>;
-      if (!caregiverId || !jobId) return toolError("INVALID_INPUT", "caregiverId and jobId are required");
-      const { loadJobDetails } = await import("../agents/jobBoardPage");
-      const r = await loadJobDetails(caregiverId as string, jobId as string);
-      if (!r.ok) {
-        if (r.reason === "no_caregiver") return toolError("NOT_FOUND", "Caregiver not found");
-        if (r.reason === "not_found") return toolError("NOT_FOUND", "Job details not available");
-        return toolError("NOT_FOUND", "This job is no longer available");
+      const { caregiverId, jobId, number, phone: dPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, dPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const sessionDoc = (await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {};
+      const { resolveJobRef, sendJobDetails, sendJobList } = await import("../agents/jobBoardText");
+      const resolved = resolveJobRef(sessionDoc as Record<string, unknown>, { jobId, number });
+      if (!resolved) {
+        await (await import("../linq/client")).sendMessage(sess.chatId, "Which job? Here's what's open near you:");
+        await sendJobList(sess.phone, sess.chatId, caregiverId as string);
+        return { success: true, shown: false, reason: "no_job_ref", note: "The list was texted so they can answer with a number — send nothing else." };
       }
-      return { success: true, job: r.details, page: `/caregiver/jobs?job=${jobId}` };
+      const r = await sendJobDetails(sess.phone, sess.chatId, caregiverId as string, resolved);
+      return { success: true, shown: r.ok, reason: r.reason ?? null, jobId: resolved, note: r.ok ? "The details were texted — send nothing else this turn." : "They were told the job is no longer available — send nothing else." };
     }
 
     if (name === "hide_job") {

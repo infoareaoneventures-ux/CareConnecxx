@@ -75,7 +75,11 @@ export async function sendNewJobNotices(jobId: string, rawJob: Record<string, un
     // Evia IS the second front door: no link — the caregiver asks her for the
     // details or to apply, like tapping the card on the site.
     await sendMessage(sess.chatId, `${body} Reply here for the details or to apply.`)
-      .then(() => result.notified.push(doc.id))
+      .then(async () => {
+        result.notified.push(doc.id);
+        // "This job" in their next text resolves to this post (jobBoardText.resolveJobRef).
+        try { await db.collection("agent_sessions").doc(sess.phone).set({ lastNoticedJobId: jobId, lastNoticedJobAt: new Date().toISOString() }, { merge: true }); } catch { /* best effort */ }
+      })
       .catch((err) => { console.error("[newJobNotice] text failed:", doc.id, err); result.bellOnly.push(doc.id); });
   }
   return result;

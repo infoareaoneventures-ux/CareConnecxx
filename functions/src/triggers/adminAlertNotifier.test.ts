@@ -116,17 +116,6 @@ describe("onAdminAlertCreated", () => {
     expect(email.html).toContain("&lt;script&gt;");
   });
 
-  it("a family emergency texts the on-call phone with the caregiver outcome (email alone is not a page)", async () => {
-    await runTrigger({ type: "family_emergency", severity: "critical", source: "site", caregiverNotified: false, note: "Mom fell" });
-    expect(mocks.sendToPhone).toHaveBeenCalledWith(
-      "+15559990000",
-      expect.stringContaining("FAMILY EMERGENCY"),
-      expect.anything(),
-    );
-    expect(String(mocks.sendToPhone.mock.calls[0][1])).toContain("could NOT be reached");
-    expect(String(mocks.sendToPhone.mock.calls[0][1])).toContain("Mom fell");
-  });
-
   it("notifies for canonical alerts that use severity instead of priority", async () => {
     await runTrigger({ type: "provider_failure", severity: "critical" });
 

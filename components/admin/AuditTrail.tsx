@@ -15,7 +15,7 @@ type AuditEventType =
   | 'background_check_requested' | 'background_check_result'
   | 'profile_updated' | 'login' | 'logout' | 'admin_action'
   | 'intake_submitted' | 'caregiver_approved' | 'caregiver_suspended'
-  | 'shift_checkin' | 'emergency_triggered' | 'wellbeing_checkin'
+  | 'shift_checkin' | 'wellbeing_checkin'
   | 'ai_proxy_called' | 'rate_limit_hit';
 
 interface AuditEntry {
@@ -87,7 +87,7 @@ const EVENT_TYPES: (AuditEventType | '')[] = [
   'background_check_requested', 'background_check_result',
   'profile_updated', 'login', 'logout', 'admin_action',
   'intake_submitted', 'caregiver_approved', 'caregiver_suspended',
-  'shift_checkin', 'emergency_triggered', 'wellbeing_checkin',
+  'shift_checkin', 'wellbeing_checkin',
   'ai_proxy_called', 'rate_limit_hit',
 ];
 
@@ -382,7 +382,7 @@ export const AuditTrail: React.FC = () => {
 };
 
 function getEventTypeBadge(eventType: string): string {
-  if (['crisis_detected', 'emergency_triggered', 'rate_limit_hit'].includes(eventType))
+  if (['crisis_detected', 'rate_limit_hit'].includes(eventType))
     return 'bg-red-50 text-red-700 border-red-200';
   if (['permissions_updated', 'admin_action', 'caregiver_suspended'].includes(eventType))
     return 'bg-amber-50 text-amber-700 border-amber-200';

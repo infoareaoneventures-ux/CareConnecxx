@@ -26,6 +26,7 @@ import { parseScheduledTimeMs, formatInterviewTime, businessTodayStr } from "../
 import { caregiverBlockReason, jobRequiresTransport, textCaregiverGateBlock } from "./caregiverAccessGate";
 import { submitJobApplication } from "./jobApplicationSubmit";
 import { rateLabel, normalizeJobPost } from "./jobBoardPage";
+import { sendJobList } from "./jobBoardText";
 import { isSiteInterviewSlot, PENDING_STATUSES, ACCEPTED_STATUSES } from "./caregiverInterviewsTab";
 
 const db = admin.firestore();
@@ -58,7 +59,9 @@ export async function startApplyFlow(
     db.collection("job_applications").where("jobId", "==", args.jobId).where("caregiverId", "==", args.caregiverId).limit(1).get(),
   ]);
   if (!jobSnap.exists || jobSnap.data()?.status !== "open") {
-    await sendMessage(chatId, "That job is no longer open.");
+    // Same as the board: the closed post is gone from it — show what's there now.
+    await sendMessage(chatId, "That job is no longer open — here's what's open near you now:");
+    await sendJobList(phone, chatId, args.caregiverId).catch(() => {});
     return { started: false, reason: "not_open" };
   }
   if (!dup.empty) {
@@ -159,7 +162,7 @@ export interface RescheduleFlowData {
 }
 
 const DATE_QUESTION = "What date? (e.g. 9/28 or next Monday)";
-const TIME_QUESTION = "What time? The site offers 9:00 AM to 6:00 PM, on the hour or half hour (e.g. 10:30 AM).";
+const TIME_QUESTION = "What time? Interviews run between 9:00 AM and 6:00 PM, on the hour or half hour (e.g. 10:30 AM).";
 const RS_CONFIRM = (d: RescheduleFlowData, label: string) =>
   `New time: ${label}\n\nReply SEND to propose it to ${d.clientName} — the interview stays at its current time until they confirm — or CANCEL.`;
 

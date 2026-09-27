@@ -27,6 +27,48 @@ export const NUDGE_DELAY_MS = 60 * 60 * 1000; // 1 hour after completedAt
 // match their ~48h cadence for the same reason (repeated indefinitely, the
 // old 3h spacing would be naggy).
 export const RENUDGE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // space repeats ~2 days apart
+// 2026-09-27 (founder): after a month nobody is still deciding — stop asking,
+// and cap how far back the sweep ever reaches.
+export const NUDGE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * completedAt as written by BOTH sides: the site's Mark as Completed writes a
+ * Firestore server timestamp (PostsPage.tsx), Evia used to write an ISO
+ * string (now a server timestamp too, 2026-09-27). Until then this job parsed
+ * it as text, so a site-completed interview read as "no completion time" and
+ * was never nudged at all — only Evia-completed ones were.
+ */
+export function completedAtMs(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") { const ms = Date.parse(value); return Number.isNaN(ms) ? null : ms; }
+  if (typeof value === "object") {
+    const v = value as { toMillis?: () => number; seconds?: number; _seconds?: number };
+    if (typeof v.toMillis === "function") { const ms = v.toMillis(); return Number.isFinite(ms) ? ms : null; }
+    const secs = typeof v.seconds === "number" ? v.seconds : typeof v._seconds === "number" ? v._seconds : null;
+    return secs === null ? null : secs * 1000;
+  }
+  return null;
+}
+
+/**
+ * The site's own "decided" signal. PostsPage.tsx keys its booking_requests
+ * by `${caregiverId}_${jobId || interviewId}` and, once ANY booking exists
+ * under an interview's key, the card shows Booking sent / accepted / Resend
+ * instead of the Send Booking button. Sending the booking IS the family's
+ * decision — whatever happens to it afterwards (declined bookings already
+ * reach the family as a text + bell; the card offers Resend, no prompt). So a
+ * completed interview is nudged only while it has no booking at all, exactly
+ * when the site still shows Send Booking. 2026-09-27 live: a family whose
+ * booking was sent AND accepted kept getting "move forward or keep looking?".
+ */
+export function interviewHasBooking(
+  interview: { id: string; caregiverId?: string; jobId?: string | null },
+  bookings: Array<{ caregiverId?: string; jobId?: string | null; interviewId?: string | null }>,
+): boolean {
+  const key = `${interview.caregiverId ?? ""}_${interview.jobId || interview.id}`;
+  return bookings.some((b) => `${b.caregiverId ?? ""}_${b.jobId || b.interviewId || ""}` === key);
+}
 
 /**
  * Pure decision: should this completed-but-undecided interview get a
@@ -51,6 +93,7 @@ export function shouldNudgeInterviewFeedback(p: {
   if (p.fitLevel === "strong" || p.fitLevel === "no") return false;
   if (p.completedMs === null) return false;
   if (p.nowMs - p.completedMs < NUDGE_DELAY_MS) return false;
+  if (p.nowMs - p.completedMs > NUDGE_WINDOW_MS) return false;
   if (p.lastNudgedMs !== null && p.nowMs - p.lastNudgedMs < RENUDGE_COOLDOWN_MS) return false;
   return true;
 }
@@ -81,7 +124,7 @@ export const sendInterviewFeedbackNudges = functions.pubsub
     for (const doc of snap.docs) {
       const interview = doc.data();
       try {
-        const completedMs = Date.parse((interview.completedAt as string) ?? "");
+        const completedMs = completedAtMs(interview.completedAt);
         const nudgeCount   = Number(interview.feedbackNudgeCount ?? 0);
         const lastNudgedMs = interview.feedbackNudgedAt
           ? Date.parse(interview.feedbackNudgedAt as string) || null
@@ -91,13 +134,25 @@ export const sendInterviewFeedbackNudges = functions.pubsub
         if (!shouldNudgeInterviewFeedback({
           status: interview.status as string,
           fitLevel,
-          completedMs: Number.isNaN(completedMs) ? null : completedMs,
+          completedMs,
           lastNudgedMs,
           nowMs,
         })) continue;
 
         const clientId = interview.clientId as string | undefined;
         if (!clientId) continue;
+
+        // Same read as the site's card (booking_requests where clientId ==,
+        // keyed client-side): a booking under this interview's key means the
+        // family already decided — nothing to ask.
+        const bookingsSnap = await db.collection("booking_requests")
+          .where("clientId", "==", clientId)
+          .limit(300)
+          .get();
+        if (interviewHasBooking(
+          { id: doc.id, caregiverId: interview.caregiverId as string | undefined, jobId: interview.jobId as string | null | undefined },
+          bookingsSnap.docs.map((b) => b.data() as { caregiverId?: string; jobId?: string | null; interviewId?: string | null }),
+        )) continue;
 
         const sessionQ = await db.collection("agent_sessions")
           .where("userId", "==", clientId)

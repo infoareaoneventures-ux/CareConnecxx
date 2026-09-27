@@ -45,6 +45,7 @@ vi.mock("firebase-admin", () => {
 vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async (_c: string, m: any) => { hoisted.sent.push(typeof m === "string" ? m : JSON.stringify(m)); return { message_id: "m" }; }) }));
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn(async () => {}) }));
 vi.mock("../../ai/scoring", () => ({ haversineMiles: () => undefined }));
+vi.mock("../jobBoardText", () => ({ sendJobList: vi.fn(async () => ({ sent: true, count: 0, total: 0, items: [] })) }));
 // Deterministic LLM router: the flows only ask the model to classify / extract.
 const quickComplete = vi.fn(async (prompt: string, text: string) => {
   if (prompt.includes("OPTIONAL cover letter")) return /^(skip|no|none)/i.test(text) ? "SKIP" : "LETTER";
@@ -164,7 +165,7 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
     expect(hoisted.sent[0]).toContain("What date?");
 
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "9/28", session());
-    expect(hoisted.sent[1]).toContain("What time? The site offers 9:00 AM to 6:00 PM");
+    expect(hoisted.sent[1]).toContain("What time? Interviews run between 9:00 AM and 6:00 PM");
 
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "10:15am", session()); // not a picker slot
     expect(hoisted.sent[2]).toContain("Sorry, I didn't quite catch that.");

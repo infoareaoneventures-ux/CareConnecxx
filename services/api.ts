@@ -145,7 +145,7 @@ function dedupePromise<T>(key: string, factory: () => Promise<T>): Promise<T> {
     pendingPromises.set(key, promise);
     return promise;
 }
-import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, Invoice, JobPost } from '../types';
+import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, Invoice, JobPost } from '../types';
 import { errorHandler } from './errorHandler';
 import { validators, isFirebaseError, getSafeErrorMessage, normalizePhoneNumber, sanitizeString } from '../utils/validation';
 import { sanitizeMessage, sanitizeName, sanitizeBio, sanitizePlainText } from '../utils/sanitize';
@@ -1370,42 +1370,6 @@ export const dbService = {
             }
         }
         throw new Error("Backend not connected");
-    },
-
-    triggerEmergencyAlert: async (initiatorId: string, type: 'client' | 'caregiver', location?: { lat: number, lng: number }) => {
-        const alert: EmergencyAlert = {
-            id: `alert_${Date.now()}`,
-            initiatorId,
-            initiatorType: type,
-            timestamp: new Date().toISOString(),
-            location,
-            status: 'active',
-            notifiedContacts: []
-        };
-
-        if (isConfigured && db) {
-            await db.collection('emergency_alerts').add(alert);
-        }
-        return true;
-    },
-
-    // Live in-app surface for emergency_alerts. Both the EmergencySOS UI
-    // (triggerEmergencyAlert above) and the agent's trigger_emergency_alert
-    // MCP tool write this collection; without a listener the alert only
-    // reaches users via push/SMS (server fan-out in
-    // functions/src/familyEmergency.ts). Equality-only query - no composite
-    // index needed; rules scope reads to the initiator.
-    subscribeToEmergencyAlerts: (userId: string, onUpdate: (alerts: EmergencyAlert[]) => void): (() => void) => {
-        if (!isConfigured || !db) { onUpdate([]); return () => {}; }
-        return db.collection('emergency_alerts')
-            .where('initiatorId', '==', userId)
-            .where('status', '==', 'active')
-            .onSnapshot(snap => {
-                const alerts = snap.docs
-                    .map(d => ({ ...(d.data() as EmergencyAlert), id: d.id }))
-                    .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
-                onUpdate(alerts);
-            }, (error) => { if (error.code === 'permission-denied') onUpdate([]); });
     },
 
     // --- NOTIFICATION API ENDPOINTS ---

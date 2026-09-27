@@ -28,6 +28,16 @@ export const HUMAN_HANDOFF_COPY =
 // Shown on the WEB chat surface while a thread is held (SMS stays silent so we
 // don't re-text the same hold every message — and don't trip the self-repeat
 // guard). The initial handoff line already set expectations for SMS users.
+// The note Evia leaves in the person's support room (site Inbox, "Evia team")
+// when she hands off. The person reads it in their own inbox, so it speaks to
+// them in the same words as the text they just got — never about them in the
+// third person — and carries their message so the teammate has the context.
+// 2026-09-27 (founder): the old note read "Evia wasn't confident enough to
+// answer this and told them a teammate would follow up. Their message: …".
+export function handoffRoomNote(userText: string): string {
+  return `Evia looped in a teammate to double-check this — they'll reply here. Your message: "${String(userText).slice(0, 500)}"`;
+}
+
 export const HUMAN_HANDOFF_HELD_COPY =
   "My teammate still has this one — they'll be in touch. I'll jump back in if you need anything else in the meantime.";
 

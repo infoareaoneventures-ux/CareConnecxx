@@ -183,10 +183,6 @@ export const CORE_TOOL_NAMES = new Set<string>([
   // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered
   // out, or Evia falls back to deflecting instead of just sending the link.
   "send_onboarding_link",
-  // Parity: emergency alert is SAFETY-critical — it must be bound on every turn
-  // and never filtered out by intent, so a family reporting an urgent situation
-  // can always reach it.
-  "trigger_emergency_alert",
   // Outbound iMessage tapback (Linq reactions, 2026-07): an expressive,
   // intent-orthogonal nicety — Evia may want to heart a photo or thumbs-up a
   // confirmation under ANY intent, so it must never be filtered out.

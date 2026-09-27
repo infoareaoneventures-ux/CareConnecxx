@@ -218,9 +218,6 @@ export const SMS_TEMPLATES = {
       ? `Evia: Great news! Your background check is complete and clear. You're ready to accept bookings!`
       : `Evia: Your background check requires review. Please contact support for next steps.`,
 
-  emergencyAlert: (initiatorName: string) =>
-    `🚨 Evia URGENT: ${initiatorName} triggered an emergency alert. Please check in immediately or call 911 if needed.`,
-
   caregiverCallout: (
     caregiverName: string,
     date: string,

@@ -332,3 +332,20 @@ describe("handoffTtlMs / isHandoffGateEnabled", () => {
     expect(isHandoffGateEnabled({ CARA_CONFIDENCE_HANDOFF: "FALSE" })).toBe(false);
   });
 });
+
+// 2026-09-27 (founder): the support-room note is read by the person in their
+// own Inbox, so it speaks to them — same words as the text they got — and
+// carries their message for the teammate. Identical for families and caregivers.
+describe("handoffRoomNote", () => {
+  it("addresses the person, matches the handoff text, and quotes their message", async () => {
+    const { handoffRoomNote, HUMAN_HANDOFF_COPY } = await import("./humanHandoff");
+    const note = handoffRoomNote("Monday at 9am");
+    expect(note).toBe('Evia looped in a teammate to double-check this — they\'ll reply here. Your message: "Monday at 9am"');
+    expect(note).not.toMatch(/told them|Their message|wasn't confident/);
+    expect(HUMAN_HANDOFF_COPY).toContain("looping in a teammate");
+  });
+  it("caps a long message at 500 characters", async () => {
+    const { handoffRoomNote } = await import("./humanHandoff");
+    expect(handoffRoomNote("x".repeat(900))).toContain(`"${"x".repeat(500)}"`);
+  });
+});

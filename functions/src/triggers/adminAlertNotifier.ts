@@ -25,10 +25,9 @@ const SMS_NOTIFY_TYPES = new Set([
   // A family or caregiver wrote to the team (website "Message our team" button,
   // a text to Evia asking for a person, or Evia's own low-confidence handoff).
   "support_message",
-  // Life-safety (2026-09-23): a family emergency raised from the site button or
-  // Evia's tool, the crisis detector's medical-emergency hit, and a family's
-  // NOTIFY reply. Email alone is not a page — support@ is suppressed by Resend.
-  "family_emergency",
+  // Life-safety (2026-09-23): the crisis detector's medical-emergency hit and a
+  // family's NOTIFY reply. Email alone is not a page — support@ is suppressed by
+  // Resend. (The family-emergency button/tool was removed 2026-09-27.)
   "cara_medical_emergency",
   "crisis_notify_requested",
 ]);
@@ -37,8 +36,6 @@ function adminSmsText(type: string, alert: Record<string, any>): string {
   switch (type) {
     case "support_message":
       return `Evia: someone messaged the team — "${String(alert.message ?? "").slice(0, 160)}" Reply in Admin › Messages; your reply is texted to them.`;
-    case "family_emergency":
-      return `🚨 Evia: FAMILY EMERGENCY (${alert.source === "site" ? "site button" : "text"}). Caregiver ${alert.caregiverNotified ? "was texted" : "could NOT be reached — call them"}.${alert.note ? ` Note: "${String(alert.note).slice(0, 120)}".` : ""} Open Admin › Alerts now.`;
     case "cara_medical_emergency":
       return `🚨 Evia: a family texted what sounds like a medical emergency${alert.phone ? ` (${alert.phone})` : ""}. They were told to call 911. Open Admin › Alerts now.`;
     case "crisis_notify_requested":

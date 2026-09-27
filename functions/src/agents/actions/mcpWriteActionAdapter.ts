@@ -7,12 +7,6 @@ const anyObjectOutput = z.object({}).passthrough();
 const stringValue = z.string().min(1);
 
 const writeActionConfigs = {
-  trigger_emergency_alert: {
-    role: "client",
-    inputSchema: z.object({ clientId: stringValue }).passthrough(),
-    auditType: "emergency_alert_raised",
-    targetCollection: "emergency_alerts",
-  },
   accept_shift: {
     role: "caregiver",
     inputSchema: z.object({ phone: stringValue, chatId: stringValue }).passthrough(),

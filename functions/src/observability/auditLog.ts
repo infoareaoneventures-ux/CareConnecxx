@@ -103,7 +103,6 @@ export type AuditEventType =
   // Codified 2026-07-21 (plan 2026-07-18-001 U0 typecheck-baseline repair):
   // these event names were already being written by mcp/server.ts at runtime
   // but were never declared here — the transpile-only build masked it.
-  | "emergency_alert_raised"
   | "callout_backup_selected"
   | "callout_backup_withdrawn"
   | "callout_refund_requested"

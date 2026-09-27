@@ -216,20 +216,6 @@ describe("booking tools", () => {
   });
 
   // ── U9b: request_booking's own rate/schedule resolution ───────────────────────
-  describe("trigger_emergency_alert", () => {
-    it("writes an active emergency_alerts doc and advises 911", async () => {
-      const r = await handleToolCall("trigger_emergency_alert", { clientId: "c1", note: "Dad fell" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.status).toBe("active");
-      expect(r.advise911).toBe(true);
-      expect(hoisted.adds.some((a) => a.path === "emergency_alerts")).toBe(true);
-    });
-    it("requires session clientId", async () => {
-      const r = await handleToolCall("trigger_emergency_alert", {}) as any;
-      expect(r._toolError).toBe(true);
-    });
-  });
-
   // 2026-09-14 (Hamse's call): rebuilt against the real `shifts` collection —
   // the old tools queried `appointments`, a legacy model no current visit
   // (site or Evia) writes to anymore, so they never actually worked.

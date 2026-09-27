@@ -349,3 +349,21 @@ describe("handoffRoomNote", () => {
     expect(handoffRoomNote("x".repeat(900))).toContain(`"${"x".repeat(500)}"`);
   });
 });
+
+// 2026-09-27 (live, both sides): "accept" / "Yes confirm" got the teammate hold —
+// once with the accept tool having SUCCEEDED, once with it having failed and the
+// draft honestly saying so. This turn's tool results outrank the LLM verifier.
+describe("groundingOverrideForTurn", () => {
+  it("a completed action supports the claim by construction", async () => {
+    const { groundingOverrideForTurn } = await import("./humanHandoff");
+    expect(groundingOverrideForTurn({ actionCompleted: true, toolErrors: 0 })).toBe("supported");
+  });
+  it("a reported tool error is not an invented fact — send it, never hold", async () => {
+    const { groundingOverrideForTurn } = await import("./humanHandoff");
+    expect(groundingOverrideForTurn({ actionCompleted: false, toolErrors: 1 })).toBe("supported");
+  });
+  it("a turn with no action and no error is left to the verifier", async () => {
+    const { groundingOverrideForTurn } = await import("./humanHandoff");
+    expect(groundingOverrideForTurn({ actionCompleted: false, toolErrors: 0 })).toBeNull();
+  });
+});

@@ -786,6 +786,24 @@ async function handleJpAskLocationEnvironment(
   const petsInHome       = rawPets.toUpperCase().startsWith("Y");
   const smokingHousehold = rawSmoke.toUpperCase().startsWith("Y");
   await mergeJobData(phone, { petsInHome, smokingHousehold });
+  // Same as the site's step-2 Save (2026-09-27): the flags live on the Care
+  // Plan's location pool entry for this address, patched in place.
+  try {
+    const jd = await getJobData(phone);
+    const uid = (session as unknown as { userId?: string }).userId;
+    if (uid && typeof jd.streetAddress === "string" && jd.streetAddress) {
+      const ref = db.collection("carePlans").doc(uid);
+      const snap = await ref.get();
+      const pool: Array<Record<string, unknown>> = Array.isArray(snap.data()?.locationPool) ? [...(snap.data()!.locationPool as Array<Record<string, unknown>>)] : [];
+      const key = (s?: unknown, z?: unknown) => `${String(s ?? "").toLowerCase().trim()}|${String(z ?? "")}`;
+      const idx = pool.findIndex((l) => key(l?.street, l?.zipCode) === key(jd.streetAddress, jd.zipCode));
+      const next = { street: String(jd.streetAddress), city: String(jd.city ?? ""), state: String(jd.state ?? ""), zipCode: String(jd.zipCode ?? ""), petsInHome, smokingHousehold };
+      if (idx >= 0) pool[idx] = { ...pool[idx], petsInHome, smokingHousehold }; else pool.push(next);
+      await ref.set({ locationPool: pool }, { merge: true });
+    }
+  } catch (err) {
+    console.warn("[jobPostingFlow] location flags write-back skipped:", err instanceof Error ? err.message : err);
+  }
   await updateJobStep(phone, "jp_ask_care_needs");
   await sendMessage(chatId,
     `Got it — ${petsInHome ? "pets, yes" : "no pets"}, ${smokingHousehold ? "smoking, yes" : "no smoking"}.\n\n${await careNeedsQuestion(phone)}`

@@ -581,9 +581,9 @@ describe("caregiver action tools enforce the website's gate (hooks/useCaregiverG
 
   it("respond_to_booking_request: Decline is never gated (the site keeps Decline available); Accept is", async () => {
     hoisted.docState.set("caregivers/cg1", { name: "Maria" });
-    const accept = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", appointmentId: "bk1", decision: "accept" }) as any;
+    const accept = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", bookingRequestId: "bk1", decision: "accept" }) as any;
     expect(accept.code).toBe("MEMBERSHIP_REQUIRED");
-    const decline = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", appointmentId: "bk1", decision: "decline" }) as any;
+    const decline = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", bookingRequestId: "bk1", decision: "decline" }) as any;
     expect(decline.code).not.toBe("MEMBERSHIP_REQUIRED");
   });
 });

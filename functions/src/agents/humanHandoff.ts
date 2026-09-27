@@ -294,6 +294,20 @@ export function neutralCopyForClaims(claims: ReadonlyArray<GroundingClaim>): str
 // parse maps garbage → supported), but resolve defensively to "send" anyway.
 export type GroundingGateAction = "send" | "neutralize" | "handoff";
 
+// 2026-09-27 (live, both sides): "accept" / "Yes confirm" replies got the
+// "looping in a teammate" hold even though the accept tool had SUCCEEDED
+// (caregiver) or had honestly FAILED and the draft said so (family). The LLM
+// verifier graded those drafts "unsupported" — but this turn's own tool
+// results are the ground truth: an action that completed supports the claim
+// by construction, and an error the model reports is not an invented fact.
+// The verifier only decides turns that ran no action and hit no error (pure
+// reads, where embellishing past a lookup is the real risk).
+export function groundingOverrideForTurn(args: { actionCompleted: boolean; toolErrors: number }): "supported" | null {
+  if (args.actionCompleted) return "supported";
+  if (args.toolErrors > 0) return "supported";
+  return null;
+}
+
 export function resolveGroundingGateAction(args: {
   verdict: GroundingVerdict;
   claims: ReadonlyArray<GroundingClaim>;

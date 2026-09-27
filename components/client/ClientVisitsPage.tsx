@@ -438,6 +438,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
                         <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}</p>
                       </div>
                     </div>
+                    {(r as any).notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{(r as any).notes}"</p>}
                     {needs.length > 0 && (
                       <div className="space-y-1.5">
                         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Plan</p>
@@ -1110,6 +1111,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                         <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}</p>
                       </div>
                     </div>
+                    {(r as any).notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{(r as any).notes}"</p>}
 
                     {/* Care needs */}
                     {needs.length > 0 && (

@@ -51,9 +51,19 @@ async function addNotification(
 // session existence explicitly (mirrors caregiverAccountEvents.ts) so a
 // session-less recipient reliably gets the plain sendToPhone text instead of
 // being silently dropped by a resolved (not thrown) false.
-async function sendTransactionalText(phone: string, message: string, sourceAgent: string): Promise<void> {
+// A notice about ONE record remembers that record on the session, so a bare
+// "accept" / "yes confirm" reply resolves to it (2026-09-27 live: the model
+// guessed an interview id — wrong interview on one side, NOT_FOUND on the other).
+async function stampSession(phone: string, patch: Record<string, unknown> | undefined): Promise<void> {
+  if (!patch) return;
+  try { await db.collection('agent_sessions').doc(phone).set(patch, { merge: true }); } catch { /* best effort */ }
+}
+export const noticedInterview = (interviewId: string) => ({ lastNoticedInterviewId: interviewId, lastNoticedInterviewAt: new Date().toISOString() });
+
+async function sendTransactionalText(phone: string, message: string, sourceAgent: string, stamp?: Record<string, unknown>): Promise<void> {
   const sessSnap = await db.collection('agent_sessions').doc(phone).get().catch(() => null);
   if (sessSnap?.exists) {
+    await stampSession(phone, stamp);
     await sendViaInteractionAgent(phone, {
       content: message, urgency: 'immediate', sourceAgent, canDrop: false,
     }).catch(() => sendToPhone(phone, message)).catch((err) =>
@@ -64,18 +74,18 @@ async function sendTransactionalText(phone: string, message: string, sourceAgent
     console.error(`[notificationTriggers] ${sourceAgent} failed (no agent session):`, err));
 }
 
-export async function notifyCaregiverByText(caregiverId: string, message: string): Promise<void> {
+export async function notifyCaregiverByText(caregiverId: string, message: string, stamp?: Record<string, unknown>): Promise<void> {
   const snap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
   const phone = snap?.data()?.phone as string | undefined;
   if (!phone) return;
-  await sendTransactionalText(phone, message, 'notification_trigger');
+  await sendTransactionalText(phone, message, 'notification_trigger', stamp);
 }
 
-export async function notifyClientByText(clientId: string, message: string): Promise<void> {
+export async function notifyClientByText(clientId: string, message: string, stamp?: Record<string, unknown>): Promise<void> {
   const snap = await db.collection('users').doc(clientId).get().catch(() => null);
   const phone = snap?.data()?.phone as string | undefined;
   if (!phone) return;
-  await sendTransactionalText(phone, message, 'notification_trigger');
+  await sendTransactionalText(phone, message, 'notification_trigger', stamp);
 }
 
 
@@ -115,7 +125,7 @@ export const onVideoInterviewWrite = functions.firestore
           body,
           data: { interviewId: context.params.interviewId },
         });
-        await notifyCaregiverByText(after.caregiverId, `${body} Reply here to accept or propose a different time.`);
+        await notifyCaregiverByText(after.caregiverId, `${body} Reply here to accept or propose a different time.`, noticedInterview(context.params.interviewId));
         return;
       }
 
@@ -151,7 +161,8 @@ export const onVideoInterviewWrite = functions.firestore
           // itself and stamps rescheduledViaAgent — skip to avoid a double text.
           if (!after.rescheduledViaAgent) {
             await notifyClientByText(after.clientId,
-              `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+              `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`,
+              noticedInterview(context.params.interviewId));
           }
         } else if (after.caregiverId) {
           await addNotification(after.caregiverId, {
@@ -162,7 +173,8 @@ export const onVideoInterviewWrite = functions.firestore
           });
           if (!after.rescheduledViaAgent) {
             await notifyCaregiverByText(after.caregiverId,
-              `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+              `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`,
+              noticedInterview(context.params.interviewId));
           }
         }
         return;
@@ -382,7 +394,7 @@ export const onBookingRequestWrite = functions.firestore
         // plain booking_requests doc and gets this one text.
         if (!after.agentTaskId) {
           await notifyCaregiverByText(after.caregiverId,
-            `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request. Check the app to respond.`);
+            `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request. Reply here for the details, or "accept" / "decline".`);
         }
         return;
       }
@@ -402,7 +414,7 @@ export const onBookingRequestWrite = functions.firestore
         });
         if (!after.agentTaskId) {
           await notifyCaregiverByText(after.caregiverId,
-            `${after.clientName || 'A client'} resent their booking request. Check the app to respond.`);
+            `${after.clientName || 'A client'} resent their booking request. Reply here for the details, or "accept" / "decline".`);
         }
         return;
       }

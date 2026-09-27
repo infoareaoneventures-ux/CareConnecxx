@@ -36,6 +36,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_upcoming_appointments:    ["booking", "scheduling"],
   get_caregiver_appointments:   ["booking", "scheduling"],
   get_pending_booking_requests: ["booking", "scheduling"],
+  show_booking_requests:        ["booking", "scheduling"],
   get_pending_schedule_amendments: ["booking", "scheduling"],  // Requests tab, schedule-change cards (2026-09-16)
   get_past_visits:              ["booking", "scheduling"],  // Past Bookings tab (2026-09-16)
   start_interview_flow:         ["booking"],  // preferred entry point — see interviewFlow.ts
@@ -64,7 +65,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // cancel/resend/amendment tools, mirroring My Bookings + Calendar.
   manage_booking:                ["booking"],
   request_schedule_amendment:    ["booking", "scheduling"],
-  respond_to_schedule_amendment: ["booking", "scheduling"],
   manage_shift_reschedule:       ["booking", "scheduling"], // caregiver-side counterpart to manage_booking's propose/accept/clear_reschedule
 
   // ── scheduling ───────────────────────────────────────────────────────────
@@ -304,7 +304,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // visit, or accepting/declining a schedule amendment, is exactly the kind
   // of mutation a family/caregiver would believe happened if we falsely
   // reported success.
-  "manage_booking", "request_schedule_amendment", "respond_to_schedule_amendment",
+  "manage_booking", "request_schedule_amendment",
   "manage_shift_reschedule", "select_callout_backup",
 ]);
 

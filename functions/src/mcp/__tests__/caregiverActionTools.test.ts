@@ -237,37 +237,43 @@ describe("U2 caregiver action tools", () => {
   });
 
   // ── respond_to_booking_request (AE1) ───────────────────────────────────────
+  // 2026-09-27: rebuilt to the Bookings page's Requests tab. It used to read/write
+  // the retired `appointments` collection — a caregiver could not accept a real
+  // booking_requests doc through Evia at all.
   describe("respond_to_booking_request", () => {
-    it("accept confirms the appointment in shared Firestore (web reads confirmed)", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "cg1", clientId: "c1", status: "pending_caregiver_confirmation" });
-      const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", appointmentId: "a1", decision: "accept" }) as any;
+    const pending = () => ({ caregiverId: "cg1", clientId: "c1", clientName: "The Doe Family", status: "pending", createdAt: "2026-09-27T00:00:00Z" });
+
+    it("accept writes the page's exact patch on booking_requests: {status:'accepted', updatedAt}", async () => {
+      hoisted.docState.set("booking_requests/br1", pending());
+      const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", bookingRequestId: "br1", decision: "accept" }) as any;
       expect(r.success).toBe(true);
-      expect(r.status).toBe("confirmed");
-      const appt = hoisted.docState.get("appointments/a1");
-      expect(appt.status).toBe("confirmed");
-      expect(appt.caregiverConfirmed).toBe(true);
+      expect(r.status).toBe("accepted");
+      const doc = hoisted.docState.get("booking_requests/br1");
+      expect(doc.status).toBe("accepted");
+      expect(doc.updatedAt).toEqual({ __serverTimestamp: true });
+      expect(Object.keys(doc).sort()).toEqual([...Object.keys(pending()), "updatedAt"].sort()); // nothing else written
     });
 
-    it("decline marks the appointment declined_by_caregiver", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "cg1", clientId: "c1", status: "pending_caregiver_confirmation" });
-      const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", appointmentId: "a1", decision: "decline" }) as any;
+    it("decline writes {status:'declined', updatedAt}", async () => {
+      hoisted.docState.set("booking_requests/br1", pending());
+      const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", bookingRequestId: "br1", decision: "decline" }) as any;
       expect(r.success).toBe(true);
-      expect(r.status).toBe("declined_by_caregiver");
-      expect(hoisted.docState.get("appointments/a1").status).toBe("declined_by_caregiver");
+      expect(r.status).toBe("declined");
+      expect(hoisted.docState.get("booking_requests/br1").status).toBe("declined");
     });
 
-    it("denies responding to another caregiver's appointment", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "OTHER", status: "pending_caregiver_confirmation" });
-      const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", appointmentId: "a1", decision: "accept" }) as any;
+    it("refuses another caregiver's request", async () => {
+      hoisted.docState.set("booking_requests/br1", { ...pending(), caregiverId: "OTHER" });
+      const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", bookingRequestId: "br1", decision: "accept" }) as any;
       expect(r._toolError).toBe(true);
-      expect(r.code).toBe("PERMISSION_DENIED");
+      expect(hoisted.docState.get("booking_requests/br1").status).toBe("pending");
     });
 
-    it("accepting an already-confirmed appointment is an idempotent no-op", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "cg1", clientId: "c1", status: "confirmed", caregiverConfirmed: true });
-      const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", appointmentId: "a1", decision: "accept" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.alreadyResponded).toBe(true);
+    it("a request that is no longer pending is refused, not re-written", async () => {
+      hoisted.docState.set("booking_requests/br1", { ...pending(), status: "accepted" });
+      const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", bookingRequestId: "br1", decision: "decline" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(String(r.message)).toContain("already accepted");
     });
   });
 

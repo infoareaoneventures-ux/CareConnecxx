@@ -55,13 +55,14 @@ const writeActionConfigs = {
     role: "caregiver",
     inputSchema: z.object({
       caregiverId: stringValue,
-      appointmentId: stringValue,
+      bookingRequestId: stringValue.optional(),
+      number: z.union([z.number(), z.string()]).optional(),
       decision: z.enum(["accept", "decline"]),
     }).passthrough(),
     auditType: "booking_request_responded",
-    targetCollection: "appointments",
+    targetCollection: "booking_requests",
     idempotencyKey: (input: Record<string, unknown>) =>
-      `respond_to_booking_request:${input.caregiverId}:${input.appointmentId}:${input.decision}`,
+      `respond_to_booking_request:${input.caregiverId}:${input.bookingRequestId ?? input.number ?? "shown"}:${input.decision}`,
   },
   start_shift: {
     role: "caregiver",

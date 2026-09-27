@@ -373,11 +373,11 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     actor: "caregiver",
     action: "Accept/decline a booking request",
     webSurface: "components/caregiver/CaregiverBookingsPage.tsx",
-    collection: "appointments",
+    collection: "booking_requests",
     tool: "respond_to_booking_request",
     promptActor: "caregiver",
     status: "shipped",
-    notes: "AE1. Accept drives the same appointment-confirmation path (status='confirmed', caregiverConfirmed) the web/shift-offer flow uses.",
+    notes: "Rebuilt 2026-09-27 to the Requests tab: {status:'accepted'|'declined', updatedAt} on booking_requests, exactly the page's Accept/Decline writes; Decline confirms first; each request texted whole (card + details) by show_booking_requests.",
   },
   {
     id: "caregiver-start-shift",

@@ -1399,12 +1399,10 @@ export function buildBookingRecap(data: BookingFlowData): string {
       const lifestyle = formatRecipientLifestyle(r.lifestyle);
       const notes = typeof r.notes === "string" ? r.notes.trim() : "";
       recipientLines.push(`${i + 1}. ${name}${rel}: ${needs}`);
-      // 2026-09-13 (live-caught): "Notes: None" per recipient read as if that
-      // literal placeholder gets forwarded to the caregiver — it never does
-      // (the site's own caregiver booking view doesn't render per-recipient
-      // notes at all; only the top-level "Message to {caregiver}" field ever
-      // reaches them, and only when non-empty). Omit the line entirely
-      // instead of asserting an absence nobody needs stated.
+      // 2026-09-13 (live-caught): "Notes: None" read as if a placeholder gets
+      // forwarded — omit the line when empty. (Since 2026-09-27 the caregiver
+      // DOES see a recipient's note: on the request card, Active/Past details,
+      // the visit card, Calendar and Families, and in Evia's request details.)
       if (notes) recipientLines.push(`   Notes: ${notes}`);
       recipientLines.push(`   Lifestyle: ${lifestyle || "Not specified"}`);
     });

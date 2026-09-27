@@ -428,48 +428,6 @@ describe("request_schedule_amendment", () => {
   });
 });
 
-describe("respond_to_schedule_amendment", () => {
-  // Cleared caregiver — Accept runs the website's action gate (membership →
-  // background check); Decline never does, exactly like the Bookings page.
-  beforeEach(() => { hoisted.reset(); hoisted.docState.set(`caregivers/${CAREGIVER}`, { membershipStatus: "active", verified: true }); });
-
-  it("decline just marks the amendment declined — no shifts created", async () => {
-    hoisted.docState.set("booking_amendments/am1", { caregiverId: CAREGIVER, status: "pending" });
-    const r = await handleToolCall("respond_to_schedule_amendment", { amendmentId: "am1", caregiverId: CAREGIVER, decision: "decline" }) as any;
-    expect(r.success).toBe(true);
-    expect(hoisted.updates.find(u => u.path === "booking_amendments/am1")?.data.status).toBe("declined");
-    expect(hoisted.sets.some(s => s.path.startsWith("shifts/"))).toBe(false);
-  });
-
-  it("accept for a one-off (non-ongoing) amendment creates exactly one linked shift", async () => {
-    hoisted.docState.set("booking_amendments/am1", {
-      caregiverId: CAREGIVER, status: "pending", bookingRequestId: "br1",
-      newDays: { Mon: [{ start: "14:00", end: "16:00" }] },
-      startDate: "2026-09-07", endDate: "2026-09-07", ongoing: false,
-    });
-    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", address: "123 Main St" });
-
-    const r = await handleToolCall("respond_to_schedule_amendment", { amendmentId: "am1", caregiverId: CAREGIVER, decision: "accept" }) as any;
-    expect(r.success).toBe(true);
-    expect(r.shiftsCreated).toBe(1);
-    const shiftSet = hoisted.sets.find(s => s.path.startsWith("shifts/"));
-    expect(shiftSet?.data).toMatchObject({
-      clientId: CLIENT, caregiverId: CAREGIVER, bookingRequestId: "br1",
-      status: "scheduled", startTime: "14:00", endTime: "16:00",
-    });
-    expect(hoisted.updates.find(u => u.path === "booking_amendments/am1")?.data.status).toBe("accepted");
-  });
-
-  it("rejects an amendment belonging to a different caregiver", async () => {
-    hoisted.docState.set("booking_amendments/am1", { caregiverId: "other_cg", status: "pending" });
-    const r = await handleToolCall("respond_to_schedule_amendment", { amendmentId: "am1", caregiverId: CAREGIVER, decision: "accept" }) as any;
-    expect(r._toolError).toBe(true);
-    expect(r.code).toBe("PERMISSION_DENIED");
-  });
-
-  it("refuses to re-decide an amendment that's already been responded to", async () => {
-    hoisted.docState.set("booking_amendments/am1", { caregiverId: CAREGIVER, status: "accepted" });
-    const r = await handleToolCall("respond_to_schedule_amendment", { amendmentId: "am1", caregiverId: CAREGIVER, decision: "decline" }) as any;
-    expect(r._toolError).toBe(true);
-  });
-});
+// (respond_to_schedule_amendment retired 2026-09-27 — the Requests tab's schedule-change
+// cards are answered by respond_to_booking_request by number; the page-exact accept/decline
+// live in agents/caregiverBookingRequests.ts and are tested there.)

@@ -41,7 +41,8 @@ export const Step6Review: React.FC<Step6Props> = ({
   })();
 
   const locationSummary = [data.streetAddress, data.city, `${data.state} ${data.zipCode}`.trim()].filter(Boolean).join(', ');
-  const careLevelLabel = CARE_LEVEL_OPTIONS.find(o => o.value === data.careLevel)?.label || '—';
+  // The wizard never asks for a care level today — show it only when set (no dangling "· —").
+  const careLevelLabel = CARE_LEVEL_OPTIONS.find(o => o.value === data.careLevel)?.label || '';
   const rateSummary = data.rateFlexible ? 'Rate depends on experience' : `$${data.rate}/hr`;
 
   const householdBits: string[] = [];
@@ -73,7 +74,7 @@ export const Step6Review: React.FC<Step6Props> = ({
         />
         <Row
           label="Care needs"
-          value={<>{data.careTypes.join(', ') || '—'} · <span className="text-slate-500">{careLevelLabel}</span></>}
+          value={<>{data.careTypes.join(', ') || '—'}{careLevelLabel && <> · <span className="text-slate-500">{careLevelLabel}</span></>}</>}
           onEdit={() => onEditStep(2)}
         />
         <Row label="Rate & payment" value={`${rateSummary} · Credit Card`} onEdit={() => onEditStep(3)} />

@@ -657,19 +657,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "respond_to_schedule_amendment",
-    description: "Caregiver accepts or declines a schedule-change request from a family.",
-    input_schema: {
-      type: "object",
-      properties: {
-        amendmentId:  { type: "string", description: "The booking_amendments document ID" },
-        caregiverId:  { type: "string", description: "The caregiver's Firestore document ID" },
-        decision:     { type: "string", enum: ["accept", "decline"] },
-      },
-      required: ["amendmentId", "caregiverId", "decision"],
-    },
-  },
-  {
     name: "manage_shift_reschedule",
     description:
       "Caregiver-side counterpart to the family's own reschedule tool — proposes moving ONE existing scheduled visit " +
@@ -1318,17 +1305,20 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "respond_to_booking_request",
     description:
-      "Accept or decline a booking request a family sent you (e.g. when you text 'I can do it' or 'I can't make that'). " +
-      "Accepting confirms the appointment and triggers the family's confirmation flow; declining frees it up for re-matching.",
+      "The caregiver Bookings page's Requests tab, Accept / Decline buttons — the ONLY way a caregiver answers a family's booking request. " +
+      "Pass the request's number from show_booking_requests (\"accept 1\", \"decline 2\"); with no number it uses the request whose details were just shown. " +
+      "Accept is gated exactly like the page (membership, then background check); Decline never is. Declining asks the caregiver to confirm first " +
+      "(the page's confirm dialog) — you get a confirmation request back, not a result. The tool texts the page's toast itself; the family is told by the " +
+      "same triggers the site's buttons fire. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "Your caregiver document ID" },
-        appointmentId: { type: "string", description: "The appointment document ID for the pending booking request" },
-        decision:      { type: "string", enum: ["accept", "decline"], description: "accept or decline" },
-        message:       { type: "string", description: "Optional note to the family" },
+        caregiverId:      { type: "string", description: "Your caregiver document ID" },
+        number:           { type: "number", description: "The request's number in the list Evia texted. Preferred." },
+        bookingRequestId: { type: "string", description: "The booking_requests document ID — only when you already have it." },
+        decision:         { type: "string", enum: ["accept", "decline"], description: "accept or decline" },
       },
-      required: ["caregiverId", "appointmentId", "decision"],
+      required: ["caregiverId", "decision"],
     },
   },
   {
@@ -1517,10 +1507,10 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
-        interviewId:   { type: "string", description: "The video_interviews document ID" },
+        interviewId:   { type: "string", description: "The video_interviews document ID — omit for a bare \"accept\" right after an interview notice (it uses that interview). Never guess an id." },
         decision:      { type: "string", enum: ["accept","decline"], description: "accept or decline" },
       },
-      required: ["caregiverId", "interviewId", "decision"],
+      required: ["caregiverId", "decision"],
     },
   },
   {
@@ -2231,16 +2221,27 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "show_booking_requests",
+    description:
+      "The caregiver Bookings page's Requests tab — this tool TEXTS the requests itself, each one WHOLE (2 at a time, MORE for the rest): the card (family, client rating, Pending, " +
+      "Starts / One visit, Ongoing / Ends, day-by-day shift times with hours and the weekly total, address + lifestyle chips, rate · Card (agreed rate)) AND its full details " +
+      "(care recipients with relationship · age and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact, Notes), then the buttons. " +
+      "Call it whenever the caregiver asks about booking requests / who booked them / what they need to answer; when they say MORE call it again with more:true. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        more:        { type: "boolean", description: "true when they ask for more — continues the last list" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "get_pending_booking_requests",
     description:
-      "List booking requests still awaiting a response — matches the site's My Bookings > Requests tab exactly " +
-      "(booking_requests with status 'pending'), on either side. Pass clientId to see requests a family has sent " +
-      "that a caregiver hasn't accepted or declined yet, or caregiverId to see incoming requests a caregiver still " +
-      "needs to accept or decline. Includes shift-replacement requests (isShiftReplacement:true) the same way the " +
-      "site does. Use when someone asks 'did they respond yet?', 'what am I still waiting on?', 'what requests do " +
-      "I need to answer?', or anything else about this tab — get_upcoming_appointments and get_pending_tasks do " +
-      "NOT cover this (they query confirmed/scheduled visits and Evia's own internal task queue, never a pending " +
-      "booking_requests doc), so this is the only tool that can answer it.",
+      "FAMILY side: booking requests this family sent that the caregiver hasn't accepted or declined yet " +
+      "(booking_requests with status 'pending'), matching the family's My Bookings > Requests view. Includes shift-replacement requests (isShiftReplacement:true). " +
+      "Use when a family asks 'did they respond yet?' / 'what am I still waiting on?'. (A caregiver's own Requests tab is show_booking_requests.)",
     input_schema: {
       type: "object",
       properties: {
@@ -2370,11 +2371,11 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        interviewId: { type: "string", description: "The video_interviews document ID" },
+        interviewId: { type: "string", description: "The video_interviews document ID — omit for a bare \"yes confirm\" / \"accept\" right after the proposal notice (it uses that interview). Never guess an id." },
         clientId:    { type: "string", description: "The client's user ID (when the family accepts)" },
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver accepts)" },
       },
-      required: ["interviewId"],
+      required: [],
     },
   },
   {
@@ -2464,10 +2465,10 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "update_care_journal_entry",
   // Requests-tab Q&A parity (2026-09-14) — matches CaregiverBookingsPage's
   // own Requests tab (booking_requests where caregiverId + status:'pending').
-  "get_pending_booking_requests",
+  "show_booking_requests",
   // Requests/Past Bookings parity (2026-09-16): pending schedule changes and
   // completed/cancelled visits, both sides.
-  "get_pending_schedule_amendments", "get_past_visits",
+  "get_past_visits",
   // CRUD/parity gap closures (agent-native audit 2026-07)
   "list_interviews",
   "cancel_interview",
@@ -2485,7 +2486,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_checkr_report",
   // Booking-pipeline parity (2026-08-30) — the caregiver's own accept/decline
   // of a family's schedule-change request.
-  "respond_to_schedule_amendment",
   // Account Settings phone-recovery audit (2026-09-02) — delete_account looks
   // the account up in whichever collection has it, so it works for either
   // role. The phone-change entry point didn't need a new tool slot — it's
@@ -2542,7 +2542,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "verify_checkr_otp",
   "get_checkr_report",
   // Booking-pipeline parity (2026-08-30) — caregiver-only accept/decline.
-  "respond_to_schedule_amendment",
   // Caregiver's own reschedule proposals / journal writes — were reachable from
   // a client conversation because the filter is subtractive (2026-09-23 sweep).
   "manage_shift_reschedule",
@@ -2982,6 +2981,20 @@ export function isReadOnlyTool(name: string): boolean {
 // live in video_interviews only — the site's collection. (The retired
 // Evia-SMS `interviews` twin collection and its linkedInterviewId mirror were
 // removed 2026-09-17; nothing writes it any more.)
+// A bare "accept" / "yes confirm" after a notice: no id (or a guessed id that
+// doesn't exist) → the interview that notice was about (notificationTriggers
+// stamps lastNoticedInterviewId on the session). 2026-09-27 live fix.
+async function interviewIdOrNoticed(interviewId: unknown, phone: unknown): Promise<string | null> {
+  if (typeof interviewId === "string" && interviewId.trim()) {
+    const snap = await db.collection("video_interviews").doc(interviewId.trim()).get();
+    if (snap.exists) return interviewId.trim();
+  }
+  if (typeof phone !== "string" || !phone) return typeof interviewId === "string" && interviewId.trim() ? interviewId.trim() : null;
+  const sess = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
+  const noticed = sess?.data()?.lastNoticedInterviewId;
+  return typeof noticed === "string" && noticed ? noticed : (typeof interviewId === "string" && interviewId.trim() ? interviewId.trim() : null);
+}
+
 async function resolveInterview(interviewId: string): Promise<{
   primary: FirebaseFirestore.DocumentSnapshot;
   iv:      FirebaseFirestore.DocumentData;
@@ -4131,86 +4144,6 @@ async function executeToolCall(
         return { success: true, amendmentId, ...(warnings.length ? { warnings } : {}) };
       }
 
-      case "respond_to_schedule_amendment": {
-        const { amendmentId, caregiverId, decision } = input;
-        if (!amendmentId || !caregiverId || !decision) return toolError("INVALID_INPUT", "amendmentId, caregiverId, and decision are required");
-        const amSnap = await db.collection("booking_amendments").doc(amendmentId as string).get();
-        if (!amSnap.exists) return toolError("NOT_FOUND", "Amendment request not found");
-        const am = amSnap.data()!;
-        if (am.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Amendment does not belong to this caregiver");
-        if (am.status !== "pending") return toolError("INVALID_INPUT", `Amendment already decided: ${am.status}`);
-        // CaregiverBookingsPage: Accept on a schedule change is replaced by the
-        // gate button while blocked; Decline stays available.
-        if (decision !== "decline") {
-          const amGate = await checkCaregiverAccessGate(caregiverId as string, "accepting a schedule change", { phone: (input as Record<string, unknown>).phone });
-          if (amGate) return amGate;
-        }
-
-        if (decision === "decline") {
-          await amSnap.ref.update({ status: "declined", respondedAt: nowIso });
-          logAudit({ eventType: "amendment_declined", userId: caregiverId as string, data: { source: "mcp:respond_to_schedule_amendment", amendmentId } }).catch(() => {});
-          return { success: true, decision: "declined", amendmentId };
-        }
-
-        // Accept — mirrors CaregiverBookingsPage.tsx's handleAcceptAmendment
-        // exactly: generate the real shifts docs from amendment.newDays,
-        // joined back via bookingRequestId, so this works identically whether
-        // the caregiver accepts by text or by opening the website.
-        const bookingSnap = am.bookingRequestId
-          ? await db.collection("booking_requests").doc(am.bookingRequestId as string).get()
-          : null;
-        const booking = bookingSnap?.data() ?? {};
-        const { nextOccurrenceOnOrAfter, addDays } = await import("../scheduled/shiftGenerator");
-        const today = new Date().toISOString().split("T")[0];
-        const generateFrom = (am.startDate as string) || today;
-        const generateTo = am.ongoing ? addDays(today, 27) : ((am.endDate as string) || generateFrom);
-        const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-        const cgData = cgSnap.data() ?? {};
-        const caregiverPhotoURL = (cgData.profilePhoto ?? cgData.photoURL ?? cgData.photo ?? null) as string | null;
-
-        const shiftBase = {
-          clientId:        booking.clientId ?? am.clientId,
-          clientName:      booking.clientName ?? am.clientName ?? "",
-          clientPhotoURL:  booking.clientPhotoURL ?? null,
-          caregiverId,
-          caregiverName:   booking.caregiverName ?? am.caregiverName ?? "",
-          caregiverPhotoURL,
-          status:          "scheduled",
-          address:         booking.address ?? "",
-          careNeeds:       booking.careNeeds ?? [],
-          lifestylePreferences: booking.lifestylePreferences ?? [],
-          rate:            booking.rate ?? null,
-          paymentMethod:   booking.paymentMethod ?? null,
-          // Same rule as the site's handleAcceptAmendment (2026-09-17): the
-          // request's note, else the booking's general note.
-          notes:           (am.notes as string) || (booking.notes as string) || "",
-          careRecipients:  booking.careRecipients ?? [],
-          emergencyContact: booking.emergencyContact ?? null,
-          bookingRequestId: am.bookingRequestId ?? null,
-          recurringWeekly: Boolean(am.ongoing),
-          tasksCompleted:  [] as string[],
-          createdAt:       nowIso,
-        };
-
-        const batch = db.batch();
-        let count = 0;
-        const newDays = (am.newDays ?? {}) as Record<string, Array<{ start: string; end: string }>>;
-        for (const [day, blocks] of Object.entries(newDays)) {
-          for (const block of blocks) {
-            let dateStr = nextOccurrenceOnOrAfter(generateFrom, day);
-            while (dateStr <= generateTo && count < 490) {
-              batch.set(db.collection("shifts").doc(), { ...shiftBase, date: dateStr, startTime: block.start, endTime: block.end });
-              count++;
-              dateStr = addDays(dateStr, 7);
-              if (!am.ongoing) break; // a one-off amendment produces exactly one shift
-            }
-          }
-        }
-        if (count > 0) await batch.commit();
-        await amSnap.ref.update({ status: "accepted", respondedAt: nowIso });
-        logAudit({ eventType: "amendment_accepted", userId: caregiverId as string, data: { source: "mcp:respond_to_schedule_amendment", amendmentId, shiftsCreated: count } }).catch(() => {});
-        return { success: true, decision: "accepted", amendmentId, shiftsCreated: count };
-      }
 
       // Caregiver-side counterpart to manage_booking's propose/accept/
       // clear_reschedule — same underlying shift-doc mechanism
@@ -5341,8 +5274,10 @@ async function executeToolCall(
 
     // ── respond_to_booking_request (U2 — AE1) ───────────────────────────────────
     if (name === "respond_to_booking_request") {
-      // CaregiverBookingsPage Requests tab: Accept is replaced by the gate
-      // button while blocked; Decline stays available (site: RequestCard).
+      // CaregiverBookingsPage Requests tab (2026-09-27, rebuilt to the page):
+      // Accept is replaced by the gate button while blocked; Decline stays
+      // available. Writes booking_requests exactly as the buttons do; the
+      // family is told by onBookingRequestWrite / onBookingAccepted.
       {
         const { caregiverId: brGateCg, decision: brGateDecision } = input as Record<string, unknown>;
         if (brGateCg && brGateDecision === "accept") {
@@ -5351,47 +5286,63 @@ async function executeToolCall(
         }
       }
       return runActionNativeMcpWrite(name, input, async () => {
-      const { caregiverId, appointmentId, decision, message: brMsg } = input as Record<string, unknown>;
-      if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
+      const { caregiverId, decision, number: brNumber, bookingRequestId: brIdIn, phone: brPhone } = input as Record<string, unknown>;
+      if (!caregiverId || !decision) return toolError("INVALID_INPUT", "caregiverId and decision are required");
       if (decision !== "accept" && decision !== "decline") return toolError("INVALID_INPUT", "decision must be 'accept' or 'decline'");
-      const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
-      if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const appt = apptSnap.data()!;
-      if (appt.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
-      // Idempotent: already in the requested terminal state → success-shaped no-op.
-      if (decision === "accept" && (appt.status === "confirmed" || appt.caregiverConfirmed === true)) {
-        return { success: true, decision: "accept", appointmentId, status: "confirmed", alreadyResponded: true };
-      }
-      const declinedStates = ["declined_by_caregiver", "cancelled", "cancelled_by_client"];
-      if (decision === "decline" && declinedStates.includes(appt.status as string)) {
-        return { success: true, decision: "decline", appointmentId, status: appt.status, alreadyResponded: true };
-      }
-      const pendingStates = ["pending_caregiver_confirmation", "pending", "requested", "offered"];
-      if (!pendingStates.includes(appt.status as string)) {
-        return toolError("INVALID_INPUT", `This booking request is no longer awaiting a response (status: ${appt.status})`);
-      }
-      if (decision === "accept") {
-        // Drive the same confirmation path the web/shift-offer flow uses.
-        await apptSnap.ref.update({ status: "confirmed", caregiverConfirmed: true, caregiverConfirmedAt: nowIso });
-      } else {
-        await apptSnap.ref.update({ status: "declined_by_caregiver", caregiverConfirmed: false, cancellationReason: "declined_by_caregiver", declinedAt: nowIso, declineMessage: brMsg ?? "" });
-      }
-      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_client_session" };
-      if (appt.clientId) {
-        const clientSessSnap = await db.collection("agent_sessions").where("userId", "==", appt.clientId).limit(1).get();
-        if (!clientSessSnap.empty) {
-          const { trySend } = await import("../utils/toolNotify");
-          const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
-          const cgName = cgData?.name ?? cgData?.firstName ?? "Your caregiver";
-          const msg = decision === "accept"
-            ? `Great news — ${cgName} accepted your booking request! The visit is confirmed.`
-            : `${cgName} isn't able to take that visit. I'm already lining up other options for you.`;
-          notification = await trySend(clientSessSnap.docs[0].id, msg, "mcp:respond_to_booking_request");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, brPhone);
+      const sessionDoc = sess ? ((await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {}) : {};
+      const { resolveBookingRequestRef, respondToBookingRequest, sendBookingRequestList } = await import("../agents/caregiverBookingRequests");
+      const resolvedRef = resolveBookingRequestRef(sessionDoc as Record<string, unknown>, { bookingRequestId: brIdIn, number: brNumber });
+      const resolved = resolvedRef?.id ?? null;
+      if (!resolved) {
+        if (sess) {
+          await (await import("../linq/client")).sendMessage(sess.chatId, "Which request? Here are your pending requests:");
+          await sendBookingRequestList(sess.phone, sess.chatId, caregiverId as string);
+          return { success: true, responded: false, reason: "no_request_ref", note: "The list was texted so they can answer with a number — send nothing else." };
         }
+        return toolError("INVALID_INPUT", "number or bookingRequestId is required");
       }
-      logAudit({ eventType: "booking_request_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_booking_request", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, decision, appointmentId, status: decision === "accept" ? "confirmed" : "declined_by_caregiver", notification };
+      // The tab's second card kind (a schedule change) has its own buttons — same tool, same numbers.
+      if (resolvedRef?.kind === "amendment") {
+        const { acceptAmendment, declineAmendment } = await import("../agents/caregiverBookingRequests");
+        const ar = decision === "accept" ? await acceptAmendment(caregiverId as string, resolved) : await declineAmendment(caregiverId as string, resolved);
+        if (!ar.ok) {
+          const msg = ar.reason === "not_pending" ? `That schedule change is already ${ar.status}.` : ar.reason === "not_yours" ? "That request isn't yours." : "That request isn't on your Requests tab anymore.";
+          if (sess) { await (await import("../linq/client")).sendMessage(sess.chatId, msg); return { success: true, responded: false, reason: ar.reason, note: "They were told — send nothing else." }; }
+          return toolError(ar.reason === "not_found" ? "NOT_FOUND" : "INVALID_INPUT", msg);
+        }
+        if (sess) await (await import("../linq/client")).sendMessage(sess.chatId, ar.toast);
+        logAudit({ eventType: ar.status === "accepted" ? "amendment_accepted" : "amendment_declined", userId: caregiverId as string, data: { source: "mcp:respond_to_booking_request", amendmentId: resolved, shiftsCreated: ar.shiftsCreated } }).catch(() => {});
+        return { success: true, responded: true, decision, amendmentId: resolved, status: ar.status, shiftsCreated: ar.shiftsCreated, note: sess ? "The toast was texted — send nothing else this turn." : `Schedule change ${ar.status}.` };
+      }
+      const r = await respondToBookingRequest(caregiverId as string, resolved, decision);
+      if (!r.ok) {
+        const msg = r.reason === "not_pending" ? `That request is already ${r.status}.`
+          : r.reason === "not_yours" ? "That request isn't yours." : "That request isn't on your Requests tab anymore.";
+        if (sess) { await (await import("../linq/client")).sendMessage(sess.chatId, msg); return { success: true, responded: false, reason: r.reason, note: "They were told — send nothing else." }; }
+        return toolError(r.reason === "not_found" ? "NOT_FOUND" : "INVALID_INPUT", msg);
+      }
+      // The page's toast, texted.
+      if (sess) await (await import("../linq/client")).sendMessage(sess.chatId, r.toast);
+      logAudit({ eventType: "booking_request_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_booking_request", bookingRequestId: resolved, decision } }).catch(() => {});
+      return { success: true, responded: true, decision, bookingRequestId: resolved, status: r.status, note: sess ? "The toast was texted — send nothing else this turn." : `Booking request ${r.status}.` };
       });
+    }
+
+    // ── show_booking_requests (the Requests tab, texted whole — founder: no details step) ──
+    if (name === "show_booking_requests") {
+      const { caregiverId, more, phone: sbPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession, checkCaregiverAccess } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, sbPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const br = await import("../agents/caregiverBookingRequests");
+      // The card's Accept is replaced by the gate button while blocked (membership → background); Decline never is.
+      const access = await checkCaregiverAccess(caregiverId as string);
+      const gate = access.ok ? null : (access.block === "transport" ? null : access.block);
+      const r = await br.sendBookingRequestList(sess.phone, sess.chatId, caregiverId as string, { more: more === true, gate });
+      return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, requests: r.items, note: "The requests were texted in full — send nothing else this turn. They answer \"accept N\" / \"decline N\", or MORE." };
     }
 
     // ── start_shift (U2) ────────────────────────────────────────────────────────
@@ -5691,7 +5642,8 @@ async function executeToolCall(
 
     // ── respond_to_interview_request ────────────────────────────────────────
     if (name === "respond_to_interview_request") {
-      const { caregiverId, interviewId, decision } = input as Record<string, unknown>;
+      const { caregiverId, decision } = input as Record<string, unknown>;
+      const interviewId = await interviewIdOrNoticed((input as Record<string, unknown>).interviewId, (input as Record<string, unknown>).phone);
       if (!caregiverId || !interviewId || !decision) return toolError("INVALID_INPUT", "caregiverId, interviewId, and decision are required");
       // JobBoard.tsx Interviews tab: on a gated pending row the site keeps
       // Decline and swaps only Accept for the gate button.
@@ -8108,7 +8060,7 @@ async function executeToolCall(
     // reschedules the 1h-before reminder for the NEW time (it otherwise skips
     // re-processing once that field is already set from the original accept).
     if (name === "accept_interview_reschedule") {
-      const arInterviewId = input.interviewId as string | undefined;
+      const arInterviewId = (await interviewIdOrNoticed(input.interviewId, input.phone)) ?? undefined;
       const arClientId    = input.clientId as string | undefined;
       const arCaregiverId = input.caregiverId as string | undefined;
       if (!arInterviewId) return toolError("INVALID_INPUT", "interviewId is required");

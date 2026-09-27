@@ -250,7 +250,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Requests to add/change a scheduled day on an accepted booking (the Calendar's '+Request Visit'; caregiver accept/decline in CaregiverBookingsPage.tsx). Evia's request_schedule_amendment/respond_to_schedule_amendment tools (booking-pipeline redesign, 2026-08-30) write the same doc shape.",
+    notes: "Requests to add/change a scheduled day on an accepted booking (the Calendar's '+Request Visit'; caregiver accept/decline in CaregiverBookingsPage.tsx). Evia's request_schedule_amendment/respond_to_booking_request (by number) tools (booking-pipeline redesign, 2026-08-30) write the same doc shape.",
   },
   interviews: {
     path: "interviews",

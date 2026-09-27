@@ -907,6 +907,22 @@ export const PostsPage: React.FC = () => {
           };
         });
 
+      // 2026-09-27 (founder): a note typed for a recipient here is the Care
+      // Plan's note for that recipient — write it back to carePlans so the
+      // Care Plan page shows it too (same field the modal pre-filled from).
+      for (const r of loadedPlan?.recipients || []) {
+        if (!bookingDraft.selectedRecipientKeys.includes(r.key)) continue;
+        const typed = bookingDraft.recipientDrafts[r.key]?.notes;
+        const planNote = loadedPlan?.recipientPlans[r.key]?.notes ?? '';
+        if (typeof typed !== 'string' || !typed.trim() || typed === planNote) continue;
+        const cpRef = fdb.collection('carePlans').doc(user.uid);
+        try {
+          await cpRef.update({ [`recipientPlans.${r.key}.notes`]: typed });
+        } catch (e: any) {
+          if (e?.code === 'not-found') await cpRef.set({ recipientPlans: { [r.key]: { notes: typed } } }, { merge: true });
+        }
+      }
+
       const bookingData = {
         clientId: user.uid,
         clientName: user.displayName || '',

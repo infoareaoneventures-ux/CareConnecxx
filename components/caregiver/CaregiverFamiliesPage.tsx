@@ -383,6 +383,7 @@ export const CaregiverFamiliesPage: React.FC = () => {
                           {(r.relationship || r.age) && <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : null].filter(Boolean).join(' · ')}</p>}
                         </div>
                       </div>
+                      {r.notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{r.notes}"</p>}
 
                       {/* Care Plan */}
                       {r.careNeeds?.length > 0 && (

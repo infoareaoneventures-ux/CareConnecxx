@@ -517,6 +517,8 @@ const RequestCard: React.FC<{
                             )}
                           </div>
                         </div>
+                        {/* The family's note for this recipient (2026-09-27 — written by the booking modal, was never shown) */}
+                        {typeof r === 'object' && r.notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{typeof r === 'object' && r.notes}"</p>}
 
                         {/* Care plan — each category as its own card */}
                         {careNeeds.length > 0 && (
@@ -1025,6 +1027,7 @@ const BookingGroupCard: React.FC<{
                     <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}</p>
                   </div>
                 </div>
+                {(r as any).notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{(r as any).notes}"</p>}
                 {needs.length > 0 && (
                   <div className="space-y-1.5">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Plan</p>
@@ -1826,6 +1829,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
                                       <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
                                     </div>
                                   )}
+                                    {(r as any).notes && <p className="text-xs text-slate-500 italic mb-1.5">"{(r as any).notes}"</p>}
                                   <div className="space-y-1.5">
                                     {cats.map((cat, ci) => {
                                       const subs = det[cat] || [];

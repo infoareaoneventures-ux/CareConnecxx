@@ -87,6 +87,9 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   // Rejecting an applicant is irreversible (caregiver sees the decline).
   // Accept is also high-stakes but happens via a separate hire flow.
   respond_to_job_application: (input) => input.decision === "reject",
+  // The Requests tab's Decline asks window.confirm('Decline this booking
+  // request?') on the site — the same confirm step over text (2026-09-27).
+  respond_to_booking_request: (input) => input.decision === "decline",
   // Care-plan edits that change what's requested (careNeeds, emergency
   // contacts, access codes) require confirmation. Note-like fields skip the
   // gate so "add a note that mom prefers tea" doesn't need a confirmation
@@ -162,6 +165,8 @@ export async function buildActionPreview(toolName: string, toolInput: Record<str
       return `Cancel job post ${String(toolInput.jobId ?? "?")}`;
     case "respond_to_job_application":
       return `${String(toolInput.decision ?? "respond to")} application ${String(toolInput.applicationId ?? "")}`.trim();
+    case "respond_to_booking_request":
+      return "Decline this booking request?";
     case "update_care_plan":
       return `${String(toolInput.action ?? "set")} care plan ${String(toolInput.field ?? "?")}`;
     case "review_shift_hours": {

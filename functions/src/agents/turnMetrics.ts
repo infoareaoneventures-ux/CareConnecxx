@@ -157,6 +157,8 @@ export interface TurnMetrics {
   groundingClaimRisk?: "high" | "low";           // highest risk tier among the candidates
   groundingVerdict?: "supported" | "unsupported" | "indeterminate"; // typed verifier outcome
   groundingVerifierIndeterminate?: boolean;      // verifier timeout/garbage — could not verify
+  // Why the LLM grounding verifier was skipped this turn (tool results outrank it).
+  groundingOverride?: "action_completed" | "tool_error_reported";
   groundingNeutralized?: boolean;                // high-risk unverifiable claim → deterministic neutral copy
   groundingVerifierLatencyMs?: number;           // wall-clock of the verifier call (incl. timeout cap)
 

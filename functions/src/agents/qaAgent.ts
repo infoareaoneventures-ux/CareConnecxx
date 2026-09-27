@@ -71,6 +71,7 @@ import {
   shouldHandOffToHuman,
   isHandoffActive,
   handoffRoomNote,
+  groundingOverrideForTurn,
 } from "./humanHandoff";
 import {
   classifyGroundingClaims,
@@ -1024,14 +1025,13 @@ export function buildCaregiverSystemPrompt(
     `- start_apply_flow: the Apply Now button — the ONLY way to apply. Call it the moment they want to apply: pass the number they said ("apply to 2"); for "apply" / "I'd like to apply to this job" pass no number (it uses the job just shown or just noticed). It texts the modal (Your Profile, Client's budget, optional cover letter, then SUBMIT / CANCEL) itself, so send nothing else that turn. Never apply any other way, never guess a job id.`,
     `- withdraw_job_application: the My Applications tab's Withdraw — only while pending and no interview is pending or scheduled for it`,
     `- get_my_applications: the My Applications tab (Pending / Closed), each with title, location, rate, status, linked interview status, applied date, and canWithdraw`,
-    `- respond_to_booking_request: accept or decline a direct booking request a family sent you`,
-    `- get_pending_booking_requests: matches your Requests tab exactly — booking requests still awaiting your response. Call when you ask "what requests do I need to answer?" or similar; get_caregiver_appointments only covers your upcoming SCHEDULED visits, not pending requests.`,
-    `- respond_to_schedule_amendment: accept or decline a family's request to add a NEW recurring day (or a genuinely new one-off visit) on an existing booking; accepting creates the real visit(s) on your schedule`,
+    `- respond_to_booking_request: the Requests tab's Accept / Decline — the ONLY way to answer a booking request OR a schedule-change request. Pass the number they said ("accept 1", "decline 2"); with no number it uses the only request listed. Decline asks them to confirm first (the page does too). It texts the page's toast itself — send nothing else that turn.`,
+    `- show_booking_requests: your Bookings page's Requests tab — it TEXTS each request in full itself (booking requests with all their details, then schedule-change requests; 2 at a time; MORE → call again with more:true). Call it for "any requests?", "who booked me?", "what do I need to answer?". Send nothing else that turn.`,
     `- manage_shift_reschedule: move an EXISTING already-scheduled visit to a different day/time, or respond to a day/time the family already proposed for one of your visits. action:"propose" (needs date/startTime/endTime) suggests a new time — the family gets a text to confirm, the visit's real time doesn't change until they accept; "accept" confirms a time the FAMILY proposed; "decline" rejects their proposal (original stands) or withdraws your own before they respond. Not for cancelling a shift — use your normal cancel flow for that.`,
     `- list_interviews: the Jobs page's Interviews tab exactly — every interview with its status (Pending / Accepted / Completed / Declined / Cancelled), date + time (scheduledTimeLocal), family, job, type, the family's note (notes — always read it back, the card shows it), Join video call link when the site would show it, any pending time proposal, and \`actions\` = the buttons that row shows on the site. Read the rows back as they are; offer ONLY the actions listed for that row.`,
-    `- respond_to_interview_request: the Accept / Decline buttons on a PENDING request. Accept is gated like the site (a gate result = tell them the button the site shows, link sent); Decline never is. No message or counter time here.`,
+    `- respond_to_interview_request: the Accept / Decline buttons on a PENDING request. For a bare "accept" / "decline" right after an interview notice, call it WITHOUT interviewId (it uses that interview); otherwise get the id from list_interviews — never guess one. Accept is gated like the site (a gate result = tell them the button the site shows, link sent); Decline never is. No message or counter time here.`,
     `- start_interview_reschedule_flow: the Propose new time (pending) / Reschedule (accepted) / Propose different time button — the ONLY way to move an interview. Call it the moment they ask to reschedule or propose a time (get the interviewId from list_interviews first); it asks the date, the time (9:00 AM–6:00 PM, on the hour or half hour), then SEND / CANCEL, itself — send nothing else that turn. Never decline-and-repropose.`,
-    `- accept_interview_reschedule: the Accept new time button — confirms a time the FAMILY proposed (never your own).`,
+    `- accept_interview_reschedule: the Accept new time button — confirms a time the FAMILY proposed (never your own). For a bare "accept" / "yes confirm" right after the proposal notice, call it WITHOUT interviewId (it uses that interview); never guess an id.`,
     `- cancel_interview: the Cancel button — only on an ACCEPTED interview (a pending request is declined, not cancelled). The family is notified by the site's own notification; nothing to send yourself.`,
     `- start_shift: clock in when you arrive at a visit — starts the shift record`,
     `- complete_shift: clock out when the visit ends — closes the shift and kicks off hours submission`,
@@ -2805,6 +2805,9 @@ export async function runQaAgent(params: {
       // Caregiver Jobs page (2026-09-27): the list, the Details modal, the
       // Apply flow and the interview reschedule flow all text themselves.
       "browse_job_board", "get_job_details", "start_apply_flow", "start_interview_reschedule_flow",
+      // Caregiver Bookings page, Requests tab (2026-09-27): list, details and
+      // the Accept/Decline toast are all texted by the tools.
+      "show_booking_requests", "respond_to_booking_request",
     ]);
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early
@@ -3627,7 +3630,15 @@ export async function runQaAgent(params: {
       const toolObservations = collectTurnToolObservations(messages, turnStartIndex);
       let groundingVerdict: GroundingVerdict = riskTiersOn ? "indeterminate" : "supported";
       const verifierStartedAt = Date.now();
-      try {
+      // This turn's tool results outrank the verifier (see groundingOverrideForTurn).
+      const groundingOverride = groundingOverrideForTurn({
+        actionCompleted: (metrics.completedActionKeys ?? []).length > 0,
+        toolErrors:      metrics.toolErrors ?? 0,
+      });
+      if (groundingOverride) {
+        groundingVerdict = groundingOverride;
+        metrics.groundingOverride = (metrics.completedActionKeys ?? []).length > 0 ? "action_completed" : "tool_error_reported";
+      } else try {
         const gateController = new AbortController();
         const gateTimer = setTimeout(() => gateController.abort(), 8_000);
         const verdictRaw = await quickComplete(

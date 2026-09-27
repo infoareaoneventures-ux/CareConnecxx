@@ -28,6 +28,35 @@ interface SavedLocation {
   smokingHousehold?: boolean;
 }
 
+// 2026-09-27 (founder: editing an existing address + pets/smoking then Save
+// "doesn't show on the final, nor update the address in file"): the pool is
+// patched in place — the matching entry (by its ORIGINAL street + zip) gets
+// the new address and flags, every other entry keeps every field it had
+// (the Care Plan page's geocoded lat/lng included). A moved address drops its
+// stale coordinates. Absent entry → appended, so pets/smoking chosen for a
+// job_postings address persist where step 2 reads them back (the pool).
+const poolKey = (street?: string, zip?: string) => `${(street || '').toLowerCase().trim()}|${zip || ''}`;
+async function upsertPoolLocation(
+  uid: string,
+  original: { street: string; zipCode: string },
+  next: { street: string; city: string; state: string; zipCode: string; petsInHome: boolean; smokingHousehold: boolean },
+): Promise<void> {
+  if (!db) return;
+  const ref = db.collection('carePlans').doc(uid);
+  const snap = await ref.get().catch(() => null);
+  const pool: any[] = Array.isArray(snap?.data()?.locationPool) ? [...snap!.data()!.locationPool] : [];
+  const idx = pool.findIndex(l => poolKey(l?.street, l?.zipCode) === poolKey(original.street, original.zipCode));
+  const moved = poolKey(original.street, original.zipCode) !== poolKey(next.street, next.zipCode);
+  if (idx >= 0) {
+    const { lat, lng, latitude, longitude, ...rest } = pool[idx] || {};
+    pool[idx] = { ...rest, ...next, ...(moved ? {} : { ...(lat != null ? { lat } : {}), ...(lng != null ? { lng } : {}), ...(latitude != null ? { latitude } : {}), ...(longitude != null ? { longitude } : {}) }) };
+  } else {
+    pool.push({ ...next });
+  }
+  try { await ref.update({ locationPool: pool }); }
+  catch (e: any) { if (e?.code === 'not-found') await ref.set({ locationPool: pool }, { merge: true }); }
+}
+
 export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
   const { currentUser } = useCareConnex();
 
@@ -284,12 +313,17 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     setSelectedLocationId(loc.id);
     onChange({ streetAddress: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode, petsInHome: loc.petsInHome ?? false, smokingHousehold: loc.smokingHousehold ?? false });
 
-    // Save to care plan
+    // Save to the family's records: the address list, and the Care Plan's
+    // location pool (where pets/smoking live and are read back from).
     if (db && currentUser?.uid) {
       db.collection('job_postings').doc(currentUser.uid).set(
         { savedLocations: firebase.firestore.FieldValue.arrayUnion({ street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode }) },
         { merge: true }
       ).catch(() => {});
+      upsertPoolLocation(currentUser.uid, { street: loc.street, zipCode: loc.zipCode }, {
+        street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode,
+        petsInHome: loc.petsInHome ?? false, smokingHousehold: loc.smokingHousehold ?? false,
+      }).catch(() => {});
     }
 
     setSavedLocations(prev => [...prev, loc]);
@@ -330,7 +364,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     const updated: SavedLocation = { ...loc, ...editingLocDraft, petsInHome: editingLocDraft.petsInHome, smokingHousehold: editingLocDraft.smokingHousehold };
     const newList = savedLocations.map(l => l.id === editingLocId ? updated : l);
     setSavedLocations(newList);
-    if (selectedLocationId === editingLocId) onChange({ streetAddress: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode });
+    if (selectedLocationId === editingLocId) onChange({ streetAddress: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode, petsInHome: updated.petsInHome ?? false, smokingHousehold: updated.smokingHousehold ?? false });
 
     if (db && currentUser?.uid) {
       if (loc.source === 'job-primary') {
@@ -338,10 +372,13 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       } else if (loc.source === 'job-saved') {
         const jobSaved = newList.filter(l => l.source === 'job-saved').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
         db.collection('job_postings').doc(currentUser.uid).update({ savedLocations: jobSaved }).catch(() => {});
-      } else if (loc.source === 'careplan-pool' || loc.source === 'careplan-recipient') {
-        const pool = newList.filter(l => l.source === 'careplan-pool' || l.source === 'careplan-recipient').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
-        db.collection('carePlans').doc(currentUser.uid).update({ locationPool: pool }).catch(() => {});
       }
+      // Every source: the address + pets/smoking live on the Care Plan's
+      // location pool (where this step reads the flags back from).
+      upsertPoolLocation(currentUser.uid, { street: loc.street, zipCode: loc.zipCode }, {
+        street: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode,
+        petsInHome: updated.petsInHome ?? false, smokingHousehold: updated.smokingHousehold ?? false,
+      }).catch(() => {});
     }
     setEditingLocId(null);
     setEditingLocDraft(null);
@@ -368,8 +405,13 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         const jobSaved = newList.filter(l => l.source === 'job-saved').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
         db.collection('job_postings').doc(currentUser.uid).set({ savedLocations: jobSaved }, { merge: true }).catch(() => {});
       } else if (loc.source === 'careplan-pool' || loc.source === 'careplan-recipient') {
-        const pool = newList.filter(l => l.source === 'careplan-pool' || l.source === 'careplan-recipient').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
-        db.collection('carePlans').doc(currentUser.uid).set({ locationPool: pool }, { merge: true }).catch(() => {});
+        // Remove just this entry; every other pool entry keeps every field (lat/lng, flags).
+        const cpRef = db.collection('carePlans').doc(currentUser.uid);
+        cpRef.get().then(snap => {
+          const pool: any[] = Array.isArray(snap.data()?.locationPool) ? snap.data()!.locationPool : [];
+          const kept = pool.filter(l => poolKey(l?.street, l?.zipCode) !== poolKey(loc.street, loc.zipCode));
+          return cpRef.set({ locationPool: kept }, { merge: true });
+        }).catch(() => {});
       }
     }
     setConfirmDeleteLocId(null);

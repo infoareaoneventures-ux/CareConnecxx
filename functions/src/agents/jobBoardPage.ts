@@ -160,7 +160,7 @@ export function jobCardLine(card: JobCard): string {
   const where = card.location
     ? `${card.location}${card.distanceMiles != null ? ` (${card.distanceMiles.toFixed(1)} mi away)` : ""}`
     : (card.distanceMiles != null ? `${card.distanceMiles.toFixed(1)} mi away` : "");
-  const pills = [card.frequency, card.day ? "Day" : "", card.night ? "Night" : "",
+  const pills = [card.frequency, card.day ? "Daytime" : "", card.night ? "Nights" : "",
     card.seniors ? `${card.seniors} seniors` : "", card.transportation ? "Transportation" : ""].filter(Boolean).join(" · ");
   return [card.title, where, card.rate, pills, card.date, card.hours].filter(Boolean).join(" · ");
 }

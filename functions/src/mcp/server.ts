@@ -1715,7 +1715,8 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
         sort:        { type: "string", enum: ["newest", "nearest"], description: "newest = the Jobs page order (default); nearest = the dashboard's Nearby Jobs order" },
-        limit:       { type: "number", description: "Optional cap (the dashboard shows 4); omit for the whole list like the Jobs page" },
+        limit:       { type: "number", description: "Optional cap (the dashboard shows 4); omit for the Jobs page, which is texted 2 at a time" },
+        more:        { type: "boolean", description: "true when they ask for more / the next ones — continues the last list where it left off (numbers keep counting)" },
         filters: {
           type: "object",
           description: "The page's sidebar filters — only when the caregiver asked for them",
@@ -6565,7 +6566,7 @@ async function executeToolCall(
 
     // The Jobs page, as data (agents/jobBoardPage.ts mirrors JobBoard.tsx).
     if (name === "browse_job_board") {
-      const { caregiverId, sort, limit, filters, phone: bPhone } = input as Record<string, unknown>;
+      const { caregiverId, sort, limit, filters, more, phone: bPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       // Self-sending (2026-09-27): the list goes out verbatim from the tool —
       // the reply post-processor used to rewrite the model's list into "I
@@ -6578,8 +6579,9 @@ async function executeToolCall(
         sort:    sort === "nearest" ? "nearest" : "newest",
         limit:   typeof limit === "number" && limit > 0 ? Math.floor(limit) : undefined,
         filters: (filters && typeof filters === "object") ? (filters as Record<string, unknown>) : undefined,
+        more:    more === true,
       });
-      return { success: r.sent, sent: r.sent, count: r.count, total: r.total, jobs: r.items, note: "The numbered list was texted to the caregiver — send nothing else this turn. They answer with a number." };
+      return { success: r.sent, sent: r.sent, count: r.count, total: r.total, remaining: r.remaining, jobs: r.items, note: "The numbered list was texted to the caregiver — send nothing else this turn. They answer with a number, or MORE for the next page." };
     }
 
     if (name === "get_job_details") {

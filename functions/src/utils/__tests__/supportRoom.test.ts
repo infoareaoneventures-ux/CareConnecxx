@@ -35,6 +35,24 @@ import { resolveSupportRouting, getOrCreateSupportRoom, relayToTeam, escalateToT
 
 beforeEach(() => { hoisted.reset(); hoisted.docs.set("users/u1", { firstName: "Hamse", lastName: "M" }); });
 
+// 2026-09-27 live: a caregiver's Evia-handoff room showed "Member" in Admin ›
+// Messages — the name is on caregivers/{uid}, not users/{uid}.
+describe("the room is named the way the site names it — caregivers included", () => {
+  it("falls back to the caregiver record's name when the users record has none", async () => {
+    hoisted.docs.set("users/cg1", { phone: "+1408" });
+    hoisted.docs.set("caregivers/cg1", { name: "Mahad" });
+    const { roomId } = await escalateToTeam({ userId: "cg1", note: "n", source: "evia_handoff", role: "caregiver" });
+    expect(hoisted.docs.get(`chatRooms/${roomId}`).participantNames).toEqual(["Mahad", SUPPORT_AGENT_NAME]);
+  });
+  it("heals an existing room that was created as 'Member' once a real name resolves", async () => {
+    hoisted.docs.set("chatRooms/r1", { participants: ["cg1", SUPPORT_AGENT_ID], participantNames: ["Member", SUPPORT_AGENT_NAME], isSupport: true });
+    hoisted.docs.set("caregivers/cg1", { firstName: "Mahad", lastName: "Ali" });
+    const { roomId } = await escalateToTeam({ userId: "cg1", note: "n", source: "evia_handoff", role: "caregiver" });
+    expect(roomId).toBe("r1");
+    expect(hoisted.docs.get("chatRooms/r1").participantNames).toEqual(["Mahad Ali", SUPPORT_AGENT_NAME]);
+  });
+});
+
 describe("resolveSupportRouting — who hears about a message in a support room", () => {
   const room = { participants: ["u1", SUPPORT_AGENT_ID], isSupport: true };
   it("the person wrote → alert the team; an admin wrote → relay to the person; system notes → nobody", () => {

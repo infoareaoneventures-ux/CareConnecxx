@@ -92,6 +92,11 @@ describe("Apply flow — the Apply for Position modal", () => {
     await handleApplyFlowStep(PHONE, CHAT, "skip", session());
     expect(hoisted.sent[1]).toContain("Reply SUBMIT to send your application, or CANCEL.");
     expect(hoisted.sent[1]).toContain("Cover letter: (none)");
+    // The recap repeats the whole modal: the job with its details, Your Profile, the budget.
+    expect(hoisted.sent[1]).toContain("Job: Senior care in San Jose\n");
+    expect(hoisted.sent[1]).toContain("$26/hr");
+    expect(hoisted.sent[1]).toContain("Your Profile\nExperience: 3-5 years\nSkills: Companionship, Transportation");
+    expect(hoisted.sent[1]).toContain("Client's budget: $26/hr");
 
     await handleApplyFlowStep(PHONE, CHAT, "SUBMIT", session());
     const app = hoisted.adds.find((a) => a.coll === "job_applications")!.data;

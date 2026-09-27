@@ -25,7 +25,7 @@ import { isBackOutRequest, isQuestionOrOther, answerMidFlow } from "./stepHandle
 import { parseScheduledTimeMs, formatInterviewTime, businessTodayStr } from "../utils/scheduledTime";
 import { caregiverBlockReason, jobRequiresTransport, textCaregiverGateBlock } from "./caregiverAccessGate";
 import { submitJobApplication } from "./jobApplicationSubmit";
-import { rateLabel, normalizeJobPost } from "./jobBoardPage";
+import { rateLabel, normalizeJobPost, buildJobCard, caregiverCoords, jobCardLine } from "./jobBoardPage";
 import { sendJobList } from "./jobBoardText";
 import { isSiteInterviewSlot, PENDING_STATUSES, ACCEPTED_STATUSES } from "./caregiverInterviewsTab";
 
@@ -42,13 +42,18 @@ async function parse(prompt: string, text: string): Promise<string> {
 export interface ApplyFlowData {
   jobId: string;
   jobTitle: string;
+  jobLine: string;        // the job's card line (location · rate · frequency · date · hours)
+  profile: string;        // the modal's "Your Profile" block, as texted
   budget: string;         // rateLabel — "Client's budget"
   coverLetter?: string;
 }
 
 const COVER_QUESTION = "Cover letter (optional) — tell the client why you're a good fit, or reply SKIP.";
+// The recap repeats everything the modal showed (founder, 2026-09-27: "the
+// confirmation has less information") — the job with its details, Your
+// Profile, Client's budget — plus the cover letter, then SUBMIT / CANCEL.
 const APPLY_CONFIRM = (d: ApplyFlowData) =>
-  `Ready to send?\n\nJob: ${d.jobTitle}\nCover letter: ${d.coverLetter ? `"${d.coverLetter}"` : "(none)"}\n\nReply SUBMIT to send your application, or CANCEL.`;
+  `Ready to send?\n\nJob: ${d.jobTitle}\n${d.jobLine}\n\n${d.profile}\nClient's budget: ${d.budget}\n\nCover letter: ${d.coverLetter ? `"${d.coverLetter}"` : "(none)"}\n\nReply SUBMIT to send your application, or CANCEL.`;
 
 export async function startApplyFlow(
   phone: string, chatId: string, session: AgentSession, args: { caregiverId: string; jobId: string },
@@ -77,19 +82,22 @@ export async function startApplyFlow(
     return { started: false, reason: "gated" };
   }
 
-  const data: ApplyFlowData = { jobId: args.jobId, jobTitle: String(job.title ?? "Care needed"), budget: rateLabel(job) };
+  // The modal, top to bottom: title, Your Profile, Client's budget, cover letter.
+  const skills = Array.isArray(cg.skills) ? (cg.skills as string[]).slice(0, 3).join(", ") : "";
+  const experience = cg.experience ?? cg.yearsExperience;
+  const rating = typeof cg.rating === "number" && (Number(cg.reviewCount) || 0) > 0 ? `\nRating: ${cg.rating.toFixed(1)} ⭐` : "";
+  const profile = `Your Profile\nExperience: ${experience ?? 0}${typeof experience === "number" ? " years" : ""}${rating}${skills ? `\nSkills: ${skills}` : ""}`;
+  const card = buildJobCard(job, cg, caregiverCoords(cg));
+  const jobLine = [card.location ? `${card.location}${card.distanceMiles != null ? ` (${card.distanceMiles.toFixed(1)} mi away)` : ""}` : "",
+    card.rate, card.frequency, card.day ? "Daytime" : "", card.night ? "Nights" : "", card.date, card.hours].filter(Boolean).join(" · ") || jobCardLine(card);
+  const data: ApplyFlowData = { jobId: args.jobId, jobTitle: String(job.title ?? "Care needed"), jobLine, profile, budget: rateLabel(job) };
   await db.collection("agent_sessions").doc(phone).update({
     applyFlowStep: "apply_cover",
     applyFlowData: data,
     stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString(),
   });
-  // The modal, top to bottom: title, Your Profile, Client's budget, cover letter.
-  const skills = Array.isArray(cg.skills) ? (cg.skills as string[]).slice(0, 3).join(", ") : "";
-  const experience = cg.experience ?? cg.yearsExperience;
-  const rating = typeof cg.rating === "number" && (Number(cg.reviewCount) || 0) > 0 ? `\nRating: ${cg.rating.toFixed(1)} ⭐` : "";
   await sendMessage(chatId,
-    `Apply for Position — ${data.jobTitle}\n\n` +
-    `Your Profile\nExperience: ${experience ?? 0}${typeof experience === "number" ? " years" : ""}${rating}${skills ? `\nSkills: ${skills}` : ""}\n` +
+    `Apply for Position — ${data.jobTitle}\n\n${profile}\n` +
     `Client's budget: ${data.budget}\n\n${COVER_QUESTION}`);
   return { started: true };
 }

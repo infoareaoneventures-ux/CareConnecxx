@@ -176,6 +176,7 @@ describe("onVideoInterviewLinkEnsure", () => {
     hoisted.docState.set("video_interviews/iv2", {
       status: "accepted", clientId: "cl1", caregiverId: "cg1",
       clientName: "The Nguyen Family", caregiverName: "Maria", scheduledTime: FUTURE_ISO,
+      notes: "testing for interview",
     });
     await fire("iv2", { status: "requested" });
 
@@ -189,6 +190,8 @@ describe("onVideoInterviewLinkEnsure", () => {
     expect(trySendMock).toHaveBeenCalledTimes(2);
     const msgs = trySendMock.mock.calls.map((c) => c[1] as string);
     for (const m of msgs) expect(m).toContain("https://meet.google.com/abc-defg-hij");
+    // 2026-09-27 (founder): the family's note the Interviews card shows is in the confirmation text, both sides.
+    for (const m of msgs) expect(m).toContain('Note: "testing for interview" Join from your phone:');
     // Reminders: both parties, calibration-exempt, 1h before, cancellable by refId
     expect(scheduleTriggerMock).toHaveBeenCalledTimes(2);
     for (const call of scheduleTriggerMock.mock.calls) {
@@ -201,6 +204,30 @@ describe("onVideoInterviewLinkEnsure", () => {
     // The caregiver's reminder names the family, like the family's names the caregiver.
     const cgReminder = scheduleTriggerMock.mock.calls.find((c) => c[0].userId === "cg1")![0];
     expect(cgReminder.message).toBe("Interview in an hour with The Nguyen Family — https://meet.google.com/abc-defg-hij Reply if you need to reschedule.");
+  });
+
+  // 2026-09-27: a reschedule accepted on the SITE clears remindersScheduledAt
+  // but left the old-time reminders live; Evia's accept tool already cancelled
+  // them. Both doors now retire the old ones and schedule fresh ones.
+  it("agreed → agreed with a new time cancels the old reminders and schedules fresh ones", async () => {
+    const LATER_ISO = new Date(FUTURE_MS + 3 * 60 * 60 * 1000).toISOString();
+    hoisted.docState.set("video_interviews/iv10", {
+      status: "accepted", clientId: "cl1", caregiverId: "cg1",
+      clientName: "The Nguyen Family", caregiverName: "Maria",
+      scheduledTime: LATER_ISO, callUrl: "https://meet.google.com/xyz",
+      linkDelivery: { client: { status: "sent", at: "x" }, caregiver: { status: "sent", at: "x" } },
+      // (the site's accept deletes remindersScheduledAt; a stale stamp must not block either)
+      remindersScheduledAt: "2026-07-05T00:00:00Z",
+    });
+    await fire("iv10", { status: "accepted", scheduledTime: FUTURE_ISO, remindersScheduledAt: "2026-07-05T00:00:00Z" });
+    expect(cancelTriggersByRefMock).toHaveBeenCalledWith("video_interview_iv10");
+    expect(createAssets).not.toHaveBeenCalled(); // the link stays
+    expect(trySendMock).not.toHaveBeenCalled();  // no re-sent confirmation
+    expect(scheduleTriggerMock).toHaveBeenCalledTimes(2);
+    for (const call of scheduleTriggerMock.mock.calls) {
+      expect(new Date(call[0].scheduledAt).getTime()).toBe(new Date(LATER_ISO).getTime() - 60 * 60 * 1000);
+    }
+    expect(hoisted.docState.get("video_interviews/iv10").remindersScheduledAt).toBeTruthy();
   });
 
   it("agreed → declined transition cancels pending reminders and clears remindersScheduledAt", async () => {

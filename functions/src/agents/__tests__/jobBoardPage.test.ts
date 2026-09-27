@@ -121,7 +121,7 @@ describe("card labels (JobBoard.tsx)", () => {
   it("jobCardLine reads like the card, in the card's order", () => {
     const card = buildJobCard(normalizeJobPost({ id: "j", title: "Care for Rosy", location: "Santa Clara", rate: 26, jobFrequency: "part-time", timeOfDay: ["morning"], date: "ASAP", lat: 37.3541, lng: -121.9552, paymentMethod: "credit" }), CG, { lat: CG.lat, lng: CG.lng });
     expect(card.action).toBe("Apply Now");
-    expect(jobCardLine(card)).toBe("Care for Rosy · Santa Clara (3.9 mi away) · $26/hr · Part-time · Day · ASAP · Morning");
+    expect(jobCardLine(card)).toBe("Care for Rosy · Santa Clara (3.9 mi away) · $26/hr · Part-time · Daytime · ASAP · Morning");
   });
 });
 

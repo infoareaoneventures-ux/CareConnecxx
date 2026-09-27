@@ -92,6 +92,22 @@ export const onVideoInterviewLinkEnsure = functions
 
       if (!after.status || !AGREED.has(after.status)) return;
 
+      // Agreed → agreed with a NEW time (a reschedule accepted on the site):
+      // the site clears remindersScheduledAt but nothing retired the reminders
+      // pointed at the OLD time — a 1:30 → 4:00 move still texted "your
+      // interview is in an hour" at 12:30. Evia's accept tool already did this;
+      // now both doors do (2026-09-27). Fresh reminders are scheduled below.
+      if (before?.status && AGREED.has(before.status) && before.scheduledTime && after.scheduledTime
+          && before.scheduledTime !== after.scheduledTime) {
+        const { cancelTriggersByRef } = await import("./triggerEngine");
+        const n = await cancelTriggersByRef(`video_interview_${interviewId}`).catch(() => 0);
+        if (after.remindersScheduledAt) {
+          await ref.update({ remindersScheduledAt: admin.firestore.FieldValue.delete() }).catch(() => {});
+          after.remindersScheduledAt = undefined;
+        }
+        if (n > 0) console.log(`onVideoInterviewLinkEnsure: time changed on ${interviewId} — cancelled ${n} old reminder(s)`);
+      }
+
       // Fast precheck — most writes on a fully-processed doc stop here
       if (after.callUrl && deliveryComplete(after) && after.remindersScheduledAt) return;
 
@@ -162,10 +178,14 @@ async function processInterview(
   const delivery = doc.linkDelivery ?? {};
   const updates: Record<string, unknown> = {};
 
+  // The Interviews card shows the family's note under the time — the
+  // confirmation text carries it too (founder's rule, 2026-09-27: notes are
+  // part of what a matching text must include).
+  const noteLine = typeof doc.notes === "string" && doc.notes.trim() ? ` Note: "${doc.notes.trim()}"` : "";
   if (!delivery.caregiver?.status) {
     const cgPhone = await resolveCaregiverPhone(doc.caregiverId);
     const outcome = await deliverLink(cgPhone, interviewId, "caregiver",
-      `Your interview with ${clientName} is confirmed for ${formatted}. Join from your phone: ${callUrl}` +
+      `Your interview with ${clientName} is confirmed for ${formatted}.${noteLine} Join from your phone: ${callUrl}` +
       (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : ""));
     if (outcome) updates["linkDelivery.caregiver"] = outcome;
   }
@@ -173,7 +193,7 @@ async function processInterview(
   if (!delivery.client?.status) {
     const clientPhone = await resolveClientPhone(doc.clientId);
     const outcome = await deliverLink(clientPhone, interviewId, "client",
-      `Your interview with ${caregiverName} is confirmed for ${formatted}. Join from your phone: ${callUrl}` +
+      `Your interview with ${caregiverName} is confirmed for ${formatted}.${noteLine} Join from your phone: ${callUrl}` +
       (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : ""));
     if (outcome) updates["linkDelivery.client"] = outcome;
   }

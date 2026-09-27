@@ -21,17 +21,37 @@ const db = admin.firestore();
 export interface LastJobList {
   at: string;
   items: Array<{ number: number; jobId: string; title: string }>;
+  // Paging (founder, 2026-09-27): the site's page scrolls; a text can't. Two
+  // at a time, newest first (the page's order), "MORE" for the next two;
+  // numbering continues across pages so "apply to 5" keeps meaning job 5.
+  offset?: number;
+  total?: number;
 }
 
+export const PAGE_SIZE = 2;
 export const LIST_FOOTER = `Reply with a number for the details, "apply to 2" to apply, or "hide 2".`;
 
-/** JobBoard.tsx: "N jobs found", one card per line, the empty states verbatim. */
-export function jobListText(page: AvailableJobsResult, opts: { filtered?: boolean; limited?: boolean } = {}): string {
-  if (page.jobs.length === 0) return opts.filtered ? "No jobs match your filters." : "No open jobs right now.";
-  const header = `${page.total} job${page.total === 1 ? "" : "s"} found${opts.limited && page.jobs.length < page.total ? ` — the ${page.jobs.length} nearest` : ""}:`;
-  const lines = page.jobs.map((card, i) =>
-    `${i + 1}. ${jobCardLine(card)}${card.action !== "Apply Now" ? ` — ${card.action}` : ""}`);
-  return [header, ...lines, "", LIST_FOOTER].join("\n");
+/**
+ * JobBoard.tsx: "N jobs found", one card per line, the empty states verbatim.
+ * `from` = how many were already shown (the next page continues the numbers).
+ */
+export function jobListText(
+  page: AvailableJobsResult,
+  opts: { filtered?: boolean; limited?: boolean; from?: number; pageSize?: number } = {},
+): { text: string; shown: AvailableJobsResult["jobs"]; remaining: number } {
+  const from = opts.from ?? 0;
+  if (page.jobs.length === 0) return { text: opts.filtered ? "No jobs match your filters." : "No open jobs right now.", shown: [], remaining: 0 };
+  const size = opts.pageSize ?? (opts.limited ? page.jobs.length : PAGE_SIZE);
+  const shown = page.jobs.slice(from, from + size);
+  const remaining = Math.max(0, page.jobs.length - (from + shown.length));
+  // Founder (2026-09-27): no counts in the text — "Jobs found:", two at a
+  // time, MORE for the next two, until there are none left.
+  if (shown.length === 0) return { text: "That's all the open jobs right now — reply with a number for the details.", shown, remaining: 0 };
+  const header = from === 0 ? (opts.limited ? "Jobs near you:" : "Jobs found:") : "More jobs:";
+  const lines = shown.map((card, i) =>
+    `${from + i + 1}. ${jobCardLine(card)}${card.action !== "Apply Now" ? ` — ${card.action}` : ""}`);
+  const footer = remaining > 0 ? `${LIST_FOOTER} Reply MORE to see more.` : LIST_FOOTER;
+  return { text: [header, ...lines, "", footer].join("\n"), shown, remaining };
 }
 
 /** The Job Details modal, top to bottom, ending in the ONE footer the modal shows. */
@@ -39,7 +59,7 @@ export function jobDetailsText(d: JobDetails): string {
   const where = d.location
     ? `${d.location}${d.distanceMiles != null ? ` (${d.distanceMiles.toFixed(1)} mi away)` : ""}`
     : (d.distanceMiles != null ? `${d.distanceMiles.toFixed(1)} mi away` : "");
-  const pills = [d.frequency, d.day ? "Day" : "", d.night ? "Night" : "",
+  const pills = [d.frequency, d.day ? "Daytime" : "", d.night ? "Nights" : "",
     d.seniors ? `${d.seniors} seniors` : "", d.transportation ? "Transportation" : ""].filter(Boolean).join(" · ");
   const out: string[] = [d.title];
   if (d.postedBy) out.push(`Posted by ${d.postedBy}`);
@@ -72,27 +92,45 @@ export function resolveJobRef(
     const hit = last?.items?.find((it) => it.number === n);
     return hit ? hit.jobId : null;
   }
-  const shown = session.lastJobDetailsJobId;
-  if (typeof shown === "string" && shown) return shown;
-  const noticed = session.lastNoticedJobId;
-  if (typeof noticed === "string" && noticed) return noticed;
-  return null;
+  // No number, no id: the job most recently put in front of them wins — the
+  // details they just read, the job just noticed, or (if the newest thing was
+  // a list) nothing, so the tool asks by number. 2026-09-27 live: "can you
+  // provide details" right after a new-job notice showed a job whose details
+  // they had read earlier, because "last shown" was checked before "just noticed".
+  const ts = (v: unknown) => (typeof v === "string" ? Date.parse(v) || 0 : 0);
+  const candidates: Array<{ at: number; jobId: string | null }> = [];
+  if (typeof session.lastJobDetailsJobId === "string" && session.lastJobDetailsJobId) candidates.push({ at: ts(session.lastJobDetailsAt), jobId: session.lastJobDetailsJobId });
+  if (typeof session.lastNoticedJobId === "string" && session.lastNoticedJobId) candidates.push({ at: ts(session.lastNoticedJobAt), jobId: session.lastNoticedJobId });
+  const last = session.lastJobList as LastJobList | undefined;
+  if (last?.items?.length) candidates.push({ at: ts(last.at), jobId: last.items.length === 1 ? last.items[0].jobId : null });
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.at - a.at);
+  return candidates[0].jobId;
 }
 
 export async function sendJobList(
   phone: string, chatId: string, caregiverId: string,
-  opts: { filters?: JobBoardFilters; sort?: "newest" | "nearest"; limit?: number } = {},
-): Promise<{ sent: boolean; count: number; total: number; items: LastJobList["items"] }> {
+  opts: { filters?: JobBoardFilters; sort?: "newest" | "nearest"; limit?: number; more?: boolean } = {},
+): Promise<{ sent: boolean; count: number; total: number; remaining: number; items: LastJobList["items"] }> {
   const page = await loadAvailableJobs(caregiverId, opts);
-  if (!page) { await sendMessage(chatId, "I couldn't find your caregiver account to load the Jobs page."); return { sent: false, count: 0, total: 0, items: [] }; }
+  if (!page) { await sendMessage(chatId, "I couldn't find your caregiver account to load the Jobs page."); return { sent: false, count: 0, total: 0, remaining: 0, items: [] }; }
   const filtered = !!opts.filters && Object.values(opts.filters).some((v) => Array.isArray(v) ? v.length > 0 : v != null && v !== "");
-  await sendMessage(chatId, jobListText(page, { filtered, limited: !!opts.limit }));
-  const items = page.jobs.map((card, i) => ({ number: i + 1, jobId: card.jobId, title: card.title }));
+  // MORE continues the last list where it left off; anything else starts over.
+  let prev: LastJobList | undefined;
+  if (opts.more) {
+    const sess = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
+    prev = (sess?.data()?.lastJobList as LastJobList | undefined) ?? undefined;
+  }
+  const from = opts.more && prev ? (prev.offset ?? prev.items.length) : 0;
+  const { text, shown, remaining } = jobListText(page, { filtered, limited: !!opts.limit, from });
+  await sendMessage(chatId, text);
+  const newItems = shown.map((card, i) => ({ number: from + i + 1, jobId: card.jobId, title: card.title }));
+  const items = from > 0 && prev ? [...prev.items.filter((it) => it.number <= from), ...newItems] : newItems;
   await db.collection("agent_sessions").doc(phone).set(
-    { lastJobList: { at: new Date().toISOString(), items } satisfies LastJobList },
+    { lastJobList: { at: new Date().toISOString(), items, offset: from + shown.length, total: page.total } satisfies LastJobList },
     { merge: true },
   ).catch(() => {});
-  return { sent: true, count: page.jobs.length, total: page.total, items };
+  return { sent: true, count: shown.length, total: page.total, remaining, items };
 }
 
 export async function sendJobDetails(
@@ -106,6 +144,6 @@ export async function sendJobDetails(
     return { sent: true, ok: false, reason: r.reason };
   }
   await sendMessage(chatId, jobDetailsText(r.details));
-  await db.collection("agent_sessions").doc(phone).set({ lastJobDetailsJobId: jobId }, { merge: true }).catch(() => {});
+  await db.collection("agent_sessions").doc(phone).set({ lastJobDetailsJobId: jobId, lastJobDetailsAt: new Date().toISOString() }, { merge: true }).catch(() => {});
   return { sent: true, ok: true };
 }

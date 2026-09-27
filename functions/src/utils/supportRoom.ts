@@ -30,18 +30,51 @@ export function resolveSupportRouting(
   return String(message.senderId ?? "") === userId ? { kind: "alert_team", userId } : { kind: "relay_to_user", userId };
 }
 
-async function displayNameFor(userId: string, fallback: string): Promise<string> {
-  const snap = await db.collection("users").doc(userId).get().catch(() => null);
-  const d = (snap?.data() ?? {}) as Record<string, unknown>;
+const NAME_FALLBACK = "Member";
+
+function nameFromDoc(d: Record<string, unknown>): string {
   const full = [d.firstName, d.lastName].filter(Boolean).join(" ").trim();
-  return (typeof d.displayName === "string" && d.displayName.trim()) || full || fallback;
+  for (const v of [d.displayName, full, d.name, d.fullName]) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+// The person's name as the site would show it: the users record first, then
+// the caregiver record — a caregiver's name lives on caregivers/{uid}
+// (2026-09-27 live: an Evia handoff room showed the caregiver as "Member" in
+// Admin › Messages because only users/{uid} was read).
+async function displayNameFor(userId: string, fallback: string): Promise<string> {
+  const [userSnap, cgSnap] = await Promise.all([
+    db.collection("users").doc(userId).get().catch(() => null),
+    db.collection("caregivers").doc(userId).get().catch(() => null),
+  ]);
+  return nameFromDoc((userSnap?.data() ?? {}) as Record<string, unknown>)
+    || nameFromDoc((cgSnap?.data() ?? {}) as Record<string, unknown>)
+    || fallback;
 }
 
 export async function getOrCreateSupportRoom(userId: string, userName?: string): Promise<string> {
   const snap = await db.collection("chatRooms").where("participants", "array-contains", userId).get();
   const existing = snap.docs.find((d) => d.data().isSupport === true);
-  if (existing) return existing.id;
-  const name = userName?.trim() || await displayNameFor(userId, "Member");
+  if (existing) {
+    // Heal a room created before the name could be resolved ("Member"): the
+    // admin page shows participantNames, so fix it there once a real name exists.
+    const room = existing.data() as Record<string, unknown>;
+    const participants = Array.isArray(room.participants) ? (room.participants as string[]) : [];
+    const names = Array.isArray(room.participantNames) ? [...(room.participantNames as string[])] : [];
+    const idx = participants.indexOf(userId);
+    const stored = idx >= 0 ? String(names[idx] ?? "") : "";
+    if (idx >= 0 && (!stored || stored === NAME_FALLBACK || stored === "User")) {
+      const real = userName?.trim() || await displayNameFor(userId, "");
+      if (real) {
+        names[idx] = real;
+        await db.collection("chatRooms").doc(existing.id).set({ participantNames: names }, { merge: true }).catch(() => {});
+      }
+    }
+    return existing.id;
+  }
+  const name = userName?.trim() || await displayNameFor(userId, NAME_FALLBACK);
   const ref = await db.collection("chatRooms").add({
     participants: [userId, SUPPORT_AGENT_ID],
     participantNames: [name, SUPPORT_AGENT_NAME],
@@ -113,7 +146,7 @@ export async function alertTeamAboutSupportMessage(input: {
  */
 export async function relayToTeam(input: { userId: string; text: string; userName?: string }): Promise<{ roomId: string }> {
   const roomId = await getOrCreateSupportRoom(input.userId, input.userName);
-  const name = input.userName?.trim() || await displayNameFor(input.userId, "Member");
+  const name = input.userName?.trim() || await displayNameFor(input.userId, NAME_FALLBACK);
   await postSupportMessage(roomId, { senderId: input.userId, senderName: name, text: input.text });
   return { roomId };
 }

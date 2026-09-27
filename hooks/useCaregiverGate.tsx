@@ -88,9 +88,12 @@ export function useCaregiverGate() {
   const p = caregiverProfile as any;
   const membershipActive = p?.membershipStatus === 'active' || p?.membershipStatus === 'trialing' || (!p?.membershipStatus && p?.membershipPaid === true);
   const bgApprovedFull = p?.verified === true || p?.backgroundCheckStatus === 'clear' || p?.backgroundCheckComplete === true;
-  const services: string[] = (p?.services || p?.skills || []) as string[];
-  const needsTransportDocs = services.includes('Transportation');
-  const transportDocsValid = needsTransportDocs ? hasValidTransportDocs(caregiverProfile as any) : true;
+  // A Transportation job needs the transportation badge (documents approved +
+  // driving record cleared) from WHOEVER applies. Before 2026-09-27 this check
+  // ran only for caregivers whose profile listed Transportation, so a caregiver
+  // who never offered it could apply to a driving job with no badge at all
+  // (founder decision; Evia's caregiverAccessGate.ts applies the same rule).
+  const transportDocsValid = hasValidTransportDocs(caregiverProfile as any);
 
   const blockReason: BlockReason = !membershipActive ? 'membership' : !bgApprovedFull ? 'background' : null;
   const transportBlockReason: BlockReason = !membershipActive ? 'membership' : !bgApprovedFull ? 'background' : !transportDocsValid ? 'transport' : null;

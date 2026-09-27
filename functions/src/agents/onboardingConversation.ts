@@ -46,7 +46,7 @@ import { buildClientSteps } from "./onboardingSteps.client";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
-import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
+import { recipientPlanKeyForFullName, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
 import {
   buildClientDraftMirror, buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields,
   upsertCarePlanLocationPool, formatWizardPhone, normalizeStartDateToISO, deriveCareLevel,
@@ -230,9 +230,11 @@ export async function mergeOnboardingData(phone: string, data: Record<string, un
   // onboardingStatus stay wherever the step machinery put them).
   const caregiverId = sess.caregiverId as string | undefined;
   if (caregiverId && sess.userType === "caregiver") {
-    const mirror = buildCaregiverProfileMirror(merged);
+    const cgRef   = db.collection("caregivers").doc(caregiverId);
+    const current = (await cgRef.get().catch(() => null))?.data() ?? {};
+    const mirror  = profileMirrorForExisting(buildCaregiverProfileMirror(merged), current);
     if (Object.keys(mirror).length > 0) {
-      await db.collection("caregivers").doc(caregiverId)
+      await cgRef
         .set(mirror, { merge: true })
         .catch((err) => console.error("mergeOnboardingData: caregiver profile mirror failed (non-fatal):", err));
     }
@@ -252,6 +254,24 @@ export async function mergeOnboardingData(phone: string, data: Record<string, un
         .catch((err) => console.error("mergeOnboardingData: client draft mirror failed (non-fatal):", err));
     }
   }
+}
+
+// A finished questionnaire stays finished: once the record carries the site
+// wizard's completion stamp (onboardingStatus 'profile_complete' — App.tsx
+// hides the setup wizard on it), Evia's mirror must not move the wizard cursor
+// back. Without this, an older record whose availability predates the two-part
+// rule was re-stamped wizardStep 'availability' on every later merge, and any
+// re-link of the record also rewrote onboardingStatus 'in_progress', so the
+// site re-opened the wizard for a caregiver who had finished it (found live
+// 2026-09-26 after an admin revoke). Field VALUES still flow — that is the
+// mirror's job.
+export function profileMirrorForExisting(
+  mirror: Record<string, unknown>,
+  existing: Record<string, unknown>,
+): Record<string, unknown> {
+  if (existing.onboardingStatus !== "profile_complete") return mirror;
+  const { wizardStep: _finished, ...rest } = mirror;
+  return rest;
 }
 
 // The caregiver-doc field mapping for everything collected over SMS — shared by
@@ -498,14 +518,10 @@ async function tryAbsorbGateProfileUpdate(
   const keys = Object.keys(updates);
   if (!keys.length) return false;
 
+  // mergeOnboardingData mirrors the update onto caregivers/{uid} itself (merge,
+  // never blanks, wizard cursor left alone once the questionnaire is finished)
+  // — no second direct write here.
   await mergeOnboardingData(phone, updates);
-  // Post-collection the caregivers/{uid} doc usually exists — mirror the update
-  // so the live profile + matching see it immediately (merge, never blanks).
-  if (session.caregiverId) {
-    await db.collection("caregivers").doc(session.caregiverId as string)
-      .set(buildCaregiverProfileMirror({ ...d, ...updates }), { merge: true })
-      .catch((err) => console.error("[gateProfileUpdate] caregiver mirror failed:", err));
-  }
 
   const human = keys
     .filter((k) => k !== "skills" && k !== "services") // derived enums — not conversational
@@ -555,15 +571,23 @@ export async function ensureCaregiverDocForOnboarding(phone: string): Promise<st
 
   const docRef  = db.collection("caregivers").doc(authUid);
   const docSnap = await docRef.get();
-  // Never demote a doc that already progressed (recovery / re-onboarding edge).
-  const keepStatus = docSnap.exists &&
-    ["active", "pending_review"].includes((docSnap.data()?.status as string) ?? "");
+  const existing = (docSnap.exists ? docSnap.data() : undefined) ?? {};
+  // Never demote a record that already progressed. `status` (visibility: only
+  // the Checkr webhook writes 'active') and `onboardingStatus` (the website's
+  // "questionnaire finished" flag — CaregiverRoute re-opens the wizard whenever
+  // it isn't 'profile_complete') are seeded ONLY on a brand-new record. Before
+  // 2026-09-26 every re-link of an existing record (a re-created session, the
+  // bg-check consent submit, an upload) rewrote onboardingStatus 'in_progress'
+  // and the site showed the setup wizard to a caregiver who had finished it.
+  const seedStatus = !docSnap.exists || !existing.status;
+  const seedOnboardingStatus = !docSnap.exists || !existing.onboardingStatus;
   await docRef.set({
     phone,
     uid: authUid,
-    ...(keepStatus ? {} : { status: "onboarding", onboardingStatus: "in_progress" }),
+    ...(seedStatus ? { status: "onboarding" } : {}),
+    ...(seedOnboardingStatus ? { onboardingStatus: "in_progress" } : {}),
     ...(docSnap.exists ? {} : { createdAt: new Date().toISOString() }),
-    ...buildCaregiverProfileMirror(d),
+    ...profileMirrorForExisting(buildCaregiverProfileMirror(d), existing),
   }, { merge: true });
   await db.collection("agent_sessions").doc(phone).update({ caregiverId: authUid });
   return authUid;
@@ -2409,17 +2433,18 @@ export async function persistClientCareRecords(
   if (!uid) return;
 
   // One plan entry per care recipient (primary + any additional — "both
-  // mom and dad"). Keys MUST use the web CarePlan.tsx getKey format
-  // (recipientPlanKey) or the web tabs can't find Evia's plan data. This is
-  // parity with the CarePlan page, which auto-seeds recipientPlans itself.
+  // mom and dad"). Keys MUST equal the web CarePlan.tsx getKey(firstName,
+  // lastName) for the roster entry the job_postings mirror writes for the same
+  // person (recipientPlanKeyForFullName splits the name the same way), or the
+  // web tabs can't find Evia's plan data and auto-seed an empty one instead.
   // Care needs are shared across recipients at signup — same behavior as the
   // web PostJob flow; per-person details are edited later in the CarePlan tabs.
   const recipients = allCareRecipients(d);
   const recipientPlans: Record<string, unknown> = {};
   for (const r of recipients) {
-    recipientPlans[recipientPlanKey(r.name.split(" ")[0] || r.name)] = {
+    recipientPlans[recipientPlanKeyForFullName(r.name)] = {
       name:         r.name,
-      age:          r.age ?? (recipientPlanKey(r.name) === recipientPlanKey(seniorName) ? seniorAge : undefined),
+      age:          r.age ?? (recipientPlanKeyForFullName(r.name) === recipientPlanKeyForFullName(seniorName) ? seniorAge : undefined),
       relationship: r.relationship ?? "",
       careNeeds,
       careNeedDetails,
@@ -4962,25 +4987,29 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       let caregiverId: string;
       if (session.caregiverId) {
         const existingSnap = await db.collection("caregivers").doc(session.caregiverId).get();
-        const currentVStatus = existingSnap.data()?.verificationStatus as string | undefined;
+        const existingData = existingSnap.data() ?? {};
+        const currentVStatus = existingData.verificationStatus as string | undefined;
         const vStatusPatch = (!currentVStatus || !TERMINAL_VSTATUSES.includes(currentVStatus))
           ? { verificationStatus: "submitted" }
           : {};
+        // The questionnaire finished long before payouts — never move the site
+        // wizard's cursor back from 'done' here (profileMirrorForExisting).
+        const finalizeData = profileMirrorForExisting(profileData, existingData);
         if (authUid && session.caregiverId !== authUid) {
           // Legacy random-ID doc (pre-created before uid-keying landed) — migrate
           // everything onto caregivers/{uid} and drop the orphan. The Checkr webhook
           // looks caregivers up by backgroundCheckData.checkrCandidateId (a query,
           // not a doc ID), so the lookup survives the move.
-          const oldData = existingSnap.exists ? existingSnap.data()! : {};
+          const oldData = existingSnap.exists ? existingData : {};
           await db.collection("caregivers").doc(authUid).set(
-            { ...oldData, ...profileData, ...vStatusPatch, uid: authUid },
+            { ...oldData, ...finalizeData, ...vStatusPatch, uid: authUid },
             { merge: true }
           );
           if (existingSnap.exists) await existingSnap.ref.delete().catch(() => {});
           caregiverId = authUid;
         } else {
           // Doc was pre-created during bg check — update it with full profile.
-          await db.collection("caregivers").doc(session.caregiverId).update({ ...profileData, ...vStatusPatch });
+          await db.collection("caregivers").doc(session.caregiverId).update({ ...finalizeData, ...vStatusPatch });
           caregiverId = session.caregiverId;
         }
       } else if (authUid) {

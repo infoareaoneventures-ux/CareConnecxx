@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   recipientPlanKey,
+  recipientPlanKeyForFullName,
   householdSeniorDocId,
   normalizeAdditionalRecipients,
   allCareRecipients,
@@ -75,5 +76,15 @@ describe("allCareRecipients", () => {
   it("translates the internal 'self' sentinel to the website's 'myself'", () => {
     expect(allCareRecipients({ seniorName: "Dorothy", relationship: "self" }))
       .toEqual([{ name: "Dorothy", relationship: "myself" }]);
+  });
+});
+
+describe("recipientPlanKeyForFullName — a full-name string keys like the site's roster entry", () => {
+  it("splits first token / rest exactly like the job_postings roster mirror (splitName)", () => {
+    expect(recipientPlanKeyForFullName("H M")).toBe("h_m");               // site getKey("H","M")
+    expect(recipientPlanKeyForFullName("Margaret")).toBe("margaret_noname");
+    expect(recipientPlanKeyForFullName("Mary Ann Smith")).toBe("mary_ann_smith"); // last = "Ann Smith"
+    expect(recipientPlanKeyForFullName("  Frank  Lee ")).toBe("frank_lee");
+    expect(recipientPlanKeyForFullName("")).toBe("_noname");
   });
 });

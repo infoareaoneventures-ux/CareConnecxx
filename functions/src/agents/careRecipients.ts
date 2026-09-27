@@ -36,6 +36,19 @@ export function recipientPlanKey(firstName: string, lastName = ""): string {
     .replace(/[~*/[\].]/g, "");
 }
 
+// The key for a recipient known by ONE full-name string ("Margaret", "H M",
+// "Mary Ann Smith"), split exactly the way the roster mirror splits it into
+// job_postings.careRecipientFirstName/LastName (first token, rest = last) —
+// so the key always equals the site's getKey(firstName, lastName) for the
+// same person. Before this, the signup writer keyed by first name only
+// ("h_noname"), the Care Plan page looked for "h_m", and a recipient with a
+// last name got an empty auto-seeded plan on the site while Evia's plan (with
+// the family's notes) sat hidden under the other key (found live 2026-09-26).
+export function recipientPlanKeyForFullName(fullName: string): string {
+  const parts = String(fullName ?? "").trim().split(/\s+/).filter(Boolean);
+  return recipientPlanKey(parts[0] ?? "", parts.slice(1).join(" "));
+}
+
 // Deterministic senior_profiles doc ID for a household member — webhook
 // retries and re-finalizations must not mint duplicate senior docs.
 export function householdSeniorDocId(clientUid: string, name: string): string {

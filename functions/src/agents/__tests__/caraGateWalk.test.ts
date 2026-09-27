@@ -205,7 +205,7 @@ vi.mock("../../utils/openaiClient", () => ({
   }),
 }));
 
-import { handleOnboardingStep, advanceOnboardingStep, confirmBgcheckConsent, persistClientCareRecords, continueAfterClientCollection } from "../onboardingConversation";
+import { handleOnboardingStep, advanceOnboardingStep, confirmBgcheckConsent, persistClientCareRecords, continueAfterClientCollection, ensureCaregiverDocForOnboarding, mergeOnboardingData, profileMirrorForExisting } from "../onboardingConversation";
 import { runOnboardingDryRun } from "../onboardingDryRun";
 import { quickComplete } from "../../utils/openaiClient";
 
@@ -988,5 +988,115 @@ describe("gate-step link resend — the link actually goes out, as a link part",
     awaitingKind = "other";
     await handleOnboardingStep(PHONE, CHAT, "resend the link", stale);
     expect(linkParts()).toHaveLength(0);
+  });
+});
+
+// ── A finished questionnaire stays finished (2026-09-26) ──────────────────────
+// App.tsx CaregiverRoute re-opens the setup wizard whenever caregivers/{uid}
+// .onboardingStatus !== 'profile_complete', resuming at `wizardStep`. Live bug:
+// after an admin revoke the founder saw the wizard again at "Your availability"
+// — every re-link of the record (ensureCaregiverDocForOnboarding) rewrote
+// onboardingStatus 'in_progress', and every later mirror re-stamped wizardStep
+// from the text draft. Both writers must leave a finished record finished.
+describe("finished-profile guard — Evia's record writers never re-open the site wizard", () => {
+  const FINISHED = {
+    status: "onboarding", onboardingStatus: "profile_complete", wizardStep: "done",
+    name: "Old Name", hourlyRate: 20,
+  };
+  // An OLD record: availability saved before the two-part (days + parts of the
+  // day) rule, so wizardStepForDraft would now say "availability".
+  const OLD_DRAFT = { ...FULL_DATA, street: "1 Main St", state: "CA", hourlyRate: 24, availability: { days: ["Monday"], hours: "" } };
+
+  it("profileMirrorForExisting drops wizardStep only for a profile_complete record", () => {
+    expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, FINISHED))
+      .toEqual({ bio: "x" });
+    expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, { onboardingStatus: "in_progress" }))
+      .toEqual({ bio: "x", wizardStep: "availability" });
+    expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, {}))
+      .toEqual({ bio: "x", wizardStep: "availability" });
+  });
+
+  it("ensureCaregiverDocForOnboarding re-linking a finished record keeps onboardingStatus/wizardStep/status and still mirrors the field values", async () => {
+    hoisted.docState.set("caregivers/cg-uid", { ...FINISHED });
+    seed("caregiver_awaiting_membership", OLD_DRAFT); // no caregiverId on the session → re-link path
+    const uid = await ensureCaregiverDocForOnboarding(PHONE);
+    expect(uid).toBe("cg-uid");
+    const cg = hoisted.docState.get("caregivers/cg-uid");
+    expect(cg.onboardingStatus).toBe("profile_complete");
+    expect(cg.wizardStep).toBe("done");
+    expect(cg.status).toBe("onboarding");
+    expect(cg.hourlyRate).toBe(24);          // values still flow
+    expect(cg.name).toBe("Maria Lopez");
+    expect(stored().caregiverId).toBe("cg-uid");
+  });
+
+  it("ensureCaregiverDocForOnboarding seeds status/onboardingStatus/wizardStep only on a brand-new record", async () => {
+    seed("caregiver_awaiting_membership", OLD_DRAFT);
+    await ensureCaregiverDocForOnboarding(PHONE);
+    const cg = hoisted.docState.get("caregivers/cg-uid");
+    expect(cg.status).toBe("onboarding");
+    expect(cg.onboardingStatus).toBe("in_progress");
+    expect(cg.wizardStep).toBe("availability");
+    expect(cg.createdAt).toBeTruthy();
+  });
+
+  it("ensureCaregiverDocForOnboarding never demotes an active record's status either", async () => {
+    hoisted.docState.set("caregivers/cg-uid", { ...FINISHED, status: "active" });
+    seed("caregiver_awaiting_stripe", OLD_DRAFT);
+    await ensureCaregiverDocForOnboarding(PHONE);
+    expect(hoisted.docState.get("caregivers/cg-uid").status).toBe("active");
+  });
+
+  it("mergeOnboardingData mirrors the value but not the wizard cursor once the record is profile_complete", async () => {
+    hoisted.docState.set("caregivers/cg-uid", { ...FINISHED });
+    seed("caregiver_awaiting_membership", OLD_DRAFT, { caregiverId: "cg-uid" });
+    await mergeOnboardingData(PHONE, { bio: "Updated over text." });
+    const cg = hoisted.docState.get("caregivers/cg-uid");
+    expect(cg.bio).toBe("Updated over text.");
+    expect(cg.wizardStep).toBe("done");
+    expect(cg.onboardingStatus).toBe("profile_complete");
+  });
+
+  it("mergeOnboardingData still moves the wizard cursor while the questionnaire is in progress", async () => {
+    hoisted.docState.set("caregivers/cg-uid", { status: "onboarding", onboardingStatus: "in_progress", wizardStep: "location" });
+    seed("caregiver_collecting", OLD_DRAFT, { caregiverId: "cg-uid" });
+    await mergeOnboardingData(PHONE, { bio: "Hi." });
+    expect(hoisted.docState.get("caregivers/cg-uid").wizardStep).toBe("availability");
+  });
+});
+
+// ── Care Plan tab key — recipient WITH a last name (2026-09-26) ──────────────
+// The Care Plan page tabs are keyed getKey(careRecipientFirstName,
+// careRecipientLastName) from the job_postings roster ("h_m" for "H M"). The
+// signup writer keyed by first name only ("h_noname"), so the page never found
+// Evia's plan (with the family's notes) and auto-seeded an empty one instead:
+// "NOTES — No notes added yet" on a family that had given Evia a note.
+describe("persistClientCareRecords — plan key matches the site's roster key", () => {
+  it("keys the primary AND additional recipients first_last, carries the note, and matches the roster's split", async () => {
+    const data = {
+      firstName: "Hamse", seniorName: "H M", relationship: "father", age: 80,
+      careNeeds: ["Dementia / Memory Care"], city: "San Jose", zipCode: "95134", state: "CA",
+      daysPerWeek: 2, hoursPerDay: 4, startDate: "ASAP", rate: 28,
+      jobDescription: "He gets anxious in the evenings; a calm voice helps.",
+      additionalRecipients: [{ name: "Mary Ann Smith", relationship: "mother", age: 78 }],
+    };
+    await persistClientCareRecords("client-uid", PHONE, data);
+    const plan = hoisted.docState.get("carePlans/client-uid");
+    expect(Object.keys(plan.recipientPlans).sort()).toEqual(["h_m", "mary_ann_smith"]);
+    expect(plan.recipientPlans.h_m.notes).toBe("He gets anxious in the evenings; a calm voice helps.");
+    expect(plan.recipientPlans.h_m.age).toBe(80);
+    // The roster the page keys from — same split, same names.
+    const jp = hoisted.docState.get("job_postings/client-uid");
+    expect(jp.careRecipientFirstName).toBe("H");
+    expect(jp.careRecipientLastName).toBe("M");
+    expect(jp.additionalRecipients).toEqual([expect.objectContaining({ firstName: "Mary", lastName: "Ann Smith" })]);
+  });
+
+  it("a recipient without a last name still keys first_noname (unchanged)", async () => {
+    await persistClientCareRecords("client-uid", PHONE, {
+      firstName: "Hamse", seniorName: "Margaret", relationship: "mother", careNeeds: ["Companionship"],
+      city: "San Jose", zipCode: "95110", state: "CA", rate: 26,
+    });
+    expect(Object.keys(hoisted.docState.get("carePlans/client-uid").recipientPlans)).toEqual(["margaret_noname"]);
   });
 });

@@ -46,7 +46,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   start_review_flow:            ["booking"],  // the site's Leave a Review modal, step for step — see reviewFlow.ts
   save_caregiver_favorite:      ["booking"],
   unsave_caregiver_favorite:    ["booking"],
-  apply_to_job:                 ["booking"],
+  start_apply_flow:             ["booking"],  // the Jobs page Apply modal, step for step — see caregiverJobFlows.ts
+  start_interview_reschedule_flow: ["booking"],  // the interview Propose new time form — see caregiverJobFlows.ts
   respond_to_job_application:   ["booking"],
   list_client_jobs:             ["booking"],
   cancel_job_post:              ["booking"],
@@ -276,7 +277,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // bookings & visits
   // interviews, hiring, jobs
   "schedule_interview", "respond_to_interview_request", "submit_interview_feedback",
-  "complete_interview", "respond_to_job_application", "apply_to_job",
+  "complete_interview", "respond_to_job_application",
   "create_job_post", "edit_job_post", "cancel_job_post",
   // shifts
   "accept_shift", "decline_shift", "submit_shift_hours", "review_shift_hours",

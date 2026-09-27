@@ -40,6 +40,12 @@ export const STATE_MACHINE_FLAGS = [
   // Scripted Leave a Review flow (reviewFlow.ts, 2026-09-19) — the site's review modal, step for step.
   "reviewFlowStep",
   "reviewFlowData",
+  // Caregiver Jobs page forms (caregiverJobFlows.ts, 2026-09-27): the Apply
+  // modal and the interview Propose new time form, step for step.
+  "applyFlowStep",
+  "applyFlowData",
+  "interviewRescheduleFlowStep",
+  "interviewRescheduleFlowData",
   // Mid-shift task acknowledgment flow
   "awaitingTaskAck",
   // Day-before shift confirmation from caregiver
@@ -155,6 +161,8 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["correctionFlowStep",      "correcting a caregiver's timesheet"],
   ["interviewFlowStep",       "setting up your interview request"],
   ["reviewFlowStep",          "leaving your review"],
+  ["applyFlowStep",           "applying to that job"],
+  ["interviewRescheduleFlowStep", "proposing a new interview time"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["awaitingIssueDescription", "the issue you started telling me about"],
   ["cancelStep",              "cancelling that shift"],
@@ -300,6 +308,8 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["visitRequestFlowStep", "generic"],
   ["correctionFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
+  ["applyFlowStep", "generic"],
+  ["interviewRescheduleFlowStep", "generic"],
   ["reviewFlowStep", "generic"],
   ["healthcareFlowStep", "generic"],
   ["availabilityStep", "generic"],
@@ -329,6 +339,8 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "correctionFlowData",
   "interviewFlowData",
   "reviewFlowData",
+  "applyFlowData",
+  "interviewRescheduleFlowData",
   "awaitingTaskAck",
   "pendingShiftConfirmation",
   "healthcareFlowData",

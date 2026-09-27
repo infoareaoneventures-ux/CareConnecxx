@@ -1137,6 +1137,33 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // (The texted job-invite yes/no state machine that used to own every reply
     // here for 48h was removed 2026-09-27 — the website has no such flow.)
 
+    // ── Jobs page forms as scripted flows (caregiverJobFlows.ts) ─────────────
+    // The Apply modal and the interview Propose-new-time form, one question per
+    // turn, back-out at any step, Submit/Send or Cancel at the end — checked
+    // before any keyword/NLU so a short answer like "9/28 at 9am" is the
+    // flow's answer, not something else's.
+    for (const flow of ["applyFlowStep", "interviewRescheduleFlowStep"] as const) {
+      if (!(session as any)[flow]) continue;
+      const dataKey = flow === "applyFlowStep" ? "applyFlowData" : "interviewRescheduleFlowData";
+      const expiry = (session as any).stateExpiresAt as string | undefined;
+      if (expiry && new Date(expiry) < new Date()) {
+        await db.collection("agent_sessions").doc(phone).update({
+          [flow]: admin.firestore.FieldValue.delete(), [dataKey]: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+        await sendMessage(chatId, "That timed out — nothing was sent. Text me anytime to start again.");
+        return "handled";
+      }
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        const flows = await import("../agents/caregiverJobFlows");
+        if (flow === "applyFlowStep") await flows.handleApplyFlowStep(phone, chatId, text, session);
+        else await flows.handleInterviewRescheduleFlowStep(phone, chatId, text, session);
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return "handled";
+    }
+
     const pendingReferral = (session as any).pendingCaregiverReferral as PendingCaregiverReferral | undefined;
     if (pendingReferral) {
       const referralExpiry = (session as any).stateExpiresAt as string | undefined;
@@ -1171,37 +1198,11 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       DONE:       () => handleDone(phone, chatId, session, text),
       LATE:       () => handleRunningLate(phone, chatId),
       ISSUE:      () => handleIssue(phone, chatId),
-      CONFIRM:    async () => {
-        // Find most recent appointment for this caregiver not yet confirmed
-        const now = new Date().toISOString();
-        const apptSnap = await db.collection("appointments")
-          .where("caregiverId", "==", session.caregiverId ?? "")
-          .where("status",      "==", "confirmed")
-          .where("caregiverConfirmed", "!=", true)
-          .orderBy("caregiverConfirmed")
-          .orderBy("date", "asc")
-          .limit(1).get();
-        if (!apptSnap.empty) {
-          const appt = apptSnap.docs[0].data();
-          const updateFields: Record<string, unknown> = { caregiverConfirmed: true, caregiverConfirmedAt: now };
-          // Mark check-in confirmed so escalation guard skips it
-          if (appt.caregiverCheckInSent) {
-            updateFields.caregiverCheckInConfirmed = true;
-            updateFields.caregiverCheckInAt        = now;
-          }
-          await apptSnap.docs[0].ref.update(updateFields);
-          // Notify family
-          const familySnap = await db.collection("agent_sessions").doc(appt.clientId ?? appt.clientPhone).get();
-          if (familySnap.exists) {
-            await sendMessage(familySnap.data()!.chatId,
-              `${appt.caregiverName ?? "Your caregiver"} confirmed the visit on ${formatDateForDisplay(appt.date)}. You're all set.`
-            );
-          }
-          await sendMessage(chatId, "Confirmed! See you then. 👍");
-        } else {
-          await sendMessage(chatId, "Got it — confirmed! 👍");
-        }
-      },
+      // (CONFIRM keyword/NLU removed 2026-09-27: it wrote the legacy appointments
+      // collection the site has no button for, and swallowed interview replies
+      // like "9/28 at 9am" with "Got it — confirmed!" before the agent saw them.
+      // A booking request is accepted with respond_to_booking_request, an
+      // interview with respond_to_interview_request — exactly the site's buttons.)
       // (RESCHEDULE and PASS keyword acks removed 2026-09-27: they wrote
       // nothing and told the caregiver times were "sent" / a request was
       // "passed" on. Moving an interview or a visit is a real tool call now —
@@ -1552,14 +1553,13 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // Catches "I just arrived", "I'm done now", "running about 10 min late", etc.
     {
       const nluRaw = await quickComplete(
-        "Classify this caregiver message as one of: ARRIVED, DONE, LATE, ISSUE, CONFIRM, NONE. " +
+        "Classify this caregiver message as one of: ARRIVED, DONE, LATE, ISSUE, NONE. " +
           "ARRIVED = caregiver arrived at or is entering a care visit. " +
           "DONE = caregiver has finished a care visit. " +
           "LATE = caregiver is running late to a visit. " +
           "ISSUE = caregiver is reporting a problem happening during a care visit (with the senior, the home, safety, or the tasks). " +
           "NOT an ISSUE: correcting something Evia said, disagreeing with a status (background check, payment, application, profile), " +
           "or asking about their own account — those are NONE. " +
-          "CONFIRM = caregiver is confirming an upcoming appointment. " +
           "NONE = does not fit any of the above. " +
           "Reply with exactly one word.",
         text,

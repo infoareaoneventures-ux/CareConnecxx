@@ -8,7 +8,7 @@ import { buildWebJobPostDoc } from "../agents/jobPostContract";
 // skills-overlap match score, and the job_notifications collection — was
 // removed: the website has no job alerts and no yes/no apply flow. A caregiver
 // finds jobs the way the site's Jobs board and dashboard "Nearby Jobs" do
-// (browse_job_board / get_job_details / apply_to_job in mcp/server.ts).
+// (browse_job_board / get_job_details / start_apply_flow in mcp/server.ts).
 
 const db = admin.firestore();
 

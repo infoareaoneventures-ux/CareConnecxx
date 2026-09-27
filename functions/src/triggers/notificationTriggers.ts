@@ -103,14 +103,19 @@ export const onVideoInterviewWrite = functions.firestore
           weekday: 'short', month: 'short', day: 'numeric',
           hour: '2-digit', minute: '2-digit',
         });
+        // The Interviews tab card, as one line: family, job, date + time, type,
+        // and the family's note (2026-09-27 — the note used to be missing).
+        const ivType = after.interviewType === 'in-person' ? 'In Person' : after.interviewType === 'phone' ? 'Phone' : 'Video';
+        const forJob = after.jobTitle ? ` for "${after.jobTitle}"` : '';
+        const note = typeof after.notes === 'string' && after.notes.trim() ? ` Note: "${after.notes.trim()}"` : '';
+        const body = `${after.clientName || 'A family'} requested an interview with you${forJob} on ${displayTime} (${ivType}).${note}`;
         await addNotification(after.caregiverId, {
           type: 'interview_request',
           title: 'New Interview Request',
-          body: `${after.clientName} requested an interview on ${displayTime}.`,
+          body,
           data: { interviewId: context.params.interviewId },
         });
-        await notifyCaregiverByText(after.caregiverId,
-          `${after.clientName || 'A family'} requested an interview with you on ${displayTime}. Reply here to accept or propose a different time.`);
+        await notifyCaregiverByText(after.caregiverId, `${body} Reply here to accept or propose a different time.`);
         return;
       }
 
@@ -305,8 +310,8 @@ export const onJobApplicationCreate = functions.firestore
         body: `${data.caregiverName} applied to your post: "${data.jobTitle}".`,
         data: { applicationId: context.params.applicationId, jobId: data.jobId },
       });
-      // The ONE text for this event (same words as the bell). apply_to_job
-      // (mcp/server.ts) deliberately does not send its own, and the second
+      // The ONE text for this event (same words as the bell). The Apply flow
+      // (agents/caregiverJobFlows.ts) deliberately does not send its own, and the second
       // LLM-worded trigger that used to fire on the same create was removed.
       await notifyClientByText(data.clientId,
         `${data.caregiverName || 'A caregiver'} applied to your post: "${data.jobTitle || 'your care request'}". Want me to pull up their profile?`);

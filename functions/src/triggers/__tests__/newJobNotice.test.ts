@@ -71,14 +71,14 @@ const session = (id: string) => hoisted.docState.set(`agent_sessions/+1${id}`, {
 beforeEach(() => hoisted.reset());
 
 describe("sendNewJobNotices", () => {
-  it("texts + bells the caregivers whose Nearby Jobs would show the job, with the card's own line and the page link", async () => {
+  it("texts + bells the caregivers whose Nearby Jobs would show the job, with the card's own line, no link", async () => {
     cg("a"); session("a");
     const res = await sendNewJobNotices("job1", JOB, "evt1");
     expect(res.notified).toEqual(["a"]);
     expect(hoisted.sent).toHaveLength(1);
     expect(hoisted.sent[0].chatId).toBe("chat-a");
     expect(hoisted.sent[0].text).toContain("New job near you: Care for Rosy · Santa Clara (3.9 mi away) · $26/hr · Part-time · Day · ASAP · Morning.");
-    expect(hoisted.sent[0].text).toContain("https://eviacares.com/caregiver/jobs?job=job1");
+    expect(hoisted.sent[0].text).not.toContain("http"); // Evia gives the details herself
     expect(hoisted.sent[0].text).not.toMatch(/yes or no/i);
     expect(hoisted.bells[0]).toMatchObject({ recipientId: "a", type: "new_job", transitionType: "new_job_posted", sourcePath: "job_posts/job1", eventId: "evt1", data: { jobId: "job1", link: "/caregiver/jobs?job=job1" } });
   });

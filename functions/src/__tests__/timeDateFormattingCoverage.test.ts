@@ -66,7 +66,7 @@ const MIN_FORMATTER_CALLS: Array<[string, number]> = [
   // agent-task booking approval texts, hireMode summary, and the legacy
   // recurring-schedule handlers) all went with the retired Evia-only paths —
   // every date/time the router still sends is rendered by a scripted flow.
-  ["../linq/routeCaregiver.ts",                 5],
+  ["../linq/routeCaregiver.ts",                 4],
   ["../mcp/server.ts",                          1],
 ];
 

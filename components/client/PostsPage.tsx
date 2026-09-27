@@ -81,8 +81,8 @@ interface Applicant {
   caregiverId: string;
   caregiverName: string;
   caregiverPhoto?: string;
-  rating?: number;
-  experience?: number;
+  rating?: number | null;
+  experience?: number | string;
   hourlyRate?: number;
   appliedAt: string;
   coverLetter?: string;
@@ -412,7 +412,9 @@ export const PostsPage: React.FC = () => {
             caregiverId: d.caregiverId,
             caregiverName: d.caregiverName || c.name || c.displayName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Caregiver',
             caregiverPhoto: d.caregiverPhoto || c.photoURL || c.imageUrl || c.photo || '',
-            rating: c.rating || c.averageRating || d.caregiverRating || 5.0,
+            // Same rule as the caregiver's profile pages: a rating only when a
+            // review backs it (reviewCount > 0) — never a default 5.0 (2026-09-27).
+            rating: (c.reviewCount ?? 0) > 0 ? (c.rating ?? c.averageRating ?? null) : null,
             experience: c.experience || (c.yearsExperience ?? d.caregiverExperience),
             hourlyRate: c.hourlyRate ?? c.rate ?? d.caregiverRate,
             appliedAt,
@@ -2641,7 +2643,11 @@ export const PostsPage: React.FC = () => {
                               <Star className="w-3 h-3 fill-amber-400 stroke-amber-400" />{a.rating.toFixed(1)}
                             </span>
                           )}
-                          {a.experience != null && <span className="text-xs text-slate-400">{a.experience} yrs exp</span>}
+                          {a.experience != null && (
+                            <span className="text-xs text-slate-400">
+                              {typeof a.experience === 'number' ? `${a.experience} yrs exp` : `${a.experience} experience`}
+                            </span>
+                          )}
                           {a.appliedAt && !isNaN(new Date(a.appliedAt).getTime()) && (
                             <span className="text-xs text-slate-400">· {new Date(a.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
                           )}

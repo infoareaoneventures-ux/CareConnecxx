@@ -226,7 +226,7 @@ describe("onShiftStatusChanged — SMS parity", () => {
 });
 
 describe("onJobApplicationCreate — SMS parity", () => {
-  it("texts the client (single source of truth — apply_to_job no longer sends this itself)", async () => {
+  it("texts the client (single source of truth — the Apply flow never sends this itself)", async () => {
     const data = { clientId: CLIENT, caregiverName: "Alice", jobTitle: "Weekend care" };
     await (onJobApplicationCreate as any)({ data: () => data }, { params: { applicationId: "app1" } });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("applied") }));
@@ -266,10 +266,16 @@ describe("onJobApplicationStatusChange — the caregiver hears the outcome (bell
 });
 
 describe("onVideoInterviewWrite — SMS parity", () => {
-  it("a new interview request texts the caregiver", async () => {
-    const after = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: new Date().toISOString() };
+  it("a new interview request texts the caregiver the card's details — job, time, type and the family's note", async () => {
+    const after = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: new Date().toISOString(), jobTitle: "Senior care in San Jose", interviewType: "video", notes: "requesting interview" };
     await (onVideoInterviewWrite as any)(change(null, "iv1", after), { params: { interviewId: "iv1" } });
-    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("interview") }));
+    const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111")!;
+    const content = (call[1] as any).content as string;
+    expect(content).toContain('A Family requested an interview with you for "Senior care in San Jose" on');
+    expect(content).toContain("(Video). Note: \"requesting interview\"");
+    expect(content).toContain("Reply here to accept or propose a different time.");
+    // The bell carries the same details.
+    expect(hoisted.addMock).toHaveBeenCalledWith(`users/${CAREGIVER}/notifications`, expect.objectContaining({ type: "interview_request", body: expect.stringContaining('Note: "requesting interview"') }));
   });
 
   it("a website-cancelled interview (no cancelledViaAgent marker) texts the caregiver", async () => {

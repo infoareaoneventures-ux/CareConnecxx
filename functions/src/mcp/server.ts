@@ -1188,21 +1188,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "apply_to_job",
-    description:
-      "The Jobs page's Apply Now: apply to an open job post, with an optional cover letter (the only thing the site's Apply form asks). " +
-      "Gated exactly like the site — while membership / background check / transport docs are pending it returns the gate instead.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:  { type: "string", description: "Your caregiver document ID" },
-        jobId:        { type: "string", description: "The job_posts document ID" },
-        coverLetter:  { type: "string", description: "Optional cover letter to the family (the Apply form's one field)" },
-      },
-      required: ["caregiverId", "jobId"],
-    },
-  },
-  {
     name: "respond_to_job_application",
     description:
       "Accept or reject a caregiver's application to your job post. The website has no direct 'accept' action — " +
@@ -1832,6 +1817,38 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "start_apply_flow",
+    description:
+      "The Jobs page's Apply Now button, as Evia's scripted step-by-step flow — the ONLY way a caregiver applies to a job. " +
+      "It shows them the Apply modal's contents (Your Profile, Client's budget), asks for the optional cover letter, then asks them to " +
+      "reply SUBMIT or CANCEL, and submits the site's exact application. This tool TEXTS THE FIRST STEP ITSELF — say nothing else this turn. " +
+      "They can back out at any step. Call it as soon as they name a job to apply to (by number from browse_job_board, or by description).",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        jobId:       { type: "string", description: "The job_posts document ID (from browse_job_board)" },
+      },
+      required: ["caregiverId", "jobId"],
+    },
+  },
+  {
+    name: "start_interview_reschedule_flow",
+    description:
+      "The Interviews tab's Propose new time / Reschedule / Propose different time button, as Evia's scripted step-by-step flow — the ONLY way " +
+      "a caregiver proposes a new interview time. Asks the date, then a time from the site's picker (9:00 AM–6:00 PM, on the hour or half hour), " +
+      "then SEND or CANCEL, and writes the site's exact proposal (the family confirms; the interview's time doesn't change until they do). " +
+      "This tool TEXTS THE FIRST STEP ITSELF — say nothing else this turn. They can back out at any step.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        interviewId: { type: "string", description: "The video_interviews document ID (from list_interviews)" },
+      },
+      required: ["caregiverId", "interviewId"],
+    },
+  },
+  {
     name: "get_my_applications",
     description:
       "The Jobs page's My Applications tab, exactly as the site shows it: every application (Pending / Closed sub-tabs; accepted ones appear in neither), " +
@@ -2419,7 +2436,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "decline_shift",
   "complete_task",
   "create_care_journal_entry",
-  "apply_to_job",
   "request_instant_payout",
   "submit_shift_hours",
   "get_caregiver_earnings",
@@ -2462,10 +2478,12 @@ const CAREGIVER_TOOL_NAMES = new Set([
   // CRUD/parity gap closures (agent-native audit 2026-07)
   "list_interviews",
   "cancel_interview",
-  // The Interviews tab's Propose new time / Reschedule and Accept new time
-  // (2026-09-27) — the same tools the family side already had.
-  "reschedule_interview",
+  // The Interviews tab's Accept new time (2026-09-27). Propose new time /
+  // Reschedule and Apply Now run as scripted flows (caregiverJobFlows.ts) —
+  // the modal step for step, Submit/Cancel at the end.
   "accept_interview_reschedule",
+  "start_apply_flow",
+  "start_interview_reschedule_flow",
   // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
   "react_to_message",
   // Checkr Candidate MCP bridge (2026-07-09) — full report details, OTP-gated
@@ -2498,7 +2516,8 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "reactivate_account",
   "accept_shift",
   "decline_shift",
-  "apply_to_job",
+  "start_apply_flow",
+  "start_interview_reschedule_flow",
   "request_instant_payout",
   "submit_shift_hours",
   "get_caregiver_earnings",
@@ -5031,50 +5050,6 @@ async function executeToolCall(
 
 
 
-    if (name === "apply_to_job") {
-      const { caregiverId, jobId, coverLetter: coverLetterIn, coverNote } = input as Record<string, unknown>;
-      const coverLetter = String((coverLetterIn ?? coverNote ?? "") as string);
-      if (!caregiverId || !jobId) return toolError("INVALID_INPUT", "caregiverId and jobId are required");
-      const jobSnap = await db.collection("job_posts").doc(jobId as string).get();
-      if (!jobSnap.exists) return toolError("NOT_FOUND", "Job post not found");
-      const job = jobSnap.data()!;
-      if (job.status !== "open") return toolError("INVALID_INPUT", "This job post is no longer accepting applications");
-      // JobBoard.tsx Apply: gate (transport-aware for transport jobs) — the
-      // "Activate Membership" / "Complete Verification" button in place of Apply.
-      {
-        const { jobRequiresTransport } = await import("../agents/caregiverAccessGate");
-        const applyGate = await checkCaregiverAccessGate(caregiverId as string, "applying to a job",
-          { phone: (input as Record<string, unknown>).phone, transport: jobRequiresTransport(job) });
-        if (applyGate) return applyGate;
-      }
-      const dupSnap2 = await db.collection("job_applications").where("jobId", "==", jobId).where("caregiverId", "==", caregiverId).limit(1).get();
-      if (!dupSnap2.empty) return toolError("INVALID_INPUT", "You have already applied to this job");
-      const { jobApplicationSnapshot } = await import("../utils/jobApplicationDoc");
-      const applicantSnap = await db.collection("caregivers").doc(caregiverId as string).get().catch(() => null);
-      const applicant = applicantSnap?.exists ? applicantSnap.data()! : {};
-      // Same document the site's Apply form writes (hooks/useJobApplications.ts
-      // applyToJob): caregiver snapshot (name, photo, experience, rating, skills),
-      // the cover letter, proposedRate null (the form has no rate field), and the
-      // job snapshot the cards render from.
-      const appRef = await db.collection("job_applications").add({
-        jobId, caregiverId, clientId: job.clientId,
-        caregiverName:  (applicant.name as string) ?? "",
-        caregiverPhoto: (applicant.photo as string) || (applicant.imageUrl as string) || "",
-        experience:     typeof applicant.experience === "number" ? applicant.experience : (Number(applicant.experience) || 0),
-        rating:         typeof applicant.rating === "number" ? applicant.rating : null,
-        skills:         Array.isArray(applicant.skills) ? applicant.skills : [],
-        ...jobApplicationSnapshot(job),
-        coverLetter,
-        proposedRate: null,
-        status: "pending", appliedAt: nowIso, source: "cara_sms",
-      });
-      // onJobApplicationCreate (notificationTriggers.ts) is the single source
-      // of truth for texting the client about this — it fires on the write
-      // above regardless of caller, so no manual send here.
-      logAudit({ eventType: "job_application_submitted", userId: caregiverId as string, data: { source: "mcp:apply_to_job", jobId, applicationId: appRef.id } }).catch(() => {});
-      return { success: true, applicationId: appRef.id };
-    }
-
     if (name === "respond_to_job_application") {
       const { applicationId, clientId, decision, preferredDate, preferredTime, interviewType } = input as Record<string, unknown>;
       if (!applicationId || !clientId || !decision) return toolError("INVALID_INPUT", "applicationId, clientId, and decision are required");
@@ -6585,6 +6560,26 @@ async function executeToolCall(
     }
 
     // ── browse_job_board ────────────────────────────────────────────────────
+    // The Jobs page's two forms as scripted flows (agents/caregiverJobFlows.ts).
+    if (name === "start_apply_flow" || name === "start_interview_reschedule_flow") {
+      const { caregiverId, jobId, interviewId, phone: flowPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, flowPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const sessionDoc = (await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {};
+      const session = { ...sessionDoc, caregiverId, chatId: sess.chatId } as unknown as import("../linq/client").AgentSession;
+      const flows = await import("../agents/caregiverJobFlows");
+      if (name === "start_apply_flow") {
+        if (!jobId) return toolError("INVALID_INPUT", "jobId is required");
+        const r = await flows.startApplyFlow(sess.phone, sess.chatId, session, { caregiverId: caregiverId as string, jobId: jobId as string });
+        return { success: r.started, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the caregiver — send nothing else this turn." : "The caregiver was already told why it didn't start — send nothing else." };
+      }
+      if (!interviewId) return toolError("INVALID_INPUT", "interviewId is required");
+      const r = await flows.startInterviewRescheduleFlow(sess.phone, sess.chatId, session, { caregiverId: caregiverId as string, interviewId: interviewId as string });
+      return { success: r.started, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the caregiver — send nothing else this turn." : "The caregiver was already told why it didn't start — send nothing else." };
+    }
+
     // The Jobs page, as data (agents/jobBoardPage.ts mirrors JobBoard.tsx).
     if (name === "browse_job_board") {
       const { caregiverId, sort, limit, filters } = input as Record<string, unknown>;
@@ -6596,7 +6591,8 @@ async function executeToolCall(
         filters: (filters && typeof filters === "object") ? (filters as Record<string, unknown>) : undefined,
       });
       if (!page) return toolError("NOT_FOUND", "Caregiver not found");
-      return { success: true, ...page, page: "/caregiver/jobs" };
+      // Numbered like a list the caregiver can answer by number ("apply to 2").
+      return { success: true, ...page, jobs: page.jobs.map((j, i) => ({ number: i + 1, ...j })), page: "/caregiver/jobs" };
     }
 
     if (name === "get_job_details") {

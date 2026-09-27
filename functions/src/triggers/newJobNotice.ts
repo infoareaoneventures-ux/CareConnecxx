@@ -9,13 +9,12 @@
 //     the board's own drops (blocked client, deactivated client) and radius
 //     rule (jobBoardPage.ts). Membership is NOT required: the site lists jobs
 //     for unpaid caregivers too and gates only Apply.
-//   • what: one text carrying the card's own lines plus the Jobs page link,
+//   • what: one text carrying the card's own lines (no link — they ask Evia),
 //     mirrored into the website bell (users/{uid}/notifications). No yes/no
 //     reply flow — they apply on the site or ask Evia, exactly as the page does.
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
-import { appLink } from "../config/appUrl";
 import { writeUserNotification } from "../notifications/userNotification";
 import { findCaregiverSession } from "../agents/caregiverAccessGate";
 import {
@@ -45,7 +44,6 @@ export async function sendNewJobNotices(jobId: string, rawJob: Record<string, un
 
   const nowIso = new Date().toISOString();
   const cgSnap = await db.collection("caregivers").where("onboardingStatus", "==", "profile_complete").get();
-  const link = appLink(`/caregiver/jobs?job=${jobId}`);
 
   for (const doc of cgSnap.docs) {
     const cg: Record<string, unknown> = { id: doc.id, ...(doc.data() as Record<string, unknown>) };
@@ -74,7 +72,9 @@ export async function sendNewJobNotices(jobId: string, rawJob: Record<string, un
 
     const sess = await findCaregiverSession(doc.id, cg.phone).catch(() => null);
     if (!sess) { result.bellOnly.push(doc.id); continue; }
-    await sendMessage(sess.chatId, `${body}\n\nSee the details and apply on your Jobs page: ${link} — or ask me about it here.`)
+    // Evia IS the second front door: no link — the caregiver asks her for the
+    // details or to apply, like tapping the card on the site.
+    await sendMessage(sess.chatId, `${body} Reply here for the details or to apply.`)
       .then(() => result.notified.push(doc.id))
       .catch((err) => { console.error("[newJobNotice] text failed:", doc.id, err); result.bellOnly.push(doc.id); });
   }

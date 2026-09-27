@@ -331,7 +331,7 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     action: "Apply to a job post",
     webSurface: "components/caregiver/JobBoard.tsx",
     collection: "job_posts",
-    tool: "apply_to_job",
+    tool: "start_apply_flow",
     promptActor: "caregiver",
     status: "shipped",
   },

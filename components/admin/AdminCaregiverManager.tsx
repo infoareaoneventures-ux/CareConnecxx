@@ -211,17 +211,10 @@ export const AdminCaregiverManager: React.FC = () => {
       setCaregivers(prev => prev.map(c => c.uid === selected.uid ? { ...c, ...updates } as Caregiver : c));
       setSelected(prev => prev ? { ...prev, ...updates } as Caregiver : prev);
       showToast(`Caregiver ${status}`, 'success');
-      dbService.sendNotification(selected.uid, {
-        type: `verification_${status}` as any,
-        title: status === 'approved' ? "You're Verified!" : status === 'rejected' ? 'Verification Update' : 'Additional Info Needed',
-        body: status === 'approved' ? 'Your background check has been approved.' : status === 'rejected' ? `Not approved. Reason: ${rejectReason}` : 'We need more information to complete your verification.',
-        message: '',
-        userId: selected.uid,
-        isRead: false,
-      }).catch((err) => {
-        console.error('[AdminCaregiverManager] Failed to send notification:', err);
-        showToast('Notification to caregiver failed', 'error');
-      });
+      // The caregiver is told by the server (onCaregiverAccountChange — bell +
+      // text, once, from the record change above); no browser-side bell here
+      // (2026-09-27: this used to say "background check approved" even when only
+      // membership was ticked, and never texted).
     } catch {
       showToast('Failed to update verification', 'error');
     }

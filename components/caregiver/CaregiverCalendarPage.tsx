@@ -926,29 +926,27 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       } catch { } finally { setDeclining(false); }
     };
 
-    // "Propose a different time" — declines the original request the same
-    // way handleDecline does, but records the alternative time and texts the
-    // family what it is (via the shared respondToInterviewRequest, the same
-    // function Evia's own respond_to_interview_request tool uses) instead of
-    // just a bare decline. Needs the queue path, not a raw Firestore write —
-    // firestore.rules never allowed proposedTime on a direct client update.
+    // "Propose a different time" — the same write as the Jobs page's Propose new
+    // time (JobBoard.tsx handleRescheduleInterview, 2026-09-27): a pending
+    // proposal on the SAME interview, which stays a live request until the
+    // family confirms. It used to decline the request and record a counter time
+    // through the interview action queue — a second path the Jobs page never had.
     const handlePropose = async () => {
-      if (!proposeDate || !proposeTime) return;
+      if (!proposeDate || !proposeTime || !db) return;
+      const scheduledDateTime = new Date(`${proposeDate}T${proposeTime}:00`);
+      if (scheduledDateTime <= new Date()) { setProposeError('Please pick a future date and time'); return; }
       setProposing(true);
       setProposeError(null);
       try {
-        const { respondToInterviewRequest } = await import('../../services/interviewActionQueue');
-        await respondToInterviewRequest({
-          caregiverId: interview.caregiverId,
-          interviewId: interview.id,
-          decision: 'decline',
-          proposedDate: proposeDate,
-          proposedTime: proposeTime,
+        await db.collection('video_interviews').doc(interview.id).update({
+          reschedulePendingTime: scheduledDateTime.toISOString(),
+          rescheduledBy: 'caregiver',
+          acceptedRescheduleViaAgent: firebase.firestore.FieldValue.delete(),
+          rescheduledViaAgent: firebase.firestore.FieldValue.delete(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
-        setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
-        setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'declined' as const } : prev);
         setShowPropose(false);
-        addToast('Proposed time sent — the family will be notified.', 'success');
+        addToast('New time proposed — waiting on the family to confirm', 'success');
       } catch (e: any) {
         setProposeError(e?.message || 'Could not send that. Please try again.');
       } finally {

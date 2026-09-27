@@ -332,16 +332,18 @@ describe("checkrWebhook — exactly-once", () => {
       verificationStatus: "approved",
     });
     const cgUpdates = () => hoisted.updates.filter((u) => u.path === "caregivers/cg1").length;
+    // 2026-09-27: the webhook writes the record only; the caregiver's one
+    // "approved" bell + text comes from onCaregiverAccountChange.
     const approvalNotifications = () =>
       hoisted.adds.filter((a) => a.path === "users/cg1/notifications").length;
     expect(cgUpdates()).toBe(1);
-    expect(approvalNotifications()).toBe(1);
+    expect(approvalNotifications()).toBe(0);
 
     const res2 = makeRes();
     await (checkrWebhook as any)(checkrReq(clearReportEvent("evt_chk_1")), res2);
     expect(res2.json).toHaveBeenCalledWith({ received: true, status: "already_processed" });
     expect(cgUpdates()).toBe(1);              // not re-approved
-    expect(approvalNotifications()).toBe(1);  // "you're approved!" not re-sent
+    expect(approvalNotifications()).toBe(0);
   });
 
   it("still processes events that arrive without an id (no dedupe possible)", async () => {

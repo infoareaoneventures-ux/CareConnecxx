@@ -45,9 +45,6 @@ async function dispatch(type: InterviewActionType, data: Record<string, unknown>
         caregiverId: String(data.caregiverId ?? ""),
         interviewId: String(data.interviewId ?? ""),
         decision: data.decision === "accept" ? "accept" : "decline",
-        proposedDate: data.proposedDate as string | undefined,
-        proposedTime: data.proposedTime as string | undefined,
-        message: data.message as string | undefined,
         source: "web",
       });
       return result as unknown as Record<string, unknown>;

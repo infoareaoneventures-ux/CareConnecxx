@@ -513,14 +513,15 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
   }
   // A family's first payment already got its one bell + text above
   // (membership_activated); writing this one too showed two bells for one event.
-  if (isRenewal || isCaregiverMember) {
+  // A caregiver's events go through notifications/caregiverAccountEvents.ts:
+  // the first payment is announced by the record change (membershipPaid), the
+  // renewal by the invoice below — one bell + one text each, never twice.
+  if (isRenewal && !isCaregiverMember) {
     await admin.firestore().collection('users').doc(userId).collection('notifications').add({
       userId,
       type: 'membership_payment_succeeded',
-      title: isRenewal ? 'Membership Renewed' : 'Membership Activated',
-      body: isRenewal
-        ? `Your Evia membership has been renewed. $${amountPaid} was charged.`
-        : `Your Evia membership is now active. $${amountPaid} was charged.`,
+      title: 'Membership Renewed',
+      body: `Your Evia membership has been renewed. ${amountPaid} was charged.`,
       isRead: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -559,6 +560,11 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
   const { requestBackgroundCheckConsent } = await import('./bgcheckConsentRequest');
   const asked = await requestBackgroundCheckConsent(userId, 'renewal')
     .catch((err) => { console.error(`requestBackgroundCheckConsent(renewal) failed for ${userId}:`, err); return false; });
+  if (asked) {
+    const { notifyCaregiverAccountEvent } = await import('./notifications/caregiverAccountEvents');
+    await notifyCaregiverAccountEvent(userId, 'membership_renewed', { eventId: `invoice:${invoice.id}`, ctx: { amount: amountPaid } })
+      .catch((err) => console.error(`membership_renewed notice failed for ${userId}:`, err));
+  }
   console.log(`Annual renewal for caregiver ${userId} — ${asked ? 'consent requested for the yearly background check' : 'no caregiver record, nothing to refresh'}`);
 }
 
@@ -626,6 +632,18 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
       `Please update your payment method at ${billingUrl} to avoid an interruption.` +
       (nextRetryDate ? ` Next retry: ${nextRetryDate}.` : "") +
       " Reply HELP if you need assistance.";
+  }
+
+  // Caregiver: one bell + one text per attempt, same words, through the
+  // shared account-event path (idempotent on the invoice + attempt).
+  if (isCaregiverMember) {
+    const { notifyCaregiverAccountEvent } = await import('./notifications/caregiverAccountEvents');
+    await notifyCaregiverAccountEvent(userId, 'membership_payment_failed', {
+      eventId: `invoice:${invoice.id}:attempt:${attemptCount}`,
+      ctx: { attempt: attemptCount, finalAttempt: isFinalAttempt, nextRetry: nextRetryDate ?? undefined },
+    }).catch((err) => console.error(`membership_payment_failed notice failed for ${userId}:`, err));
+    console.log(`Payment failed for caregiver: ${userId} (attempt ${attemptCount}, final: ${isFinalAttempt})`);
+    return;
   }
 
   // Proactively text the client via Evia
@@ -749,11 +767,23 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   }, { merge: true });
   const isCaregiverMember = await mirrorMembershipToCaregiverDoc(userId, subscription.status);
 
-  // The Membership page's two transitions the family could only see by opening
+  // The Membership page's two transitions a member could only see by opening
   // the site: cancel scheduled ("Your membership ends on …" + Reactivate) and
   // reactivated ("Next billing date: …"). Fires for the site's buttons, Evia's
   // set_subscription_status AND the Stripe portal alike — the webhook is where
-  // every channel meets. Caregiver texts are the caregiver pass's job.
+  // every channel meets. Caregivers (2026-09-27): same two events through the
+  // shared account-event path (bell + text, once per subscription event).
+  if (isCaregiverMember && hadRecord) {
+    const isLive = subscription.status === 'active' || subscription.status === 'trialing';
+    const { notifyCaregiverAccountEvent } = await import('./notifications/caregiverAccountEvents');
+    if (isLive && !prevCancelScheduled && subscription.cancel_at_period_end) {
+      await notifyCaregiverAccountEvent(userId, 'membership_cancel_scheduled', { eventId: `sub:${subscription.id}:cancel:${subscription.current_period_end}`, ctx: { date: membershipDay(subscription.current_period_end) } })
+        .catch((err) => console.error(`membership_cancel_scheduled notice failed for ${userId}:`, err));
+    } else if (isLive && prevCancelScheduled && !subscription.cancel_at_period_end) {
+      await notifyCaregiverAccountEvent(userId, 'membership_reactivated', { eventId: `sub:${subscription.id}:reactivated:${subscription.current_period_end}`, ctx: { date: membershipDay(subscription.current_period_end) } })
+        .catch((err) => console.error(`membership_reactivated notice failed for ${userId}:`, err));
+    }
+  }
   if (!isCaregiverMember && hadRecord) {
     const isLive = subscription.status === 'active' || subscription.status === 'trialing';
     if (isLive && !prevCancelScheduled && subscription.cancel_at_period_end) {
@@ -847,10 +877,17 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
   // canceled" card with the reactivate CTA. Returns false for clients (no doc).
   const isCaregiverMember = await mirrorMembershipToCaregiverDoc(userId, 'canceled');
 
+  // Caregiver (2026-09-27): the record flip to 'canceled' above is announced
+  // by onCaregiverAccountChange (bell + text, once) — nothing more here.
+  if (isCaregiverMember) {
+    console.log(`Subscription canceled for caregiver: ${userId}`);
+    return;
+  }
+
   // Proactively text via Evia — this used to be silent (in-app notice only),
-  // so a client/caregiver whose membership fully lapsed had no way to find
-  // out unless they happened to open the website. Mirrors the same dunning
-  // pattern handleInvoicePaymentFailed already uses.
+  // so a client whose membership fully lapsed had no way to find out unless
+  // they happened to open the website. Mirrors the same dunning pattern
+  // handleInvoicePaymentFailed already uses.
   try {
     const sessionSnap = await admin.firestore()
       .collection("agent_sessions")

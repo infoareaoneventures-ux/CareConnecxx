@@ -110,7 +110,7 @@ export async function buildLivePhotoFact(phone: string, session: AgentSession): 
     const d = (s.onboardingData ?? {}) as Record<string, unknown>;
     if (d.profilePhoto) {
       return "LIVE STATUS RIGHT NOW: their profile photo is IN — Evia already has it. Do NOT ask them to upload " +
-        "it again; confirm it's received (next up is certifications).";
+        "it again; confirm it's received (next up is job type and availability, like the site's wizard).";
     }
     return "LIVE STATUS RIGHT NOW: no profile photo received yet — the upload link Evia sent is the way (Evia can " +
       "send it again if they ask).";

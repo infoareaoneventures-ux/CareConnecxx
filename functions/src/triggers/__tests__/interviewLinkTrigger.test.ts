@@ -158,17 +158,18 @@ describe("parseScheduledTimeMs", () => {
 });
 
 describe("onVideoInterviewLinkEnsure", () => {
-  it("web 'requested' create → SMS-accept path for the caregiver, no link yet", async () => {
+  // 2026-09-27: a new request no longer gets a second text from here —
+  // onVideoInterviewWrite writes the caregiver's bell AND texts them (one event,
+  // one text). Nothing else to do until the caregiver accepts.
+  it("web 'requested' create → nothing sent, no link yet", async () => {
     hoisted.docState.set("video_interviews/iv1", {
       status: "requested", clientId: "cl1", caregiverId: "cg1",
       clientName: "The Nguyen Family", caregiverName: "Maria", scheduledTime: FUTURE_ISO,
     });
     await fire("iv1", null);
-    expect(trySendMock).toHaveBeenCalledTimes(1);
-    expect(trySendMock.mock.calls[0][0]).toBe("+14085551111");
-    expect(trySendMock.mock.calls[0][1]).toContain("video interview");
+    expect(trySendMock).not.toHaveBeenCalled();
     expect(createAssets).not.toHaveBeenCalled();
-    expect(hoisted.docState.get("video_interviews/iv1").requestNotifiedAt).toBeTruthy();
+    expect(hoisted.docState.get("video_interviews/iv1").requestNotifiedAt).toBeUndefined();
   });
 
   it("web doc reaching 'accepted' → generates link, delivers to both, schedules reminders", async () => {
@@ -194,7 +195,12 @@ describe("onVideoInterviewLinkEnsure", () => {
       expect(call[1]).toEqual({ bypassCalibration: true });
       expect(new Date(call[0].scheduledAt).getTime()).toBe(FUTURE_MS - 60 * 60 * 1000);
       expect(call[0].refId).toBe("video_interview_iv2");
+      // 2026-09-27: every reminder text carries a bell copy for the same person.
+      expect(call[0].bell).toMatchObject({ recipientId: call[0].userId, type: "interview_reminder", title: "Interview in an hour", body: call[0].message });
     }
+    // The caregiver's reminder names the family, like the family's names the caregiver.
+    const cgReminder = scheduleTriggerMock.mock.calls.find((c) => c[0].userId === "cg1")![0];
+    expect(cgReminder.message).toBe("Interview in an hour with The Nguyen Family — https://meet.google.com/abc-defg-hij Reply if you need to reschedule.");
   });
 
   it("agreed → declined transition cancels pending reminders and clears remindersScheduledAt", async () => {
@@ -236,7 +242,7 @@ describe("onVideoInterviewLinkEnsure", () => {
 
   it("MCP-shaped create (link + delivery markers present) → schedules reminders only", async () => {
     hoisted.docState.set("video_interviews/iv4", {
-      status: "scheduled", clientId: "cl1", caregiverId: "cg1",
+      status: "accepted", clientId: "cl1", caregiverId: "cg1",
       clientName: "The Nguyen Family", caregiverName: "Maria", scheduledTime: FUTURE_ISO,
       callUrl: "https://meet.google.com/abc", icsUrl: "https://signed/ics",
       linkDelivery: {
@@ -281,7 +287,19 @@ describe("onVideoInterviewLinkEnsure", () => {
     hoisted.docState.set("video_interviews/iv7", {
       status: "declined", clientId: "cl1", caregiverId: "cg1", scheduledTime: FUTURE_ISO,
     });
-    await fire("iv7", { status: "scheduled" });
+    await fire("iv7", { status: "accepted" });
+    expect(createAssets).not.toHaveBeenCalled();
+    expect(trySendMock).not.toHaveBeenCalled();
+    expect(scheduleTriggerMock).not.toHaveBeenCalled();
+  });
+
+  // The caregiver's Interviews tab reads 'scheduled' as PENDING — no link,
+  // no "confirmed" texts, no reminders until the caregiver actually accepts.
+  it("'scheduled' is pending, not agreed → nothing happens", async () => {
+    hoisted.docState.set("video_interviews/iv8", {
+      status: "scheduled", clientId: "cl1", caregiverId: "cg1", clientName: "The Nguyen Family", scheduledTime: FUTURE_ISO,
+    });
+    await fire("iv8", null);
     expect(createAssets).not.toHaveBeenCalled();
     expect(trySendMock).not.toHaveBeenCalled();
     expect(scheduleTriggerMock).not.toHaveBeenCalled();

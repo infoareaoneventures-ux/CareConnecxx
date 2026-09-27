@@ -10,7 +10,6 @@
 // consent-first. A renewal also resets the verified state so the yearly
 // refresh is not optional.
 import * as admin from "firebase-admin";
-import { appLink } from "./config/appUrl";
 
 export type ConsentReason = "initial" | "renewal";
 
@@ -64,22 +63,9 @@ export async function requestBackgroundCheckConsent(uid: string, reason: Consent
   await ref.set(patch, { merge: true });
   await db.collection("users").doc(uid).set({ verificationStatus: "submitted" }, { merge: true }).catch(() => {});
 
-  const link = appLink("/caregiver/dashboard");
-  const title = reason === "renewal" ? "Renew your background check" : "Authorize your background check";
-  const body = reason === "renewal"
-    ? "Your annual membership renewed. Authorize this year's background check refresh to stay bookable."
-    : "Payment received! Next: authorize your background check — it takes about 2 minutes.";
-  await db.collection("users").doc(uid).collection("notifications").add({
-    userId: uid, type: "background_check_consent", title, body, isRead: false, createdAt: now,
-  }).catch(() => {});
-
-  const phone = String(cg.phone || "").trim();
-  if (phone) {
-    try {
-      await textCaregiver(phone, `${body} ${link}`);
-    } catch (err) {
-      console.error(`requestBackgroundCheckConsent: text to ${uid} failed:`, err);
-    }
-  }
+  // The caregiver is told ONCE through notifications/caregiverAccountEvents.ts:
+  // a first payment by the record change (membership_paid: "Next: authorize
+  // your background check"), a renewal by its invoice (membership_renewed).
+  // Nothing is sent from here (2026-09-27).
   return true;
 }

@@ -45,11 +45,12 @@ const hoisted = vi.hoisted(() => {
   };
 });
 
-vi.mock("firebase-admin", () => ({
-  __esModule: true,
-  default: { firestore: () => ({ collection: hoisted.collectionMock }) },
-  firestore: () => ({ collection: hoisted.collectionMock }),
-}));
+vi.mock("firebase-admin", () => {
+  const firestore = Object.assign(() => ({ collection: hoisted.collectionMock }), {
+    FieldValue: { delete: () => ({ __delete: true }), serverTimestamp: () => ({ __serverTimestamp: true }) },
+  });
+  return { __esModule: true, default: { firestore }, firestore };
+});
 
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../linq/client", () => ({ sendToPhone: vi.fn().mockResolvedValue(undefined) }));
@@ -97,37 +98,37 @@ describe("respondToInterviewRequest", () => {
     expect(sendToPhone).not.toHaveBeenCalled();
   });
 
-  it("decline with no counter-proposal writes status 'declined', no proposedTime", async () => {
+  // 2026-09-27: the Interviews tab's Decline write, field for field — status +
+  // updatedAt, proposal fields cleared; the family's bell + text come from
+  // onVideoInterviewWrite (no own text, no respondedViaAgent flag).
+  it("decline writes the site's exact patch and sends nothing itself", async () => {
+    hoisted.docState.set(`video_interviews/${IV_ID}`, { ...hoisted.docState.get(`video_interviews/${IV_ID}`), reschedulePendingTime: "2026-10-01T21:00:00.000Z", rescheduledBy: "client" });
     const r = await respondToInterviewRequest({ caregiverId: CAREGIVER, interviewId: IV_ID, decision: "decline", source: "web" });
     expect(r.status).toBe("declined");
-    expect(r.proposedTime).toBeNull();
     const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
+    expect(update?.data.status).toBe("declined");
+    expect(update?.data.updatedAt).toBeDefined();
+    expect(update?.data.reschedulePendingTime).toEqual({ __delete: true });
+    expect(update?.data.rescheduledBy).toEqual({ __delete: true });
+    expect(update?.data.respondedViaAgent).toBeUndefined();
     expect(update?.data.proposedTime).toBeUndefined();
-    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("isn't available"));
+    expect(sendToPhone).not.toHaveBeenCalled();
   });
 
-  it("decline with a counter-proposed date/time stores proposedTime as an ISO string and tells the client", async () => {
-    const r = await respondToInterviewRequest({
-      caregiverId: CAREGIVER, interviewId: IV_ID, decision: "decline",
-      proposedDate: "2026-10-01", proposedTime: "14:00", source: "web",
-    });
-    expect(r.status).toBe("declined");
-    expect(r.proposedTime).toEqual(expect.any(String));
-    expect(new Date(r.proposedTime!).toISOString()).toBe(r.proposedTime);
-    const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
-    expect(update?.data.proposedTime).toBe(r.proposedTime);
-    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("2026-10-01"));
-    // The site's "Accept this time" / "Propose another time" buttons, as a reply anchor (interviewCounterReply.ts).
-    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("Reply YES to book that time"));
-    expect(hoisted.docState.get("agent_sessions/+15551234567")).toMatchObject({
-      pendingInterviewCounter: { interviewId: IV_ID, caregiverId: CAREGIVER, proposedTime: r.proposedTime },
-    });
+  it("only a PENDING request can be accepted or declined — an accepted one says to cancel / reschedule, a terminal one refuses", async () => {
+    hoisted.docState.set(`video_interviews/${IV_ID}`, { ...hoisted.docState.get(`video_interviews/${IV_ID}`), status: "accepted" });
+    await expect(respondToInterviewRequest({ caregiverId: CAREGIVER, interviewId: IV_ID, decision: "decline", source: "web" }))
+      .rejects.toMatchObject({ code: "invalid-argument", message: expect.stringContaining("cancel") });
+    hoisted.docState.set(`video_interviews/${IV_ID}`, { ...hoisted.docState.get(`video_interviews/${IV_ID}`), status: "completed" });
+    await expect(respondToInterviewRequest({ caregiverId: CAREGIVER, interviewId: IV_ID, decision: "accept", source: "web" }))
+      .rejects.toMatchObject({ code: "invalid-argument" });
+    expect(hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`)).toBeUndefined();
   });
 
-  it("stamps respondedViaAgent on every response so the Firestore trigger never double-texts", async () => {
-    await respondToInterviewRequest({ caregiverId: CAREGIVER, interviewId: IV_ID, decision: "decline", source: "web" });
-    const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
-    expect(update?.data.respondedViaAgent).toBe(true);
+  it("accept while the family's new time is pending points to Accept new time instead", async () => {
+    hoisted.docState.set(`video_interviews/${IV_ID}`, { ...hoisted.docState.get(`video_interviews/${IV_ID}`), reschedulePendingTime: "2026-10-01T21:00:00.000Z", rescheduledBy: "client" });
+    await expect(respondToInterviewRequest({ caregiverId: CAREGIVER, interviewId: IV_ID, decision: "accept", source: "web" }))
+      .rejects.toMatchObject({ code: "invalid-argument", message: expect.stringContaining("accept_interview_reschedule") });
   });
 
   it("logs the audit event with the given source", async () => {
@@ -139,11 +140,9 @@ describe("respondToInterviewRequest", () => {
     }));
   });
 
-  it("does not throw when there's no matching client session to notify", async () => {
-    hoisted.collState.set("agent_sessions", []);
-    await expect(
-      respondToInterviewRequest({ caregiverId: CAREGIVER, interviewId: IV_ID, decision: "accept", source: "web" }),
-    ).resolves.toMatchObject({ status: "accepted" });
-    expect(sendToPhone).not.toHaveBeenCalled();
+  it("accept writes the site's exact patch: status + updatedAt only", async () => {
+    await respondToInterviewRequest({ caregiverId: CAREGIVER, interviewId: IV_ID, decision: "accept", source: "web" });
+    const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
+    expect(Object.keys(update?.data ?? {}).sort()).toEqual(["status", "updatedAt"]);
   });
 });

@@ -228,25 +228,29 @@ describe("respond_to_interview_request", () => {
     expect(sendToPhone).not.toHaveBeenCalledWith("+15551234567", expect.anything());
   });
 
-  it("decline writes status 'declined' and notifies the client", async () => {
+  // 2026-09-27: the Interviews tab's Decline — status + updatedAt, proposal
+  // fields cleared, nothing texted here (onVideoInterviewWrite tells the family).
+  it("decline writes the site's patch and sends nothing itself", async () => {
     const r = await handleToolCall("respond_to_interview_request", {
       caregiverId: "cg1", interviewId: IV_ID, decision: "decline",
     }) as any;
     expect(r.success).toBe(true);
     const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
     expect(update?.data.status).toBe("declined");
-    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("isn't available"));
+    expect(update?.data.respondedViaAgent).toBeUndefined();
+    expect(sendToPhone).not.toHaveBeenCalled();
   });
 
-  // 2026-09-06 fix: onVideoInterviewWrite's decline branch (notificationTriggers.ts)
-  // checks this flag to skip its own text — this tool already sent one above —
-  // so a decline routed through Evia doesn't double-text the client.
-  it("stamps respondedViaAgent so the Firestore trigger doesn't send a duplicate decline text", async () => {
-    await handleToolCall("respond_to_interview_request", {
-      caregiverId: "cg1", interviewId: IV_ID, decision: "decline",
-    });
-    const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
-    expect(update?.data.respondedViaAgent).toBe(true);
+  // JobBoard.tsx: on a gated pending row the site keeps Decline and only swaps
+  // Accept for the gate button.
+  it("Decline is never gated; Accept is (membership → background)", async () => {
+    hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipPaid: false });
+    const declined = await handleToolCall("respond_to_interview_request", { caregiverId: "cg1", interviewId: IV_ID, decision: "decline" }) as any;
+    expect(declined.success).toBe(true);
+    hoisted.docState.set(`video_interviews/${IV_ID}`, { clientId: CLIENT, caregiverId: "cg1", status: "requested" });
+    const accepted = await handleToolCall("respond_to_interview_request", { caregiverId: "cg1", interviewId: IV_ID, decision: "accept" }) as any;
+    expect(accepted._toolError).toBe(true);
+    expect(accepted.code).toBe("MEMBERSHIP_REQUIRED");
   });
 
   it("refuses when the interview doesn't belong to this caregiver", async () => {

@@ -141,14 +141,8 @@ export async function authorizeBackgroundCheck(args: {
       if (step === "caregiver_send_bgcheck" || step === "caregiver_awaiting_bgcheck_consent") patch.onboardingStep = "caregiver_awaiting_bgcheck";
       if (Object.keys(patch).length) await sessRef.update(patch).catch(() => {});
     }
-    if (invitationUrl) {
-      const { textCaregiver } = await import("./bgcheckConsentRequest");
-      await textCaregiver(phone,
-        consentReason === "renewal"
-          ? `Thanks — here's this year's background check refresh. It usually takes about 5 minutes, and your SSN and date of birth go directly to Checkr, never to me: ${invitationUrl}`
-          : `Thanks for authorizing! Here's your background check link — it usually takes about 5 minutes, and your SSN and date of birth go directly to Checkr, never to me: ${invitationUrl}`,
-      ).catch((err) => console.error(`authorizeBackgroundCheck: text to ${uid} failed:`, err));
-    }
+    // The link is delivered ONCE — bell + text — by onCaregiverAccountChange when
+    // the record flips to invitationStatus 'sent' with the URL (2026-09-27).
   }
 
   return { status: "ok", candidateId: inv.candidateId, invitationUrl };

@@ -1331,14 +1331,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "withdraw_job_application",
     description:
-      "Withdraw your own pending application to a job post. The client/admin views stop showing it as active. " +
-      "Only works while the application is still pending (not yet accepted, rejected, or interview-scheduled).",
+      "The My Applications tab's Withdraw button: withdraw your own pending application. " +
+      "Only while it is still pending and no interview for it is pending or scheduled — exactly when the site shows the button. No reason is asked (the site asks none).",
     input_schema: {
       type: "object",
       properties: {
         caregiverId:   { type: "string", description: "Your caregiver document ID" },
         applicationId: { type: "string", description: "The job_applications document ID to withdraw" },
-        reason:        { type: "string", description: "Optional short reason for withdrawing" },
       },
       required: ["caregiverId", "applicationId"],
     },
@@ -1538,16 +1537,15 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "respond_to_interview_request",
     description:
-      "Caregiver accepts or declines a scheduled interview. If proposing a new time, include proposedDate and proposedTime.",
+      "The Interviews tab's Accept / Decline buttons on a PENDING interview request. Accept is gated like the site (membership, then background check); " +
+      "Decline never is. Not for moving the time — that is reschedule_interview (Propose new time) / accept_interview_reschedule (Accept new time); " +
+      "not for an already-accepted interview — that is cancel_interview. Nothing to say to the family here: the site sends the notification.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
         interviewId:   { type: "string", description: "The video_interviews document ID" },
         decision:      { type: "string", enum: ["accept","decline"], description: "accept or decline" },
-        proposedDate:  { type: "string", description: "Alternative date YYYY-MM-DD (when declining with counter-offer)" },
-        proposedTime:  { type: "string", description: "Alternative time HH:MM (when declining with counter-offer)" },
-        message:       { type: "string", description: "Optional message to the client" },
       },
       required: ["caregiverId", "interviewId", "decision"],
     },
@@ -2314,7 +2312,8 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "cancel_interview",
     description:
-      "Cancel a scheduled interview. Either participant can cancel their own interview; the other side is notified. " +
+      "The site's Cancel button on an interview. Either participant can cancel their own interview; the other side gets the site's own " +
+      "notification (bell + text) — nothing to send or explain yourself, and no reason is asked (the site asks none). " +
       "Call this as soon as they've expressed clear intent to cancel (e.g. 'cancel it', 'yes') — do NOT ask them " +
       "to confirm again yourself first. The platform already requires and enforces an explicit confirmation before " +
       "this executes, so asking twice just makes them confirm the same thing a second time. " +
@@ -2325,7 +2324,6 @@ export const MCP_TOOLS: McpTool[] = [
         interviewId: { type: "string", description: "The video_interviews document ID" },
         clientId:    { type: "string", description: "The client's user ID (when the family cancels)" },
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver cancels)" },
-        reason:      { type: "string", description: "Optional short reason passed to the other side" },
       },
       required: ["interviewId"],
     },
@@ -2464,6 +2462,10 @@ const CAREGIVER_TOOL_NAMES = new Set([
   // CRUD/parity gap closures (agent-native audit 2026-07)
   "list_interviews",
   "cancel_interview",
+  // The Interviews tab's Propose new time / Reschedule and Accept new time
+  // (2026-09-27) — the same tools the family side already had.
+  "reschedule_interview",
+  "accept_interview_reschedule",
   // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
   "react_to_message",
   // Checkr Candidate MCP bridge (2026-07-09) — full report details, OTP-gated
@@ -5364,7 +5366,7 @@ async function executeToolCall(
     }
 
     if (name === "withdraw_job_application") {
-      const { caregiverId, applicationId, reason } = input as Record<string, unknown>;
+      const { caregiverId, applicationId } = input as Record<string, unknown>;
       if (!caregiverId || !applicationId) return toolError("INVALID_INPUT", "caregiverId and applicationId are required");
       const appSnap = await db.collection("job_applications").doc(applicationId as string).get();
       if (!appSnap.exists) return toolError("NOT_FOUND", "Application not found");
@@ -5381,7 +5383,8 @@ async function executeToolCall(
           return toolError("INVALID_INPUT", "This application can't be withdrawn while an interview for it is pending or scheduled — respond to the interview instead");
         }
       }
-      await appSnap.ref.update({ status: "withdrawn", withdrawnAt: nowIso, withdrawReason: reason ?? "" });
+      // Same write as the site's withdrawApplication (hooks/useJobApplications.ts): status + updatedAt.
+      await appSnap.ref.update({ status: "withdrawn", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
       logAudit({ eventType: "job_application_withdrawn", userId: caregiverId as string, data: { source: "mcp:withdraw_job_application", applicationId, jobId: app.jobId } }).catch(() => {});
       return { success: true, applicationId, status: "withdrawn" };
     }
@@ -5738,24 +5741,23 @@ async function executeToolCall(
 
     // ── respond_to_interview_request ────────────────────────────────────────
     if (name === "respond_to_interview_request") {
-      const { caregiverId, interviewId, decision, proposedDate, proposedTime, message: ivMsg } = input as Record<string, unknown>;
+      const { caregiverId, interviewId, decision } = input as Record<string, unknown>;
       if (!caregiverId || !interviewId || !decision) return toolError("INVALID_INPUT", "caregiverId, interviewId, and decision are required");
-      // JobBoard.tsx Interviews tab: a pending interview's Accept/Decline (and
-      // the reschedule form) are replaced by the gate button while blocked.
-      const ivGate = await checkCaregiverAccessGate(caregiverId as string, "responding to an interview request", { phone: (input as Record<string, unknown>).phone });
-      if (ivGate) return ivGate;
+      // JobBoard.tsx Interviews tab: on a gated pending row the site keeps
+      // Decline and swaps only Accept for the gate button.
+      if (decision === "accept") {
+        const ivGate = await checkCaregiverAccessGate(caregiverId as string, "accepting an interview request", { phone: (input as Record<string, unknown>).phone });
+        if (ivGate) return ivGate;
+      }
       const { respondToInterviewRequest, InterviewResponseError } = await import("../agents/interviewResponse");
       try {
         const result = await respondToInterviewRequest({
           caregiverId: caregiverId as string,
           interviewId: interviewId as string,
           decision: decision === "accept" ? "accept" : "decline",
-          proposedDate: proposedDate as string | undefined,
-          proposedTime: proposedTime as string | undefined,
-          message: ivMsg as string | undefined,
           source: "mcp:respond_to_interview_request",
         });
-        return { success: true, decision, interviewId, callUrl: result.callUrl, proposedTime: result.proposedTime };
+        return { success: true, decision, interviewId, callUrl: result.callUrl };
       } catch (err) {
         if (err instanceof InterviewResponseError) {
           return toolError(
@@ -6293,9 +6295,9 @@ async function executeToolCall(
             fix: "send_onboarding_link (linkType caregiver_photo)",
           });
         }
-        if (!filled(cg.documents) && !filled(cg.certifications)) {
-          optionalGaps.push("certifications/documents (CNA, HHA, etc. — optional but boosts trust; send_onboarding_link linkType caregiver_documents)");
-        }
+        // (No certifications check: the site's wizard never asks for them —
+        // removed 2026-09-27. Transport documents are gated by the badge, not
+        // suggested here.)
 
         // Gates
         const membershipActive = cg.membershipPaid === true || user.membershipStatus === "active" || user.subscriptionActive === true;
@@ -6646,7 +6648,10 @@ async function executeToolCall(
       for (const d of ivSnap.docs) { const iv = d.data(); if (iv.jobId) interviewsByJob.set(iv.jobId as string, iv); }
       const STATUS_LABEL: Record<string, string> = { pending: "Pending", accepted: "Accepted", rejected: "Declined by client", withdrawn: "Withdrawn by you" };
       const IV_LABEL: Record<string, string> = { pending: "Interview Pending", requested: "Interview Pending", scheduled: "Interview Pending", accepted: "Interview Confirmed", confirmed: "Interview Confirmed", completed: "Interview Completed", declined: "Interview Declined", cancelled: "Interview Cancelled" };
-      const applications = myAppSnap.docs.map((d) => {
+      // The tab lists pending + closed (rejected / withdrawn) only. An ACCEPTED
+      // application means the family sent a booking after the interview — it
+      // lives on the Interviews tab / Bookings page, not here.
+      const applications = myAppSnap.docs.filter((d) => ["pending", "rejected", "withdrawn"].includes(String(d.data().status ?? "pending"))).map((d) => {
         const app = d.data();
         const iv = interviewsByJob.get(app.jobId as string);
         const ivStatus = (iv?.status as string | undefined) ?? null;
@@ -6662,7 +6667,7 @@ async function executeToolCall(
           rate:          rateLabelFor({ rate: app.jobRate, rateFlexible: app.jobRateFlexible }),
           status,
           statusLabel:   STATUS_LABEL[status] ?? status,
-          tab:           status === "pending" ? "Pending" : (status === "rejected" || status === "withdrawn") ? "Closed" : null,
+          tab:           status === "pending" ? "Pending" : "Closed",
           interviewStatus: ivStatus ? (IV_LABEL[ivStatus] ?? "Interview Scheduled") : null,
           jobFrequency:  app.jobFrequency ?? null,
           jobCareTypes:  Array.isArray(app.jobCareTypes) ? app.jobCareTypes : [],
@@ -6672,7 +6677,11 @@ async function executeToolCall(
           canWithdraw:   status === "pending" && !(ivStatus && ["pending", "requested", "scheduled", "accepted", "confirmed"].includes(ivStatus)),
         };
       });
-      return { success: true, applications, total: applications.length, page: "/caregiver/jobs?tab=applications" };
+      return {
+        success: true, applications, total: applications.length, page: "/caregiver/jobs?tab=applications",
+        // The tab's own empty state, so Evia says what the page says.
+        ...(applications.length === 0 ? { emptyText: "No applications yet.", emptyAction: "Browse available jobs" } : {}),
+      };
     }
 
     // ── get_pending_timesheets ──────────────────────────────────────────────
@@ -7891,11 +7900,6 @@ async function executeToolCall(
       // date onto a different interview's real time. Precomputing a
       // human-readable Pacific label server-side (same helper the interview
       // reminders use) removes that mental-math step entirely.
-      const scheduledTimeLocal = (iso: unknown): string | null => {
-        if (typeof iso !== "string" || !iso) return null;
-        const ms = parseScheduledTimeMs(iso);
-        return Number.isNaN(ms) ? null : formatInterviewTime(ms);
-      };
       const liClientId    = input.clientId as string | undefined;
       const liCaregiverId = input.caregiverId as string | undefined;
       const liStatus      = input.status as string | undefined;
@@ -7917,40 +7921,13 @@ async function executeToolCall(
         });
         return { success: true, interviews, count: interviews.length };
       }
-      // Caregiver: their own interviews from video_interviews (the site's
-      // only interview collection — the retired Evia-SMS `interviews` twin
-      // was dropped 2026-09-17).
-      let q = db.collection("video_interviews").where(field, "==", id);
-      if (liStatus) q = q.where("status", "==", liStatus);
-      const liSnap = await q.limit(25).get();
-      const interviews = liSnap.docs.map(d => {
-        const iv = d.data();
-        return {
-          interviewId:   d.id,
-          source:        "video_interviews",
-          clientId:      iv.clientId ?? null,
-          caregiverId:   iv.caregiverId ?? null,
-          caregiverName: iv.caregiverName ?? null,
-          clientName:    iv.clientName ?? null,
-          scheduledTime: iv.scheduledTime ?? null,
-          scheduledTimeLocal: scheduledTimeLocal(iv.scheduledTime),
-          interviewType: iv.interviewType ?? "video",
-          status:        iv.status ?? "requested",
-          callUrl:       iv.callUrl ?? null,
-          notes:         iv.notes ?? null,
-          jobTitle:      iv.jobTitle ?? null,
-          proposedTime:  iv.proposedTime ?? null,
-          applicationId: iv.applicationId ?? null,
-          reschedulePendingTime:      iv.reschedulePendingTime ?? null,
-          reschedulePendingTimeLocal: scheduledTimeLocal(iv.reschedulePendingTime),
-          rescheduledBy:              iv.rescheduledBy ?? null,
-        };
-      }).sort((a, b) => String(a.scheduledTime ?? "").localeCompare(String(b.scheduledTime ?? "")));
-      console.log("list_interviews: query result", {
-        field, id, statusFilter: liStatus ?? null, videoInterviewsCount: liSnap.docs.length,
-        statusBreakdown: interviews.reduce((acc: Record<string, number>, iv) => { acc[iv.status] = (acc[iv.status] ?? 0) + 1; return acc; }, {}),
-      });
-      return { success: true, interviews, count: interviews.length };
+      // Caregiver: the Jobs page > Interviews tab, one read
+      // (agents/caregiverInterviewsTab.ts) — the tab's statuses, order, chips,
+      // card fields, Join rule and the exact buttons each row shows.
+      const { listCaregiverInterviews } = await import("../agents/caregiverInterviewsTab");
+      const tab = await listCaregiverInterviews(id, liStatus === "requested" ? "pending" : liStatus);
+      console.log("list_interviews: query result", { field, id, chip: tab.chip, count: tab.count });
+      return { success: true, ...tab, page: "/caregiver/jobs?tab=interviews" };
     }
 
     // ── cancel_interview ────────────────────────────────────────────────────
@@ -7958,7 +7935,6 @@ async function executeToolCall(
       const ciInterviewId = input.interviewId as string | undefined;
       const ciClientId    = input.clientId as string | undefined;
       const ciCaregiverId = input.caregiverId as string | undefined;
-      const ciReason      = input.reason as string | undefined;
       if (!ciInterviewId) return toolError("INVALID_INPUT", "interviewId is required");
       const ivSnap = await db.collection("video_interviews").doc(ciInterviewId).get();
       if (!ivSnap.exists) return toolError("NOT_FOUND", "Interview not found");
@@ -7971,23 +7947,39 @@ async function executeToolCall(
           : null;
       if (!cancelledBy) return toolError("PERMISSION_DENIED", "Interview does not belong to this user");
       if (iv.status === "cancelled") return { success: true, alreadyCancelled: true, interviewId: ciInterviewId };
-      // The page's Cancel button exists only on pending/accepted rows.
-      if (!["requested", "scheduled", "pending", "accepted", "confirmed"].includes(iv.status as string)) {
+      // Caregiver (JobBoard.tsx Interviews tab): Cancel exists only on an ACCEPTED
+      // row — a pending request is ended with Decline (respond_to_interview_request).
+      if (cancelledBy === "caregiver" && !["accepted", "confirmed"].includes(iv.status as string)) {
+        return toolError("INVALID_INPUT", ["requested", "scheduled", "pending"].includes(iv.status as string)
+          ? "This request isn't accepted yet — decline it (respond_to_interview_request) instead of cancelling"
+          : `Cannot cancel a ${iv.status} interview`);
+      }
+      // Family: the page's Cancel button exists on pending/accepted rows.
+      if (cancelledBy === "client" && !["requested", "scheduled", "pending", "accepted", "confirmed"].includes(iv.status as string)) {
         return toolError("INVALID_INPUT", `Cannot cancel a ${iv.status} interview — only a pending or accepted one`);
       }
-      const cancelPatch = {
-        status:       "cancelled",
-        cancelledAt:  nowIso,
-        cancelledBy,
-        cancelReason: ciReason ?? null,
-        // Terminal status — clear any leftover reschedule proposal, exactly
-        // as the site's handleCancelInterview does (2026-09-16).
-        reschedulePendingTime: admin.firestore.FieldValue.delete(),
-        rescheduledBy:         admin.firestore.FieldValue.delete(),
-        // Tells onVideoInterviewWrite (notificationTriggers.ts) not to also
-        // text the counterpart — this tool already does it below.
-        cancelledViaAgent: true,
-      };
+      const cancelPatch = cancelledBy === "caregiver"
+        // The site's handleCancelInterview write, field for field. No reason (the
+        // site asks none) and no own text — onVideoInterviewWrite sends the
+        // family's bell + text, exactly as for a click on the site.
+        ? {
+            status:       "cancelled",
+            cancelledBy,
+            updatedAt:    admin.firestore.FieldValue.serverTimestamp(),
+            reschedulePendingTime: admin.firestore.FieldValue.delete(),
+            rescheduledBy:         admin.firestore.FieldValue.delete(),
+          }
+        // Family (PostsPage.tsx Cancel): status + cancelledBy, proposal fields
+        // cleared; the caregiver's bell + text come from onVideoInterviewWrite —
+        // the site's own wording, no reason (2026-09-27: the optional reason Evia
+        // used to relay was a path the site never had).
+        : {
+            status:       "cancelled",
+            cancelledAt:  nowIso,
+            cancelledBy,
+            reschedulePendingTime: admin.firestore.FieldValue.delete(),
+            rescheduledBy:         admin.firestore.FieldValue.delete(),
+          };
       await ivSnap.ref.update(cancelPatch);
       // Retire the pending 1h reminder + follow-up for the dead interview
       // (also covered by onVideoInterviewLinkEnsure for web cancels).
@@ -7995,29 +7987,10 @@ async function executeToolCall(
         const { cancelTriggersByRef } = await import("../triggers/triggerEngine");
         await cancelTriggersByRef(`video_interview_${ciInterviewId}`).catch(() => {});
       }
-      // Notify the counterpart, following schedule_interview (caregiver via
-      // trySend) / respond_to_interview_request (client via agent_sessions).
-      const when = typeof iv.scheduledTime === "string" ? iv.scheduledTime.slice(0, 10) : "the scheduled time";
-      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_counterpart_phone" };
-      if (cancelledBy === "client") {
-        const cgPhone = await resolveCaregiverPhone(iv.caregiverId as string | undefined);
-        if (cgPhone) {
-          const { trySend } = await import("../utils/toolNotify");
-          notification = await trySend(cgPhone, `The interview scheduled for ${when} has been cancelled by the family.${ciReason ? ` Reason: ${ciReason}` : ""}`, "mcp:cancel_interview");
-        }
-      } else {
-        const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
-        const clientPhone = !clientSess.empty ? clientSess.docs[0].id : (iv.clientPhone as string | undefined);
-        if (clientPhone) {
-          const cgData = iv.caregiverId ? (await db.collection("caregivers").doc(iv.caregiverId as string).get()).data() : undefined;
-          const cgName = cgData?.name ?? iv.caregiverName ?? "The caregiver";
-          const { sendToPhone } = await import("../linq/client");
-          const sent = await sendToPhone(clientPhone, `${cgName} cancelled the interview scheduled for ${when}.${ciReason ? ` Reason: ${ciReason}` : ""} Want me to find another time?`)
-            .then(() => true)
-            .catch(() => false);
-          notification = sent ? { sent: true } : { sent: false, reason: "linq_send_failed" };
-        }
-      }
+      // Either direction: the other side's bell + text come from
+      // onVideoInterviewWrite (notificationTriggers.ts), exactly as for a click
+      // on the site — this tool sends nothing itself.
+      const notification: { sent: boolean; reason?: string } = { sent: true, reason: "notification_trigger" };
       logAudit({ eventType: "interview_cancelled", userId: (cancelledBy === "caregiver" ? ciCaregiverId : ciClientId) as string, data: { source: "mcp:cancel_interview", interviewId: ciInterviewId, cancelledBy, notificationSent: notification.sent } }).catch(() => {});
       return { success: true, cancelled: true, interviewId: ciInterviewId, cancelledBy, notification };
     }
@@ -8064,6 +8037,15 @@ async function executeToolCall(
       if (iv.reschedulePendingTime && iv.rescheduledBy === proposedBy) {
         return toolError("INVALID_INPUT", "You already proposed a new time for this interview — it's waiting on the other party to confirm. Cancel the interview if it no longer works; otherwise wait for their answer.");
       }
+      // Caregiver (JobBoard.tsx): the reschedule form is hidden while gated
+      // (membership → background), and its picker offers 9:00–18:00 on the
+      // hour or half hour.
+      if (proposedBy === "caregiver") {
+        const rsGate = await checkCaregiverAccessGate(riCaregiverId as string, "proposing a new interview time", { phone: (input as Record<string, unknown>).phone });
+        if (rsGate) return rsGate;
+        const { isSiteInterviewSlot } = await import("../agents/caregiverInterviewsTab");
+        if (!isSiteInterviewSlot(riNewTime)) return toolError("INVALID_INPUT", "Interview times are offered between 9:00 AM and 6:00 PM, on the hour or half hour (e.g. 10:30, 14:00) — pick one of those");
+      }
 
       const startMs = parseScheduledTimeMs(`${riNewDate}T${riNewTime}:00`);
       if (Number.isNaN(startMs)) return toolError("INVALID_INPUT", "newDate/newTime could not be parsed");
@@ -8071,19 +8053,29 @@ async function executeToolCall(
       const newScheduledTime = new Date(startMs).toISOString();
       const displayTime = formatInterviewTime(startMs);
 
-      const proposalPatch = {
-        reschedulePendingTime: newScheduledTime,
-        rescheduledBy:         proposedBy,
-        // Tells onVideoInterviewWrite (notificationTriggers.ts) not to also
-        // text the counterpart — this tool already does it below.
-        rescheduledViaAgent:   true,
-        // A stale marker from a PRIOR accept cycle (on this same interview,
-        // rescheduled more than once) would otherwise wrongly suppress the
-        // trigger's own SMS on a future site-driven accept that has nothing
-        // to do with this tool.
-        acceptedRescheduleViaAgent: admin.firestore.FieldValue.delete(),
-        updatedAt:             nowIso,
-      };
+      const proposalPatch = proposedBy === "caregiver"
+        // The site's handleRescheduleInterview write, field for field; the
+        // family's bell + text come from onVideoInterviewWrite like a site click.
+        ? {
+            reschedulePendingTime: newScheduledTime,
+            rescheduledBy:         proposedBy,
+            acceptedRescheduleViaAgent: admin.firestore.FieldValue.delete(),
+            rescheduledViaAgent:        admin.firestore.FieldValue.delete(),
+            updatedAt:             admin.firestore.FieldValue.serverTimestamp(),
+          }
+        : {
+            reschedulePendingTime: newScheduledTime,
+            rescheduledBy:         proposedBy,
+            // Tells onVideoInterviewWrite (notificationTriggers.ts) not to also
+            // text the counterpart — this tool already does it below.
+            rescheduledViaAgent:   true,
+            // A stale marker from a PRIOR accept cycle (on this same interview,
+            // rescheduled more than once) would otherwise wrongly suppress the
+            // trigger's own SMS on a future site-driven accept that has nothing
+            // to do with this tool.
+            acceptedRescheduleViaAgent: admin.firestore.FieldValue.delete(),
+            updatedAt:             nowIso,
+          };
       await primary.ref.update(proposalPatch);
 
       // Notify whichever party did NOT propose this, following cancel_interview's
@@ -8097,17 +8089,8 @@ async function executeToolCall(
           notification = await trySend(cgPhone, `${clName} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`, "mcp:reschedule_interview");
         }
       } else {
-        const clientSess  = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
-        const clientPhone = !clientSess.empty ? clientSess.docs[0].id : (iv.clientPhone as string | undefined);
-        if (clientPhone) {
-          const cgData = iv.caregiverId ? (await db.collection("caregivers").doc(iv.caregiverId as string).get()).data() : undefined;
-          const cgName = (cgData?.name as string | undefined) ?? (iv.caregiverName as string | undefined) ?? "Your caregiver";
-          const { sendToPhone } = await import("../linq/client");
-          const sent = await sendToPhone(clientPhone, `${cgName} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`)
-            .then(() => true)
-            .catch(() => false);
-          notification = sent ? { sent: true } : { sent: false, reason: "linq_send_failed" };
-        }
+        // Caregiver proposal: the family's bell + text come from onVideoInterviewWrite.
+        notification = { sent: true, reason: "notification_trigger" };
       }
 
       logAudit({
@@ -8157,18 +8140,41 @@ async function executeToolCall(
       if (iv.rescheduledBy === acceptedBy) {
         return toolError("INVALID_INPUT", "You proposed this time yourself — waiting on the other party to accept it, not you");
       }
+      // Caregiver (JobBoard.tsx): a PENDING row is gated (Decline + the gate
+      // button only); an accepted interview's Accept new time is not.
+      if (acceptedBy === "caregiver" && ["requested", "scheduled", "pending"].includes(String(iv.status))) {
+        const arGate = await checkCaregiverAccessGate(arCaregiverId as string, "accepting the new interview time", { phone: (input as Record<string, unknown>).phone });
+        if (arGate) return arGate;
+      }
 
       const newScheduledTime = iv.reschedulePendingTime as string;
-      const acceptPatch = {
-        scheduledTime:         newScheduledTime,
-        status:                "accepted",
-        reschedulePendingTime: admin.firestore.FieldValue.delete(),
-        rescheduledBy:         admin.firestore.FieldValue.delete(),
-        rescheduledViaAgent:   admin.firestore.FieldValue.delete(),
-        acceptedRescheduleViaAgent: true,
-        remindersScheduledAt:  admin.firestore.FieldValue.delete(),
-        updatedAt:             nowIso,
-      };
+      const acceptPatch = acceptedBy === "caregiver"
+        // The site's handleAcceptRescheduleProposal write, field for field.
+        ? {
+            scheduledTime:         newScheduledTime,
+            status:                "accepted",
+            reschedulePendingTime: admin.firestore.FieldValue.delete(),
+            rescheduledBy:         admin.firestore.FieldValue.delete(),
+            rescheduledViaAgent:   admin.firestore.FieldValue.delete(),
+            remindersScheduledAt:  admin.firestore.FieldValue.delete(),
+            updatedAt:             admin.firestore.FieldValue.serverTimestamp(),
+          }
+        : {
+            scheduledTime:         newScheduledTime,
+            status:                "accepted",
+            reschedulePendingTime: admin.firestore.FieldValue.delete(),
+            rescheduledBy:         admin.firestore.FieldValue.delete(),
+            rescheduledViaAgent:   admin.firestore.FieldValue.delete(),
+            acceptedRescheduleViaAgent: true,
+            remindersScheduledAt:  admin.firestore.FieldValue.delete(),
+            updatedAt:             nowIso,
+          };
+      // The 1h reminder still points at the OLD time — retire it; clearing
+      // remindersScheduledAt lets interviewLinkTrigger schedule fresh ones.
+      {
+        const { cancelTriggersByRef } = await import("../triggers/triggerEngine");
+        await cancelTriggersByRef(`video_interview_${arInterviewId}`).catch(() => {});
+      }
       await primary.ref.update(acceptPatch);
 
       const displayTime = formatInterviewTime(Date.parse(newScheduledTime));
@@ -8176,15 +8182,8 @@ async function executeToolCall(
       // Notify whoever originally proposed it that their time is now confirmed.
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_counterpart_phone" };
       if (acceptedBy === "caregiver") {
-        const clientSess  = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
-        const clientPhone = !clientSess.empty ? clientSess.docs[0].id : (iv.clientPhone as string | undefined);
-        if (clientPhone) {
-          const cgData = iv.caregiverId ? (await db.collection("caregivers").doc(iv.caregiverId as string).get()).data() : undefined;
-          const cgName = (cgData?.name as string | undefined) ?? (iv.caregiverName as string | undefined) ?? "Your caregiver";
-          const { sendToPhone } = await import("../linq/client");
-          const sent = await sendToPhone(clientPhone, `${cgName} confirmed the new interview time: ${displayTime}.`).then(() => true).catch(() => false);
-          notification = sent ? { sent: true } : { sent: false, reason: "linq_send_failed" };
-        }
+        // The family's bell + text come from onVideoInterviewWrite, like a site click.
+        notification = { sent: true, reason: "notification_trigger" };
       } else {
         const cgPhone = await resolveCaregiverPhone(iv.caregiverId as string | undefined);
         if (cgPhone) {

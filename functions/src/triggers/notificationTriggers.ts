@@ -36,7 +36,7 @@ async function addNotification(
 // booking request/decline, interview request/decline/cancel, caregiver
 // arrived, …), never a "use your judgment" proactive check-in, so it must
 // match the canDrop:false pattern every other must-always-deliver send in
-// this codebase uses (see checkr.ts's sendBgcheckNoticeToCaregiver,
+// this codebase uses (see notifications/caregiverAccountEvents.ts,
 // appointmentUpdated.ts). The first pass here (canDrop:true, still gated on
 // shouldSend's judgment call) was itself the bug it was written to fix: a
 // live test found a client-requested interview never reached the caregiver
@@ -48,7 +48,7 @@ async function addNotification(
 // of those cases — so the `.catch(() => sendToPhone(...))` fallback below
 // never ran for exactly the caregiver who most needs it: one who has never
 // texted Evia yet, and so has no agent_sessions doc at all. Now checks
-// session existence explicitly (mirrors sendBgcheckNoticeToCaregiver) so a
+// session existence explicitly (mirrors caregiverAccountEvents.ts) so a
 // session-less recipient reliably gets the plain sendToPhone text instead of
 // being silently dropped by a resolved (not thrown) false.
 async function sendTransactionalText(phone: string, message: string, sourceAgent: string): Promise<void> {
@@ -312,6 +312,35 @@ export const onJobApplicationCreate = functions.firestore
         `${data.caregiverName || 'A caregiver'} applied to your post: "${data.jobTitle || 'your care request'}". Want me to pull up their profile?`);
     } catch (err) {
       console.error('[onJobApplicationCreate] error:', err);
+    }
+  });
+
+// Application outcome → notify the caregiver (founder, 2026-09-27: "we do the
+// notification. no details though. something simple"). The family's Posts
+// page writes `rejected` ("Applicant declined") and `accepted` (when they send
+// a booking after the interview); the caregiver's My Applications tab flips
+// the badge to "Declined by client" / "Accepted" but nothing told them —
+// no bell, no text. One bell entry + one text per outcome, same words as the
+// tab's badge, nothing more. A withdraw (the caregiver's own action) is silent.
+export const onJobApplicationStatusChange = functions.firestore
+  .document('job_applications/{applicationId}')
+  .onUpdate(async (change, context) => {
+    const before = change.before.data();
+    const after  = change.after.data();
+    if (!after?.caregiverId || before?.status === after.status) return;
+    const title = after.jobTitle ? `"${after.jobTitle}"` : 'a job';
+    let bell: { type: string; title: string; body: string } | null = null;
+    if (after.status === 'accepted') {
+      bell = { type: 'job_application_accepted', title: 'Application accepted', body: `Your application for ${title} was accepted.` };
+    } else if (after.status === 'rejected') {
+      bell = { type: 'job_application_declined', title: 'Application declined', body: `Your application for ${title} was declined by the family.` };
+    }
+    if (!bell) return;
+    try {
+      await addNotification(after.caregiverId, { ...bell, data: { applicationId: context.params.applicationId, jobId: after.jobId } });
+      await notifyCaregiverByText(after.caregiverId, bell.body);
+    } catch (err) {
+      console.error('[onJobApplicationStatusChange] error:', err);
     }
   });
 

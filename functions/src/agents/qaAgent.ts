@@ -1028,9 +1028,11 @@ export function buildCaregiverSystemPrompt(
     `- get_pending_booking_requests: matches your Requests tab exactly — booking requests still awaiting your response. Call when you ask "what requests do I need to answer?" or similar; get_caregiver_appointments only covers your upcoming SCHEDULED visits, not pending requests.`,
     `- respond_to_schedule_amendment: accept or decline a family's request to add a NEW recurring day (or a genuinely new one-off visit) on an existing booking; accepting creates the real visit(s) on your schedule`,
     `- manage_shift_reschedule: move an EXISTING already-scheduled visit to a different day/time, or respond to a day/time the family already proposed for one of your visits. action:"propose" (needs date/startTime/endTime) suggests a new time — the family gets a text to confirm, the visit's real time doesn't change until they accept; "accept" confirms a time the FAMILY proposed; "decline" rejects their proposal (original stands) or withdraws your own before they respond. Not for cancelling a shift — use your normal cancel flow for that.`,
-    `- respond_to_interview_request: accept or decline an interview; include proposedDate/Time to counter-offer`,
-    `- list_interviews: see your scheduled interviews (date, time, status)`,
-    `- cancel_interview: cancel an interview you can't make — the family is notified; to propose a new time use respond_to_interview_request instead`,
+    `- list_interviews: the Jobs page's Interviews tab exactly — every interview with its status (Pending / Accepted / Completed / Declined / Cancelled), date + time, family, job, Join video call link when the site would show it, any pending time proposal, and \`actions\` = the buttons that row shows on the site. Read the rows back as they are; offer ONLY the actions listed for that row.`,
+    `- respond_to_interview_request: the Accept / Decline buttons on a PENDING request. Accept is gated like the site (a gate result = tell them the button the site shows, link sent); Decline never is. No message or counter time here.`,
+    `- reschedule_interview: the Propose new time (pending) / Reschedule (accepted) button — proposes a new time on the SAME interview; the family confirms. Times are 9:00 AM–6:00 PM on the hour or half hour. Never decline-and-repropose.`,
+    `- accept_interview_reschedule: the Accept new time button — confirms a time the FAMILY proposed (never your own).`,
+    `- cancel_interview: the Cancel button — only on an ACCEPTED interview (a pending request is declined, not cancelled). The family is notified by the site's own notification; nothing to send yourself.`,
     `- start_shift: clock in when you arrive at a visit — starts the shift record`,
     `- complete_shift: clock out when the visit ends — closes the shift and kicks off hours submission`,
     `- update_shift_task: check off or update a care-plan task during the current shift`,
@@ -3872,7 +3874,11 @@ export async function runQaAgent(params: {
     // same dropped-promise failure mode regardless of onboarding state
     // (2026-09-06 live bug: confirmed via Firestore no interview was ever
     // created, in an already-"complete" conversation).
-    if (!skipSend && !shadowMode && !scheduledInterviewThisTurn && reply.trim()) {
+    // Family only (2026-09-27): a caregiver cannot schedule an interview on the
+    // site or through Evia, so a "lining up an interview" promise net in a
+    // caregiver thread only ever produced a family-worded follow-up they
+    // couldn't act on.
+    if (!skipSend && !shadowMode && !scheduledInterviewThisTurn && reply.trim() && userType === "client") {
       const { fulfillNarratedInterviewPromise } = await import("./interviewPromiseNet");
       await fulfillNarratedInterviewPromise({ phone, chatId, reply, userId, userType }).catch((err) =>
         console.error("qaAgent: interview-promise net failed", err));

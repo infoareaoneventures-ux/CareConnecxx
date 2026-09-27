@@ -65,20 +65,10 @@ export const evaluateTransportBadges = functions.pubsub
       // are back; neither alone earns the badge).
       const shouldHaveBadge = allApproved && !anyExpired && data.isApprovedDriver === true;
 
+      // Badge earned / lost is announced by onCaregiverAccountChange (bell +
+      // text, once) from the live rule; this stored flag is only the projection.
       if (shouldHaveBadge !== (data.transportationBadge === true)) {
         batch.update(doc.ref, { transportationBadge: shouldHaveBadge });
-        if (!shouldHaveBadge && data.transportationBadge === true) {
-          // Badge just revoked — notify caregiver
-          notifications.push(
-            db.collection('users').doc(doc.id).collection('notifications').add({
-              title: 'Transportation badge removed',
-              body: 'One or more of your transportation documents has expired. Upload updated documents to restore your badge.',
-              type: 'system',
-              isRead: false,
-              createdAt: new Date().toISOString(),
-            })
-          );
-        }
       }
 
       // Warn about docs expiring within 30 days
@@ -87,21 +77,15 @@ export const evaluateTransportBadges = functions.pubsub
       if (isExpiringSoon(insurance?.expirationDate) && !isExpired(insurance?.expirationDate)) expiringSoon.push('Vehicle Insurance');
       if (isExpiringSoon(registration?.expirationDate) && !isExpired(registration?.expirationDate)) expiringSoon.push('Vehicle Registration');
 
+      // Expiring-soon: ONE bell + text per document expiry date (idempotent on
+      // the dates), not one bell a day for 30 days.
       if (expiringSoon.length > 0) {
-        const lastWarnedAt: string | undefined = data.transportDocWarnedAt;
-        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-        if (!lastWarnedAt || lastWarnedAt < oneDayAgo) {
-          batch.update(doc.ref, { transportDocWarnedAt: new Date().toISOString() });
-          notifications.push(
-            db.collection('users').doc(doc.id).collection('notifications').add({
-              title: 'Document expiring soon',
-              body: `${expiringSoon.join(', ')} will expire within 30 days. Upload a renewal to keep your transportation badge active.`,
-              type: 'system',
-              isRead: false,
-              createdAt: new Date().toISOString(),
-            })
-          );
-        }
+        const expiryKey = [license?.expirationDate, insurance?.expirationDate, registration?.expirationDate].filter(Boolean).join('|');
+        notifications.push(
+          import('../notifications/caregiverAccountEvents').then(({ notifyCaregiverAccountEvent }) =>
+            notifyCaregiverAccountEvent(doc.id, 'transport_doc_expiring', { eventId: `docs_expiring:${expiryKey}`, ctx: { docs: expiringSoon } }),
+          ).catch((err) => console.error('transport_doc_expiring notice failed for', doc.id, err)),
+        );
       }
     }
 

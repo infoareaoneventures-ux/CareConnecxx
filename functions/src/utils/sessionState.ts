@@ -5,7 +5,6 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingCareNotes",
   "awaitingLateMinutes",
   "awaitingIssueDescription",
-  "caregiverRescheduling",
   "pendingShiftApproval",
   "collectingCredential",
   "collectingCredentialSetAt",
@@ -288,7 +287,6 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["awaitingCareNotes", "generic"],
   ["awaitingLateMinutes", "generic"],
   ["awaitingIssueDescription", "generic"],
-  ["caregiverRescheduling", "generic"],
   // Set by approvalNoticeDispatcher.ts alongside pendingShiftApprovalSetAt.
   ["pendingShiftApproval", { setAtField: "pendingShiftApprovalSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
   // SMS router parity: credentialCollector.ts clears this flow after

@@ -64,6 +64,13 @@ export async function guardInterviewIdentityConsistency(
     status:          "cancelled",
     cancelledReason: "identity_mismatch_auto_corrected",
     cancelledAt:     new Date().toISOString(),
+    // The family's side created it in error — the tab reads this as the
+    // family's cancel. cancelledViaAgent keeps onVideoInterviewWrite from
+    // texting the caregiver a second time on top of the apology below.
+    cancelledBy:       "client",
+    cancelledViaAgent: true,
+    reschedulePendingTime: admin.firestore.FieldValue.delete(),
+    rescheduledBy:         admin.firestore.FieldValue.delete(),
   }).catch((err) => console.error("interviewIdentityGuard: cancel failed", err));
 
   // Tell the wrongly-targeted caregiver so they aren't left sitting on a

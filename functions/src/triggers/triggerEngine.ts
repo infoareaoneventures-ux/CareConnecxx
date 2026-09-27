@@ -40,6 +40,10 @@ export interface ProactiveTrigger {
   // Links a trigger to the record it serves (e.g. "video_interview_<id>") so
   // cancelTriggersByRef can retire reminders when that record is cancelled.
   refId?:            string;
+  // A website-bell copy of the reminder, written when it fires (founder's
+  // rule, 2026-09-26: every reminder text is also in the bell). Idempotent per
+  // trigger doc (users/{recipientId}/notifications keyed on the trigger id).
+  bell?: { recipientId: string; type: string; title: string; body: string; data?: Record<string, unknown> };
   // Claude-scheduled trigger fields
   source?:           "claude" | "system";   // "claude" = scheduled by Evia via schedule_followup tool
   intent?:           string;                // why this trigger exists (used for dynamic content + suppression)
@@ -574,6 +578,19 @@ export const runTriggerEngine = functions.pubsub
             sourceAgent: "trigger_engine",
             canDrop:     !isHealthTrigger,
           });
+        }
+        if (trigger.bell?.recipientId) {
+          const { writeUserNotification } = await import("../notifications/userNotification");
+          await writeUserNotification({
+            sourcePath:     `proactive_triggers/${doc.id}`,
+            eventId:        doc.id,
+            recipientId:    trigger.bell.recipientId,
+            transitionType: trigger.type,
+            type:           trigger.bell.type,
+            title:          trigger.bell.title,
+            body:           trigger.bell.body,
+            ...(trigger.bell.data ? { data: trigger.bell.data } : {}),
+          }).catch((err) => console.error("triggerEngine: bell copy failed for", doc.id, err));
         }
         if (delivered === false) {
           // The send layer dropped it (quiet hours / DND / daily cap / wait-tool).

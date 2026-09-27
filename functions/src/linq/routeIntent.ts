@@ -8,7 +8,6 @@ import { staleConfirmFlags, hasActiveSmsFlow, PENDING_MATCHES_TTL_MS } from "../
 import { getLatestPending } from "../agents/pendingActions";
 import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../utils/bareDateTimeAnswer";
 import { handleCompletionNudgeReply, freshCompletionNudgeInterviewId } from "../agents/completionNudgeReply";
-import { handleInterviewCounterReply, freshInterviewCounter } from "../agents/interviewCounterReply";
 import { handleReviewPromptReply } from "../agents/reviewPrompt";
 import { handleEmailChangeReply } from "../agents/emailChangeReply";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
@@ -18,7 +17,6 @@ import { handleEarningsView } from "../agents/earningsHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
-import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTodayStr } from "../utils/scheduledTime";
 import {
   searchZepMemory,
@@ -286,21 +284,10 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── RESCHEDULE_REQUEST (caregiver) — natural language reschedule, mirrors RESCHEDULE keyword ──
-    if (intent === "RESCHEDULE_REQUEST" && session.userType === "caregiver") {
-      await db.collection("agent_sessions").doc(phone).update({
-        caregiverRescheduling: true,
-        stateExpiresAt:        new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      });
-      const rescheduleNlMsg = await generateCaraMessage({
-        audience: "caregiver",
-        context: "Caregiver wants to reschedule a visit. Evia is asking them to suggest 2–3 times that work and will relay them to the family.",
-        fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
-        maxTokens: 80,
-      });
-      await sendMessage(chatId, rescheduleNlMsg);
-      return;
-    }
+    // (The caregiver RESCHEDULE_REQUEST ack was removed 2026-09-27 — a
+    // caregiver's reschedule is a real tool call in the agent now:
+    // reschedule_interview for an interview, manage_shift_reschedule for a
+    // visit — exactly the site's buttons.)
 
     // ── RESCHEDULE_REQUEST — move an existing visit to a new date/time ──────
     // 2026-09-15 (live-caught): left to the free-form agent loop this asserted
@@ -772,9 +759,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // Mark as Completed write; NO = offer Reschedule / Cancel. Anything else
     // goes to the full agent (which gets the interview id in its prompt) —
     // never to the quick reply while the check-in is fresh.
-    // 2026-09-23: a caregiver's counter-offered interview time — the site's
-    // "Accept this time" / "Propose another time" buttons, as a reply.
-    if (await handleInterviewCounterReply({ phone, chatId, text, session: session as unknown as Record<string, unknown> })) return;
     const nudgeReply = await handleCompletionNudgeReply({ phone, chatId, text, session: session as unknown as Record<string, unknown> });
     if (nudgeReply) {
       await persistDefaultQaTurn(ctx, nudgeReply);
@@ -793,8 +777,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       !intentDegraded &&
       isTrivialQuickReply(text) &&
       !hasActiveSmsFlow(session as unknown as Record<string, unknown>) &&
-      !freshCompletionNudgeInterviewId(session as unknown as Record<string, unknown>) &&
-      !freshInterviewCounter(session as unknown as Record<string, unknown>)
+      !freshCompletionNudgeInterviewId(session as unknown as Record<string, unknown>)
     ) {
       const quickReply = await runQuickReply({
         text,

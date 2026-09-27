@@ -174,7 +174,6 @@ export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
 export { expireAccountRecoveryRequests } from './scheduled/accountRecoveryExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
 export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
-export { checkBackgroundCheckExpiry } from './scheduled/backgroundCheckExpiry';
 export { wellbeingCheckinJob } from './scheduled/wellbeingCheckin';
 export { dispatchBillingApprovalNotices } from './billing/approvalNoticeDispatcher';
 
@@ -206,6 +205,7 @@ export * from './triggers/carePlanHistory';
 // JOB POST GEOCODING — writes lat/lng back when a job_posts doc has an address but no coords
 export { geocodeJobPost } from './triggers/jobPostGeocode';
 export { onJobPostCreatedNotifyCaregivers } from './triggers/newJobNotice';
+export { onCaregiverAccountChange } from './triggers/caregiverAccountEvents';
 
 // CLIENT INTAKE GEOCODING — writes lat/lng to users/{uid} when clientIntakes is saved
 export { geocodeClientIntake } from './triggers/clientIntakeGeocode';

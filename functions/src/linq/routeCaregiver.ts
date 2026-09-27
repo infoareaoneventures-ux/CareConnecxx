@@ -1202,33 +1202,11 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
           await sendMessage(chatId, "Got it — confirmed! 👍");
         }
       },
-      RESCHEDULE: async () => {
-        await db.collection("agent_sessions").doc(phone).update({
-          caregiverRescheduling: true,
-          stateExpiresAt:        new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        const rescheduleMsg = await generateCaraMessage({
-          audience: "caregiver",
-          context: "Caregiver wants to reschedule a visit. Evia is asking them to suggest 2–3 times that work and will relay them to the family.",
-          fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
-          maxTokens: 80,
-        });
-        await sendMessage(chatId, rescheduleMsg);
-      },
-      PASS:       async () => {
-        // 2026-09-09: used to delegate to handleCaregiverAvailabilityReply
-        // (interviewAgent.ts), whose interview_requests lookup could never
-        // find a live doc once schedule_interview/video_interviews became the
-        // only interview path (2026-09-07) — the ack below is exactly what
-        // that dead branch always fell through to. Inlined; no behavior change.
-        const caregiverDeclinedAckMsg = await generateCaraMessage({
-          audience: "caregiver",
-          context:  "The caregiver just declined a request by replying PASS. Acknowledge their decision warmly and let them know you'll pass the message along.",
-          fallback: "No problem — I'll let the family know.",
-          maxTokens: 80,
-        });
-        await sendMessage(chatId, caregiverDeclinedAckMsg);
-      },
+      // (RESCHEDULE and PASS keyword acks removed 2026-09-27: they wrote
+      // nothing and told the caregiver times were "sent" / a request was
+      // "passed" on. Moving an interview or a visit is a real tool call now —
+      // reschedule_interview / manage_shift_reschedule — and declining a
+      // request is respond_to_interview_request, exactly like the site.)
       PAYOUT:     async () => {
         if (!session.caregiverId) {
           await sendMessage(chatId, "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again.");
@@ -1477,10 +1455,10 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // (2026-09-07), so reqSnap was always empty and that branch was already
     // dead. The unconditional ack below is exactly what always ran regardless;
     // removing the dead query changes no observable behavior.
+    // A legacy caregiverRescheduling flag (the removed RESCHEDULE ack) no
+    // longer owns the next text — clear it and route normally.
     if ((session as any).caregiverRescheduling) {
-      await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() });
-      await sendMessage(chatId, "Got it — I've sent those times to the family. I'll let you know once they confirm.");
-      return "handled";
+      await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() }).catch(() => {});
     }
 
     // (Removed 2026-07-15: a pendingInterviewAvailabilityRequest consumer sat
@@ -1574,7 +1552,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // Catches "I just arrived", "I'm done now", "running about 10 min late", etc.
     {
       const nluRaw = await quickComplete(
-        "Classify this caregiver message as one of: ARRIVED, DONE, LATE, ISSUE, CONFIRM, RESCHEDULE, NONE. " +
+        "Classify this caregiver message as one of: ARRIVED, DONE, LATE, ISSUE, CONFIRM, NONE. " +
           "ARRIVED = caregiver arrived at or is entering a care visit. " +
           "DONE = caregiver has finished a care visit. " +
           "LATE = caregiver is running late to a visit. " +
@@ -1582,7 +1560,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
           "NOT an ISSUE: correcting something Evia said, disagreeing with a status (background check, payment, application, profile), " +
           "or asking about their own account — those are NONE. " +
           "CONFIRM = caregiver is confirming an upcoming appointment. " +
-          "RESCHEDULE = caregiver wants to change the time of an appointment. " +
           "NONE = does not fit any of the above. " +
           "Reply with exactly one word.",
         text,

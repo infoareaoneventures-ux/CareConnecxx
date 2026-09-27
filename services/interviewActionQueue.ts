@@ -13,16 +13,15 @@ export interface RespondToInterviewResult {
   status: 'accepted' | 'declined';
   interviewId: string;
   callUrl: string | null;
-  proposedTime: string | null;
 }
 
+// Accept / Decline only (2026-09-27): proposing a new time is a pending
+// proposal on the same interview (reschedulePendingTime), written directly —
+// see JobBoard.tsx handleRescheduleInterview.
 export async function respondToInterviewRequest(params: {
   caregiverId: string;
   interviewId: string;
   decision: 'accept' | 'decline';
-  proposedDate?: string;
-  proposedTime?: string;
-  message?: string;
 }, opts: { timeoutMs?: number } = {}): Promise<RespondToInterviewResult> {
   if (!db) throw new Error('Not connected');
   const ref = db.collection('interview_action_requests').doc();

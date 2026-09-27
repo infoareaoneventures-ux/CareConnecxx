@@ -76,7 +76,10 @@ import { stripeWebhook } from "../stripe";
 beforeEach(() => { hoisted.reset(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe("requestBackgroundCheckConsent", () => {
-  it("initial: parks the account on awaiting_consent, bells and texts the caregiver, never touches Checkr", async () => {
+  // 2026-09-27: this function only parks the record. The caregiver's ONE
+  // notice (bell + text) comes from onCaregiverAccountChange (membership_paid /
+  // membership_renewed via the invoice) — nothing is sent from here.
+  it("initial: parks the account on awaiting_consent, sends nothing itself, never touches Checkr", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     hoisted.docs.set("caregivers/cg1", { phone: "+15550001111", services: ["Transportation"] });
@@ -88,9 +91,8 @@ describe("requestBackgroundCheckConsent", () => {
     expect(cg.verificationStatus).toBe("submitted");
     expect(cg.backgroundCheckData).toMatchObject({ consentRequired: true, consentReason: "initial", invitationStatus: "awaiting_consent", status: "pending" });
     expect(cg.verified).toBeUndefined();
-    expect(hoisted.adds.find((a) => a.path === "users/cg1/notifications")?.data).toMatchObject({ type: "background_check_consent" });
-    expect(hoisted.texts[0].content).toMatch(/authorize your background check/i);
-    expect(hoisted.texts[0].content).toMatch(/\/caregiver\/dashboard/);
+    expect(hoisted.adds.find((a) => a.path === "users/cg1/notifications")).toBeUndefined();
+    expect(hoisted.texts).toHaveLength(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -109,13 +111,7 @@ describe("requestBackgroundCheckConsent", () => {
     const cg = hoisted.docs.get("caregivers/cg1");
     expect(cg).toMatchObject({ verified: false, backgroundCheckStatus: "pending", backgroundCheckComplete: false, verificationStatus: "submitted" });
     expect(cg.backgroundCheckData).toMatchObject({ checkrCandidateId: "cand", consentRequired: true, consentReason: "renewal", invitationStatus: "awaiting_consent", checkrClearedAt: null });
-    expect(hoisted.texts[0].content).toMatch(/renewed/i);
-  });
-
-  it("texts a caregiver with no Evia session through a fresh chat", async () => {
-    hoisted.docs.set("caregivers/cg1", { phone: "+15550002222" });
-    await requestBackgroundCheckConsent("cg1", "initial");
-    expect(hoisted.texts).toHaveLength(1);
+    expect(hoisted.texts).toHaveLength(0);
   });
 });
 
@@ -136,7 +132,10 @@ describe("stripe webhook → consent, never a direct Checkr call", () => {
     expect(cg.backgroundCheckData).toMatchObject({ consentRequired: true, consentReason: "initial", invitationStatus: "awaiting_consent" });
     expect(cg.backgroundCheckData.checkrCandidateId).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(hoisted.texts.some((t) => /authorize your background check/i.test(t.content))).toBe(true);
+    // 2026-09-27: the webhook sends nothing itself — the "membership active,
+    // next: authorize your background check" bell + text comes from
+    // onCaregiverAccountChange on the membershipPaid flip above.
+    expect(hoisted.texts).toHaveLength(0);
   });
 
   it("annual renewal invoice requests renewal consent instead of re-inviting on Checkr", async () => {

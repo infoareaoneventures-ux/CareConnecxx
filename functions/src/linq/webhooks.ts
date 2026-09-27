@@ -1303,17 +1303,9 @@ const handleInboundInner = traceable(
     }
   }
 
-  // ── Caregiver "RENEW" — re-issue an expired/expiring background check link ───
-  // The bg-check expiry nudge tells caregivers to "reply RENEW". Strict keyword
-  // protocol (allowed without an LLM), gated to caregiver sessions.
-  {
-    const normRenew = text.trim().toUpperCase();
-    if (session.userType === "caregiver" && (normRenew === "RENEW" || normRenew === "RENOVAR")) {
-      const { sendBgCheckRenewalLink } = await import("../agents/onboardingConversation");
-      await sendBgCheckRenewalLink(phone, chatId, session);
-      return;
-    }
-  }
+  // (The caregiver "RENEW" keyword and its expiry nudge were removed 2026-09-27:
+  // the yearly background-check refresh is the site's own renewal flow —
+  // Stripe renewal → consent card on the dashboard — not an Evia-only path.)
 
   const crisis = detectCrisis(text);
   const sessionLang = languageFromSession(session as unknown as Record<string, unknown>);

@@ -384,7 +384,9 @@ describe("gate dry-run safety — Stripe/Checkr/Auth never fire", () => {
   });
 
   it("records the Stripe Connect account creation under dry-run", async () => {
-    seed("caregiver_send_stripe_connect", { ...FULL_DATA }, { caregiverId: "cg-uid" });
+    // A session actually waiting on the check — the step guard (2026-09-27)
+    // ignores background_check for any other step.
+    seed("caregiver_awaiting_bgcheck", { ...FULL_DATA }, { caregiverId: "cg-uid" });
 
     const { recorded } = await runOnboardingDryRun(() =>
       advanceOnboardingStep(PHONE, "background_check", "clear"),

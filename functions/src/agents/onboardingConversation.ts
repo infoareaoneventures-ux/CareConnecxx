@@ -2,7 +2,7 @@ import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
 import { isMvrCheckConfigured } from "../mvrConfig";
-import { createCheckrInvitation, cancelCheckrInvitationsForCandidate } from "../checkrApi";
+import { cancelCheckrInvitationsForCandidate } from "../checkrApi";
 import { authorizeBackgroundCheck } from "../backgroundCheckConsent";
 import Stripe from "stripe";
 import { recordCommitment, resolveCommitment } from "./commitmentTracker";
@@ -16,7 +16,7 @@ import {
   StoredEmotionalContext,
 } from "./emotionalContext";
 import { generateToken } from "./tokenService";
-import { getCapabilityExamples, buildHelpSmsReply } from "./capabilityDiscovery";
+import { buildHelpSmsReply } from "./capabilityDiscovery";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
@@ -3898,79 +3898,6 @@ export async function confirmBgcheckConsent(
   return { status: "ok" };
 }
 
-// Re-issue a Checkr background-check link for an already-onboarded caregiver whose
-// check expired / is expiring (they replied "RENEW" to the expiry nudge). Mirrors the
-// onboarding invitation logic but updates the EXISTING caregiver doc instead of creating one.
-export async function sendBgCheckRenewalLink(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  let inviteUrl: string | null = null;
-  let linkError: unknown = null;
-  try {
-    // Resolve name/email/candidate: prefer the caregivers doc, fall back to session.
-    let firstName = "";
-    let lastName  = "";
-    let docEmail: string | undefined;
-    let existingCandidateId: string | undefined;
-    const caregiverId = session.caregiverId;
-    if (caregiverId) {
-      const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-      const cg = cgSnap.data() ?? {};
-      const parts = ((cg.name ?? "") as string).split(" ");
-      firstName = parts[0] ?? "";
-      lastName  = parts.slice(1).join(" ");
-      docEmail  = (cg.email || undefined) as string | undefined;
-      existingCandidateId = cg.backgroundCheckData?.checkrCandidateId as string | undefined;
-    }
-    const d = session.onboardingData ?? {};
-    if (!firstName) {
-      const parts = ((d.name ?? "") as string).split(" ");
-      firstName = parts[0] ?? "";
-      lastName  = parts.slice(1).join(" ");
-    }
-
-    const checkrPkg = process.env.CHECKR_PACKAGE || "checkrdirect_essential_criminal";
-    // Renewal: reuse the existing Checkr candidate when we have one (mirrors the
-    // web renewal path) — a fresh candidate would orphan the caregiver's history.
-    // Candidate-first otherwise; email required for candidate creation.
-    const inv = await guardSideEffect(
-      "checkr.invitation.create",
-      () => createCheckrInvitation({
-        firstName,
-        lastName,
-        email:       docEmail ?? ((d.email ?? "") as string),
-        candidateId: existingCandidateId,
-        workState:   CHECKR_WORK_STATE,
-        packageSlug: checkrPkg,
-        ...(caregiverId ? { customId: caregiverId } : {}),
-      }),
-      { invitationUrl: "https://dryrun.local/checkr", candidateId: "cand_dryrun" },
-    );
-    inviteUrl = inv.invitationUrl;
-    await updateSession(phone, { bgcheckInviteUrl: inviteUrl, bgcheckInviteSentAt: new Date().toISOString() });
-
-    const candidateId = inv.candidateId as string | undefined;
-    if (caregiverId) {
-      await db.collection("caregivers").doc(caregiverId).update({
-        "backgroundCheckData.checkrCandidateId": candidateId ?? null,
-        "backgroundCheckData.status":            "pending",
-        "backgroundCheckData.submittedAt":       new Date().toISOString(),
-      }).catch(() => {});
-    }
-  } catch (err) {
-    linkError = err;
-    console.error("[sendBgCheckRenewalLink] Checkr invitation error:", err);
-  }
-
-  if (!inviteUrl) {
-    await alertOnboardingLinkFailure(phone, "background_check_renewal", linkError ?? "missing Checkr renewal invitation URL");
-    await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check renewal");
-    return;
-  }
-
-  await sendMessage(chatId, "Here's your background check renewal link - usually about 5 minutes:");
-  await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
-  resolveCommitment(phone, "link", "link_sent").catch(() => {});
-  await sendMessage(chatId, "I'll text you the moment results come in. Bookings stay paused until it clears.");
-}
 
 async function handleCaregiverSendStripeConnect(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const token = generateToken({ phone, task: "stripe_connect" });
@@ -4649,15 +4576,9 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       }
 
       await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
-      // Short thank-you only — handleCaregiverSendBgcheck composes the
-      // background-check intro itself (avoids two stacked intros).
-      await sendMessage(chatId, await generateCaraMessage({
-        audience: "caregiver",
-        language: session.preferredLanguage === "es" ? "es" : "en",
-        context: "The caregiver's membership payment just went through. ONE short warm line acknowledging it — you're about to send the background-check step right after, so don't explain it here.",
-        fallback: "Payment received — thank you!",
-        maxTokens: 40,
-      }));
+      // The "membership active" notice itself (bell + text) comes from
+      // onCaregiverAccountChange when membershipPaid flips above; this step
+      // only delivers the next thing the dashboard card offers — the consent link.
       await handleCaregiverSendBgcheck(phone, chatId, session);
       break;
     }
@@ -4666,13 +4587,17 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       await db.collection("agent_sessions").doc(phone).update({
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
       });
-      // Checkr came back clear → congratulate, then advance to Stripe Connect
+      // The "background check approved" notice (bell + text) comes from
+      // onCaregiverAccountChange. This step only moves a session that is
+      // actually waiting on the check to the next dashboard card — payouts —
+      // and sends that link. A finished or unrelated session is left alone
+      // (2026-09-27: this used to rewind any session to the Connect step).
+      const bgStepNow = (session.onboardingStep ?? "") as string;
+      if (!["caregiver_awaiting_bgcheck", "caregiver_send_bgcheck", "caregiver_awaiting_bgcheck_consent"].includes(bgStepNow)) {
+        console.info(`advanceOnboardingStep: ignoring background_check at step="${bgStepNow}" for phone=${phone}`);
+        break;
+      }
       await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
-      const clearFirstName = (((session.onboardingData ?? {}).name ?? "") as string).split(" ")[0];
-      await sendMessage(chatId,
-        `🎉 Great news${clearFirstName ? `, ${clearFirstName}` : ""} — your background check came back clear. ` +
-        `You're officially approved to be on Evia, and families can now book you!`
-      );
       await handleCaregiverSendStripeConnect(phone, chatId, session);
       break;
     }
@@ -4848,13 +4773,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           await db.collection("users").doc(uid).set({ membershipStatus: "active", subscriptionActive: true, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         }
         await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
-        await sendMessage(chatId, await generateCaraMessage({
-          audience: "caregiver",
-          language: session.preferredLanguage === "es" ? "es" : "en",
-          context: "The caregiver's membership was just confirmed. ONE short warm line acknowledging it — you're about to send the background-check step right after, so don't explain it here.",
-          fallback: "Membership confirmed — thank you!",
-          maxTokens: 40,
-        }));
+        // The "membership active" notice comes from onCaregiverAccountChange.
         await handleCaregiverSendBgcheck(phone, chatId, session);
       }
       break;
@@ -4868,11 +4787,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       const bgStep = session.onboardingStep ?? "";
       if (bgStep === "caregiver_awaiting_bgcheck" || bgStep === "caregiver_send_bgcheck" || bgStep === "caregiver_awaiting_bgcheck_consent") {
         await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
-        const firstName = (((session.onboardingData ?? {}).name ?? "") as string).split(" ")[0];
-        await sendMessage(chatId,
-          `🎉 Great news${firstName ? `, ${firstName}` : ""} — your background check came back clear. ` +
-          `You're officially approved to be on Evia, and families can now book you!`
-        );
+        // The "background check approved" notice comes from onCaregiverAccountChange.
         await handleCaregiverSendStripeConnect(phone, chatId, session);
       }
       break;
@@ -5089,60 +5004,16 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         },
       }).catch((err) => console.error("addBusinessDataToZep caregiver error:", err));
 
-      // Warm "you're approved" milestone message before handing off to permissions.
-      // Capability tour (R13): close onboarding with 2-3 concrete care recipes
-      // drawn from the shipped-parity registry (capabilityDiscovery/careRecipes)
-      // instead of a generic welcome, so the caregiver's first impression of
-      // Evia is what they can actually text her for - woven into prose, never a
-      // feature list or menu (voice contract).
-      const firstName = ((d.name ?? "") as string).split(" ")[0] || "you";
-      const specialties = Array.isArray(d.specialties) ? (d.specialties as string[]).join(", ") : "";
-      // Drop dual-role phrases written from the family's point of view ("ask
-      // the caregiver...") - they read wrong addressed TO a caregiver.
-      const recipePhrases = getCapabilityExamples("caregiver", 4)
-        .filter((phrase) => !phrase.toLowerCase().includes("the caregiver"))
-        .slice(0, 3);
-      const recipeList = recipePhrases.length > 1
-        ? `${recipePhrases.slice(0, -1).join(", ")}, or ${recipePhrases[recipePhrases.length - 1]}`
-        : recipePhrases[0] ?? "handle your schedule, visit notes, and pay";
-      const activationMsg = await generateCaraMessage({
-        audience: "caregiver",
-        context:
-          `Caregiver first name: ${firstName}. ` +
-          `Their background check came back clear and they just finished setting up payouts — they're now fully approved and active. ` +
-          `${specialties ? `Their specialties: ${specialties}. ` : ""}` +
-          `Write a warm 3-4 sentence "you're approved" celebration message. Reassure them their profile is live and families can now book them, ` +
-          `and that open jobs near them are on their Jobs page — they can also just ask me what's open. ` +
-          `Then, in one natural closing sentence (plain prose - no list, no menu, no numbering), let them know ` +
-          `they can text me anytime to ${recipeList}. ` +
-          `Sound genuinely happy for them.`,
-        fallback:
-          `🎉 You're approved, ${firstName}! Your profile is live and families can now book you. ` +
-          `Open jobs near you are on your Jobs page — or just ask me what's open. ` +
-          `And I'm your coordinator from here on: text me anytime to ${recipeList}. Welcome to Evia!`,
-        maxTokens: 220,
-      });
-      await sendMessage(chatId, activationMsg);
-
-      // How-you-get-paid facts (2026-07-06 money model): automatic daily payouts
-      // are the standard rail; instant payouts carry Stripe's 1% fee (2026-09-19). Sent once, here, so
-      // every caregiver leaves onboarding knowing how money reaches them.
-      await sendMessage(chatId,
-        `Quick money note: payouts are automatic — your earnings land in your bank about 2 business days after each visit is paid, no action needed. ` +
-        `Need it sooner? Text me PAYOUT for an instant payout — Stripe charges 1% (minimum $0.50) for that; the daily payout is free. ` +
-        `You can see your balance and payment history anytime at ${APP_URL}/caregiver/payments`
-      );
-
       // Setup is finished here, exactly where the website's progress bar
-      // completes (the former yes/no "permissions" questions were removed
-      // 2026-09-27 — the site has no such settings). The session leaves the
-      // onboarding machine; the capability note tells them what to text for.
+      // completes. Nothing is announced from this step (2026-09-27: the old
+      // "you're approved" celebration, money note and capability note were
+      // Evia-only) — "Payouts set up" and, once bookable, "You're approved"
+      // reach the caregiver as bell + text from onCaregiverAccountChange, the
+      // same way every other progress-bar change does.
       await db.collection("agent_sessions").doc(phone).update({
         onboardingStep: "complete",
         optedIn:        true,
       });
-      await sendMessage(chatId, buildHelpSmsReply("caregiver", undefined,
-        languageFromSession(session as unknown as Record<string, unknown>)));
       await db.collection("admin_alerts").add({
         type:        "caregiver_onboarding_complete",
         caregiverId,

@@ -33,7 +33,10 @@ const db = admin.firestore();
 // SECURITY: never log callUrl/icsUrl values — OPEN links are joinable by
 // anyone who holds them. Log interview doc IDs only.
 
-const AGREED = new Set(["accepted", "confirmed", "scheduled"]);
+// The caregiver's Interviews tab reads "scheduled" as PENDING (JobBoard.tsx),
+// so it is not an agreed state here either (2026-09-27) — a link, "confirmed"
+// texts and reminders go out only once the caregiver has actually accepted.
+const AGREED = new Set(["accepted", "confirmed"]);
 const CLAIM_TTL_MS = 5 * 60 * 1000;
 const INTERVIEW_MINUTES = 30;
 
@@ -67,13 +70,10 @@ export const onVideoInterviewLinkEnsure = functions
     const ref = change.after.ref;
 
     try {
-      // Web-created requests: SMS the caregiver so Evia-onboarded (phone-keyed,
-      // no web login) caregivers can accept by text. The in-app notification
-      // from onVideoInterviewWrite only reaches auth-account caregivers.
-      if (!change.before.exists && after.status === "requested" && !after.requestNotifiedAt) {
-        await notifyCaregiverOfRequest(ref, interviewId, after);
-        return;
-      }
+      // (The second "would like a 30-minute video interview… reply to confirm"
+      // text on a new request was removed 2026-09-27: onVideoInterviewWrite
+      // already writes the caregiver's bell AND texts them, with the same
+      // words as the bell — one event, one text.)
 
       // Agreed → terminal transition (declined/cancelled/no-response): retire
       // the 1h reminders so nobody gets "your interview is in an hour" for a
@@ -241,54 +241,35 @@ async function scheduleReminders(
 
   const { scheduleTrigger } = await import("./triggerEngine");
   const refId = `video_interview_${interviewId}`; // cancelTriggersByRef key on decline/cancel
+  // Both reminders carry a bell copy (founder's rule: every reminder text is
+  // also in the website bell), written when the reminder fires.
+  const clientName = (doc.clientName as string) || "the family";
   const clientPhone = await resolveClientPhone(doc.clientId);
   if (clientPhone) {
+    const message = `Your interview with ${caregiverName} is in an hour — ${callUrl}`;
     await scheduleTrigger({
       userId:      doc.clientId ?? clientPhone,
       phone:       clientPhone,
       type:        "appointment_reminder",
       scheduledAt: new Date(oneHourBefore).toISOString(),
-      message:     `Your interview with ${caregiverName} is in an hour — ${callUrl}`,
+      message,
       refId,
+      ...(doc.clientId ? { bell: { recipientId: doc.clientId, type: "interview_reminder", title: "Interview in an hour", body: message, data: { interviewId } } } : {}),
     }, { bypassCalibration: true }).catch((err) => console.error("interview reminder (client) error:", err));
   }
   const cgPhone = await resolveCaregiverPhone(doc.caregiverId);
   if (cgPhone) {
+    const message = `Interview in an hour with ${clientName} — ${callUrl} Reply if you need to reschedule.`;
     await scheduleTrigger({
       userId:      doc.caregiverId ?? cgPhone,
       phone:       cgPhone,
       type:        "appointment_reminder",
       scheduledAt: new Date(oneHourBefore).toISOString(),
-      message:     `Interview in an hour with a family — ${callUrl} Reply if you need to reschedule.`,
+      message,
       refId,
+      ...(doc.caregiverId ? { bell: { recipientId: doc.caregiverId, type: "interview_reminder", title: "Interview in an hour", body: message, data: { interviewId } } } : {}),
     }, { bypassCalibration: true }).catch((err) => console.error("interview reminder (caregiver) error:", err));
   }
   return true;
 }
 
-// ── Web-created 'requested' docs: SMS the caregiver an accept path ────────────
-
-async function notifyCaregiverOfRequest(
-  ref: FirebaseFirestore.DocumentReference,
-  interviewId: string,
-  doc: InterviewDoc
-): Promise<void> {
-  if (!doc.caregiverId) return;
-  const cgPhone = await resolveCaregiverPhone(doc.caregiverId);
-  if (!cgPhone) return; // no phone on file anywhere — in-app notification is the only path left
-
-  const startMs = parseScheduledTimeMs(doc.scheduledTime ?? "");
-  const when = Number.isNaN(startMs) ? "a time that works" : formatInterviewTime(startMs);
-  const clientName = (doc.clientName as string) || "A family";
-
-  const outcome = await trySend(
-    cgPhone,
-    `Hi — ${clientName} would like a 30-minute video interview with you on ${when}. ` +
-    `Reply to confirm, or suggest another time and I'll pass it along.`,
-    "interviewLinkTrigger:requested"
-  );
-  await ref.update({ requestNotifiedAt: new Date().toISOString() }).catch(() => {});
-  if (!outcome.sent && outcome.reason !== "recipient_opted_out") {
-    console.warn(`Interview request SMS to caregiver not sent for ${interviewId}: ${outcome.reason}`);
-  }
-}

@@ -170,7 +170,6 @@ vi.mock("../../sms", () => ({
 }));
 
 const handleOnboardingStep   = vi.fn(async (..._a: any[]) => {});
-const sendBgCheckRenewalLink = vi.fn(async (..._a: any[]) => {});
 const continueAfterClientCollection = vi.fn(async (..._a: any[]) => {});
 const absorbClientFields     = vi.fn(async (..._a: any[]) => ({}));
 const drivePostCollectionHandoff = vi.fn(async (..._a: any[]) => {});
@@ -182,7 +181,6 @@ const drivePostCollectionHandoff = vi.fn(async (..._a: any[]) => {});
 const createFirebaseAuthAccount = vi.fn(async (..._a: any[]) => null as string | null);
 vi.mock("../../agents/onboardingConversation", () => ({
   handleOnboardingStep:   (...a: any[]) => handleOnboardingStep(...a),
-  sendBgCheckRenewalLink: (...a: any[]) => sendBgCheckRenewalLink(...a),
   continueAfterClientCollection: (...a: any[]) => continueAfterClientCollection(...a),
   absorbClientFields:     (...a: any[]) => absorbClientFields(...a),
   drivePostCollectionHandoff: (...a: any[]) => drivePostCollectionHandoff(...a),
@@ -742,12 +740,6 @@ describe("safety + account gates", () => {
     expect(classifyCrisisMultilingual).not.toHaveBeenCalled();
   });
 
-  it("caregiver RENEW keyword re-issues the bg-check link (terminal)", async () => {
-    seedSession({ userType: "caregiver", caregiverId: "cg1" });
-    await handleInbound(makeEvent("RENEW"));
-    expect(sendBgCheckRenewalLink).toHaveBeenCalled();
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
 });
 
 describe("onboarding + rate limit", () => {

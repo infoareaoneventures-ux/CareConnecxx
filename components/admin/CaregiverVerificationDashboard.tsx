@@ -144,15 +144,8 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
         reviewNotes: reviewNotes
       } as Partial<Caregiver>);
 
-      // Send approval notification to caregiver
-      await dbService.sendNotification(getDocId(caregiver), {
-        type: 'verification_approved',
-        title: 'You\'re Verified!',
-        body: 'Your background check has been approved. You can now start accepting jobs.',
-        message: 'Your background check has been approved. You can now start accepting jobs.',
-        userId: getDocId(caregiver),
-        isRead: false,
-      });
+      // The caregiver is told by the server (onCaregiverAccountChange — bell +
+      // text, once) from the record change above.
 
       onShowToast(`${caregiver.name} has been approved`, 'success');
       setSelectedCaregiver(null);
@@ -183,15 +176,8 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
         rejectionReason: reviewNotes
       });
 
-      // Send rejection notification
-      await dbService.sendNotification(getDocId(caregiver), {
-        type: 'verification_rejected',
-        title: 'Verification Update',
-        body: `Your application was not approved. Reason: ${reviewNotes}`,
-        message: `Your application was not approved. Reason: ${reviewNotes}`,
-        userId: getDocId(caregiver),
-        isRead: false,
-      });
+      // Told by the server (onCaregiverAccountChange: "Background check not
+      // approved"); the site sends no reason.
 
       onShowToast(`${caregiver.name} has been rejected`, 'info');
       setSelectedCaregiver(null);
@@ -214,14 +200,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
         infoRequestedAt: new Date().toISOString()
       });
 
-      await dbService.sendNotification(getDocId(caregiver), {
-        type: 'info_requested',
-        title: 'Additional Information Needed',
-        body: `We need more information to complete your verification: ${reviewNotes}`,
-        message: `We need more information to complete your verification: ${reviewNotes}`,
-        userId: getDocId(caregiver),
-        isRead: false,
-      });
+      // Told by the server (onCaregiverAccountChange) from the record change above.
 
       onShowToast(`Information requested from ${caregiver.name}`, 'info');
       setSelectedCaregiver(null);

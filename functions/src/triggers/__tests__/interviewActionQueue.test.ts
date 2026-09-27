@@ -47,21 +47,22 @@ describe("processInterviewActionQueue", () => {
     });
     await (processInterviewActionQueue as any)(s);
     expect(hoisted.respondToInterviewRequest).toHaveBeenCalledWith({
-      caregiverId: "cg1", interviewId: "iv_1", decision: "accept",
-      proposedDate: undefined, proposedTime: undefined, message: undefined, source: "web",
+      caregiverId: "cg1", interviewId: "iv_1", decision: "accept", source: "web",
     });
   });
 
-  it("passes through proposedDate/proposedTime for a counter-proposal decline", async () => {
-    hoisted.respondToInterviewRequest.mockResolvedValue({ status: "declined", interviewId: "iv_1", callUrl: null, proposedTime: "2026-10-01T14:00:00.000Z" });
+  // 2026-09-27: the decline-with-counter-offer is gone — a new time is proposed on
+  // the SAME interview (reschedulePendingTime), never by declining.
+  it("ignores any proposedDate/proposedTime/message on the request (no counter-offer path)", async () => {
+    hoisted.respondToInterviewRequest.mockResolvedValue({ status: "declined", interviewId: "iv_1", callUrl: null });
     const { snap: s } = snap({
       type: "respond_to_interview", caregiverId: "cg1", interviewId: "iv_1", decision: "decline",
-      proposedDate: "2026-10-01", proposedTime: "14:00",
+      proposedDate: "2026-10-01", proposedTime: "14:00", message: "x",
     });
     await (processInterviewActionQueue as any)(s);
-    expect(hoisted.respondToInterviewRequest).toHaveBeenCalledWith(expect.objectContaining({
-      proposedDate: "2026-10-01", proposedTime: "14:00",
-    }));
+    expect(hoisted.respondToInterviewRequest).toHaveBeenCalledWith({
+      caregiverId: "cg1", interviewId: "iv_1", decision: "decline", source: "web",
+    });
   });
 
   it("marks the request doc done with the result on success", async () => {

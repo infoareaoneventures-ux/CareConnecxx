@@ -60,6 +60,7 @@ import {
   onBookingAmendmentWrite,
   onShiftStatusChanged,
   onJobApplicationCreate,
+  onJobApplicationStatusChange,
   onVideoInterviewWrite,
 } from "../notificationTriggers";
 
@@ -241,6 +242,26 @@ describe("onJobApplicationCreate — SMS parity", () => {
     const data = { clientId: CLIENT, caregiverName: "Alice", jobTitle: "Weekend care" };
     await (onJobApplicationCreate as any)({ data: () => data }, { params: { applicationId: "app1" } });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ urgency: "immediate" }));
+  });
+});
+
+describe("onJobApplicationStatusChange — the caregiver hears the outcome (bell + text, no details)", () => {
+  const base = { caregiverId: CAREGIVER, clientId: CLIENT, jobId: "job1", jobTitle: "Weekend care" };
+  it("declined by the family → bell + text with the tab's words", async () => {
+    await (onJobApplicationStatusChange as any)(change({ ...base, status: "pending" }, "app1", { ...base, status: "rejected" }), { params: { applicationId: "app1" } });
+    expect(hoisted.addMock).toHaveBeenCalledWith(`users/${CAREGIVER}/notifications`, expect.objectContaining({ type: "job_application_declined", title: "Application declined", body: 'Your application for "Weekend care" was declined by the family.' }));
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: 'Your application for "Weekend care" was declined by the family.', urgency: "immediate" }));
+  });
+  it("accepted (the family sent a booking) → bell + text", async () => {
+    await (onJobApplicationStatusChange as any)(change({ ...base, status: "pending" }, "app1", { ...base, status: "accepted" }), { params: { applicationId: "app1" } });
+    expect(hoisted.addMock).toHaveBeenCalledWith(`users/${CAREGIVER}/notifications`, expect.objectContaining({ type: "job_application_accepted", title: "Application accepted" }));
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: 'Your application for "Weekend care" was accepted.' }));
+  });
+  it("the caregiver's own withdraw, and a write with no status change, are silent", async () => {
+    await (onJobApplicationStatusChange as any)(change({ ...base, status: "pending" }, "app1", { ...base, status: "withdrawn" }), { params: { applicationId: "app1" } });
+    await (onJobApplicationStatusChange as any)(change({ ...base, status: "rejected" }, "app1", { ...base, status: "rejected", updatedAt: 1 }), { params: { applicationId: "app1" } });
+    expect(hoisted.addMock).not.toHaveBeenCalled();
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
   });
 });
 

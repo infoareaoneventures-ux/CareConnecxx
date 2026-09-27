@@ -30,7 +30,9 @@ const hoisted = vi.hoisted(() => {
 vi.mock("firebase-admin", () => ({
   __esModule: true,
   default: { firestore: () => ({ collection: hoisted.collectionMock }) },
-  firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {}),
+  firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
+    FieldValue: { delete: () => ({ __delete: true }), serverTimestamp: () => ({ __serverTimestamp: true }) },
+  }),
 }));
 
 const quickComplete = vi.fn(async () => "NO");
@@ -81,6 +83,10 @@ describe("guardInterviewIdentityConsistency", () => {
     const ivUpdate = hoisted.updates.find((u) => u.path === `video_interviews/${IV_ID}`);
     expect(ivUpdate?.data.status).toBe("cancelled");
     expect(ivUpdate?.data.cancelledReason).toBe("identity_mismatch_auto_corrected");
+    // One text to the caregiver (the apology below), not two: the trigger's own
+    // "cancelled the scheduled interview" text is suppressed by cancelledViaAgent.
+    expect(ivUpdate?.data.cancelledBy).toBe("client");
+    expect(ivUpdate?.data.cancelledViaAgent).toBe(true);
 
     expect(sendToPhone).toHaveBeenCalledWith("+15559998888", expect.stringContaining("mistake"));
 

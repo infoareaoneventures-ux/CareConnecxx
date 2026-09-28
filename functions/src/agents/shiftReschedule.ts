@@ -153,6 +153,22 @@ export async function findOwnShiftConflict(args: {
   return others.find((c) => timeRangesOverlap(args.startTime, args.endTime, c.startTime, c.endTime)) ?? null;
 }
 
+/** CaregiverBookingsPage.tsx fetchOwnShiftsForDate + rangeConflicts: the caregiver's OTHER scheduled / in-progress visits that day that overlap the range. */
+export async function findCaregiverOwnShiftConflict(args: {
+  caregiverId: string; date: string; startTime: string; endTime: string; excludeShiftId: string;
+}): Promise<OwnShiftConflict | null> {
+  if (!args.date) return null;
+  const snap = await db.collection("shifts")
+    .where("caregiverId", "==", args.caregiverId)
+    .where("status", "in", ["scheduled", "in-progress"])
+    .where("date", "==", args.date)
+    .get();
+  const others: OwnShiftConflict[] = snap.docs
+    .filter((d) => d.id !== args.excludeShiftId && d.data().caregiverId === args.caregiverId && String(d.data().date ?? args.date) === args.date)
+    .map((d) => ({ startTime: String(d.data().startTime ?? ""), endTime: d.data().endTime ? String(d.data().endTime) : undefined }));
+  return others.find((c) => timeRangesOverlap(args.startTime, args.endTime, c.startTime, c.endTime)) ?? null;
+}
+
 // ── Validation shared by the tool and the flow ───────────────────────────────
 
 export type RescheduleTimeCheck =

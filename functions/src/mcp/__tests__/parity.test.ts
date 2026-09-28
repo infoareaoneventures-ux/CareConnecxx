@@ -56,10 +56,10 @@ const PROMPT_EXEMPT = new Set<string>([
 ]);
 
 const NEW_AGENT_NATIVE_TOOLS = [
-  "pause_account", "reactivate_account", "accept_shift", "decline_shift",
+  "pause_account", "reactivate_account",
   // U2 caregiver action-parity wave — hard-asserted since the 2026-07-06 audit
   // found them bound but invisible (schemas only, no prompt line).
-  "start_shift", "complete_shift", "update_shift_task", "submit_media_update",
+  "start_shift", "complete_shift", "update_shift_task",
   "respond_to_booking_request", "withdraw_job_application",
   "respond_to_shift_hour_correction", "create_caregiver_referral",
 ];

@@ -12,9 +12,6 @@ const db = admin.firestore();
 const SYSTEM_DIRECTIVE_PREFIXES = [
   "health_escalation:",
   "qa_retry:",
-  "issue_escalation:",
-  "issue_escalation_final:",
-  "issue_followup:",
 ];
 
 function isSystemDirectiveMessage(message: string): boolean {
@@ -28,8 +25,7 @@ export interface ProactiveTrigger {
   // (weekly_checkin / medication_reminder and the health_* types were removed
   // 2026-09-27: nothing ever scheduled them and the website has no such thing.)
   type:              "appointment_reminder" | "custom"
-                   | "qa_retry" | "caregiver_checkin" | "caregiver_checkin_escalation"
-                   | "issue_escalation" | "issue_escalation_final" | "issue_followup";
+                   | "qa_retry" | "caregiver_checkin" | "caregiver_checkin_escalation";
   scheduledAt:       string;   // ISO
   message:           string;
   firedAt?:          string | null;
@@ -207,9 +203,8 @@ export async function shouldFireTrigger(
 const REPLY_EXEMPT_TYPES = new Set([
   "appointment_reminder",
 ]);
-const REPLY_EXEMPT_MESSAGE_PREFIXES = [
-  "issue_escalation:", "issue_escalation_final:", "issue_followup:",
-];
+// (the issue_escalation / issue_followup directives were removed 2026-09-28 with the ISSUE pipeline)
+const REPLY_EXEMPT_MESSAGE_PREFIXES: string[] = [];
 export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): boolean {
   if (REPLY_EXEMPT_TYPES.has(t.type)) return true;
   return REPLY_EXEMPT_MESSAGE_PREFIXES.some((p) => t.message?.startsWith(p));
@@ -525,24 +520,6 @@ export const runTriggerEngine = functions.pubsub
           } catch (err) {
             console.error("qa_retry: parse/run failed:", err);
           }
-        } else if (trigger.message.startsWith("issue_escalation:")) {
-          const issueLogId = trigger.message.slice("issue_escalation:".length);
-          const { escalateIssue } = await import("../agents/issueEscalator");
-          await escalateIssue(issueLogId).catch(err =>
-            console.error("issue_escalation failed:", err)
-          );
-        } else if (trigger.message.startsWith("issue_escalation_final:")) {
-          const issueLogId = trigger.message.slice("issue_escalation_final:".length);
-          const { escalateIssueFinal } = await import("../agents/issueEscalator");
-          await escalateIssueFinal(issueLogId).catch(err =>
-            console.error("issue_escalation_final failed:", err)
-          );
-        } else if (trigger.message.startsWith("issue_followup:")) {
-          const issueLogId = trigger.message.slice("issue_followup:".length);
-          const { sendIssueFollowUp } = await import("../agents/issueEscalator");
-          await sendIssueFollowUp(issueLogId).catch(err =>
-            console.error("issue_followup failed:", err)
-          );
         } else if (trigger.source === "claude" && trigger.intent) {
           // Claude-scheduled follow-up: check context before firing, then regenerate message
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // U2 — caregiver action-parity tools:
 //   withdraw_job_application, respond_to_booking_request, start_shift,
-//   complete_shift, update_shift_task, submit_media_update,
+//   complete_shift, update_shift_task, add_visit_note,
 //   respond_to_shift_hour_correction, request_instant_payout (delegation).
 //
 // Same firebase-admin mock shape as booking.test.ts: docState backs .doc().get(),
@@ -278,61 +278,68 @@ describe("U2 caregiver action tools", () => {
   });
 
   // ── start_shift / complete_shift ───────────────────────────────────────────
-  describe("start_shift", () => {
-    it("marks an appointment in-progress (canonical hyphen — what the crons/triggers read) and records startedAt", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "cg1", clientId: "c1", status: "confirmed" });
-      const r = await handleToolCall("start_shift", { caregiverId: "cg1", appointmentId: "a1" }) as any;
-      expect(r.success).toBe(true);
-      // Hyphen, NOT underscore: the in-shift-update/task-nudge crons, the
-      // arrival trigger, and handleArrived's twin path all match "in-progress".
-      expect(hoisted.docState.get("appointments/a1").status).toBe("in-progress");
-      expect(hoisted.docState.get("appointments/a1").startedAt).toBeTruthy();
-    });
+  // The Bookings page's per-visit buttons (agents/inShift.ts, 2026-09-28):
+  // shifts only, the page's conditions, the page's writes.
+  const la = (d: Date) => { const p: Record<string, string> = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(d)) p[x.type] = x.value; return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour === "24" ? "00" : p.hour}:${p.minute}` }; };
+  const RECIPIENTS = [{ name: "Mai", careNeeds: ["Companionship", "Mobility Assistance"], careNeedDetails: { "Mobility Assistance": ["Transfer Assist", "Walking"] } }];
 
-    it("marks a shifts doc in-progress (web dashboard shape)", async () => {
-      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "scheduled" });
+  describe("start_shift", () => {
+    it("starts a scheduled visit inside the 15-minute window with the page's write and returns the numbered tasks", async () => {
+      const { date, time } = la(new Date(Date.now() + 10 * 60 * 1000));
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", clientId: "c1", clientName: "Fam", status: "scheduled", date, startTime: time, endTime: "23:59", careRecipients: RECIPIENTS });
       const r = await handleToolCall("start_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
       expect(r.success).toBe(true);
-      expect(hoisted.docState.get("shifts/s1").status).toBe("in-progress");
+      expect(hoisted.docState.get("shifts/s1")).toMatchObject({ status: "in-progress", startedAt: { __serverTimestamp: true }, updatedAt: { __serverTimestamp: true } });
+      expect(r.tasks.map((t: any) => t.label)).toEqual(["Companionship", "Mobility Assistance — Transfer Assist", "Mobility Assistance — Walking"]);
     });
 
-    it("is idempotent — starting an in-progress visit returns alreadyStarted", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "cg1", status: "in_progress", startedAt: "2026-06-20T09:00:00Z" });
-      const r = await handleToolCall("start_shift", { caregiverId: "cg1", appointmentId: "a1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.alreadyStarted).toBe(true);
+    it("refuses the page's hidden cases: too early, overdue, not scheduled", async () => {
+      const { date, time } = la(new Date(Date.now() + 3 * 60 * 60 * 1000));
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "scheduled", date, startTime: time, endTime: "23:59" });
+      let r = await handleToolCall("start_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
+      expect(r.success).toBe(false); expect(r.reason).toBe("too_early");
+      expect(hoisted.docState.get("shifts/s1").status).toBe("scheduled");
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "scheduled", date: "2000-01-01", startTime: "09:00", endTime: "10:00" });
+      r = await handleToolCall("start_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
+      expect(r.reason).toBe("overdue");
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "completed", date: "2099-01-01", startTime: "09:00" });
+      r = await handleToolCall("start_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
+      expect(r.reason).toBe("not_scheduled");
+    });
+
+    it("is idempotent — starting an in-progress visit returns alreadyStarted; another caregiver's visit is denied", async () => {
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00", startedAt: "2026-06-20T09:00:00Z" });
+      let r = await handleToolCall("start_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
+      expect(r.success).toBe(true); expect(r.alreadyStarted).toBe(true);
+      hoisted.docState.set("shifts/s1", { caregiverId: "OTHER", status: "scheduled", date: "2099-01-01", startTime: "09:00" });
+      r = await handleToolCall("start_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
+      expect(r._toolError).toBe(true); expect(r.code).toBe("PERMISSION_DENIED");
     });
   });
 
-  describe("complete_shift (AE7 idempotency)", () => {
-    it("completes an in-progress appointment", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "cg1", status: "in_progress" });
-      const r = await handleToolCall("complete_shift", { caregiverId: "cg1", appointmentId: "a1" }) as any;
+  describe("complete_shift", () => {
+    it("ends the visit in progress with the page's write, incl. the closing note", async () => {
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", clientId: "c1", status: "in-progress", date: "2099-01-01", startTime: "09:00", endTime: "12:00" });
+      const r = await handleToolCall("complete_shift", { caregiverId: "cg1", shiftId: "s1", notes: "Mai was cheerful." }) as any;
       expect(r.success).toBe(true);
-      expect(hoisted.docState.get("appointments/a1").status).toBe("completed");
+      expect(hoisted.docState.get("shifts/s1")).toMatchObject({ status: "completed", completedAt: { __serverTimestamp: true }, updatedAt: { __serverTimestamp: true }, completionNotes: "Mai was cheerful." });
     });
 
-    it("called twice does NOT create a second billable shiftHours record", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "cg1", clientId: "c1", status: "in_progress" });
-      // First completion → appointment marked completed. No shiftHours yet (submitted separately).
-      const r1 = await handleToolCall("complete_shift", { caregiverId: "cg1", appointmentId: "a1" }) as any;
+    it("is idempotent — a completed visit returns alreadyCompleted; a scheduled (never started) visit can't be ended", async () => {
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00" });
+      const r1 = await handleToolCall("complete_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
       expect(r1.success).toBe(true);
-      // Simulate the shiftHours record being created (e.g. by submit_shift_hours).
-      hoisted.docState.set("shiftHours/a1", { appointmentId: "a1", caregiverId: "cg1", clientId: "c1", status: "pending_client_review", amountCents: 4400 });
-      // SMS retry: complete again — must be a no-op acknowledging the existing billable record.
-      const r2 = await handleToolCall("complete_shift", { caregiverId: "cg1", appointmentId: "a1" }) as any;
-      expect(r2.success).toBe(true);
-      expect(r2.alreadyCompleted).toBe(true);
-      expect(r2.billableRecordExists).toBe(true);
-      // No NEW shiftHours doc was added.
-      expect(hoisted.adds.filter((a) => a.path === "shiftHours").length).toBe(0);
-      // The existing record is untouched (still one).
-      expect(hoisted.docState.get("shiftHours/a1").amountCents).toBe(4400);
+      const r2 = await handleToolCall("complete_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
+      expect(r2.success).toBe(true); expect(r2.alreadyCompleted).toBe(true);
+      hoisted.docState.set("shifts/s2", { caregiverId: "cg1", status: "scheduled", date: "2099-01-01", startTime: "09:00" });
+      const r3 = await handleToolCall("complete_shift", { caregiverId: "cg1", shiftId: "s2" }) as any;
+      expect(r3.success).toBe(false); expect(r3.reason).toBe("not_in_progress");
+      expect(hoisted.docState.get("shifts/s2").status).toBe("scheduled");
     });
 
     it("denies completing another caregiver's visit", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "OTHER", status: "in_progress" });
-      const r = await handleToolCall("complete_shift", { caregiverId: "cg1", appointmentId: "a1" }) as any;
+      hoisted.docState.set("shifts/s1", { caregiverId: "OTHER", status: "in-progress", date: "2099-01-01" });
+      const r = await handleToolCall("complete_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
     });
@@ -340,47 +347,51 @@ describe("U2 caregiver action tools", () => {
 
   // ── update_shift_task ──────────────────────────────────────────────────────
   describe("update_shift_task", () => {
-    it("toggles a task complete and the web-read tasksCompleted array reflects it", async () => {
-      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", tasksCompleted: [] });
-      const r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", taskKey: "0_Medication" }) as any;
+    it("checks off tasks by the texted numbers and writes the full array like the page", async () => {
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00", careRecipients: RECIPIENTS, tasksCompleted: [] });
+      const r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", numbers: [1, 3] }) as any;
       expect(r.success).toBe(true);
-      expect(r.completed).toBe(true);
-      expect(hoisted.docState.get("shifts/s1").tasksCompleted).toContain("0_Medication");
+      expect(hoisted.docState.get("shifts/s1").tasksCompleted).toEqual(["0_Companionship", "0_Mobility Assistance_Walking"]);
     });
 
-    it("undoes a task (completed=false) removing it from the array", async () => {
-      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", tasksCompleted: ["0_Medication"] });
-      const r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", taskKey: "0_Medication", completed: false }) as any;
+    it("a key with completed=false unchecks; omitted completed toggles like the page's row", async () => {
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00", careRecipients: RECIPIENTS, tasksCompleted: ["0_Companionship"] });
+      let r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", taskKey: "0_Companionship", completed: false }) as any;
       expect(r.success).toBe(true);
-      expect(hoisted.docState.get("shifts/s1").tasksCompleted).not.toContain("0_Medication");
+      expect(hoisted.docState.get("shifts/s1").tasksCompleted).toEqual([]);
+      r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", taskKeys: ["0_Mobility Assistance_Transfer Assist", "0_Mobility Assistance_Walking"] }) as any;
+      expect(hoisted.docState.get("shifts/s1").tasksCompleted).toEqual(["0_Mobility Assistance_Transfer Assist", "0_Mobility Assistance_Walking"]);
     });
 
-    it("denies toggling tasks on another caregiver's shift", async () => {
-      hoisted.docState.set("shifts/s1", { caregiverId: "OTHER", tasksCompleted: [] });
-      const r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", taskKey: "0_Medication" }) as any;
+    it("only while the visit is in progress; another caregiver's shift is denied", async () => {
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "scheduled", date: "2099-01-01", startTime: "09:00", careRecipients: RECIPIENTS, tasksCompleted: [] });
+      let r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", numbers: [1] }) as any;
+      expect(r.success).toBe(false); expect(r.reason).toBe("not_in_progress");
+      hoisted.docState.set("shifts/s1", { caregiverId: "OTHER", status: "in-progress", date: "2099-01-01", tasksCompleted: [] });
+      r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", numbers: [1] }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
     });
   });
 
-  // ── submit_media_update ────────────────────────────────────────────────────
-  describe("submit_media_update", () => {
-    it("creates a care_journal media entry the family feed reads", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "cg1", clientId: "c1", seniorId: "s1" });
-      const r = await handleToolCall("submit_media_update", { caregiverId: "cg1", appointmentId: "a1", mediaUrl: "https://x/p.jpg", caption: "Lunch in the garden" }) as any;
+  // ── add_visit_note ─────────────────────────────────────────────────────────
+  describe("add_visit_note", () => {
+    it("appends the page's {at, text, by:'caregiver'} line to notesLog while in progress", async () => {
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00" });
+      const r = await handleToolCall("add_visit_note", { caregiverId: "cg1", shiftId: "s1", text: "She ate a full lunch." }) as any;
       expect(r.success).toBe(true);
-      const entry = hoisted.adds.find((a) => a.path === "care_journal");
-      expect(entry).toBeTruthy();
-      expect(entry!.data.entryType).toBe("media");
-      expect(entry!.data.mediaUrl).toBe("https://x/p.jpg");
-      expect(entry!.data.seniorId).toBe("s1");
+      const notesLog = hoisted.docState.get("shifts/s1").notesLog;
+      expect(notesLog).toHaveLength(1);
+      expect(notesLog[0]).toMatchObject({ text: "She ate a full lunch.", by: "caregiver" });
+      expect(typeof notesLog[0].at).toBe("string");
     });
-
-    it("denies posting media to another caregiver's appointment", async () => {
-      hoisted.docState.set("appointments/a1", { caregiverId: "OTHER", clientId: "c1" });
-      const r = await handleToolCall("submit_media_update", { caregiverId: "cg1", appointmentId: "a1", mediaUrl: "https://x/p.jpg" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("PERMISSION_DENIED");
+    it("refuses when the visit is not in progress or the note is empty", async () => {
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "scheduled", date: "2099-01-01", startTime: "09:00" });
+      let r = await handleToolCall("add_visit_note", { caregiverId: "cg1", shiftId: "s1", text: "hi" }) as any;
+      expect(r.success).toBe(false); expect(r.reason).toBe("not_in_progress");
+      hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00" });
+      r = await handleToolCall("add_visit_note", { caregiverId: "cg1", shiftId: "s1", text: "   " }) as any;
+      expect(r.reason).toBe("empty");
     });
   });
 

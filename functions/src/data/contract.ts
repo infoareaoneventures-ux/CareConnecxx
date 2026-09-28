@@ -118,13 +118,6 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Booking-pipeline redesign (2026-08-30, unified 2026-09-17): Evia's scripted booking flow writes the SAME booking_requests doc the website's Send Booking button does (agents/bookingSend.ts mirrors PostsPage.tsx handleSendBooking); manage_booking / cancelFlow write the site's cancel shapes. No agent_tasks staging, no shift offers.",
   },
-  shift_offers: {
-    path: "shift_offers",
-    docId: "auto",
-    caraWrites: true,
-    webReads: false,
-    notes: "Caregiver YES/NO offer state machine (agents/shiftOffer.ts).",
-  },
   shiftHours: {
     path: "shiftHours",
     docId: "appointmentId",

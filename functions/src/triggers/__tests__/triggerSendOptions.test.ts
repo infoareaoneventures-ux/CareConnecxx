@@ -34,10 +34,6 @@ describe("triggerSendOptions — transactional reminders are never droppable", (
     expect(caregiver).toEqual(family);
   });
 
-  it("issue escalation directives are reply-exempt and not droppable", () => {
-    expect(triggerSendOptions({ type: "custom", message: "issue_followup:abc" }).canDrop).toBe(false);
-  });
-
   it("discretionary nudges stay droppable (judge + daily cap still apply)", () => {
     expect(triggerSendOptions({ type: "custom", message: "Following up on the caregiver search" })).toEqual({ urgency: "standard", canDrop: true });
   });

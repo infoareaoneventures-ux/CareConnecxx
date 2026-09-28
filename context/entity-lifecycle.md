@@ -28,7 +28,7 @@ terminal records drop out of user-active views but stay admin/audit-visible.
 | `job_posts` | Client (own) | Public (open jobs) | Client (own) / Admin | **Terminal status** via `cancel_job_post` (Evia) / client update; client/admin delete allowed | Job board. |
 | `job_postings` | Client (own uid) | Any authed | Client (own) | Admin delete only | Per-client wizard mirror of `job_posts`. |
 | `appointments` | Any authed (booking) / Evia | Participants + Admin | Participants + Admin | **Terminal status** `cancelled`/`completed` via `cancel_appointment` / `reschedule_appointment`; admin hard-delete only | Protected from client delete. |
-| `booking_requests` | Client (own) | Participants + Admin | Participants + Admin | Terminal status (accept/decline) | Web booking equivalent of Evia `agent_tasks` + `shift_offers`. |
+| `booking_requests` | Client (own) | Participants + Admin | Participants + Admin | Terminal status (accept/decline) | Evia's scripted booking flow writes this same doc (the former `agent_tasks` / `shift_offers` pipeline was removed 2026-09-17 / 2026-09-28). |
 | `shiftHours` | Caregiver (self, `pending_client_review`) | Participants + Admin | Admin / Caregiver (cash-confirm only) | **Terminal status** approved/auto_approved/disputed/paid; admin hard-delete only | Protected. Payroll. `review_shift_hours`, `admin_resolve_dispute`. |
 | `threads` | Participants | Participants | Participants | Admin hard-delete only | Evia conversations mirror into `threads` (`cara_{uid}`). |
 | `admin_alerts` | Server only | Admin | Admin (mark resolved) | **Soft**: resolved flag; create/delete denied | Server-written escalations. |

@@ -156,11 +156,6 @@ vi.mock("../../agents/approvalHandler", () => ({
   handlePendingApprovals: (...a: any[]) => handlePendingApprovals(...a),
 }));
 
-const handleShiftOfferReply = vi.fn(async (..._a: any[]): Promise<"handled" | "fallthrough"> => "fallthrough");
-vi.mock("../../agents/shiftOffer", () => ({
-  handleShiftOfferReply: (...a: any[]) => handleShiftOfferReply(...a),
-}));
-
 const optOutPhoneNumber = vi.fn(async (..._a: any[]) => {});
 const optInPhoneNumber  = vi.fn(async (..._a: any[]) => {});
 vi.mock("../../sms", () => ({
@@ -362,7 +357,6 @@ beforeEach(() => {
   hasActiveSmsFlow.mockReturnValue(false);
   getAllPending.mockResolvedValue([]);
   handlePendingApprovals.mockResolvedValue({ outcome: "fallthrough" });
-  handleShiftOfferReply.mockResolvedValue("fallthrough");
   detectCrisis.mockReturnValue(null);
   isLikelyRealCrisis.mockResolvedValue(true);
   classifyCrisisMultilingual.mockResolvedValue(null);
@@ -825,29 +819,6 @@ describe("pending-approval gate and shift-offer interception (order-critical)", 
     expect(runQaAgent).toHaveBeenCalledTimes(1);
   });
 
-  it("approvals run BEFORE the caregiver shift-offer interception", async () => {
-    seedSession({ userType: "caregiver", caregiverId: "cg1", pendingShiftOfferId: "offer1" });
-    getAllPending.mockResolvedValue([{ id: "pa1" }]);
-    handlePendingApprovals.mockResolvedValue({ outcome: "handled" });
-    await handleInbound(makeEvent("yes"));
-    expect(handlePendingApprovals).toHaveBeenCalled();
-    expect(handleShiftOfferReply).not.toHaveBeenCalled();
-  });
-
-  it("caregiver shift-offer reply handled = terminal", async () => {
-    seedSession({ userType: "caregiver", caregiverId: "cg1", pendingShiftOfferId: "offer1" });
-    handleShiftOfferReply.mockResolvedValue("handled");
-    await handleInbound(makeEvent("YES"));
-    expect(handleShiftOfferReply).toHaveBeenCalledWith({ phone: PHONE, chatId: CHAT, text: "YES" });
-    expect(classifyIntentDetailed).not.toHaveBeenCalled();
-  });
-
-  it("caregiver question about a pending offer falls through to the QA agent (offer stays pending)", async () => {
-    seedSession({ userType: "caregiver", caregiverId: "cg1", pendingShiftOfferId: "offer1" });
-    handleShiftOfferReply.mockResolvedValue("fallthrough");
-    await handleInbound(makeEvent("what is the hourly rate for this shift?"));
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("QA tail (quick-reply bypass vs full agent)", () => {

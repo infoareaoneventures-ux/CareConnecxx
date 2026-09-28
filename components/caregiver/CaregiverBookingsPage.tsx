@@ -689,11 +689,22 @@ const BookingGroupCard: React.FC<{
   onAcceptAmendment: (amendment: BookingAmendment) => Promise<void>;
   /** The family's membership lapsed past its grace window — no new visits are generated (booking_requests.schedulePausedAt). */
   schedulePaused?: boolean;
-}> = ({ shifts, amendments, onCancel, onAcceptAmendment, schedulePaused }) => {
+  /** The booking's own note (booking_requests.notes); undefined while the requests haven't loaded. */
+  bookingNote?: string | null;
+}> = ({ shifts, amendments, onCancel, onAcceptAmendment, schedulePaused, bookingNote }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
   const { setMembershipModalOpen } = useCareConnex();
-  const base = shifts[0];
+  // The card reads its booking-level fields (schedule, note, care plan…) off the
+  // group's LATEST-dated shift — the same shift the family's card reads
+  // (ClientVisitsPage lists shifts date-desc). Our listener is date-asc, so
+  // shifts[0] was the OLDEST visit: its schedule pre-dated every accepted
+  // schedule change and its note was one visit's own (2026-09-28).
+  const base = [...shifts].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.startTime || '').localeCompare(a.startTime || ''))[0];
+  // The header note is the note the family typed when SENDING the booking
+  // (booking_requests.notes), the same on the family's card; a visit shows its
+  // own note below only when it differs — i.e. a schedule-change note.
+  const headerNote = bookingNote !== undefined ? bookingNote : base.notes;
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandedShift, setExpandedShift] = useState<string | null>(null);
   const [showAllShifts, setShowAllShifts] = useState(false);
@@ -987,10 +998,10 @@ const BookingGroupCard: React.FC<{
             <span><span className="font-semibold">${base.rate}/hr</span><span className="text-slate-400"> · Card</span></span>
           </div>
         )}
-        {base.notes && (
+        {headerNote && (
           <div className="flex items-start gap-2 text-sm text-slate-500">
             <FileText className="w-4 h-4 text-slate-300 shrink-0 mt-0.5" />
-            <span>{base.notes}</span>
+            <span>{headerNote}</span>
           </div>
         )}
       </div>
@@ -1159,58 +1170,12 @@ const BookingGroupCard: React.FC<{
         </div>
       ))}
 
-      {/* ── Pending extra visit requests ── */}
-      {shifts.filter(s => s.status === 'pending').map(shift => (
-        <div key={shift.id} className="border-t border-amber-100 bg-amber-50 px-5 py-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-0.5">Extra Visit Requested</p>
-              <p className="text-sm font-semibold text-slate-800">{fmtDate(shift.date)}</p>
-              <p className="text-xs text-slate-500">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</p>
-              {shift.notes && <p className="text-xs text-slate-400 mt-1 italic">{shift.notes}</p>}
-            </div>
-            <div className="flex gap-2 shrink-0 mt-0.5">
-              <button
-                onClick={async () => {
-                  if (!db) return;
-                  // U3: the client notification is owned by the onShiftStatusChanged
-                  // server trigger (pending → scheduled = extra_visit_accepted). The
-                  // browser only writes the canonical status; no peer notification.
-                  await db.collection('shifts').doc(shift.id).update({
-                    status: 'scheduled',
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                  }).catch(() => {});
-                }}
-                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1"
-              >
-                <CheckCircle className="w-3.5 h-3.5" /> Accept
-              </button>
-              <button
-                onClick={async () => {
-                  if (!db) return;
-                  // U3: onShiftStatusChanged owns the client notification
-                  // (pending → cancelled = extra_visit_declined). Browser writes
-                  // only the canonical status.
-                  await db.collection('shifts').doc(shift.id).update({
-                    status: 'cancelled',
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                  }).catch(() => {});
-                }}
-                className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl"
-              >
-                Decline
-              </button>
-            </div>
-          </div>
-        </div>
-      ))}
-
       {/* ── Upcoming shifts ── */}
       <div className="border-t border-slate-100">
         <p className="px-5 pt-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Upcoming Shifts</p>
         {(() => {
           const allUpcoming = shifts
-            .filter(s => s.status !== 'pending' && shiftDisplayStatus(s) !== 'overdue')
+            .filter(s => shiftDisplayStatus(s) !== 'overdue')
             .sort((a, b) => {
               const d = (a.date || '').localeCompare(b.date || '');
               return d !== 0 ? d : (a.startTime || '').localeCompare(b.startTime || '');
@@ -1278,6 +1243,12 @@ const BookingGroupCard: React.FC<{
                       {shiftStatusLabel(shiftDisplayStatus(shift))}
                     </span>
                   </div>
+                  {/* The visit's own note (e.g. the note on the schedule-change request
+                      that created it) — the family's card shows it under each visit;
+                      only when it differs from the booking's general note above. */}
+                  {shift.notes && shift.notes !== headerNote && (
+                    <p className="text-xs text-slate-400 italic mt-0.5">{shift.notes}</p>
+                  )}
                   {shift.startedAt && (
                     <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-500">
                       <span>Started: <span className="font-semibold text-slate-700">{fmtTs(shift.startedAt)}</span></span>
@@ -1972,7 +1943,7 @@ export const CaregiverBookingsPage: React.FC = () => {
     if (!uid || !db) { setActiveLoading(false); return; }
     const unsub = db.collection('shifts')
       .where('caregiverId', '==', uid)
-      .where('status', 'in', ['pending', 'scheduled', 'in-progress'])
+      .where('status', 'in', ['scheduled', 'in-progress'])
       .orderBy('date', 'asc')
       .onSnapshot(snap => {
         setActiveShifts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Shift)));
@@ -2399,6 +2370,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                     onCancel={handleCancelShift}
                     onAcceptAmendment={handleAcceptAmendment}
                     schedulePaused={!!(requests.find(r => r.id === groupShifts[0]?.bookingRequestId) as any)?.schedulePausedAt}
+                    bookingNote={(() => { const r = requests.find(x => x.id === groupShifts[0]?.bookingRequestId); return r ? (r.notes || null) : undefined; })()}
                   />
                 ));
               })()

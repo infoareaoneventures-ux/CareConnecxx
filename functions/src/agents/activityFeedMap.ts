@@ -136,6 +136,8 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   shift_started:                      { included: false },
   shift_completed:                    { included: false },
   shift_task_updated:                 { included: false },
+
+  visit_note_added:                 { included: false },
   media_update_submitted:             { included: false },
   shift_hour_correction_responded:    { included: false },
   standard_payout_requested:          { included: false },

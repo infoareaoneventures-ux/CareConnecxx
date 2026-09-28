@@ -55,7 +55,7 @@ export interface BookingRequest {
 }
 
 // ── The page's own helpers (CaregiverBookingsPage.tsx), verbatim in behavior ──
-const ALL_DAYS_ORDER = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const ALL_DAYS_ORDER = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** fmtDate: "Sat, Sep 27, 2026" (weekday short, month short, day, year). */
@@ -95,7 +95,7 @@ export function fmtTime(t?: string): string {
   const out = `${h12}:${String(Number.isFinite(m) ? m : 0).padStart(2, "0")} ${suffix}`;
   return nextDay ? `${out} (next day)` : out;
 }
-function sortBlocks<T extends { start: string }>(blocks: T[]): T[] {
+export function sortBlocks<T extends { start: string }>(blocks: T[]): T[] {
   return [...blocks].sort((a, b) => parseMinutes(a.start) % 1440 - parseMinutes(b.start) % 1440);
 }
 

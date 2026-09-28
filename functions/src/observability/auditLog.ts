@@ -83,6 +83,7 @@ export type AuditEventType =
   | "shift_started"
   | "shift_completed"
   | "shift_task_updated"
+  | "visit_note_added"
   | "media_update_submitted"
   | "shift_hour_correction_responded"
   | "standard_payout_requested"

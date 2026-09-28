@@ -51,8 +51,6 @@ const HELPER_WIRED: Array<[string, number]> = [
 // explicit inline attribution line instead (bereavement keeps it minimal and
 // past-tense — grief-sensitive copy).
 const INLINE_WIRED: Array<[string, string, number]> = [
-  ["../../linq/routeCaregiver.ts", "the care recipient is ${", 1], // family confirm (the cancel alert went with the removed emergency-replacement path, 2026-09-16)
-  ["../issueEscalator.ts",         "the care recipient is ${", 2], // issue notice + next-day follow-up
 ];
 
 describe("R11 — who-is-who grounding present at every audited family-facing briefing", () => {

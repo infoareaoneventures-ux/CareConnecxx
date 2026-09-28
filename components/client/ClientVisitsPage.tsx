@@ -838,10 +838,19 @@ interface ActiveVisitGroupCardProps {
   onWithdrawReplacement: (replacementRequestId: string) => Promise<void>;
   /** The generator paused new visits because the membership lapsed (booking_requests.schedulePausedAt). */
   schedulePaused?: boolean;
+  /** The booking's own note (booking_requests.notes); undefined while the booking doc hasn't loaded. */
+  bookingNote?: string | null;
 }
 
-const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onSkipReplacement, onFindReplacement, onWithdrawReplacement, schedulePaused }) => {
+const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onSkipReplacement, onFindReplacement, onWithdrawReplacement, schedulePaused, bookingNote }) => {
   const base = shifts[0];
+  // The header note is the note the family typed when SENDING the booking
+  // (booking_requests.notes) — not whichever note the newest visit carries.
+  // A schedule-change note used to take over the header once its visits were
+  // the latest, and the real booking note then repeated under every ordinary
+  // visit (founder, 2026-09-28). Each visit shows its own note below only when
+  // it differs — i.e. a schedule-change note.
+  const headerNote = bookingNote !== undefined ? bookingNote : base.notes;
   const [cancelling, setCancelling] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -1071,10 +1080,10 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
             </span>
           </div>
         )}
-        {base.notes && (
+        {headerNote && (
           <div className="flex items-start gap-2 text-sm text-slate-500">
             <AlertCircle className="w-4 h-4 text-slate-300 shrink-0 mt-0.5" />
-            <span>{base.notes}</span>
+            <span>{headerNote}</span>
           </div>
         )}
       </div>
@@ -1277,7 +1286,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                     {/* A visit's own note (e.g. the note on the schedule-change request
                         that created it) — shown only when it differs from the booking's
                         general note above, so regular visits don't repeat it. */}
-                    {s.notes && s.notes !== base.notes && (
+                    {s.notes && s.notes !== headerNote && (
                       <p className="text-xs text-slate-400 italic mt-0.5">{s.notes}</p>
                     )}
                   </div>
@@ -1656,12 +1665,15 @@ export const ClientVisitsPage: React.FC = () => {
   const [pendingBookings, setPendingBookings] = useState<any[]>([]);
   const [pendingAmendments, setPendingAmendments] = useState<BookingAmendment[]>([]);
   const [pausedBookingIds, setPausedBookingIds] = useState<Set<string>>(new Set());
+  /** booking_requests.notes per accepted booking — the card's header note. */
+  const [bookingNotes, setBookingNotes] = useState<Map<string, string | null>>(new Map());
   const [loading, setLoading] = useState(true);
   const { gate, Modals: GateModals } = useAccessGates();
 
   const user = useAuthUser();
 
-  // Accepted bookings — only for the membership-pause flag the shift generator writes.
+  // Accepted bookings — the membership-pause flag the shift generator writes,
+  // and each booking's own note for the card header.
   useEffect(() => {
     if (!user || !db) return;
     const unsub = db.collection('booking_requests')
@@ -1669,6 +1681,7 @@ export const ClientVisitsPage: React.FC = () => {
       .where('status', '==', 'accepted')
       .onSnapshot(snap => {
         setPausedBookingIds(new Set(snap.docs.filter(d => !!(d.data() as any).schedulePausedAt).map(d => d.id)));
+        setBookingNotes(new Map(snap.docs.map(d => [d.id, ((d.data() as any).notes as string | undefined) || null])));
       }, () => {});
     return unsub;
   }, [user?.uid]);
@@ -1990,6 +2003,7 @@ export const ClientVisitsPage: React.FC = () => {
                 onFindReplacement={setReplacementShift}
                 onWithdrawReplacement={handleWithdrawReplacement}
                 schedulePaused={pausedBookingIds.has(String(groupShifts[0]?.bookingRequestId ?? ''))}
+                bookingNote={bookingNotes.get(String(groupShifts[0]?.bookingRequestId ?? ''))}
               />
             ))}
             {tab === 'past' && Array.from(pastGroups.entries()).map(([key, groupShifts]) => (

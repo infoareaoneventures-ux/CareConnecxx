@@ -296,15 +296,39 @@ describe("manage_booking — propose/accept/clear_reschedule", () => {
 describe("manage_shift_reschedule (caregiver side)", () => {
   beforeEach(() => hoisted.reset());
 
-  it("propose stores a pending proposal scoped to this caregiver's shift", async () => {
-    hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00" });
+  it("propose stores a pending proposal scoped to this caregiver's shift (the page's write, incl. updatedAt)", async () => {
+    hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00" });
     const r = await handleToolCall("manage_shift_reschedule", {
-      caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2026-09-08", startTime: "10:00", endTime: "13:00",
+      caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2099-09-08", startTime: "10:00", endTime: "13:00",
     }) as any;
     expect(r.success).toBe(true);
     expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({
-      reschedulePendingDate: "2026-09-08", rescheduledBy: "caregiver",
+      reschedulePendingDate: "2099-09-08", rescheduledBy: "caregiver", updatedAt: { __serverTimestamp: true },
     });
+  });
+
+  // 2026-09-28 parity: the page hides Reschedule inside 24h, while your own
+  // proposal is out, and refuses a time overlapping another visit of yours.
+  it("propose refuses a visit starting within 24 hours, a second proposal while yours is out, and an overlapping time", async () => {
+    const soon = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const p: Record<string, string> = {};
+    for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(soon)) p[x.type] = x.value;
+    hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER, status: "scheduled", date: `${p.year}-${p.month}-${p.day}`, startTime: `${p.hour === "24" ? "00" : p.hour}:${p.minute}`, endTime: "23:59" });
+    let r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2099-09-08", startTime: "10:00", endTime: "13:00" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.message).toMatch(/within 24 hours/);
+
+    hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00", reschedulePendingDate: "2099-09-03", rescheduledBy: "caregiver" });
+    r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2099-09-08", startTime: "10:00", endTime: "13:00" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.message).toMatch(/already out/);
+
+    hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00" });
+    hoisted.collState.set("shifts", [{ id: "s2", caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-08", startTime: "12:00", endTime: "14:00" }]);
+    r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2099-09-08", startTime: "10:00", endTime: "13:00" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.message).toMatch(/overlaps another shift you have at 12:00 PM–2:00 PM/);
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")).toBeUndefined();
   });
 
   it("rejects a shift belonging to a different caregiver", async () => {
@@ -316,15 +340,20 @@ describe("manage_shift_reschedule (caregiver side)", () => {
     expect(r.code).toBe("PERMISSION_DENIED");
   });
 
-  it("accept moves the real date/time when the FAMILY proposed it", async () => {
+  it("accept moves the real date/time when the FAMILY proposed it — after the page's own-visit overlap check", async () => {
     hoisted.docState.set("shifts/s1", {
-      caregiverId: CAREGIVER, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00",
-      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00",
+      reschedulePendingDate: "2099-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
       rescheduledBy: "client",
     });
-    const r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "accept" }) as any;
+    hoisted.collState.set("shifts", [{ id: "s2", caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-08", startTime: "12:30", endTime: "14:00" }]);
+    let r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "accept" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.message).toMatch(/already have another shift at 12:30 PM–2:00 PM/);
+    hoisted.collState.set("shifts", []);
+    r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "accept" }) as any;
     expect(r.success).toBe(true);
-    expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({ date: "2026-09-08", startTime: "10:00", endTime: "13:00" });
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({ date: "2099-09-08", startTime: "10:00", endTime: "13:00", updatedAt: { __serverTimestamp: true } });
   });
 
   it("refuses to accept your own proposal", async () => {
@@ -339,8 +368,8 @@ describe("manage_shift_reschedule (caregiver side)", () => {
 
   it("decline clears a pending proposal without moving the real date/time", async () => {
     hoisted.docState.set("shifts/s1", {
-      caregiverId: CAREGIVER, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00",
-      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00",
+      reschedulePendingDate: "2099-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
       rescheduledBy: "client",
     });
     const r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "decline" }) as any;

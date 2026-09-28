@@ -20,7 +20,7 @@ import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./too
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
 import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay, weekdayForDate } from "../utils/scheduledTime";
-import { loadReschedulableShift, proposeShiftReschedule, isShiftOverdue, shiftDisplayStatus, acceptRescheduleProposal, clearRescheduleProposal } from "../agents/shiftReschedule";
+import { loadReschedulableShift, proposeShiftReschedule, isShiftOverdue, shiftDisplayStatus, acceptRescheduleProposal, clearRescheduleProposal, findCaregiverOwnShiftConflict } from "../agents/shiftReschedule";
 import { listActiveBookings } from "../agents/activeBookings";
 import { listClientInterviews } from "../agents/interviewsTab";
 import { presentCaregiverSearch, searchCaregivers } from "../agents/caregiverSearch";
@@ -892,18 +892,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "get_caregiver_appointments",
-    description: "Get upcoming scheduled appointments for a caregiver — used when a caregiver asks about their schedule.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        daysAhead:   { type: "number", description: "How many days ahead to look (default 7, max 30)" },
-      },
-      required: ["caregiverId"],
-    },
-  },
-  {
     name: "get_pending_tasks",
     description:
       "Everything the website shows the family as pending, in one read — the exact items and conditions of its pages: " +
@@ -1018,34 +1006,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "accept_shift",
-    description:
-      "Accept the shift offer the family or system just sent you — confirms the visit. " +
-      "Use when you agree to take your current pending offer. There's nothing to pass; it resolves your active offer.",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone:  { type: "string", description: "The acting caregiver's phone — auto-injected" },
-        chatId: { type: "string", description: "The caregiver's chat id — auto-injected" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "decline_shift",
-    description:
-      "Decline the shift offer the family or system just sent you. " +
-      "Use when you can't take your current pending offer; the system will line up a replacement.",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone:  { type: "string", description: "The acting caregiver's phone — auto-injected" },
-        chatId: { type: "string", description: "The caregiver's chat id — auto-injected" },
-      },
-      required: [],
-    },
-  },
-  {
     name: "complete_task",
     description:
       "Signal that you've finished this turn — call this INSTEAD of a plain text reply when you've " +
@@ -1141,25 +1101,6 @@ export const MCP_TOOLS: McpTool[] = [
         userId: { type: "string", description: "The user's ID (client or caregiver)" },
       },
       required: ["userId"],
-    },
-  },
-  {
-    name: "create_care_journal_entry",
-    description:
-      "Create a care journal entry after a visit — notes, mood, whether medications were given, activities. " +
-      "Used by caregivers to log what happened during the shift.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:   { type: "string",  description: "Your caregiver document ID" },
-        appointmentId: { type: "string",  description: "The appointment document ID" },
-        notes:         { type: "string",  description: "Visit notes" },
-        mood:          { type: "string",  enum: ["good","fair","poor"], description: "Senior's mood during visit" },
-        medsGiven:     { type: "boolean", description: "Whether medications were administered" },
-        activities:    { type: "array",   items: { type: "string" }, description: "Activities done during the visit" },
-        recipientFirstName: { type: "string", description: "First name of the care recipient this entry is about — pass it when the household cares for more than one person; omit otherwise." },
-      },
-      required: ["caregiverId", "appointmentId", "notes"],
     },
   },
   {
@@ -1324,14 +1265,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_shift",
     description:
-      "Clock in / start a scheduled visit. Marks the visit in-progress and records the start time. " +
-      "Safe to call more than once — if the visit is already started it just confirms the existing start.",
+      "The Bookings page's Start Shift button — it TEXTS the confirmation and the visit's numbered task list itself. Only a SCHEDULED visit, " +
+      "not overdue, from 15 minutes before its start (otherwise the caregiver is told when it opens). With no shiftId it takes today's visit. " +
+      "Call it for 'I'm here', 'starting', 'arrived'. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "Your caregiver document ID" },
-        appointmentId: { type: "string", description: "The appointment document ID (provide this or shiftId)" },
-        shiftId:       { type: "string", description: "The shifts document ID (provide this or appointmentId)" },
+        caregiverId: { type: "string", description: "Your caregiver document ID" },
+        shiftId:     { type: "string", description: "The shifts document ID — optional; today's visit when omitted" },
       },
       required: ["caregiverId"],
     },
@@ -1339,15 +1280,15 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "complete_shift",
     description:
-      "Clock out / complete a visit. Marks the visit completed and records the end time. " +
-      "Idempotent — calling it again after the visit is already completed will NOT create a second billable record.",
+      "The Bookings page's End button — only on the visit IN PROGRESS; writes completed + the end time and the optional closing note for the family, " +
+      "then TEXTS the confirmation itself. With no shiftId it takes the visit in progress. If they say they're done but gave no closing note, " +
+      "ask once whether they want to add one, then call this with notes (or without). Send nothing else the turn you call it.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "Your caregiver document ID" },
-        appointmentId: { type: "string", description: "The appointment document ID (provide this or shiftId)" },
-        shiftId:       { type: "string", description: "The shifts document ID (provide this or appointmentId)" },
-        notes:         { type: "string", description: "Optional completion notes" },
+        caregiverId: { type: "string", description: "Your caregiver document ID" },
+        shiftId:     { type: "string", description: "The shifts document ID — optional; the visit in progress when omitted" },
+        notes:       { type: "string", description: "The closing note for the family, if they gave one" },
       },
       required: ["caregiverId"],
     },
@@ -1355,34 +1296,35 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_shift_task",
     description:
-      "Mark a visit care task / checklist item complete (or undo it). Reflects on the family and caregiver visit views. " +
-      "Task keys follow the recipient_careNeed[_subtask] format the dashboard uses (e.g. '0_Medication' or '0_Bathing_Shower').",
+      "The Bookings page's Tasks checklist — only while the visit is IN PROGRESS. Pass the task numbers from the list start_shift texted " +
+      "(numbers: [1, 3]) or task keys; completed omitted = the page's toggle. It TEXTS the result itself. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string",  description: "Your caregiver document ID" },
-        shiftId:     { type: "string",  description: "The shifts document ID for the visit" },
-        taskKey:     { type: "string",  description: "The task key to toggle (recipient_careNeed[_subtask])" },
-        completed:   { type: "boolean", description: "true to mark complete, false to undo (default true)" },
+        shiftId:     { type: "string",  description: "The shifts document ID — optional; the visit in progress when omitted" },
+        numbers:     { type: "array",   items: { type: "number" }, description: "Task numbers as texted by start_shift" },
+        taskKey:     { type: "string",  description: "A task key (recipient_careNeed[_subtask]) instead of a number" },
+        taskKeys:    { type: "array",   items: { type: "string" }, description: "Several task keys (a whole care-need row)" },
+        completed:   { type: "boolean", description: "true = check off, false = uncheck; omitted = toggle like the page" },
       },
-      required: ["caregiverId", "shiftId", "taskKey"],
+      required: ["caregiverId"],
     },
   },
   {
-    name: "submit_media_update",
+    name: "add_visit_note",
     description:
-      "Send a photo / media care update to the family for a visit. Appears in the care journal and live updates feed. " +
-      "Use this when the caregiver shares a picture or video link of the senior during a shift.",
+      "The Bookings page's visit-notes box — adds one line to the visit's notes log while it is IN PROGRESS; the family sees it right away. " +
+      "Call it when the caregiver tells you something about the visit for the family ('she ate well', 'we walked twice'). With no shiftId it takes " +
+      "the visit in progress. It TEXTS the confirmation itself. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "Your caregiver document ID" },
-        appointmentId: { type: "string", description: "The appointment document ID" },
-        mediaUrl:      { type: "string", description: "URL of the uploaded photo/video" },
-        caption:       { type: "string", description: "Optional caption / note for the family" },
-        mediaType:     { type: "string", enum: ["photo", "video"], description: "photo or video (default photo)" },
+        caregiverId: { type: "string", description: "Your caregiver document ID" },
+        shiftId:     { type: "string", description: "The shifts document ID — optional" },
+        text:        { type: "string", description: "The note, in the caregiver's words" },
       },
-      required: ["caregiverId", "appointmentId", "mediaUrl"],
+      required: ["caregiverId", "text"],
     },
   },
   {
@@ -2221,6 +2163,24 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "show_active_bookings",
+    description:
+      "The caregiver Bookings page's Active Bookings tab — this tool TEXTS the bookings itself, each card WHOLE (2 at a time, MORE for the rest): " +
+      "family · Ongoing (· Schedule paused), Starts, day-by-day shift times with hours, address + lifestyle chips, $rate/hr · Card, the booking note, " +
+      "the Care plan & preferences details (care recipients with relationship · age and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact), " +
+      "then UPCOMING SHIFTS — two per booking like the page, every one with allVisits:true (they text VISITS) — each visit: date, time, Scheduled / In Progress, tasks done, its own schedule-change note when it has one, a pending reschedule proposal. " +
+      "Call it for 'my schedule', 'my bookings', 'when am I with X', 'what's my next shift', 'any notes for my visit'; when they say MORE call it again with more:true. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        more:        { type: "boolean", description: "true when they ask for more — continues the last list" },
+        allVisits:   { type: "boolean", description: "true to list every upcoming visit of each booking (the page's Show more); default shows two per booking" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "show_booking_requests",
     description:
       "The caregiver Bookings page's Requests tab — this tool TEXTS the requests itself, each one WHOLE (2 at a time, MORE for the rest): the card (family, client rating, Pending, " +
@@ -2262,25 +2222,6 @@ export const MCP_TOOLS: McpTool[] = [
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
       },
       required: ["caregiverId"],
-    },
-  },
-  {
-    name: "update_care_journal_entry",
-    description:
-      "Correct an existing care journal entry the caregiver already logged — fix the notes, mood, meds given, or activities. " +
-      "Use when the caregiver says 'I made a mistake on that entry' or 'add that I also gave her the evening dose'. " +
-      "Only the caregiver who wrote the entry can edit it. Pass only the fields that change.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver who authored the entry (ownership check)" },
-        entryId:     { type: "string", description: "The care_journal document ID to update" },
-        notes:       { type: "string", description: "Corrected notes text (optional)" },
-        mood:        { type: "string", description: "Corrected mood (optional)" },
-        medsGiven:   { type: "boolean", description: "Whether medications were administered (optional)" },
-        activities:  { type: "array", items: { type: "string" }, description: "Corrected activities list (optional)" },
-      },
-      required: ["caregiverId", "entryId"],
     },
   },
   // ── CRUD/parity gap closures (agent-native audit 2026-07) ─────────────────
@@ -2411,7 +2352,8 @@ export const MCP_TOOLS: McpTool[] = [
 
 // Tools available to caregivers — scoped to what's relevant to their role
 const CAREGIVER_TOOL_NAMES = new Set([
-  "get_caregiver_appointments",
+  "show_active_bookings",
+  "add_visit_note",
   "get_caregiver_info",
   "get_upcoming_appointments",
   "get_senior_profile",
@@ -2426,10 +2368,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "update_caregiver_profile",
   "pause_account",
   "reactivate_account",
-  "accept_shift",
-  "decline_shift",
   "complete_task",
-  "create_care_journal_entry",
   "request_instant_payout",
   "submit_shift_hours",
   "get_caregiver_earnings",
@@ -2457,12 +2396,10 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "start_shift",
   "complete_shift",
   "update_shift_task",
-  "submit_media_update",
   "respond_to_shift_hour_correction",
   "create_caregiver_referral",
   "get_shifts",
   "get_caregiver_availability",
-  "update_care_journal_entry",
   // Requests-tab Q&A parity (2026-09-14) — matches CaregiverBookingsPage's
   // own Requests tab (booking_requests where caregiverId + status:'pending').
   "show_booking_requests",
@@ -2500,15 +2437,14 @@ export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_N
 // CRUD tools from clients). Shared tools (memory, web, reminders, messaging reads,
 // send_onboarding_link, get_caregiver_info/reviews) stay client-visible.
 const CAREGIVER_ONLY_TOOL_NAMES = new Set([
-  "get_caregiver_appointments",
+  "show_active_bookings",
+  "add_visit_note",
   "update_caregiver_profile",
   // Scoping fix 2026-09-05 (client-tool capability audit): both operate on
   // "your own caregiver account" per their own descriptions — were reachable
   // from a client conversation too since neither was ever added here.
   "pause_account",
   "reactivate_account",
-  "accept_shift",
-  "decline_shift",
   "start_apply_flow",
   "start_interview_reschedule_flow",
   "request_instant_payout",
@@ -2532,7 +2468,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "start_shift",
   "complete_shift",
   "update_shift_task",
-  "submit_media_update",
   "respond_to_shift_hour_correction",
   "create_caregiver_referral",
   "get_shifts",
@@ -2545,8 +2480,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   // Caregiver's own reschedule proposals / journal writes — were reachable from
   // a client conversation because the filter is subtractive (2026-09-23 sweep).
   "manage_shift_reschedule",
-  "create_care_journal_entry",
-  "update_care_journal_entry",
 ]);
 export const CLIENT_TOOLS: McpTool[] = MCP_TOOLS.filter(t => !CAREGIVER_ONLY_TOOL_NAMES.has(t.name));
 
@@ -2930,7 +2863,7 @@ async function recordMcpToolStatus(params: {
 const READ_ONLY_TOOLS = new Set<string>([
   "get_senior_profile", "list_household_seniors", "get_pending_tasks",
   "get_care_team", "cara_knows",
-  "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
+  "get_upcoming_appointments", "get_caregiver_info",
   "get_pending_booking_requests",
   "get_pending_schedule_amendments", "get_past_visits", "get_calendar", "get_resendable_booking_requests",
   // find_nearby_caregivers is NOT here (2026-09-14): it took over the removed
@@ -4167,12 +4100,29 @@ async function executeToolCall(
             return toolError("INVALID_INPUT", "startTime/endTime must be 'HH:MM' with end after start");
           }
           if (shift.status !== "scheduled") return toolError("INVALID_INPUT", `Only a scheduled visit can be rescheduled this way (status: ${shift.status})`);
+          // The page hides Reschedule while the caregiver's own proposal is out,
+          // once the visit is overdue, and inside 24h of the start (Cancel is the
+          // only option that close); it also refuses a time that overlaps another
+          // visit of theirs that day (2026-09-28 parity).
+          if (shift.reschedulePendingDate && shift.rescheduledBy === "caregiver") return toolError("INVALID_INPUT", "Your proposal for this visit is already out — withdraw it (action:'decline') before proposing another time.");
+          if (isShiftOverdue(shift)) return toolError("INVALID_INPUT", "This visit's time has already passed — it can't be moved.");
+          {
+            const startsMs = parseScheduledTimeMs(`${String(shift.date ?? "")}T${String(shift.startTime ?? "00:00").slice(0, 5)}:00`);
+            if (Number.isFinite(startsMs) && startsMs > 0 && (startsMs - Date.now()) / 3600000 <= 24) {
+              return toolError("INVALID_INPUT", "This visit starts within 24 hours, so it can't be moved — this close to the start the page only offers Cancel.");
+            }
+          }
+          {
+            const conflict = await findCaregiverOwnShiftConflict({ caregiverId: caregiverId as string, date: date as string, startTime: startTime as string, endTime: endTime as string, excludeShiftId: shiftId as string });
+            if (conflict) return toolError("INVALID_INPUT", `That overlaps another shift you have at ${formatHHMMForDisplay(conflict.startTime)}${conflict.endTime ? `–${formatHHMMForDisplay(conflict.endTime)}` : ""} that day.`);
+          }
           await shiftSnap.ref.update({
             reschedulePendingDate: date,
             reschedulePendingStartTime: startTime,
             reschedulePendingEndTime: endTime,
             reschedulePendingAt: nowIso,
             rescheduledBy: "caregiver",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
           logAudit({ eventType: "shift_reschedule_proposed", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
           return { success: true, action, shiftId, date, startTime, endTime };
@@ -4181,6 +4131,11 @@ async function executeToolCall(
         if (action === "accept") {
           if (!shift.reschedulePendingDate) return toolError("INVALID_INPUT", "There's no pending reschedule proposal on this visit");
           if (shift.rescheduledBy !== "client") return toolError("INVALID_INPUT", "This proposal is your own — nothing to accept (use action:'decline' to withdraw it)");
+          {
+            // The page's Accept new time checks the caregiver's other visits on the new day first.
+            const conflict = await findCaregiverOwnShiftConflict({ caregiverId: caregiverId as string, date: String(shift.reschedulePendingDate), startTime: String(shift.reschedulePendingStartTime ?? ""), endTime: String(shift.reschedulePendingEndTime ?? shift.reschedulePendingStartTime ?? ""), excludeShiftId: shiftId as string });
+            if (conflict) return toolError("INVALID_INPUT", `You already have another shift at ${formatHHMMForDisplay(conflict.startTime)}${conflict.endTime ? `–${formatHHMMForDisplay(conflict.endTime)}` : ""} that day — decline this proposal or move that visit first.`);
+          }
           await shiftSnap.ref.update({
             date: shift.reschedulePendingDate,
             startTime: shift.reschedulePendingStartTime,
@@ -4198,6 +4153,7 @@ async function executeToolCall(
               acceptedBy: "caregiver",
               acceptedAt: nowIso,
             }),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
           logAudit({ eventType: "shift_reschedule_accepted", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
           return { success: true, action, shiftId, date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime };
@@ -4211,6 +4167,7 @@ async function executeToolCall(
             reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
             reschedulePendingAt: admin.firestore.FieldValue.delete(),
             rescheduledBy: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
           logAudit({ eventType: "shift_reschedule_cleared", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
           return { success: true, action, shiftId };
@@ -4345,26 +4302,6 @@ async function executeToolCall(
           return { success: false, reason: "skipped_calibration_period" };
         }
         return { success: true, triggerId, scheduledAt };
-      }
-
-      case "get_caregiver_appointments": {
-        if (!input.caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-        const daysAhead   = Math.min((input.daysAhead as number) ?? 7, 30);
-        // Business-timezone window — UTC "today" dropped tonight's shift in PT evenings
-        const today       = businessTodayStr();
-        const futureLimitD = new Date(`${today}T12:00:00Z`);
-        futureLimitD.setUTCDate(futureLimitD.getUTCDate() + daysAhead);
-        const futureLimit = futureLimitD.toISOString().slice(0, 10);
-        const snap = await db.collection("appointments")
-          .where("caregiverId", "==", input.caregiverId)
-          .where("date",        ">=", today)
-          .where("date",        "<=", futureLimit)
-          .where("status",      "in", ["confirmed", "pending_caregiver_confirmation"])
-          .orderBy("date", "asc")
-          .limit(11)
-          .get();
-        const docs = snap.docs.slice(0, 10).map(d => d.data());
-        return { success: true, results: docs, hasMore: snap.docs.length > 10 };
       }
 
       case "get_pending_tasks": {
@@ -4677,24 +4614,6 @@ async function executeToolCall(
       return { success: true, reactivated: true };
     }
 
-    if (name === "accept_shift" || name === "decline_shift") {
-      return runActionNativeMcpWrite(name, input, async () => {
-      const { phone: actingPhone, chatId } = input as Record<string, unknown>;
-      if (!actingPhone || !chatId) return toolError("INVALID_INPUT", "phone and chatId are required (auto-injected)");
-      const { acceptCaregiverShiftOffer, declineCaregiverShiftOffer } = await import("../agents/shiftOffer");
-      const res = name === "accept_shift"
-        ? await acceptCaregiverShiftOffer(actingPhone as string, chatId as string)
-        : await declineCaregiverShiftOffer(actingPhone as string, chatId as string);
-      // _toolError so the loop's high-stakes is_error guard fires (these are
-      // HIGH_STAKES_MUTATIONS — a plain success:false skips that hardening).
-      if (res.status === "no_pending_offer") return { _toolError: true, success: false, reason: "no_pending_offer", message: "There's no pending shift offer to act on right now." };
-      if (res.status === "not_pending" || res.status === "already_closed") return { _toolError: true, success: false, reason: res.status, message: "That offer is no longer open." };
-      return { success: true, resolution: res.status };
-      });
-    }
-
-
-
     if (name === "start_review_flow") {
       // The site's Leave a Review modal in text (agents/reviewFlow.ts). Replaced
       // submit_review (2026-09-19), which looked visits up in the legacy
@@ -4760,57 +4679,6 @@ async function executeToolCall(
       }
       logAudit({ eventType: "subscription_reactivated", userId: clientId as string, data: { source: "mcp:set_subscription_status" } }).catch(() => {});
       return { success: true, ...result };
-    }
-
-    if (name === "create_care_journal_entry") {
-      const { caregiverId, appointmentId, notes, mood, medsGiven, activities, recipientFirstName } = input as Record<string, unknown>;
-      if (!caregiverId || !appointmentId || !notes) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and notes are required");
-      const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
-      if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const appt = apptSnap.data()!;
-      if (appt.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
-      // Recipient attribution: an explicit name from the caregiver wins, else
-      // the appointment's own attribution rides along. Fail-soft: absent = the
-      // household's sole recipient. Kill-switch aware for the explicit path.
-      let recipientName: string | null = null;
-      let recipientKey:  string | null = (appt.recipientKey as string | undefined) ?? null;
-      try {
-        const { multiRecipientScopingEnabled } = await import("../config/featureFlags");
-        if (recipientFirstName && multiRecipientScopingEnabled()) {
-          const { resolveRecipientKey } = await import("../agents/careRecipients");
-          const webPlanSnap = await db.collection("carePlans").doc(appt.clientId as string).get();
-          const res = resolveRecipientKey(
-            Object.keys((webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, unknown>),
-            String(recipientFirstName));
-          if (res.ok) { recipientKey = res.key; recipientName = String(recipientFirstName).trim().split(" ")[0]; }
-        } else if (appt.seniorName) {
-          recipientName = String(appt.seniorName);
-        }
-      } catch (e) { console.warn("[create_care_journal_entry] recipient attribution failed:", e); }
-      const entryRef = await db.collection("care_journal").add({
-        seniorId: appt.seniorId ?? appt.clientId, caregiverId, appointmentId,
-        clientId: appt.clientId, notes, mood: mood ?? null,
-        medsGiven: medsGiven ?? null, activities: activities ?? [],
-        ...(recipientName ? { recipientName } : {}),
-        ...(recipientKey  ? { recipientKey }  : {}),
-        source: "cara_sms", timestamp: nowIso,
-      });
-      await apptSnap.ref.update({ journalEntryLogged: true }).catch(() => {});
-      // U3: guarantee the family summary fires on this path too (previously only
-      // the SMS care-notes path notified the family). Reuses the shared,
-      // PHI-minimized sender so both write paths behave identically.
-      try {
-        const { sendFamilyShiftEndUpdate } = await import("../linq/routeCaregiver");
-        await sendFamilyShiftEndUpdate({
-          caregiverName: (appt.caregiverName as string) ?? "",
-          clientId: appt.clientId,
-          seniorId: (appt.seniorId ?? appt.clientId) as string,
-          apptData: { ...appt, id: appointmentId },
-          entry: { mood: mood ?? "", activities: activities ?? [], observations: notes, notes },
-        });
-      } catch (e) { console.error("[create_care_journal_entry] family summary failed", e); }
-      logAudit({ eventType: "care_journal_created", userId: caregiverId as string, data: { source: "mcp:create_care_journal_entry", appointmentId, entryId: entryRef.id } }).catch(() => {});
-      return { success: true, entryId: entryRef.id };
     }
 
     if (name === "create_senior_profile") {
@@ -5331,6 +5199,18 @@ async function executeToolCall(
     }
 
     // ── show_booking_requests (the Requests tab, texted whole — founder: no details step) ──
+    // ── show_active_bookings (the Active Bookings tab, texted whole — 2026-09-28) ──
+    if (name === "show_active_bookings") {
+      const { caregiverId, more, allVisits, phone: sabPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, sabPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const { sendCaregiverActiveBookings } = await import("../agents/caregiverActiveBookings");
+      const r = await sendCaregiverActiveBookings(sess.phone, sess.chatId, caregiverId as string, { more: more === true, allVisits: allVisits === true });
+      return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, bookings: r.items, note: "The bookings were texted in full — send nothing else this turn. They can reply MORE for the rest." };
+    }
+
     if (name === "show_booking_requests") {
       const { caregiverId, more, phone: sbPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
@@ -5345,7 +5225,7 @@ async function executeToolCall(
       return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, requests: r.items, note: "The requests were texted in full — send nothing else this turn. They answer \"accept N\" / \"decline N\", or MORE." };
     }
 
-    // ── start_shift (U2) ────────────────────────────────────────────────────────
+    // ── start_shift — the page's Start Shift button (agents/inShift.ts, 2026-09-28) ──
     if (name === "start_shift") {
       // Calendar / Bookings "Start Shift" is replaced by the gate button while blocked.
       {
@@ -5356,137 +5236,79 @@ async function executeToolCall(
         }
       }
       return runActionNativeMcpWrite(name, input, async () => {
-      const { caregiverId, appointmentId, shiftId } = input as Record<string, unknown>;
-      if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
-      const coll = appointmentId ? "appointments" : "shifts";
-      const docId = (appointmentId ?? shiftId) as string;
-      const snap = await db.collection(coll).doc(docId).get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Visit not found");
-      const visit = snap.data()!;
-      if (visit.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "This visit does not belong to this caregiver");
-      const inProgress = ["in_progress", "in-progress"];
-      // Idempotent: already started → confirm the existing start rather than re-stamping.
-      if (inProgress.includes(visit.status as string)) {
-        return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: visit.status, startedAt: visit.startedAt ?? null, alreadyStarted: true };
-      }
-      if (["completed", "cancelled", "cancelled_by_client"].includes(visit.status as string)) {
-        return toolError("INVALID_INPUT", `Cannot start a visit that is already ${visit.status}`);
-      }
-      // A visit must be confirmed before it can be started — never let an
-      // unconfirmed (pending/requested/offered) visit be marked as worked.
-      if (["pending", "requested", "offered", "pending_caregiver_confirmation"].includes(visit.status as string)) {
-        return toolError("INVALID_INPUT", `Cannot start a visit that hasn't been confirmed yet (status: ${visit.status})`);
-      }
-      // "in-progress" (hyphen) is the canonical started status for BOTH
-      // collections. The old underscore write to appointments was invisible to
-      // every hyphen reader — handleArrived's twin path, the in-shift-update +
-      // task-nudge crons, the arrival trigger (appointmentUpdated.ts:95), the
-      // family notification, and care-notes validStatuses — so an agent-tool
-      // start silently disabled the whole in-shift experience.
-      const startedStatus = "in-progress";
-      await snap.ref.update({ status: startedStatus, startedAt: nowIso });
-      logAudit({ eventType: "shift_started", userId: caregiverId as string, data: { source: "mcp:start_shift", collection: coll, docId } }).catch(() => {});
-      return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: startedStatus, startedAt: nowIso };
+      const { caregiverId, shiftId, phone: isPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { startVisit } = await import("../agents/inShift");
+      const r = await startVisit(caregiverId as string, shiftId);
+      if (!r.ok && r.reason === "not_yours") return toolError("PERMISSION_DENIED", r.message);
+      if (!r.ok && r.reason === "not_found") return toolError("NOT_FOUND", r.message);
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, isPhone);
+      const text = r.ok ? r.text : r.message;
+      if (sess) await (await import("../linq/client")).sendMessage(sess.chatId, text);
+      if (!r.ok) return { success: false, reason: r.reason, message: r.message, note: sess ? "They were told — send nothing else this turn." : undefined };
+      logAudit({ eventType: "shift_started", userId: caregiverId as string, data: { source: "mcp:start_shift", shiftId: r.shiftId } }).catch(() => {});
+      return { success: true, shiftId: r.shiftId, status: "in-progress", startedAt: r.startedAt, alreadyStarted: r.alreadyStarted, tasks: r.tasks, note: sess ? "The start confirmation and task list were texted — send nothing else this turn." : text };
       });
     }
 
-    // ── complete_shift (U2 — AE7, idempotent) ───────────────────────────────────
+    // ── complete_shift — the page's End button (agents/inShift.ts, 2026-09-28) ──
     if (name === "complete_shift") {
-      // Deliberately NOT gated: the website shows End Shift on any in-progress
-      // shift with no membership/background check (Calendar, Dashboard,
-      // Bookings) — a shift started while active can always be ended, even if
-      // the membership lapsed or the yearly check is re-running mid-visit.
+      // Deliberately NOT gated: the website shows End on any in-progress visit
+      // with no membership/background check.
       return runActionNativeMcpWrite(name, input, async () => {
-      const { caregiverId, appointmentId, shiftId, notes: completeNotes } = input as Record<string, unknown>;
-      if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
-      const coll = appointmentId ? "appointments" : "shifts";
-      const docId = (appointmentId ?? shiftId) as string;
-      const snap = await db.collection(coll).doc(docId).get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Visit not found");
-      const visit = snap.data()!;
-      if (visit.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "This visit does not belong to this caregiver");
-      // AE7 idempotency: a billable shiftHours record keyed by the appointment is
-      // the source of truth. If the visit is already completed OR shift hours
-      // already exist, return a success-shaped no-op — never double-write/double-bill.
-      const billingKey = (appointmentId as string | undefined) ?? (visit.appointmentId as string | undefined);
-      if (billingKey) {
-        const existingShift = await db.collection("shiftHours").doc(billingKey).get();
-        if (existingShift.exists) {
-          return { success: true, appointmentId: billingKey, shiftId: shiftId ?? null, status: "completed", alreadyCompleted: true, billableRecordExists: true };
-        }
-      }
-      if (visit.status === "completed") {
-        return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: "completed", alreadyCompleted: true };
-      }
-      if (["cancelled", "cancelled_by_client"].includes(visit.status as string)) {
-        return toolError("INVALID_INPUT", `Cannot complete a visit that is ${visit.status}`);
-      }
-      // Never bill for an unconfirmed visit: a pending/requested/offered visit
-      // can't be completed (it was never confirmed, let alone worked).
-      if (["pending", "requested", "offered", "pending_caregiver_confirmation"].includes(visit.status as string)) {
-        return toolError("INVALID_INPUT", `Cannot complete a visit that hasn't been confirmed or started (status: ${visit.status})`);
-      }
-      await snap.ref.update({ status: "completed", completedAt: nowIso, ...(completeNotes ? { completionNotes: completeNotes } : {}) });
-      logAudit({ eventType: "shift_completed", userId: caregiverId as string, data: { source: "mcp:complete_shift", collection: coll, docId } }).catch(() => {});
-      return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: "completed", completedAt: nowIso };
+      const { caregiverId, shiftId, notes: closingNote, phone: cPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { endVisit } = await import("../agents/inShift");
+      const r = await endVisit(caregiverId as string, shiftId, closingNote);
+      if (!r.ok && r.reason === "not_yours") return toolError("PERMISSION_DENIED", r.message);
+      if (!r.ok && r.reason === "not_found") return toolError("NOT_FOUND", r.message);
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, cPhone);
+      const text = r.ok ? r.text : r.message;
+      if (sess) await (await import("../linq/client")).sendMessage(sess.chatId, text);
+      if (!r.ok) return { success: false, reason: r.reason, message: r.message, note: sess ? "They were told — send nothing else this turn." : undefined };
+      logAudit({ eventType: "shift_completed", userId: caregiverId as string, data: { source: "mcp:complete_shift", shiftId: r.shiftId } }).catch(() => {});
+      return { success: true, shiftId: r.shiftId, status: "completed", completedAt: r.completedAt, alreadyCompleted: r.alreadyCompleted, note: sess ? "The end confirmation was texted — send nothing else this turn." : text };
       });
     }
 
-    // ── update_shift_task (U2) ──────────────────────────────────────────────────
+    // ── update_shift_task — the page's Tasks checklist (agents/inShift.ts, 2026-09-28) ──
     if (name === "update_shift_task") {
       return runActionNativeMcpWrite(name, input, async () => {
-      const { caregiverId, shiftId, taskKey } = input as Record<string, unknown>;
-      const completed = input.completed == null ? true : Boolean(input.completed);
-      if (!caregiverId || !shiftId || !taskKey) return toolError("INVALID_INPUT", "caregiverId, shiftId, and taskKey are required");
-      const snap = await db.collection("shifts").doc(shiftId as string).get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Shift not found");
-      const shift = snap.data()!;
-      if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "This shift does not belong to this caregiver");
-      const current: string[] = Array.isArray(shift.tasksCompleted) ? shift.tasksCompleted as string[] : [];
-      const already = current.includes(taskKey as string);
-      // Idempotent: the doc already reflects the desired state → no-op success.
-      if (completed && already) return { success: true, shiftId, taskKey, completed: true, alreadyInState: true };
-      if (!completed && !already) return { success: true, shiftId, taskKey, completed: false, alreadyInState: true };
-      await snap.ref.update({
-        tasksCompleted: completed
-          ? admin.firestore.FieldValue.arrayUnion(taskKey)
-          : admin.firestore.FieldValue.arrayRemove(taskKey),
-      });
-      logAudit({ eventType: "shift_task_updated", userId: caregiverId as string, data: { source: "mcp:update_shift_task", shiftId, taskKey, completed } }).catch(() => {});
-      return { success: true, shiftId, taskKey, completed };
+      const { caregiverId, shiftId, taskKey, taskKeys, numbers, completed, phone: tPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { checkTasks } = await import("../agents/inShift");
+      const keys = [...(Array.isArray(taskKeys) ? taskKeys.map(String) : []), ...(typeof taskKey === "string" && taskKey ? [taskKey] : [])];
+      const nums = Array.isArray(numbers) ? numbers.map(Number).filter((n) => Number.isFinite(n)) : [];
+      const r = await checkTasks(caregiverId as string, shiftId, { numbers: nums, keys, ...(typeof completed === "boolean" ? { completed } : {}) });
+      if (!r.ok && r.reason === "not_yours") return toolError("PERMISSION_DENIED", r.message);
+      if (!r.ok && r.reason === "not_found") return toolError("NOT_FOUND", r.message);
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, tPhone);
+      const text = r.ok ? r.text : r.message;
+      if (sess) await (await import("../linq/client")).sendMessage(sess.chatId, text);
+      if (!r.ok) return { success: false, reason: r.reason, message: r.message, note: sess ? "They were told — send nothing else this turn." : undefined };
+      logAudit({ eventType: "shift_task_updated", userId: caregiverId as string, data: { source: "mcp:update_shift_task", shiftId: r.shiftId, keys, numbers: nums } }).catch(() => {});
+      return { success: true, shiftId: r.shiftId, tasksCompleted: r.tasksCompleted, tasks: r.tasks, note: sess ? "The result was texted — send nothing else this turn." : text };
       });
     }
 
-    // ── submit_media_update (U2) ────────────────────────────────────────────────
-    if (name === "submit_media_update") {
-      const { caregiverId, appointmentId, mediaUrl, caption, mediaType } = input as Record<string, unknown>;
-      if (!caregiverId || !appointmentId || !mediaUrl) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and mediaUrl are required");
-      const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
-      if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const appt = apptSnap.data()!;
-      if (appt.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
-      const type = mediaType === "video" ? "video" : "photo";
-      const entryRef = await db.collection("care_journal").add({
-        seniorId: appt.seniorId ?? appt.clientId, caregiverId, appointmentId,
-        clientId: appt.clientId,
-        notes: (caption as string) ?? "",
-        entryType: "media", mediaUrl, mediaType: type,
-        media: [{ url: mediaUrl, type, caption: (caption as string) ?? "" }],
-        mood: null, medsGiven: null, activities: [],
-        source: "cara_sms", timestamp: nowIso,
-      });
-      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_client_session" };
-      if (appt.clientId) {
-        const clientSessSnap = await db.collection("agent_sessions").where("userId", "==", appt.clientId).limit(1).get();
-        if (!clientSessSnap.empty) {
-          const { trySend } = await import("../utils/toolNotify");
-          const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
-          const cgName = cgData?.name ?? cgData?.firstName ?? "Your caregiver";
-          notification = await trySend(clientSessSnap.docs[0].id, `${cgName} shared a new ${type} update: ${(caption as string) || "tap to view in the care journal."}`, "mcp:submit_media_update");
-        }
-      }
-      logAudit({ eventType: "media_update_submitted", userId: caregiverId as string, data: { source: "mcp:submit_media_update", appointmentId, entryId: entryRef.id, mediaType: type } }).catch(() => {});
-      return { success: true, entryId: entryRef.id, mediaType: type, notification };
+    // ── add_visit_note — the page's visit-notes box (agents/inShift.ts, 2026-09-28) ──
+    if (name === "add_visit_note") {
+      const { caregiverId, shiftId, text: noteText, phone: nPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { addVisitNote } = await import("../agents/inShift");
+      const r = await addVisitNote(caregiverId as string, shiftId, noteText);
+      if (!r.ok && r.reason === "not_yours") return toolError("PERMISSION_DENIED", r.message);
+      if (!r.ok && r.reason === "not_found") return toolError("NOT_FOUND", r.message);
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, nPhone);
+      const text = r.ok ? r.text : r.message;
+      if (sess) await (await import("../linq/client")).sendMessage(sess.chatId, text);
+      if (!r.ok) return { success: false, reason: r.reason, message: r.message, note: sess ? "They were told — send nothing else this turn." : undefined };
+      logAudit({ eventType: "visit_note_added", userId: caregiverId as string, data: { source: "mcp:add_visit_note", shiftId: r.shiftId } }).catch(() => {});
+      return { success: true, shiftId: r.shiftId, note: r.note, instruction: sess ? "The confirmation was texted — send nothing else this turn." : text };
     }
 
     // ── respond_to_shift_hour_correction (U2) ───────────────────────────────────
@@ -5815,41 +5637,26 @@ async function executeToolCall(
       }
       let resolvedClientId = clientIdInput as string | undefined;
 
-      // If clientId is omitted we MUST verify the caregiver has an active or
-      // recent engagement with that client. Previously this auto-resolved from
-      // the most-recent appointment regardless of age or status, which let a
-      // dismissed caregiver message any past client (IDOR).
+      // The Message button lives on an active booking card, and the Inbox
+      // also lists families from recent visits: a caregiver may message a
+      // family they have a scheduled / in-progress visit with, or one completed
+      // in the last 30 days — read from `shifts` with the Bookings page's own
+      // queries (2026-09-28: this used to read the retired `appointments`
+      // collection, so it refused every caregiver on the new pipeline).
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const [activeSnap, pastSnap] = await Promise.all([
+        db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "in", ["scheduled", "in-progress"]).orderBy("date", "asc").get(),
+        db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "in", ["completed", "cancelled"]).orderBy("date", "desc").limit(50).get(),
+      ]);
+      const related = [
+        ...activeSnap.docs.map((d) => d.data()).filter((s) => s.status === "scheduled" || s.status === "in-progress"),
+        ...pastSnap.docs.map((d) => d.data()).filter((s) => s.status === "completed" && String(s.date ?? "") >= thirtyDaysAgo),
+      ].filter((s) => s.caregiverId === caregiverId);
       if (!resolvedClientId) {
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-        const activeOrRecent = await db.collection("appointments")
-          .where("caregiverId", "==", caregiverId)
-          .where("status",      "in", ["confirmed", "in-progress", "in_progress", "completed"])
-          .orderBy("date", "desc")
-          .limit(5)
-          .get();
-        const eligible = activeOrRecent.docs.find((d) => {
-          const data = d.data();
-          const date = data.date as string | undefined;
-          const status = data.status as string | undefined;
-          // Confirmed/in-progress regardless of date; completed only if within 30 days.
-          // (both spellings: hyphen is canonical, underscore = legacy MCP starts)
-          if (status === "confirmed" || status === "in-progress" || status === "in_progress") return true;
-          if (status === "completed" && date && date >= thirtyDaysAgo) return true;
-          return false;
-        });
-        if (eligible) resolvedClientId = eligible.data().clientId as string;
-      } else {
-        // Explicit clientId still requires verifying the relationship exists —
-        // anyone could otherwise pass an arbitrary clientId to address.
-        const relationship = await db.collection("appointments")
-          .where("caregiverId", "==", caregiverId)
-          .where("clientId",    "==", resolvedClientId)
-          .where("status",      "in", ["confirmed", "in-progress", "in_progress", "completed"])
-          .limit(1)
-          .get();
-        if (relationship.empty) {
-          return toolError("FORBIDDEN", "No active or recent engagement with that client — cannot send message.");
-        }
+        const first = related.find((s) => s.clientId);
+        if (first) resolvedClientId = String(first.clientId);
+      } else if (!related.some((s) => s.clientId === resolvedClientId)) {
+        return toolError("FORBIDDEN", "No active or recent engagement with that client — cannot send message.");
       }
 
       if (!resolvedClientId) {
@@ -7805,26 +7612,6 @@ async function executeToolCall(
     }
 
     // ── update_care_journal_entry ───────────────────────────────────────────
-    if (name === "update_care_journal_entry") {
-      const { caregiverId: ujCgId, entryId: ujEntryId, notes, mood, medsGiven, activities } =
-        input as Record<string, unknown>;
-      if (!ujCgId || !ujEntryId) return toolError("INVALID_INPUT", "caregiverId and entryId are required");
-      const ujRef  = db.collection("care_journal").doc(ujEntryId as string);
-      const ujSnap = await ujRef.get();
-      if (!ujSnap.exists) return toolError("NOT_FOUND", "Care journal entry not found");
-      if (ujSnap.data()?.caregiverId !== ujCgId) return toolError("PERMISSION_DENIED", "You can only edit entries you wrote");
-      const ujUpdate: Record<string, unknown> = { updatedAt: nowIso };
-      if (notes      !== undefined) ujUpdate.notes = notes;
-      if (mood       !== undefined) ujUpdate.mood = mood;
-      if (medsGiven  !== undefined) ujUpdate.medsGiven = medsGiven;
-      if (activities !== undefined) ujUpdate.activities = activities;
-      if (Object.keys(ujUpdate).length === 1) {
-        return toolError("INVALID_INPUT", "Provide at least one field to update (notes, mood, medsGiven, or activities).");
-      }
-      await ujRef.update(ujUpdate);
-      logAudit({ eventType: "care_journal_updated", userId: ujCgId as string, data: { source: "mcp:update_care_journal_entry", entryId: ujEntryId, fields: Object.keys(ujUpdate).filter(k => k !== "updatedAt") } }).catch(() => {});
-      return { success: true, updated: true, entryId: ujEntryId };
-    }
 
     // ── CRUD/parity gap closures (agent-native audit 2026-07) ───────────────
 

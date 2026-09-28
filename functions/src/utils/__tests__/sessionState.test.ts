@@ -9,27 +9,27 @@ import {
 
 describe("readFlag (validated session access)", () => {
   it("returns the value when present and no validator is given", () => {
-    expect(readFlag({ awaitingLateMinutes: true }, "awaitingLateMinutes")).toBe(true);
+    expect(readFlag({ pendingFamilyMessage: true }, "pendingFamilyMessage")).toBe(true);
   });
 
   it("returns null for an absent flag (instead of undefined to destructure)", () => {
-    expect(readFlag({}, "awaitingCareNotes")).toBeNull();
-    expect(readFlag(undefined, "awaitingCareNotes")).toBeNull();
-    expect(readFlag(null, "awaitingCareNotes")).toBeNull();
+    expect(readFlag({}, "pendingFamilyMessage")).toBeNull();
+    expect(readFlag(undefined, "pendingFamilyMessage")).toBeNull();
+    expect(readFlag(null, "pendingFamilyMessage")).toBeNull();
   });
 
   it("returns null when the value fails the shape guard (the crash this prevents)", () => {
     const hasApptId = (v: unknown) => !!v && typeof v === "object" && typeof (v as any).appointmentId === "string";
     // Malformed flag — present but missing appointmentId. The router used to
     // destructure this into undefined and call db.doc(undefined).
-    expect(readFlag({ awaitingCareNotes: {} }, "awaitingCareNotes", hasApptId)).toBeNull();
-    expect(readFlag({ awaitingCareNotes: { foo: 1 } }, "awaitingCareNotes", hasApptId)).toBeNull();
+    expect(readFlag({ pendingFamilyMessage: {} }, "pendingFamilyMessage", hasApptId)).toBeNull();
+    expect(readFlag({ pendingFamilyMessage: { foo: 1 } }, "pendingFamilyMessage", hasApptId)).toBeNull();
   });
 
   it("returns the typed value when it passes the shape guard", () => {
     const hasApptId = (v: unknown) => !!v && typeof v === "object" && typeof (v as any).appointmentId === "string";
     const ok = { appointmentId: "a1" };
-    expect(readFlag({ awaitingCareNotes: ok }, "awaitingCareNotes", hasApptId)).toEqual(ok);
+    expect(readFlag({ pendingFamilyMessage: ok }, "pendingFamilyMessage", hasApptId)).toEqual(ok);
   });
 });
 
@@ -62,9 +62,9 @@ describe("setFlags / clearFlags (batched writes)", () => {
 
   it("setFlags writes all given flags in one update", async () => {
     const { update, db } = mockDb();
-    await setFlags("+1", db, { awaitingCareNotes: true, stateExpiresAt: "2026-06-21T13:00:00Z" });
+    await setFlags("+1", db, { pendingFamilyMessage: true, stateExpiresAt: "2026-06-21T13:00:00Z" });
     expect(update).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledWith({ awaitingCareNotes: true, stateExpiresAt: "2026-06-21T13:00:00Z" });
+    expect(update).toHaveBeenCalledWith({ pendingFamilyMessage: true, stateExpiresAt: "2026-06-21T13:00:00Z" });
   });
 
   it("clearFlags deletes only the named subset in one update", async () => {
@@ -158,16 +158,14 @@ describe("hasActiveSmsFlow (U2 web guard)", () => {
   });
 
   it("generic stamp-less flow: future stateExpiresAt defers, past does not, absent defers (deny-by-default)", () => {
-    expect(hasActiveSmsFlow({ awaitingCareNotes: true, stateExpiresAt: iso(NOW + 60 * 1000) }, NOW)).toBe(true);
-    expect(hasActiveSmsFlow({ awaitingCareNotes: true, stateExpiresAt: iso(NOW - 60 * 1000) }, NOW)).toBe(false);
-    expect(hasActiveSmsFlow({ awaitingCareNotes: true }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ pendingFamilyMessage: true, stateExpiresAt: iso(NOW + 60 * 1000) }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ pendingFamilyMessage: true, stateExpiresAt: iso(NOW - 60 * 1000) }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow({ pendingFamilyMessage: true }, NOW)).toBe(true);
   });
 
   it("passive ack flags never defer a web turn", () => {
     expect(hasActiveSmsFlow({ pendingBgCheckAck: true }, NOW)).toBe(false);
     expect(hasActiveSmsFlow({ pendingPayoutNotificationAck: true }, NOW)).toBe(false);
-    expect(hasActiveSmsFlow({ awaitingTaskAck: true }, NOW)).toBe(false);
-    expect(hasActiveSmsFlow({ pendingShiftConfirmation: true }, NOW)).toBe(false);
   });
 });
 

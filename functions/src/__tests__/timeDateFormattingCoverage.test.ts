@@ -45,13 +45,13 @@ const MIN_FORMATTER_CALLS: Array<[string, number]> = [
   // needs_replacement flow (onShiftStatusChanged, mcp/server.ts's
   // get_callout_backups/select_callout_backup) and had a dead-end REPLACE/SKIP
   // reply path. Remaining calls are the booking-confirmed/arrival/reminder paths.
-  ["../scheduled/shiftTaskNudges.ts",           4],
   ["../scheduled/dayBeforeShiftReminder.ts",    2],
   // 2 (2026-09-17): the reminder is now one deterministic sentence per language,
   // each formatting the start time once — no model rewrite of the time anymore.
   ["../scheduled/clientDayBeforeReminder.ts",   1],
-  ["../agents/caregiverCancelShiftHandler.ts",  6],
-  ["../agents/shiftOffer.ts",                  11],
+  // 0 (2026-09-28): rewritten as the Bookings page's ✕ — every date/time goes through
+  // fmtDate / fmtTime from agents/caregiverBookingRequests.ts (the page's own format), never raw.
+  ["../agents/caregiverCancelShiftHandler.ts",  0],
   ["../agents/qaAgent.ts",                      4],
   ["../agents/situationSnapshot.ts",            2],
   // Dropped from 18 (2026-09-17): the legacy appointments-based REBOOK_REQUEST /
@@ -66,7 +66,9 @@ const MIN_FORMATTER_CALLS: Array<[string, number]> = [
   // agent-task booking approval texts, hireMode summary, and the legacy
   // recurring-schedule handlers) all went with the retired Evia-only paths —
   // every date/time the router still sends is rendered by a scripted flow.
-  ["../linq/routeCaregiver.ts",                 4],
+  // 0 (2026-09-28): every dated text left routeCaregiver with the retired paths (ARRIVED / DONE, the day-before
+  // YES/NO, LATE / ISSUE, care notes) — the page twins in agents/ format their own dates.
+  ["../linq/routeCaregiver.ts",                 0],
   ["../mcp/server.ts",                          1],
 ];
 

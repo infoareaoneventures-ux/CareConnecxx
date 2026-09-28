@@ -1,385 +1,152 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const hoisted = vi.hoisted(() => {
-  const updateMock = vi.fn().mockResolvedValue(undefined);
-  const addMock    = vi.fn().mockResolvedValue({ id: "doc-1" });
-  const docGetMock = vi.fn().mockResolvedValue({ exists: false, data: () => null });
+// The caregiver Bookings page's two cancel buttons, over text
+// (caregiverCancelShiftHandler.ts): the ✕ on a visit and Cancel Booking —
+// the page's options, its two dialogs, its two writes.
 
-  // Stub appointment query results (where().where().where().orderBy().limit().get())
-  const appointmentsQueryGetMock = vi.fn().mockResolvedValue({
-    empty: false,
-    docs: [
-      {
-        id:   "shift-1",
-        data: () => ({
-          date:       "2026-06-10",
-          time:       "09:00",
-          startTime:  "09:00",
-          clientName: "Doe",
-          clientId:   "client-1",
-          seniorName: "Linda Doe",
-        }),
-      },
-      {
-        id:   "shift-2",
-        data: () => ({
-          date:       "2026-06-12",
-          time:       "13:00",
-          startTime:  "13:00",
-          clientName: "Smith",
-          clientId:   "client-2",
-          seniorName: "John Smith",
-        }),
-      },
-    ],
+const hoisted = vi.hoisted(() => ({
+  docs: new Map<string, any>(),
+  updates: [] as Array<{ path: string; data: any }>,
+  sent: [] as string[],
+  parse: vi.fn(async () => "NO"),
+}));
+vi.mock("firebase-admin", () => {
+  const ref = (name: string, id: string) => ({
+    path: `${name}/${id}`,
+    get: vi.fn(async () => ({ exists: hoisted.docs.has(`${name}/${id}`), id, data: () => hoisted.docs.get(`${name}/${id}`) })),
+    update: vi.fn(async (d: any) => { hoisted.updates.push({ path: `${name}/${id}`, data: d }); if (hoisted.docs.has(`${name}/${id}`)) hoisted.docs.set(`${name}/${id}`, { ...hoisted.docs.get(`${name}/${id}`), ...d }); }),
   });
+  const firestore = Object.assign(() => ({
+    collection: (name: string) => {
+      const q = (filters: Array<[string, any]>): any => ({
+        where: (f: string, _o: string, v: any) => q([...filters, [f, v]]),
+        orderBy: () => q(filters), limit: () => q(filters),
+        get: vi.fn(async () => {
+          const docs = [...hoisted.docs.entries()]
+            .filter(([p, d]) => p.startsWith(`${name}/`) && filters.every(([f, v]) => f === "date" ? true : Array.isArray(v) ? v.includes(d[f]) : d[f] === v))
+            .map(([p, d]) => ({ id: p.split("/")[1], data: () => d, ref: ref(name, p.split("/")[1]) }));
+          return { docs, empty: docs.length === 0 };
+        }),
+      });
+      return { doc: (id: string) => ref(name, id), where: (f: string, _o: string, v: any) => q([[f, v]]) };
+    },
+    batch: () => ({
+      update: (r: any, d: any) => { hoisted.updates.push({ path: r.path, data: d }); const cur = hoisted.docs.get(r.path); if (cur) hoisted.docs.set(r.path, { ...cur, ...d }); },
+      commit: vi.fn(async () => {}),
+    }),
+  }), { FieldValue: { delete: () => "__delete__", serverTimestamp: () => "__ts__" } });
+  return { __esModule: true, default: { firestore }, firestore };
+});
+vi.mock("../linq/client", () => ({ sendMessage: vi.fn(async (_c: string, m: string) => { hoisted.sent.push(m); return { message_id: "m" }; }) }));
+vi.mock("../utils/parseWithClaude", () => ({ parseWithClaude: (...a: any[]) => (hoisted.parse as any)(...a) }));
+vi.mock("./humanReply", () => ({ answerHumanMidFlow: vi.fn(async ({ reAsk }: any) => `Answer. ${reAsk}`) }));
 
-  const sessionsGetMock = vi.fn().mockResolvedValue({ empty: true, docs: [] });
-  // shifts (booking_requests/shifts pipeline, 2026-08-30) — empty by default so
-  // pre-existing appointments-only test expectations are unaffected; individual
-  // tests override this to exercise the shifts-merge path.
-  const shiftsQueryGetMock = vi.fn().mockResolvedValue({ empty: true, docs: [] });
+import { handleCaregiverCancelShift, cancelShiftLikeThePage, cancelBookingLikeThePage, loadCancelOptions } from "./caregiverCancelShiftHandler";
 
-  // Chainable query mock — used by .where().where().where().orderBy().limit().get()
-  const chain: any = {};
-  chain.where    = vi.fn(() => chain);
-  chain.orderBy  = vi.fn(() => chain);
-  chain.limit    = vi.fn(() => chain);
-  chain.get      = vi.fn(() => appointmentsQueryGetMock());
+const PHONE = "+15555550100", CHAT = "chat", CG = "cg1";
+const shift = (id: string, over: Record<string, unknown>) => hoisted.docs.set(`shifts/${id}`, { caregiverId: CG, status: "scheduled", clientName: "Basra Yousuf", clientId: "fam1", bookingRequestId: "br1", startTime: "11:00", endTime: "14:00", ...over });
+const laParts = (d: Date) => { const p: Record<string, string> = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(d)) p[x.type] = x.value; return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour === "24" ? "00" : p.hour}:${p.minute}` }; };
+const VISIT_CONFIRM = "Cancel this shift only? The rest of your booking stays active. Reply YES to cancel, or NO to keep it.";
+const BOOKING_CONFIRM = "Cancel this shift and all future scheduled shifts for this booking? Reply YES to cancel, or NO to keep it.";
 
-  const shiftsChain: any = {};
-  shiftsChain.where   = vi.fn(() => shiftsChain);
-  shiftsChain.orderBy = vi.fn(() => shiftsChain);
-  shiftsChain.limit   = vi.fn(() => shiftsChain);
-  shiftsChain.get     = vi.fn(() => shiftsQueryGetMock());
+beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sent.length = 0; hoisted.parse.mockReset(); hoisted.parse.mockResolvedValue("NO"); });
 
-  const sessionsChain: any = {};
-  sessionsChain.where = vi.fn(() => sessionsChain);
-  sessionsChain.limit = vi.fn(() => sessionsChain);
-  sessionsChain.get   = vi.fn(() => sessionsGetMock());
-
-  const docFn = vi.fn(() => ({ update: updateMock, get: docGetMock }));
-
-  const collectionMock = vi.fn((name: string) => {
-    if (name === "agent_sessions") return { ...sessionsChain, doc: docFn };
-    if (name === "appointments")   return { doc: docFn, ...chain };
-    if (name === "shifts")         return { doc: docFn, ...shiftsChain };
-    return { doc: docFn, add: addMock, ...chain };
+describe("the options — each visit with a ✕, then the whole booking", () => {
+  it("lists scheduled, not-overdue visits (this visit only) and one whole-booking option per booking, numbered", async () => {
+    shift("b", { date: "2099-10-03", startTime: "19:30", endTime: "21:30" });
+    shift("a", { date: "2099-09-28" });
+    shift("old", { date: "2000-01-01" });
+    shift("live", { date: "2099-09-29", status: "in-progress" });
+    shift("z", { date: "2099-10-10", bookingRequestId: "br2", clientName: "Fam Two" });
+    const opts = await loadCancelOptions(CG);
+    expect(opts.map((o) => `${o.index}:${o.kind}:${o.id}`)).toEqual(["1:visit:a", "2:visit:b", "3:visit:z", "4:booking:a", "5:booking:z"]);
+    expect(opts[3]).toMatchObject({ clientName: "Basra Yousuf", count: 2 });
+    hoisted.parse.mockResolvedValueOnce("0"); // the message names nothing in particular
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "I need to cancel something", {}, CHAT);
+    expect(hoisted.sent[0]).toBe([
+      "What do you need to cancel?",
+      "1. Mon, Sep 28, 2099 at 11:00 AM – 2:00 PM — Basra Yousuf (this visit only)",
+      "2. Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only)",
+      "3. Sat, Oct 10, 2099 at 11:00 AM – 2:00 PM — Fam Two (this visit only)",
+      "4. The whole booking with Basra Yousuf — every upcoming visit (2)",
+      "5. The whole booking with Fam Two — every upcoming visit (1)",
+      "", "Reply with the number, or CANCEL to back out.",
+    ].join("\n"));
   });
-
-  const sendMessage             = vi.fn().mockResolvedValue({ message_id: "x" });
-  const sendViaInteractionAgent = vi.fn().mockResolvedValue(undefined);
-  const parseWithClaude         = vi.fn();
-  const quickComplete           = vi.fn();
-  // generateCaraMessage wraps an LLM call but deterministically returns its
-  // `fallback` on empty/error output — that fallback is the contract the
-  // graceful paths rely on, so the mock mirrors it instead of a constant.
-  const generateCaraMessage     = vi.fn(async (...a: any[]) => a[0]?.fallback ?? "ack");
-
-  return {
-    updateMock, addMock, docGetMock, appointmentsQueryGetMock, shiftsQueryGetMock, sessionsGetMock,
-    sendMessage, sendViaInteractionAgent, parseWithClaude, quickComplete,
-    generateCaraMessage, collectionMock,
-  };
+  it("a message that names one thing skips the list: 'cancel the booking with Basra' → the booking's dialog; the bare CANCEL keyword always lists", async () => {
+    shift("a", { date: "2099-09-28" });
+    shift("b", { date: "2099-10-03", startTime: "19:30", endTime: "21:30" });
+    hoisted.parse.mockResolvedValueOnce("3"); // resolveOptionFromText → the whole booking
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "cancel my whole booking with Basra", {}, CHAT);
+    expect(hoisted.sent[0]).toBe(`The whole booking with Basra Yousuf — every upcoming visit (2).\n\n${BOOKING_CONFIRM}`);
+    expect(hoisted.updates.find((u) => u.data.cancelKind)!.data).toMatchObject({ cancelShiftId: "a", cancelKind: "booking" });
+    hoisted.sent.length = 0; hoisted.parse.mockClear();
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "CANCEL", {}, CHAT);
+    expect(hoisted.sent[0]).toMatch(/^What do you need to cancel\?/);
+    expect(hoisted.parse).not.toHaveBeenCalled();
+  });
+  it("nothing cancellable → says so and clears the step", async () => {
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "cancel", {}, CHAT);
+    expect(hoisted.sent[0]).toBe("You don't have any upcoming shifts to cancel.");
+  });
 });
 
-vi.mock("firebase-admin", () => ({
-  __esModule: true,
-  default: { firestore: () => ({ collection: hoisted.collectionMock }) },
-  firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
-    FieldValue: { delete: vi.fn(() => "__DELETE__"), arrayUnion: vi.fn((...v: unknown[]) => v) },
-  }),
-}));
-
-vi.mock("../linq/client", () => ({
-  sendMessage: (...args: unknown[]) => hoisted.sendMessage(...args),
-}));
-
-vi.mock("../utils/parseWithClaude", () => ({
-  parseWithClaude: (...args: unknown[]) => hoisted.parseWithClaude(...args),
-}));
-
-vi.mock("../utils/openaiClient", () => ({
-  quickComplete: (...args: unknown[]) => hoisted.quickComplete(...args),
-}));
-
-vi.mock("../utils/caraMessage", () => ({
-  generateCaraMessage: (...args: unknown[]) => hoisted.generateCaraMessage(...args),
-}));
-
-vi.mock("./caraAgent", () => ({
-  sendViaInteractionAgent: (...args: unknown[]) => hoisted.sendViaInteractionAgent(...args),
-}));
-
-const {
-  updateMock, sendMessage, sendViaInteractionAgent, parseWithClaude,
-  appointmentsQueryGetMock, docGetMock,
-} = hoisted;
-
-import { handleCaregiverCancelShift } from "./caregiverCancelShiftHandler";
-
-const PHONE = "+15555550100";
-const CHAT  = "chat-1";
-const CG_ID = "cg-1";
-const CG_NAME = "Maria Garcia";
-
-describe("handleCaregiverCancelShift", () => {
-  beforeEach(() => {
-    updateMock.mockClear();
-    sendMessage.mockClear();
-    sendViaInteractionAgent.mockClear();
-    parseWithClaude.mockReset();
-    hoisted.quickComplete.mockReset();
-    hoisted.sessionsGetMock.mockResolvedValue({ empty: true, docs: [] });
-    hoisted.shiftsQueryGetMock.mockResolvedValue({ empty: true, docs: [] });
-    docGetMock.mockResolvedValue({ exists: true, data: () => ({}) });
-    appointmentsQueryGetMock.mockResolvedValue({
-      empty: false,
-      docs: [
-        { id: "shift-1", data: () => ({ date: "2026-06-10", time: "09:00", startTime: "09:00", clientName: "Doe", clientId: "client-1", seniorName: "Linda Doe" }) },
-        { id: "shift-2", data: () => ({ date: "2026-06-12", time: "13:00", startTime: "13:00", clientName: "Smith", clientId: "client-2", seniorName: "John Smith" }) },
-      ],
-    });
+describe("confirm — the page's dialogs, then the page's writes", () => {
+  const options = JSON.stringify([
+    { index: 1, kind: "visit", id: "a", bookingRequestId: "br1", date: "2099-09-28", startTime: "11:00", endTime: "14:00", clientName: "Basra Yousuf", clientId: "fam1" },
+    { index: 2, kind: "visit", id: "b", bookingRequestId: "br1", date: "2099-10-03", startTime: "19:30", endTime: "21:30", clientName: "Basra Yousuf", clientId: "fam1" },
+    { index: 3, kind: "booking", id: "a", bookingRequestId: "br1", date: "2099-09-28", startTime: "11:00", endTime: "14:00", clientName: "Basra Yousuf", clientId: "fam1", count: 2 },
+  ]);
+  it("a number picks the visit and asks the ✕ dialog; the booking number asks the Cancel Booking dialog", async () => {
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "2", { cancelStep: "confirm_shift", cancelCandidates: options }, CHAT);
+    expect(hoisted.sent[0]).toBe(`Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only).\n\n${VISIT_CONFIRM}`);
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "3", { cancelStep: "confirm_shift", cancelCandidates: options }, CHAT);
+    expect(hoisted.sent[1]).toBe(`The whole booking with Basra Yousuf — every upcoming visit (2).\n\n${BOOKING_CONFIRM}`);
   });
-
-  it("identify_shift — lists upcoming shifts and advances state", async () => {
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I need to cancel a shift", {}, CHAT);
-    // Lists shifts message sent
-    expect(sendMessage).toHaveBeenCalled();
-    const out = sendMessage.mock.calls[0][1] as string;
-    expect(out).toMatch(/1\..*June 10, 2026/);
-    expect(out).toMatch(/2\..*June 12, 2026/);
-    // State advanced to confirm_shift with candidates stored
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      cancelStep:       "confirm_shift",
-      cancelCandidates: expect.stringContaining("shift-1"),
-    }));
+  it("YES on a visit writes exactly the ✕'s patch and clears the flow", async () => {
+    shift("b", { date: "2099-10-03", startTime: "19:30", endTime: "21:30" });
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "YES", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "b", cancelKind: "visit" }, CHAT);
+    expect(hoisted.updates.find((u) => u.path === "shifts/b")!.data).toEqual({ status: "cancelled", cancelledBy: "caregiver", updatedAt: "__ts__" });
+    expect(hoisted.sent[0]).toBe("Cancelled — Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only). The family has been notified.");
+    expect(hoisted.parse).not.toHaveBeenCalled();
   });
-
-  it("identify_shift — no upcoming shifts → graceful message", async () => {
-    appointmentsQueryGetMock.mockResolvedValueOnce({ empty: true, docs: [] });
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "cancel a shift", {}, CHAT);
-    expect(sendMessage.mock.calls[0][1]).toMatch(/don't have any upcoming shifts/);
+  it("YES on the booking cancels this shift and every future scheduled shift of the booking (batch), then the booking itself when none was urgent — the page's toast", async () => {
+    shift("a", { date: "2099-09-28" });
+    shift("b", { date: "2099-10-03", startTime: "19:30", endTime: "21:30" });
+    shift("done", { date: "2099-09-20", status: "completed" });
+    shift("other", { date: "2099-10-04", caregiverId: "cg2" });
+    hoisted.docs.set("booking_requests/br1", { status: "accepted" });
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "yes", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "a", cancelKind: "booking" }, CHAT);
+    const patch = { status: "cancelled", cancelledBy: "caregiver", updatedAt: "__ts__" };
+    expect(hoisted.updates.filter((u) => u.path.startsWith("shifts/")).map((u) => u.path).sort()).toEqual(["shifts/a", "shifts/b"]);
+    expect(hoisted.docs.get("shifts/a")).toMatchObject(patch);
+    expect(hoisted.docs.get("shifts/b")).toMatchObject(patch);
+    expect(hoisted.docs.get("shifts/done").status).toBe("completed");
+    expect(hoisted.docs.get("shifts/other").status).toBe("scheduled");
+    expect(hoisted.updates.find((u) => u.path === "booking_requests/br1")!.data).toEqual({ status: "cancelled", updatedAt: "__ts__" });
+    expect(hoisted.sent[0]).toBe("Booking cancelled — Basra Yousuf, 2 visits. The family has been notified.");
   });
-
-  // Booking-pipeline parity (2026-08-30): a shift booked via the newer
-  // booking_requests/shifts pipeline never appears in `appointments` at all —
-  // the caregiver must still be able to see and cancel it by texting Evia.
-  it("identify_shift — lists a shifts-pipeline visit (no appointments doc exists at all)", async () => {
-    appointmentsQueryGetMock.mockResolvedValueOnce({ empty: true, docs: [] });
-    hoisted.shiftsQueryGetMock.mockResolvedValueOnce({
-      empty: false,
-      docs: [
-        { id: "shift-9", data: () => ({ date: "2026-06-15", startTime: "10:00", clientName: "Rivera", clientId: "client-9", careRecipients: [{ name: "Ana Rivera" }] }) },
-      ],
-    });
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I need to cancel a shift", {}, CHAT);
-    const out = sendMessage.mock.calls[0][1] as string;
-    expect(out).toMatch(/1\..*June 15, 2026/);
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      cancelStep:       "confirm_shift",
-      cancelCandidates: expect.stringContaining("shift-9"),
-    }));
-    const stored = JSON.parse(updateMock.mock.calls.find(c => c[0].cancelCandidates)![0].cancelCandidates);
-    expect(stored[0]).toMatchObject({ id: "shift-9", coll: "shifts", seniorName: "Ana Rivera" });
+  it("a booking with a visit inside 24h: that visit becomes needs_replacement and the booking record is left alone (the page's rule)", async () => {
+    const { date, time } = laParts(new Date(Date.now() + 2 * 60 * 60 * 1000));
+    shift("a", { date, startTime: time, endTime: "23:59" });
+    shift("b", { date: "2099-10-03" });
+    hoisted.docs.set("booking_requests/br1", { status: "accepted" });
+    const r = await cancelBookingLikeThePage(CG, "a");
+    expect(r).toMatchObject({ ok: true, anyUrgent: true, count: 2, toast: "Cancelled — the family can pick a replacement for the urgent shift" });
+    expect(hoisted.docs.get("shifts/a").status).toBe("needs_replacement");
+    expect(hoisted.docs.get("shifts/b").status).toBe("cancelled");
+    expect(hoisted.updates.find((u) => u.path === "booking_requests/br1")).toBeUndefined();
   });
-
-  it("identify_shift — merges appointments and shifts candidates sorted by date", async () => {
-    appointmentsQueryGetMock.mockResolvedValueOnce({
-      empty: false,
-      docs: [{ id: "appt-1", data: () => ({ date: "2026-06-20", time: "09:00", clientName: "Doe", clientId: "client-1", seniorName: "Linda Doe" }) }],
-    });
-    hoisted.shiftsQueryGetMock.mockResolvedValueOnce({
-      empty: false,
-      docs: [{ id: "shift-9", data: () => ({ date: "2026-06-15", startTime: "10:00", clientName: "Rivera", clientId: "client-9", careRecipients: [{ name: "Ana Rivera" }] }) }],
-    });
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "cancel a shift", {}, CHAT);
-    const out = sendMessage.mock.calls[0][1] as string;
-    // The earlier shifts-pipeline visit (06-15) sorts before the appointments one (06-20).
-    expect(out).toMatch(/1\..*June 15, 2026[\s\S]*2\..*June 20, 2026/);
-  });
-
-  it("confirm_shift — picks shift number and asks YES/NO", async () => {
-    parseWithClaude.mockResolvedValueOnce("NO"); // isQuestionOrOther returns NO
-
-    const session = {
-      cancelStep: "confirm_shift",
-      cancelCandidates: JSON.stringify([
-        { index: 1, id: "shift-1", date: "2026-06-10", time: "09:00", clientName: "Doe", clientId: "client-1", seniorName: "Linda Doe", startTime: "09:00" },
-        { index: 2, id: "shift-2", date: "2026-06-12", time: "13:00", clientName: "Smith", clientId: "client-2", seniorName: "John Smith", startTime: "13:00" },
-      ]),
-    };
-
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "1", session, CHAT);
-    expect(sendMessage).toHaveBeenCalled();
-    const out = sendMessage.mock.calls[0][1] as string;
-    expect(out).toMatch(/June 10, 2026/);
-    expect(out).toMatch(/YES.*cancel.*NO.*keep/i);
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      cancelShiftId:   "shift-1",
-      cancelShiftDate: "2026-06-10",
-    }));
-  });
-
-  it("confirm_shift — bail-out keyword CANCEL clears state", async () => {
-    const session = {
-      cancelStep: "confirm_shift",
-      cancelCandidates: JSON.stringify([{ index: 1, id: "s1", date: "d", time: "t", clientName: "c", clientId: "cl", seniorName: "s", startTime: "t" }]),
-    };
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "CANCEL", session, CHAT);
-    expect(sendMessage.mock.calls[0][1]).toMatch(/unchanged/);
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      cancelStep: "__DELETE__",
-    }));
-  });
-
-  it("confirm_shift YES → advances to ask_reason", async () => {
-    parseWithClaude
-      .mockResolvedValueOnce("NO")   // isQuestionOrOther
-      .mockResolvedValueOnce("YES"); // decision
-
-    const session = {
-      cancelStep:          "confirm_shift",
-      cancelShiftId:       "shift-1",
-      cancelCandidates:    JSON.stringify([{ index: 1, id: "shift-1", date: "2026-06-10", time: "09:00", clientName: "Doe", clientId: "client-1", seniorName: "Linda", startTime: "09:00" }]),
-    };
-
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "yes cancel it", session, CHAT);
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      cancelStep: "ask_reason",
-    }));
-    expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/reason/i);
-  });
-
-  it("ask_reason — cancels and acknowledges while the appointment trigger owns family fan-out", async () => {
-    parseWithClaude
-      .mockResolvedValueOnce("NO")   // isQuestionOrOther
-      .mockResolvedValueOnce("family emergency"); // reason summary
-
-    docGetMock.mockResolvedValueOnce({
-      exists: true,
-      data: () => ({ seniorName: "Linda Doe", startTime: "09:00", clientName: "Doe" }),
-    });
-
-    const session = {
-      cancelStep:          "ask_reason",
-      cancelShiftId:       "shift-1",
-      cancelShiftDate:     "2026-06-10",
-      cancelShiftClientId: "client-1",
-    };
-
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I'm sick", session, CHAT);
-
-    // Appointment marked cancelled
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      status:             "cancelled",
-      cancelledBy:        "caregiver",
-      cancellationReason: "family emergency",
-    }));
-    // State cleared
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      cancelStep:       "__DELETE__",
-      cancelCandidates: "__DELETE__",
-    }));
-    // Caregiver acked
-    expect(sendMessage).toHaveBeenCalled();
-    // The Firestore appointment trigger is the sole family alert/replacement owner.
-    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
-  });
-
-  it("ask_reason — cancels a shifts-pipeline visit by updating shifts, not appointments", async () => {
-    parseWithClaude
-      .mockResolvedValueOnce("NO")   // isQuestionOrOther
-      .mockResolvedValueOnce("illness"); // reason summary
-
-    docGetMock.mockResolvedValueOnce({
-      exists: true,
-      data: () => ({ careRecipients: [{ name: "Ana Rivera" }], clientName: "Rivera", startTime: "10:00" }),
-    });
-
-    const session = {
-      cancelStep:          "ask_reason",
-      cancelShiftId:       "shift-9",
-      cancelShiftColl:     "shifts",
-      cancelShiftDate:     "2026-06-15",
-      cancelShiftClientId: "client-9",
-    };
-
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I'm sick", session, CHAT);
-
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      status:             "cancelled",
-      cancelledBy:        "caregiver",
-      cancellationReason: "illness",
-    }));
-    // Acknowledgment used the shifts doc's careRecipients-derived senior name.
-    expect(hoisted.generateCaraMessage).toHaveBeenCalledWith(expect.objectContaining({
-      context: expect.stringContaining("Ana Rivera"),
-    }));
-  });
-
-  it("ask_reason — flags an imminent (< 24h) shifts cancellation as needs_replacement, site parity", async () => {
-    parseWithClaude
-      .mockResolvedValueOnce("NO")   // isQuestionOrOther
-      .mockResolvedValueOnce("illness"); // reason summary
-
-    // 2h from now, expressed as separate Pacific wall-clock date/time fields —
-    // same shape a real shifts doc stores (see CaregiverBookingsPage's
-    // handleCancelShift isUrgent check). Formatted in America/Los_Angeles
-    // (not getUTCHours) since the handler's urgency check parses these as
-    // Pacific wall-clock (parseScheduledTimeMs).
-    const soon = new Date(Date.now() + 2 * 60 * 60 * 1000);
-    const soonParts: Record<string, string> = {};
-    for (const p of new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/Los_Angeles", hour12: false,
-      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-    }).formatToParts(soon)) soonParts[p.type] = p.value;
-    const soonDate = `${soonParts.year}-${soonParts.month}-${soonParts.day}`;
-    const soonTime = `${soonParts.hour === "24" ? "00" : soonParts.hour}:${soonParts.minute}`;
-
-    docGetMock.mockResolvedValueOnce({
-      exists: true,
-      data: () => ({ careRecipients: [{ name: "Ana Rivera" }], clientName: "Rivera", date: soonDate, startTime: soonTime }),
-    });
-
-    const session = {
-      cancelStep:          "ask_reason",
-      cancelShiftId:       "shift-9",
-      cancelShiftColl:     "shifts",
-      cancelShiftDate:     soonDate,
-      cancelShiftClientId: "client-9",
-    };
-
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I'm sick", session, CHAT);
-
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      status:             "needs_replacement",
-      cancelledBy:        "caregiver",
-      cancellationReason: "illness",
-    }));
-  });
-
-  it("ask_reason — isQuestionOrOther answers and does NOT cancel", async () => {
-    parseWithClaude
-      .mockResolvedValueOnce("YES"); // isQuestionOrOther → question
-    hoisted.quickComplete.mockResolvedValueOnce("Refunds work like this...");
-
-    const session = {
-      cancelStep:          "ask_reason",
-      cancelShiftId:       "shift-1",
-      cancelShiftDate:     "2026-06-10",
-      cancelShiftClientId: "client-1",
-    };
-
-    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "wait — do I get a refund if I cancel?", session, CHAT);
-
-    // Appointment NOT marked cancelled
-    expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
-    // No family alert
-    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
-    // No replacement
-    // But the question was answered
-    const out = sendMessage.mock.calls[0][1] as string;
-    expect(out).toMatch(/Refunds/);
+  it("NO keeps it; a question mid-flow is answered and re-asked; CANCEL backs out; a non-scheduled visit is not re-written", async () => {
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "no", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "b", cancelKind: "visit" }, CHAT);
+    expect(hoisted.sent.at(-1)).toMatch(/^Okay — keeping that one\./);
+    hoisted.parse.mockResolvedValueOnce("YES"); // isQuestionOrOther → a question
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "will I still get paid?", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "a", cancelKind: "booking" }, CHAT);
+    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. Cancel this shift and all future scheduled shifts/);
+    expect(hoisted.updates.find((u) => u.path.startsWith("shifts/"))).toBeUndefined();
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "CANCEL", { cancelStep: "confirm_shift", cancelCandidates: options }, CHAT);
+    expect(hoisted.sent.at(-1)).toBe("No problem — your shifts are unchanged.");
+    shift("b", { date: "2099-10-03", status: "cancelled" });
+    expect(await cancelShiftLikeThePage("b")).toEqual({ ok: false, reason: "not_scheduled", status: "cancelled" });
   });
 });

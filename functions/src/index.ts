@@ -156,7 +156,6 @@ export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
 export { memoryOperationWorker } from './scheduled/memoryOperationWorker';
 export { experimentScorecardWeekly } from './scheduled/experimentScorecard';
-export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
 // Grouped family texts for tasks checked off / visit notes during a visit (minute sweep).
 export { flushFamilyVisitUpdates } from './scheduled/flushFamilyVisitUpdates';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
@@ -169,7 +168,6 @@ export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';
 export { adminAlertAgingDaily } from './scheduled/adminAlertAging';
 export { opsAnomalyWatchHourly } from './scheduled/opsAnomalyWatch';
 export { inferActiveHoursWeekly } from './scheduled/inferActiveHours';
-export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
 export { expireAccountRecoveryRequests } from './scheduled/accountRecoveryExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
 export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';

@@ -1,6 +1,5 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
-import { writeUserNotification } from '../notifications/userNotification';
 import { sendToPhone } from '../linq/client';
 import { sendViaInteractionAgent } from '../agents/caraAgent';
 import { formatDateForDisplay, formatHHMMForDisplay } from '../utils/scheduledTime';
@@ -439,7 +438,7 @@ export const onBookingRequestWrite = functions.firestore
       }
 
       // Accepted → text client. An Evia-negotiated booking (agentTaskId set)
-      // is accepted through shiftOffer.ts, which already texts the family
+      // was accepted through the retired shiftOffer.ts (removed 2026-09-28), which texted the family
       // "Great news — X accepted!" itself — only a website-button accept has
       // nothing else reaching the family's phone.
       if (statusAfter === 'accepted' && after.clientId && !after.agentTaskId) {
@@ -456,7 +455,7 @@ export const onBookingRequestWrite = functions.firestore
           data: { bookingId: context.params.bookingId },
         });
         // Same reasoning as above — an Evia-negotiated decline already texts
-        // the family from shiftOffer.ts's onOfferNotAccepted.
+        // the family from the retired shiftOffer.ts (removed 2026-09-28).
         if (!after.agentTaskId) {
           await notifyClientByText(after.clientId,
             `${after.caregiverName || 'Your caregiver'} isn't able to accept that booking request.`);
@@ -710,38 +709,13 @@ export const onShiftStatusChanged = functions.firestore
 
     // ── 1. In-app notifications on status change ────────────────────────────
     try {
-      // Extra visit = a client-requested pending shift. The caregiver's response
-      // (accept → scheduled, decline → cancelled) must notify the CLIENT.
-      // Previously decline set status:'cancelled' with no cancelledBy and fell
-      // through to the generic branch below, notifying the caregiver (wrong
-      // party). Keyed on observable doc state — NOT createdBy, which no shift
-      // writer sets: the only actor on a pending shift is the caregiver
-      // (CaregiverBookingsPage Accept/Decline), so pending → scheduled, and
-      // pending → cancelled without a cancelledBy attribution, are both
-      // caregiver responses. Idempotent via the trigger eventId.
-      if (before.status === 'pending' && after.clientId &&
-          (after.status === 'scheduled' ||
-           (after.status === 'cancelled' && !after.cancelledBy && !after.bulkCancelled))) {
-        const accepted = after.status === 'scheduled';
-        await writeUserNotification({
-          sourcePath: `shifts/${shiftId}`,
-          eventId: context.eventId,
-          recipientId: after.clientId,
-          transitionType: accepted ? 'extra_visit_accepted' : 'extra_visit_declined',
-          type: accepted ? 'shift_accepted' : 'shift_declined',
-          title: accepted ? 'Extra Visit Confirmed' : 'Extra Visit Declined',
-          body: accepted
-            ? `${after.caregiverName || 'Your caregiver'} confirmed your extra visit${fmtDate}.`
-            : `${after.caregiverName || 'Your caregiver'} can't make the extra visit${fmtDate}.`,
-          data: { shiftId },
-        });
-        await notifyClientByText(after.clientId, accepted
-          ? `${after.caregiverName || 'Your caregiver'} confirmed your extra visit${fmtDate}.`
-          : `${after.caregiverName || 'Your caregiver'} can't make the extra visit${fmtDate}.`);
       // Caregiver started shift → notify client (parity with onAppointmentUpdated's
       // arrival ping — start_shift/complete_shift never message the family
       // themselves, so this trigger is the only place this text comes from).
-      } else if (after.status === 'in-progress' && after.clientId) {
+      // (The "extra visit" branch — a caregiver answering a pending shift —
+      // was removed 2026-09-28: nothing creates a pending shift any more;
+      // Request Visit writes a booking_amendments doc instead.)
+      if (after.status === 'in-progress' && after.clientId) {
         await addNotification(after.clientId, {
           type: 'shift_started',
           title: 'Shift Started',

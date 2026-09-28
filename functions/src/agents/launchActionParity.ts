@@ -412,27 +412,8 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     status: "shipped",
     notes: "Toggles shifts.{id}.tasksCompleted (recipient_careNeed[_subtask] keys) — the exact array the caregiver/family visit views read.",
   },
-  {
-    id: "caregiver-submit-media-update",
-    actor: "caregiver",
-    action: "Send a photo/media care update",
-    webSurface: "components/caregiver/CaregiverHomeDashboard.tsx",
-    collection: "care_journal",
-    tool: "submit_media_update",
-    promptActor: "caregiver",
-    status: "shipped",
-    notes: "Writes a care_journal entry (entryType='media', media[]) the family care-journal/live-updates feed reads.",
-  },
-  {
-    id: "caregiver-create-journal-entry",
-    actor: "caregiver",
-    action: "Create a care journal entry",
-    webSurface: "components/caregiver/CaregiverHomeDashboard.tsx",
-    collection: "care_journal",
-    tool: "create_care_journal_entry",
-    promptActor: "caregiver",
-    status: "shipped",
-  },
+  // (caregiver-submit-media-update / caregiver-create-journal-entry rows removed 2026-09-28: the tools were retired —
+  // the site's caregiver pages never read care_journal; visit notes are shifts.notesLog via add_visit_note.)
   {
     id: "caregiver-submit-shift-hours",
     actor: "caregiver",

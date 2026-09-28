@@ -505,7 +505,7 @@ export async function confirmEmailChange(token: string): Promise<void> {
 }
 
 // ── Expiry sweep ─────────────────────────────────────────────────────────────
-// Same convention as the other short-lived-record sweepers (shiftOfferExpiry,
+// Same convention as the other short-lived-record sweepers (accountRecoveryExpiry,
 // feedbackExpiry, objectiveExpirySweeper) — these tokens have no side effects
 // to roll back on expiry (unlike a shift offer), so a stale one is just
 // deleted rather than marked "expired" and kept.

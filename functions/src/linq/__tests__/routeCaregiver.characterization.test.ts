@@ -270,45 +270,6 @@ describe("characterization — duplicate inbound does NOT double-write", () => {
     expect(session2.pendingCaregiverReferral).toBeUndefined();
   });
 
-  it("a duplicate DONE/care-notes submission for one visit bills the visit exactly once", async () => {
-    // This is the money-path idempotency contract — re-pinned here against the
-    // coded handleCareNotes path so a future migration can't reintroduce double-billing.
-    const APPT_ID = "appt-dup-1";
-    const CLIENT_ID = "client-dup-1";
-    const CLIENT_PHONE = "+15557770000";
-    hoisted.docState.set(`appointments/${APPT_ID}`, {
-      clientId: CLIENT_ID, seniorId: CLIENT_ID, caregiverId: CAREGIVER_ID, status: "in-progress",
-      durationHours: 3, date: "2026-06-15", startTime: "09:00", endTime: "12:00",
-      clientName: "Smith Family", caregiverName: "Jane Referrer", hourlyRate: 25,
-      paymentMethod: "credit", billingAuthority: "server-v1",
-    });
-    hoisted.docState.set(`agent_sessions/${CLIENT_PHONE}`, {
-      chatId: "client-chat", userType: "client", userId: CLIENT_ID, phone: CLIENT_PHONE,
-    });
-    const parkNotes = () => hoisted.docState.set(`agent_sessions/${CG_PHONE}`, {
-      chatId: "cg-chat", userType: "caregiver", caregiverId: CAREGIVER_ID, service: "SMS",
-      awaitingCareNotes: true, careNotesApptId: APPT_ID,
-    });
-    seed();
-    parkNotes();
-    quickComplete.mockResolvedValue('{"notes":"ate well","mood":"happy","appetite":"good"}');
-
-    await routeCaregiverMessage(ctx("ate well, good mood"));
-    const firstShift = hoisted.docState.get(`shiftHours/${APPT_ID}`);
-    expect(firstShift).toBeTruthy();
-    expect(firstShift.grossPay).toBe(75);
-
-    // Replay: re-park awaitingCareNotes and resubmit. The care_journal dedup
-    // transaction + shiftHours.create() atomicity must prevent a second bill.
-    parkNotes();
-    const outcome = await routeCaregiverMessage(ctx("ate well, good mood"));
-
-    expect(outcome).toBe("handled");
-    const journalDocs = [...hoisted.docState.entries()].filter(([p]) => p.startsWith("care_journal/"));
-    expect(journalDocs).toHaveLength(1);
-    // Still exactly one shiftHours doc, unchanged gross — no double-bill.
-    expect(hoisted.docState.get(`shiftHours/${APPT_ID}`).grossPay).toBe(75);
-  });
 });
 
 // ── State-machine dispatch / early exits ──────────────────────────────────────

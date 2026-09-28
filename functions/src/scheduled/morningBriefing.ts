@@ -221,7 +221,7 @@ export async function checkCaregiverWorkloads(): Promise<void> {
     if (!cgId) continue;
 
     const startTime = d.startTime ?? "09:00";
-    const endTime   = d.endTime   ?? d.completedAt?.slice(11, 16) ?? "17:00";
+    const endTime   = d.endTime   ?? (typeof d.completedAt === "string" ? d.completedAt.slice(11, 16) : undefined) ?? "17:00";
     const [sh, sm]  = startTime.split(":").map(Number);
     const [eh, em]  = endTime.split(":").map(Number);
     const durationH = Math.max(0, (eh * 60 + em - sh * 60 - sm) / 60);

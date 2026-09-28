@@ -59,12 +59,12 @@ export const sendThirtyMinShiftReminders = functions.pubsub
             `Senior: ${seniorName}\n` +
             `Start time: ${startTime}\n` +
             `Address: ${address || "client's home"}\n` +
-            `Remind them to text ARRIVED when they get there and LATE if they're running behind. ` +
+            `Remind them to text START when they get there (that's the Start Shift button), and that if they're running behind they can text LATE and you'll pass their message to the family. ` +
             `Keep it light and encouraging — like a quick text from a friend.`,
           fallback:
             `Hey ${cgFirstName}, just a heads-up — ${seniorName}'s visit starts in about 30 minutes` +
             `${address ? " at " + address : ""}. ` +
-            `Safe travels! Text ARRIVED when you're there or LATE if you hit any traffic. 🚗`,
+            `Safe travels! Text START when you're there — or LATE and I'll pass your message to the family.`,
         });
 
         await sendViaInteractionAgent(cgPhone, {

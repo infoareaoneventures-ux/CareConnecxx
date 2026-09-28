@@ -429,42 +429,6 @@ describe("missing CRUD tools", () => {
     });
   });
 
-  describe("update_care_journal_entry", () => {
-    it("requires caregiverId and entryId", async () => {
-      const r = await handleToolCall("update_care_journal_entry", { caregiverId: "cg1" }) as any;
-      expect(r._toolError).toBe(true);
-    });
-
-    it("returns NOT_FOUND for a missing entry", async () => {
-      const r = await handleToolCall("update_care_journal_entry", { caregiverId: "cg1", entryId: "ghost", notes: "x" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("NOT_FOUND");
-    });
-
-    it("rejects edits from a caregiver who did not author the entry", async () => {
-      hoisted.docState.set("care_journal/e1", { caregiverId: "other", notes: "..." });
-      const r = await handleToolCall("update_care_journal_entry", { caregiverId: "cg1", entryId: "e1", notes: "x" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("PERMISSION_DENIED");
-    });
-
-    it("requires at least one field beyond identifiers", async () => {
-      hoisted.docState.set("care_journal/e1", { caregiverId: "cg1", notes: "..." });
-      const r = await handleToolCall("update_care_journal_entry", { caregiverId: "cg1", entryId: "e1" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("INVALID_INPUT");
-    });
-
-    it("updates provided fields and stamps updatedAt", async () => {
-      hoisted.docState.set("care_journal/e1", { caregiverId: "cg1", notes: "old" });
-      const r = await handleToolCall("update_care_journal_entry", { caregiverId: "cg1", entryId: "e1", notes: "corrected", mood: "calm" }) as any;
-      expect(r.success).toBe(true);
-      const upd = hoisted.updates.find(u => u.path === "care_journal/e1");
-      expect(upd?.data.notes).toBe("corrected");
-      expect(upd?.data.mood).toBe("calm");
-      expect(upd?.data.updatedAt).toBeDefined();
-    });
-  });
 });
 
 // Fix 3 (loop-only): the model saves jobType in whatever casing it extracted

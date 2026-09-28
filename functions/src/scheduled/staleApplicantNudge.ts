@@ -38,7 +38,7 @@ export function shouldNudgeStaleApplicants(p: {
  * marketplace doesn't silently leak applicants.
  *
  * Read-only except the send + a cooldown marker on the job; no money/booking
- * path. Mirrors the established scheduled-nudge pattern (shiftTaskNudges):
+ * path. Mirrors the established scheduled-nudge pattern (pendingDecisionNudge):
  * per-item idempotency marker, opt-out / onboarding guards, one nudge per client
  * per run, generateCaraMessage + sendViaInteractionAgent(canDrop) which respects
  * DND/dedup downstream.

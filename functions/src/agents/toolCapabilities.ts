@@ -34,7 +34,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   find_nearby_caregivers:       ["booking"],
   get_caregiver_info:           ["booking"],
   get_upcoming_appointments:    ["booking", "scheduling"],
-  get_caregiver_appointments:   ["booking", "scheduling"],
+  show_active_bookings:         ["booking", "scheduling"],  // Active Bookings tab, texted whole (2026-09-28)
   get_pending_booking_requests: ["booking", "scheduling"],
   show_booking_requests:        ["booking", "scheduling"],
   get_pending_schedule_amendments: ["booking", "scheduling"],  // Requests tab, schedule-change cards (2026-09-16)
@@ -94,8 +94,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
 
   // ── care_plan (includes journal, health, profiles) ──────────────────────
   get_care_journal_client:   ["care_plan"],
-  create_care_journal_entry: ["care_plan"],
-  update_care_journal_entry: ["care_plan"],
   get_care_plan:             ["care_plan"],
   update_care_plan:          ["care_plan"],
   create_senior_profile:     ["care_plan"],
@@ -107,15 +105,13 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_caregiver_profile:  ["care_plan"],
   pause_account:             ["scheduling"],
   reactivate_account:        ["scheduling"],
-  accept_shift:              ["booking", "scheduling"],
-  decline_shift:             ["booking", "scheduling"],
   update_user_profile:       ["care_plan"],
   delete_account:            ["care_plan"],
   submit_gps_checkin:        ["care_plan"],
   start_shift:               ["care_plan", "scheduling"],
   complete_shift:            ["care_plan", "scheduling"],
   update_shift_task:         ["care_plan"],
-  submit_media_update:       ["care_plan", "messaging"],
+  add_visit_note:            ["booking", "scheduling"],  // the visit-notes box (2026-09-28)
   get_background_check_status: ["care_plan", "booking"],
   // Final signup audit (2026-07-14) — cross-cutting profile/gates read; tagged
   // broadly so "did I miss anything?" reaches it under most filtered intents.
@@ -276,7 +272,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "complete_interview", "respond_to_job_application",
   "create_job_post", "edit_job_post", "cancel_job_post",
   // shifts
-  "accept_shift", "decline_shift", "submit_shift_hours", "review_shift_hours",
+  "submit_shift_hours", "review_shift_hours",
   "submit_gps_checkin",
   // money
   "set_subscription_status",
@@ -285,7 +281,6 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "set_block_status",
   // care data
   "update_care_plan",
-  "create_care_journal_entry",
   // profiles & account
   "update_user_profile",
   "update_caregiver_profile", "update_caregiver_availability",

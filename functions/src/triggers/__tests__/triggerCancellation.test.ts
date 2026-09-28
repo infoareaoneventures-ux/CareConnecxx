@@ -99,11 +99,6 @@ describe("isReplyExempt", () => {
     expect(isReplyExempt({ type: "appointment_reminder", message: "Interview in an hour" })).toBe(true);
   });
 
-  it("exempts system-directive messages", () => {
-    expect(isReplyExempt({ type: "custom", message: "issue_escalation:il1" })).toBe(true);
-    expect(isReplyExempt({ type: "custom", message: "issue_escalation_final:il1" })).toBe(true);
-    expect(isReplyExempt({ type: "custom", message: "issue_followup:il1" })).toBe(true);
-  });
 
   it("keeps nudges and qa_retry reply-cancellable (twin-trigger + commitment tracker semantics)", () => {
     expect(isReplyExempt({ type: "custom", message: "How was the week?" })).toBe(false);
@@ -137,14 +132,9 @@ describe("cancelTriggerIfUserReplied", () => {
       userId: "u1", phone: "+1", type: "appointment_reminder", message: "Interview in an hour",
       cancelledAt: null, firedAt: null,
     });
-    hoisted.docs.set("directive", {
-      userId: "u1", phone: "+1", type: "custom", message: "issue_escalation:il1",
-      cancelledAt: null, firedAt: null,
-    });
     await cancelTriggerIfUserReplied("u1", "+1");
     expect(hoisted.docs.get("nudge").cancelledAt).toBeTruthy();
     expect(hoisted.docs.get("reminder").cancelledAt).toBeNull();
-    expect(hoisted.docs.get("directive").cancelledAt).toBeNull();
   });
 });
 

@@ -7,18 +7,6 @@ const anyObjectOutput = z.object({}).passthrough();
 const stringValue = z.string().min(1);
 
 const writeActionConfigs = {
-  accept_shift: {
-    role: "caregiver",
-    inputSchema: z.object({ phone: stringValue, chatId: stringValue }).passthrough(),
-    auditType: "shift_offer_accepted",
-    targetCollection: "shift_offers",
-  },
-  decline_shift: {
-    role: "caregiver",
-    inputSchema: z.object({ phone: stringValue, chatId: stringValue }).passthrough(),
-    auditType: "shift_offer_declined",
-    targetCollection: "shift_offers",
-  },
   submit_shift_hours: {
     role: "caregiver",
     inputSchema: z.object({
@@ -64,45 +52,31 @@ const writeActionConfigs = {
     idempotencyKey: (input: Record<string, unknown>) =>
       `respond_to_booking_request:${input.caregiverId}:${input.bookingRequestId ?? input.number ?? "shown"}:${input.decision}`,
   },
+  // The Bookings page's per-visit buttons (agents/inShift.ts, 2026-09-28):
+  // shifts only — shiftId optional, today's visit is resolved inside.
   start_shift: {
     role: "caregiver",
-    inputSchema: z.object({
-      caregiverId: stringValue,
-      appointmentId: z.string().optional(),
-      shiftId: z.string().optional(),
-    }).passthrough().refine(input => !!input.appointmentId || !!input.shiftId, {
-      message: "appointmentId or shiftId is required",
-    }),
+    inputSchema: z.object({ caregiverId: stringValue, shiftId: z.string().optional() }).passthrough(),
     auditType: "shift_started",
-    targetCollection: "appointments",
+    targetCollection: "shifts",
     idempotencyKey: (input: Record<string, unknown>) =>
-      `start_shift:${input.caregiverId}:${input.appointmentId ?? input.shiftId}`,
+      `start_shift:${input.caregiverId}:${input.shiftId ?? "today"}`,
   },
   complete_shift: {
     role: "caregiver",
-    inputSchema: z.object({
-      caregiverId: stringValue,
-      appointmentId: z.string().optional(),
-      shiftId: z.string().optional(),
-    }).passthrough().refine(input => !!input.appointmentId || !!input.shiftId, {
-      message: "appointmentId or shiftId is required",
-    }),
+    inputSchema: z.object({ caregiverId: stringValue, shiftId: z.string().optional() }).passthrough(),
     auditType: "shift_completed",
-    targetCollection: "appointments",
+    targetCollection: "shifts",
     idempotencyKey: (input: Record<string, unknown>) =>
-      `complete_shift:${input.caregiverId}:${input.appointmentId ?? input.shiftId}`,
+      `complete_shift:${input.caregiverId}:${input.shiftId ?? "in_progress"}`,
   },
   update_shift_task: {
     role: "caregiver",
-    inputSchema: z.object({
-      caregiverId: stringValue,
-      shiftId: stringValue,
-      taskKey: stringValue,
-    }).passthrough(),
+    inputSchema: z.object({ caregiverId: stringValue, shiftId: z.string().optional(), taskKey: z.string().optional() }).passthrough(),
     auditType: "shift_task_updated",
     targetCollection: "shifts",
     idempotencyKey: (input: Record<string, unknown>) =>
-      `update_shift_task:${input.caregiverId}:${input.shiftId}:${input.taskKey}:${input.completed ?? true}`,
+      `update_shift_task:${input.caregiverId}:${input.shiftId ?? "in_progress"}:${JSON.stringify(input.numbers ?? input.taskKeys ?? input.taskKey ?? "")}:${input.completed ?? "toggle"}`,
   },
   respond_to_shift_hour_correction: {
     role: "caregiver",

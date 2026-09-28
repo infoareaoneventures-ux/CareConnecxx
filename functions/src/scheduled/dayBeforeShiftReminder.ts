@@ -7,8 +7,10 @@ import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
-// Runs daily at 6 PM ET — sends a warm confirmation request to caregivers
-// for all shifts scheduled tomorrow, then notifies families of confirmed shifts.
+// Runs daily at 6 PM ET — a plain reminder to caregivers for tomorrow's
+// visits. (Until 2026-09-28 it asked for YES/NO and texted the family a
+// "confirmed" note; the site never asks a caregiver to re-confirm a visit they
+// accepted, so the reminder now just points at the page's own actions.)
 export const sendDayBeforeShiftReminders = functions.pubsub
   .schedule("0 22 * * *")
   .timeZone("America/New_York")
@@ -62,12 +64,12 @@ export const sendDayBeforeShiftReminders = functions.pubsub
             `Date: ${tomorrowDisplay}\n` +
             `Start time: ${startTime ? formatHHMMForDisplay(startTime) : "time TBD"}\n` +
             `Location: ${address || "client's home"}\n` +
-            `Ask them to reply YES to confirm they'll be there or NO if something's come up. ` +
-            `Sound like you're genuinely checking in — not sending an automated alert.`,
+            `End by saying that if anything has changed they can text CANCEL and you will walk them through it, or text you to move the visit. ` +
+            `Do NOT ask them to confirm. Sound like you're genuinely checking in — not sending an automated alert.`,
           fallback:
-            `Hey ${cgFirstName}! Hope your evening's going well. Just checking in — you've got ` +
-            `${seniorName}'s visit ${startTime ? "at " + formatHHMMForDisplay(startTime) : "tomorrow"}${address ? " at " + address : ""}` +
-            `. Still all good on your end? Reply YES to confirm or NO if something's come up.`,
+            `Hey ${cgFirstName}! Just a reminder — you've got ` +
+            `${seniorName}'s visit tomorrow${startTime ? " at " + formatHHMMForDisplay(startTime) : ""}${address ? " at " + address : ""}` +
+            `. If anything's changed, text CANCEL and I'll walk you through it, or text me to move it.`,
         });
 
         await sendViaInteractionAgent(cgPhone, {
@@ -77,20 +79,7 @@ export const sendDayBeforeShiftReminders = functions.pubsub
           canDrop:     false,
         });
 
-        await doc.ref.update({ dayBeforeConfirmSent: true });
-        await cgSessionSnap.ref.update({
-          pendingShiftConfirmation: {
-            appointmentId:   apptId,
-            appointmentDate: tomorrowStr,
-            appointmentDisplay: tomorrowDisplay,
-            clientId,
-            seniorName,
-            startTime,
-            caregiverName: cgData?.name ?? "",
-            sentAt: new Date().toISOString(),
-          },
-          stateExpiresAt: new Date(Date.now() + 16 * 60 * 60 * 1000).toISOString(),
-        });
+        await doc.ref.update({ dayBeforeConfirmSent: true }); // "reminder sent" marker (field name kept so already-reminded visits aren't re-sent)
       } catch (err) {
         console.error(`[sendDayBeforeShiftReminders] Error for appointment ${apptId}:`, err);
       }

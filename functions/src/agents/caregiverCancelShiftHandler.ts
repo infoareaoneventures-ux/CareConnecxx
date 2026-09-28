@@ -1,49 +1,75 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { generateCaraMessage } from "../utils/caraMessage";
 import { answerHumanMidFlow } from "./humanReply";
-import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay, parseScheduledTimeMs } from "../utils/scheduledTime";
+import { businessTodayStr, parseScheduledTimeMs } from "../utils/scheduledTime";
+import { fmtDate, fmtTime } from "./caregiverBookingRequests";
+import { isShiftOverdue } from "./shiftReschedule";
 
 const db = admin.firestore();
 
 /**
- * Caregiver-initiated proactive cancellation flow.
+ * The caregiver Bookings page's two cancel buttons, over text — each with the
+ * page's own dialog and the page's own write, nothing more (2026-09-28):
  *
- * Three-step state machine:
- *   identify_shift → list upcoming shifts numbered 1..N, store JSON in session
- *   confirm_shift  → caregiver picks number; system shows shift + asks YES/NO
- *   ask_reason     → caregiver gives reason and cancels the appointment;
- *                    the appointment trigger owns family alerts and replacement
+ *   ✕ on an upcoming visit  → "Cancel this shift only? The rest of your booking
+ *                              stays active."  → {status: needs_replacement
+ *                              (starts within 24h) | cancelled, cancelledBy:
+ *                              'caregiver', updatedAt}
+ *   Cancel Booking (card)    → "Cancel this shift and all future scheduled
+ *                              shifts for this booking?" → the same patch on
+ *                              this booking's every scheduled visit (batch),
+ *                              and booking_requests → cancelled when none of
+ *                              them was urgent
  *
- * Same stamped-step, session-driven pattern as the other caregiver multi-step flows.
+ *   identify → the options the page shows (each visit with a ✕, then "the
+ *              whole booking with X" per booking), numbered; a message that
+ *              already names one ("cancel tomorrow's shift", "cancel the
+ *              booking with Basra") skips the list
+ *   confirm  → the matching dialog; YES → the matching write; NO / CANCEL back out
+ *
+ * The family's notice comes from onShiftStatusChanged, exactly as on the site.
+ * Entry: the CANCEL keyword, or the CANCEL_SHIFT intent (routeIntent).
  */
 
-interface CancelShift {
+export interface CancelOption {
   index:      number;
+  kind:       "visit" | "booking";
+  /** the shift id (visit), or the booking's earliest scheduled shift id (booking — what the page's button passes) */
   id:         string;
-  coll:       "appointments" | "shifts";
+  bookingRequestId: string | null;
   date:       string;
-  time:       string;
+  startTime:  string;
+  endTime?:   string;
   clientName: string;
   clientId:   string;
-  seniorName: string;
-  startTime:  string;
+  /** booking: how many scheduled visits it covers */
+  count?:     number;
 }
 
-// shifts docs (booking_requests/shifts pipeline, 2026-08-30) carry
-// careRecipients: [{name}] instead of a top-level seniorName field.
-function seniorNameFor(coll: "appointments" | "shifts", data: FirebaseFirestore.DocumentData): string {
-  if (coll === "shifts") {
-    const recipients = data.careRecipients as Array<{ name?: string }> | undefined;
-    return recipients?.[0]?.name || data.clientName || "the client";
-  }
-  return data.seniorName ?? data.clientName ?? "the client";
+const CONFIRM_VISIT   = "Cancel this shift only? The rest of your booking stays active. Reply YES to cancel, or NO to keep it.";
+const CONFIRM_BOOKING = "Cancel this shift and all future scheduled shifts for this booking? Reply YES to cancel, or NO to keep it.";
+
+const CLEAR = {
+  cancelStep:          admin.firestore.FieldValue.delete(),
+  cancelCandidates:    admin.firestore.FieldValue.delete(),
+  cancelShiftId:       admin.firestore.FieldValue.delete(),
+  cancelKind:          admin.firestore.FieldValue.delete(),
+  cancelShiftDate:     admin.firestore.FieldValue.delete(),
+  cancelShiftClientId: admin.firestore.FieldValue.delete(),
+  stateExpiresAt:      admin.firestore.FieldValue.delete(),
+};
+
+export function optionLine(o: CancelOption): string {
+  if (o.kind === "booking") return `The whole booking with ${o.clientName} — every upcoming visit (${o.count ?? 0})`;
+  return `${fmtDate(o.date)} at ${fmtTime(o.startTime)}${o.endTime ? ` – ${fmtTime(o.endTime)}` : ""} — ${o.clientName} (this visit only)`;
 }
+const confirmFor = (o: CancelOption) => `${optionLine(o)}.\n\n${o.kind === "booking" ? CONFIRM_BOOKING : CONFIRM_VISIT}`;
+const listText = (opts: CancelOption[]) => `What do you need to cancel?\n${opts.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n\nReply with the number, or CANCEL to back out.`;
 
 async function isQuestionOrOther(text: string, currentQuestion: string): Promise<boolean> {
   const result = await parseWithClaude(
-    `The caregiver is in a shift cancellation flow. Current step's question: "${currentQuestion}". ` +
+    `The caregiver is cancelling a visit or a booking. Current step's question: "${currentQuestion}". ` +
       "Reply YES if their message is a general question or off-topic comment unrelated to that question. " +
       "Reply NO if it is a direct answer. Only reply YES or NO.",
     text,
@@ -51,294 +77,202 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
   );
   return result.toUpperCase().startsWith("Y");
 }
-
 async function answerMidFlow(text: string, reAsk: string): Promise<string> {
-  return answerHumanMidFlow({
-    audience: "caregiver",
-    situation: "caregiver is canceling one of their upcoming shifts",
+  return answerHumanMidFlow({ audience: "caregiver", situation: "caregiver is cancelling one of their upcoming visits or a booking", text, reAsk });
+}
+
+/** The page's options: every visit with a ✕ (scheduled, today or later, not overdue), then one "whole booking" per booking. */
+export async function loadCancelOptions(caregiverId: string): Promise<CancelOption[]> {
+  const today = businessTodayStr();
+  const snap = await db.collection("shifts")
+    .where("caregiverId", "==", caregiverId)
+    .where("status", "in", ["scheduled"])
+    .where("date", ">=", today)
+    .orderBy("date", "asc")
+    .limit(60)
+    .get();
+  const visits = snap.docs
+    .filter((d) => d.data().caregiverId === caregiverId && d.data().status === "scheduled" && !isShiftOverdue(d.data()))
+    .sort((a, b) => String(a.data().date).localeCompare(String(b.data().date)) || String(a.data().startTime ?? "").localeCompare(String(b.data().startTime ?? "")));
+  const out: CancelOption[] = visits.slice(0, 5).map((d, i) => ({
+    index: i + 1, kind: "visit" as const, id: d.id, bookingRequestId: (d.data().bookingRequestId as string | undefined) ?? null,
+    date: String(d.data().date ?? ""), startTime: String(d.data().startTime ?? ""), endTime: d.data().endTime ? String(d.data().endTime) : undefined,
+    clientName: String(d.data().clientName ?? "the family"), clientId: String(d.data().clientId ?? ""),
+  }));
+  const byBooking = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
+  for (const d of visits) { const key = String(d.data().bookingRequestId || d.id); if (!byBooking.has(key)) byBooking.set(key, []); byBooking.get(key)!.push(d); }
+  for (const [key, list] of byBooking) {
+    const first = list[0];
+    out.push({
+      index: out.length + 1, kind: "booking", id: first.id, bookingRequestId: first.data().bookingRequestId ? key : null,
+      date: String(first.data().date ?? ""), startTime: String(first.data().startTime ?? ""), endTime: first.data().endTime ? String(first.data().endTime) : undefined,
+      clientName: String(first.data().clientName ?? "the family"), clientId: String(first.data().clientId ?? ""), count: list.length,
+    });
+  }
+  return out;
+}
+
+const urgent = (s: FirebaseFirestore.DocumentData): boolean => {
+  const startsMs = parseScheduledTimeMs(`${String(s.date ?? "")}T${String(s.startTime ?? "00:00").slice(0, 5)}:00`);
+  return Number.isFinite(startsMs) && startsMs > 0 ? (startsMs - Date.now()) / (1000 * 60 * 60) <= 24 : false;
+};
+
+/** The ✕'s write (CaregiverBookingsPage BookingGroupCard.handleCancelShift). */
+export async function cancelShiftLikeThePage(shiftId: string): Promise<{ ok: true; status: "needs_replacement" | "cancelled" } | { ok: false; reason: "not_found" | "not_scheduled"; status?: string }> {
+  const ref = db.collection("shifts").doc(shiftId);
+  const snap = await ref.get();
+  if (!snap.exists) return { ok: false, reason: "not_found" };
+  const shift = snap.data() ?? {};
+  if (shift.status !== "scheduled") return { ok: false, reason: "not_scheduled", status: String(shift.status ?? "") };
+  const status = urgent(shift) ? "needs_replacement" as const : "cancelled" as const;
+  await ref.update({ status, cancelledBy: "caregiver", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+  return { ok: true, status };
+}
+
+/** The Cancel Booking button's write (CaregiverBookingsPage.handleCancelShift): this shift + every future scheduled shift of the booking, then the booking itself when none was urgent. */
+export async function cancelBookingLikeThePage(caregiverId: string, shiftId: string): Promise<{ ok: true; anyUrgent: boolean; count: number; toast: string } | { ok: false; reason: "not_found" | "not_scheduled"; status?: string }> {
+  const ref = db.collection("shifts").doc(shiftId);
+  const snap = await ref.get();
+  if (!snap.exists) return { ok: false, reason: "not_found" };
+  const shift = snap.data() ?? {};
+  if (shift.status !== "scheduled") return { ok: false, reason: "not_scheduled", status: String(shift.status ?? "") };
+  const bookingRequestId = shift.bookingRequestId as string | undefined;
+  const batch = db.batch();
+  let anyUrgent = false;
+  let count = 0;
+  const applyCancel = (r: FirebaseFirestore.DocumentReference, s: FirebaseFirestore.DocumentData) => {
+    const u = urgent(s);
+    if (u) anyUrgent = true;
+    count += 1;
+    batch.update(r, { status: u ? "needs_replacement" : "cancelled", cancelledBy: "caregiver", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+  };
+  applyCancel(ref, shift);
+  if (bookingRequestId) {
+    const future = await db.collection("shifts")
+      .where("bookingRequestId", "==", bookingRequestId)
+      .where("status", "==", "scheduled")
+      .where("caregiverId", "==", caregiverId)
+      .get();
+    future.docs.forEach((d) => { if (d.id !== shiftId && d.data().status === "scheduled" && d.data().caregiverId === caregiverId) applyCancel(d.ref, d.data()); });
+    await batch.commit();
+    if (!anyUrgent) {
+      await db.collection("booking_requests").doc(bookingRequestId).update({ status: "cancelled", updatedAt: admin.firestore.FieldValue.serverTimestamp() }).catch(() => {});
+    }
+  } else {
+    await batch.commit();
+  }
+  // The page's toasts.
+  return { ok: true, anyUrgent, count, toast: anyUrgent ? "Cancelled — the family can pick a replacement for the urgent shift" : "Booking cancelled" };
+}
+
+/** "cancel tomorrow's shift" / "cancel the booking with Basra" → the option it names, else null. */
+export async function resolveOptionFromText(text: string, options: CancelOption[]): Promise<CancelOption | null> {
+  if (options.length === 0) return null;
+  const raw = await parseWithClaude(
+    `A caregiver wrote a message about cancelling. These are the things they could cancel:\n${options.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n` +
+      `Today is ${businessTodayStr()}. If the message clearly refers to exactly ONE of these (by day, date, family, or "the whole booking" / "all my shifts with"), reply with its number. ` +
+      `If it just says they need to cancel something, or it is unclear which, reply 0. Reply with only the number.`,
     text,
-    reAsk,
-  });
+    5,
+  );
+  const n = parseInt(String(raw).replace(/[^0-9]/g, ""), 10);
+  return options.find((o) => o.index === n) ?? null;
+}
+
+async function parkChoice(sessionRef: FirebaseFirestore.DocumentReference, o: CancelOption, expires: string): Promise<void> {
+  await sessionRef.update({ cancelShiftId: o.id, cancelKind: o.kind, cancelShiftDate: o.date, cancelShiftClientId: o.clientId, stateExpiresAt: expires });
 }
 
 export async function handleCaregiverCancelShift(
   caregiverId:    string,
-  caregiverName:  string,
+  _caregiverName: string,
   caregiverPhone: string,
   text:           string,
   session:        Record<string, unknown>,
   chatId:         string,
 ): Promise<void> {
   const step = (session.cancelStep as string) ?? "identify_shift";
+  const sessionRef = db.collection("agent_sessions").doc(caregiverPhone);
+  const expires = () => new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
-  // ── identify_shift — list shifts, store candidates ─────────────────────────
   if (step === "identify_shift") {
-    // Business-timezone today — UTC hid tonight's shift after 5pm PT
-    const today = businessTodayStr();
-    // Query both collections — a shift booked via the newer booking_requests/
-    // shifts pipeline (2026-08-30) never appears in `appointments` at all.
-    const [apptSnap, shiftsSnap] = await Promise.all([
-      db.collection("appointments")
-        .where("caregiverId", "==", caregiverId)
-        .where("status",      "in", ["confirmed", "pending_caregiver_confirmation"])
-        .where("date",        ">=", today)
-        .orderBy("date", "asc")
-        .limit(5)
-        .get(),
-      db.collection("shifts")
-        .where("caregiverId", "==", caregiverId)
-        .where("status",      "in", ["scheduled", "in-progress"])
-        .where("date",        ">=", today)
-        .orderBy("date", "asc")
-        .limit(5)
-        .get(),
-    ]);
-
-    if (apptSnap.empty && shiftsSnap.empty) {
-      await sendMessage(chatId, await generateCaraMessage({
-        audience: "caregiver",
-        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
-        context: "The caregiver asked to cancel a shift, but they don't have any upcoming shifts on the calendar. Gently let them know there's nothing to cancel right now.",
-        fallback: "You don't have any upcoming shifts to cancel.",
-        maxTokens: 60,
-      }));
-      await db.collection("agent_sessions").doc(caregiverPhone).update({
-        cancelStep: admin.firestore.FieldValue.delete(),
-      });
+    const options = await loadCancelOptions(caregiverId);
+    if (options.length === 0) {
+      await sendMessage(chatId, "You don't have any upcoming shifts to cancel.");
+      await sessionRef.update({ cancelStep: admin.firestore.FieldValue.delete() });
       return;
     }
-
-    const merged = [
-      ...apptSnap.docs.map(d => ({ doc: d, coll: "appointments" as const })),
-      ...shiftsSnap.docs.map(d => ({ doc: d, coll: "shifts" as const })),
-    ].sort((a, b) => String(a.doc.data().date).localeCompare(String(b.doc.data().date)));
-
-    const shifts: CancelShift[] = merged.slice(0, 5).map(({ doc, coll }, i) => ({
-      index:      i + 1,
-      id:         doc.id,
-      coll,
-      date:       doc.data().date,
-      time:       doc.data().time ?? doc.data().startTime ?? "",
-      clientName: doc.data().clientName ?? "client",
-      clientId:   doc.data().clientId,
-      seniorName: seniorNameFor(coll, doc.data()),
-      startTime:  doc.data().startTime ?? doc.data().time ?? "",
-    }));
-
-    await db.collection("agent_sessions").doc(caregiverPhone).update({
-      cancelStep:       "confirm_shift",
-      cancelCandidates: JSON.stringify(shifts),
-      stateExpiresAt:   new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    });
-
-    const list = shifts.map(s => `${s.index}. ${formatDateForDisplay(s.date)} at ${formatHHMMForDisplay(s.time)} — ${s.clientName}`).join("\n");
-    await sendMessage(chatId,
-      `Which shift do you need to cancel?\n${list}\n\nReply with the number, or CANCEL to back out.`,
-    );
+    await sessionRef.update({ cancelStep: "confirm_shift", cancelCandidates: JSON.stringify(options), stateExpiresAt: expires() });
+    // A message that already names one thing skips the list (the bare CANCEL keyword never does).
+    const named = text.trim().toUpperCase() === "CANCEL" ? null : await resolveOptionFromText(text, options);
+    if (named) {
+      await parkChoice(sessionRef, named, expires());
+      await sendMessage(chatId, confirmFor(named));
+      return;
+    }
+    await sendMessage(chatId, listText(options));
     return;
   }
 
-  // ── confirm_shift — caregiver picks number; ask YES/NO ─────────────────────
   if (step === "confirm_shift") {
-    const candidates: CancelShift[] = (() => {
-      try { return JSON.parse((session.cancelCandidates as string) ?? "[]"); }
-      catch { return []; }
-    })();
-
-    if (candidates.length === 0) {
-      await sendMessage(chatId, await generateCaraMessage({
-        audience: "caregiver",
-        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
-        context: "Something got tangled mid-flow while cancelling a shift, so you're starting that step over. Warmly reassure them and ask which shift they need to cancel.",
-        fallback: "Something went wrong — let me start over. Which shift do you need to cancel?",
-        maxTokens: 70,
-      }));
-      await db.collection("agent_sessions").doc(caregiverPhone).update({
-        cancelStep:       "identify_shift",
-        cancelCandidates: admin.firestore.FieldValue.delete(),
-      });
+    const options: CancelOption[] = (() => { try { return JSON.parse((session.cancelCandidates as string) ?? "[]"); } catch { return []; } })();
+    if (options.length === 0) {
+      await sessionRef.update({ cancelStep: "identify_shift", cancelCandidates: admin.firestore.FieldValue.delete() });
+      await sendMessage(chatId, "Something went wrong — let me start over. What do you need to cancel?");
       return;
     }
-
-    // CANCEL bail-out (literal)
     if (text.trim().toUpperCase() === "CANCEL") {
-      await db.collection("agent_sessions").doc(caregiverPhone).update({
-        cancelStep:       admin.firestore.FieldValue.delete(),
-        cancelCandidates: admin.firestore.FieldValue.delete(),
-        cancelShiftId:    admin.firestore.FieldValue.delete(),
-        cancelShiftColl:  admin.firestore.FieldValue.delete(),
-        cancelShiftDate:  admin.firestore.FieldValue.delete(),
-        cancelShiftClientId: admin.firestore.FieldValue.delete(),
-        stateExpiresAt:   admin.firestore.FieldValue.delete(),
-      });
+      await sessionRef.update(CLEAR);
       await sendMessage(chatId, "No problem — your shifts are unchanged.");
       return;
     }
 
-    // If we already have a chosen shift, this reply is the YES/NO confirmation
     const chosenId = session.cancelShiftId as string | undefined;
-    if (chosenId) {
-      const list = candidates.map(s => `${s.index}. ${formatDateForDisplay(s.date)} at ${formatHHMMForDisplay(s.time)} — ${s.clientName}`).join("\n");
-      const reAsk = `Cancel this shift? Reply YES to cancel, or NO to keep it.`;
-      if (await isQuestionOrOther(text, reAsk)) {
-        await sendMessage(chatId, await answerMidFlow(text, reAsk));
-        return;
-      }
-      const decision = await parseWithClaude(
-        '"yes", "yeah", "confirm", "do it", "cancel it" → YES. ' +
-        '"no", "wait", "never mind", "keep it", "back" → NO. ' +
-        'Reply with exactly YES or NO.',
-        text,
-        5,
+    const chosen = chosenId ? options.find((o) => o.id === chosenId && o.kind === ((session.cancelKind as string) || o.kind)) ?? options.find((o) => o.id === chosenId) : undefined;
+    if (chosen) {
+      const confirm = chosen.kind === "booking" ? CONFIRM_BOOKING : CONFIRM_VISIT;
+      // "Reply YES or NO" — a bare YES / NO is the strict protocol; anything else is checked for a question first.
+      const norm = text.trim().toUpperCase();
+      if (norm !== "YES" && norm !== "NO" && await isQuestionOrOther(text, confirm)) { await sendMessage(chatId, await answerMidFlow(text, confirm)); return; }
+      const decision = norm === "YES" || norm === "NO" ? norm : await parseWithClaude(
+        '"yes", "yeah", "confirm", "do it", "cancel it" → YES. "no", "wait", "never mind", "keep it", "back" → NO. Reply with exactly YES or NO.',
+        text, 5,
       );
       if (decision === "YES") {
-        await db.collection("agent_sessions").doc(caregiverPhone).update({
-          cancelStep:     "ask_reason",
-          stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        await sendMessage(chatId,
-          "Got it. What's the reason for cancelling? (Illness, schedule conflict, family emergency, etc.) " +
-          "This helps us let the family know.",
-        );
+        await sessionRef.update(CLEAR);
+        if (chosen.kind === "booking") {
+          const r = await cancelBookingLikeThePage(caregiverId, chosen.id);
+          if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That booking's next visit is already ${r.status} — nothing to cancel.` : "That booking isn't on your bookings any more."); return; }
+          await sendMessage(chatId, `${r.toast} — ${chosen.clientName}, ${r.count} visit${r.count === 1 ? "" : "s"}. The family has been notified.`);
+          return;
+        }
+        const r = await cancelShiftLikeThePage(chosen.id);
+        if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That shift is already ${r.status} — nothing to cancel.` : "That shift isn't on your bookings any more."); return; }
+        await sendMessage(chatId, r.status === "needs_replacement"
+          ? `Cancelled — ${optionLine(chosen)}. It starts within 24 hours, so the family is being offered a replacement caregiver.`
+          : `Cancelled — ${optionLine(chosen)}. The family has been notified.`);
         return;
       }
-      // NO — back out, keep candidates so they can pick a different one
-      await db.collection("agent_sessions").doc(caregiverPhone).update({
-        cancelShiftId:       admin.firestore.FieldValue.delete(),
-        cancelShiftColl:     admin.firestore.FieldValue.delete(),
-        cancelShiftDate:     admin.firestore.FieldValue.delete(),
-        cancelShiftClientId: admin.firestore.FieldValue.delete(),
-      });
-      await sendMessage(chatId,
-        `Okay — keeping that one. ${list}\n\nReply with another number, or CANCEL to back out entirely.`,
-      );
+      if (decision === "NO") {
+        if (options.length === 1) { await sessionRef.update(CLEAR); await sendMessage(chatId, "Okay — keeping it. Your shifts are unchanged."); return; }
+        await sessionRef.update({ cancelShiftId: admin.firestore.FieldValue.delete(), cancelKind: admin.firestore.FieldValue.delete(), cancelShiftDate: admin.firestore.FieldValue.delete(), cancelShiftClientId: admin.firestore.FieldValue.delete() });
+        await sendMessage(chatId, `Okay — keeping that one.\n${options.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n\nReply with another number, or CANCEL to back out.`);
+        return;
+      }
+      await sendMessage(chatId, confirm);
       return;
     }
 
-    // No chosen shift yet — this reply should be a number selection
-    const reAskPick = `Reply with the number of the shift to cancel (1–${candidates.length}), or CANCEL to back out.`;
-    if (await isQuestionOrOther(text, reAskPick)) {
-      await sendMessage(chatId, await answerMidFlow(text, reAskPick));
-      return;
-    }
-
+    const reAskPick = `Reply with the number of what to cancel (1–${options.length}), or CANCEL to back out.`;
+    if (await isQuestionOrOther(text, reAskPick)) { await sendMessage(chatId, await answerMidFlow(text, reAskPick)); return; }
     const pick = parseInt(text.trim(), 10);
-    const shift = candidates.find(s => s.index === pick);
-    if (!shift) {
-      await sendMessage(chatId, `Please reply with a number between 1 and ${candidates.length}, or CANCEL to back out.`);
-      return;
-    }
-
-    await db.collection("agent_sessions").doc(caregiverPhone).update({
-      cancelShiftId:       shift.id,
-      cancelShiftColl:     shift.coll,
-      cancelShiftDate:     shift.date,
-      cancelShiftClientId: shift.clientId,
-      stateExpiresAt:      new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    });
-    await sendMessage(chatId,
-      `You want to cancel: ${formatDateForDisplay(shift.date)} at ${formatHHMMForDisplay(shift.time)} with the ${shift.clientName} family.\n\n` +
-      `Cancel this shift? Reply YES to cancel, or NO to keep it.`,
-    );
+    const option = options.find((o) => o.index === pick) ?? (Number.isNaN(pick) ? await resolveOptionFromText(text, options) : null);
+    if (!option) { await sendMessage(chatId, `Please reply with a number between 1 and ${options.length}, or CANCEL to back out.`); return; }
+    await parkChoice(sessionRef, option, expires());
+    await sendMessage(chatId, confirmFor(option));
     return;
   }
 
-  // ── ask_reason — capture reason, finalize cancellation ─────────────────────
-  if (step === "ask_reason") {
-    const reAsk = "What's the reason for cancelling? (illness, conflict, emergency, etc.)";
-    if (await isQuestionOrOther(text, reAsk)) {
-      await sendMessage(chatId, await answerMidFlow(text, reAsk));
-      return;
-    }
-
-    const reasonRaw = await parseWithClaude(
-      'Summarize the caregiver\'s cancellation reason in a short phrase (e.g. "illness", "family emergency", "schedule conflict", "transportation issue"). ' +
-        'If unclear or missing, reply: unspecified. Reply with only the short phrase.',
-      text,
-      30,
-    );
-    const reason = reasonRaw && reasonRaw !== "__parse_error__" ? reasonRaw : "unspecified";
-
-    const shiftId   = session.cancelShiftId as string;
-    const shiftColl = (session.cancelShiftColl as string) === "shifts" ? "shifts" : "appointments";
-    const shiftDate = session.cancelShiftDate as string;
-
-    if (!shiftId) {
-      await sendMessage(chatId, await generateCaraMessage({
-        audience: "caregiver",
-        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
-        context: "Something went wrong while cancelling, so nothing changed — their shifts are all still as they were. Warmly reassure them and ask them to try again.",
-        fallback: "Something went wrong — your shifts are unchanged. Please try again.",
-        maxTokens: 70,
-      }));
-      await db.collection("agent_sessions").doc(caregiverPhone).update({
-        cancelStep:          admin.firestore.FieldValue.delete(),
-        cancelCandidates:    admin.firestore.FieldValue.delete(),
-        cancelShiftId:       admin.firestore.FieldValue.delete(),
-        cancelShiftColl:     admin.firestore.FieldValue.delete(),
-        cancelShiftDate:     admin.firestore.FieldValue.delete(),
-        cancelShiftClientId: admin.firestore.FieldValue.delete(),
-        cancelReason:        admin.firestore.FieldValue.delete(),
-        stateExpiresAt:      admin.firestore.FieldValue.delete(),
-      });
-      return;
-    }
-
-    // Load the visit for context — shiftColl resolves to whichever
-    // collection this candidate was listed from (see identify_shift above).
-    const apptSnap = await db.collection(shiftColl).doc(shiftId).get();
-    const apptData = apptSnap.data() ?? {};
-    const seniorName = seniorNameFor(shiftColl, apptData);
-
-    // Site parity (CaregiverBookingsPage.tsx handleCancelShift): a shift
-    // starting within 24h needs an urgent replacement (needs_replacement —
-    // shows Find Replacement/Skip on the family's My Bookings page), while
-    // one further out is just cancelled — the family has time to rebook
-    // normally. This handler previously always wrote "cancelled" regardless
-    // of timing, so an SMS-cancelled imminent shift never got flagged urgent.
-    const startTime = (apptData.startTime ?? apptData.time) as string | undefined;
-    const isUrgent =
-      shiftColl === "shifts" && apptData.date && startTime
-        ? (parseScheduledTimeMs(`${apptData.date}T${startTime.slice(0, 5)}:00`) - Date.now()) / (1000 * 60 * 60) <= 24
-        : false;
-
-    // Mark the visit cancelled (or needs_replacement, if urgent)
-    await db.collection(shiftColl).doc(shiftId).update({
-      status:              isUrgent ? "needs_replacement" : "cancelled",
-      cancelledBy:         "caregiver",
-      cancelledAt:         new Date().toISOString(),
-      cancellationReason:  reason,
-      cancelledByCaregiverId:   caregiverId,
-      cancelledByCaregiverName: caregiverName,
-    });
-
-    // Clear flow state
-    await db.collection("agent_sessions").doc(caregiverPhone).update({
-      cancelStep:          admin.firestore.FieldValue.delete(),
-      cancelCandidates:    admin.firestore.FieldValue.delete(),
-      cancelShiftId:       admin.firestore.FieldValue.delete(),
-      cancelShiftColl:     admin.firestore.FieldValue.delete(),
-      cancelShiftDate:     admin.firestore.FieldValue.delete(),
-      cancelShiftClientId: admin.firestore.FieldValue.delete(),
-      cancelReason:        admin.firestore.FieldValue.delete(),
-      stateExpiresAt:      admin.firestore.FieldValue.delete(),
-    });
-
-    // Acknowledge caregiver warmly
-    const cgFirstName = caregiverName.split(" ")[0] || "you";
-    const ackMsg = await generateCaraMessage({
-      audience: "caregiver",
-      context:
-        `${cgFirstName} just cancelled their ${shiftDate} shift with ${seniorName} (reason: ${reason}). ` +
-        `Write a brief, understanding acknowledgment — no judgment, let them know the family will be notified ` +
-        `and you're already working on coverage. Be warm.`,
-      fallback:
-        `Got it, ${cgFirstName} — I'll let the ${seniorName} family know and start working on coverage for ${shiftDate}. ` +
-        `Thanks for letting me know ahead of time.`,
-      maxTokens: 100,
-    });
-    await sendMessage(chatId, ackMsg);
-
-    return;
-  }
+  await sessionRef.update(CLEAR);
+  await sendMessage(chatId, "Let's start over — what do you need to cancel?");
 }

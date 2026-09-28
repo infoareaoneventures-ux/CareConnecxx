@@ -444,7 +444,7 @@ describe("handleWebChatTurn", () => {
   describe("U2 active-SMS-flow guard", () => {
     it("active flow defers via smsFlowActive: no agent run, lock + claim released, flags untouched", async () => {
       seedUser();
-      seedSession({ awaitingCareNotes: true });
+      seedSession({ cancelStep: "confirm_shift" });
       hoisted.activeFlowMock.mockReturnValue(true);
       hoisted.describeFlowMock.mockReturnValue("cancelling that shift");
 
@@ -464,7 +464,7 @@ describe("handleWebChatTurn", () => {
         .toBeLessThan(hoisted.releaseMock.mock.invocationCallOrder[0]);
       // Read-only: the session flag was never cleared/stamped by the web path.
       expect(hoisted.docs.get(`agent_sessions/${PHONE}`)).toMatchObject({
-        awaitingCareNotes: true,
+        cancelStep: "confirm_shift",
       });
     });
 

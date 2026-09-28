@@ -95,7 +95,7 @@ export interface ActiveBooking {
 
 type ShiftDoc = FirebaseFirestore.DocumentData & { id: string };
 
-function shiftRow(s: ShiftDoc, base: ShiftDoc): ActiveBookingShift {
+function shiftRow(s: ShiftDoc, bookingNote: string | null): ActiveBookingShift {
   const ds = shiftDisplayStatus(s as { status?: unknown; date?: unknown; startTime?: unknown; endTime?: unknown });
   const actions: ActiveShiftAction[] = [];
   // Cancel single shift — only a 'scheduled' row has the ✕.
@@ -119,7 +119,7 @@ function shiftRow(s: ShiftDoc, base: ShiftDoc): ActiveBookingShift {
     startTime: (s.startTime as string | undefined) ?? null,
     endTime: (s.endTime as string | undefined) ?? null,
     displayStatus: ds,
-    ...(s.notes && s.notes !== base.notes ? { notes: String(s.notes) } : {}),
+    ...(s.notes && s.notes !== bookingNote ? { notes: String(s.notes) } : {}),
     ...(s.reschedulePendingDate ? {
       reschedulePending: {
         date: String(s.reschedulePendingDate),
@@ -168,6 +168,10 @@ export async function listActiveBookings(clientId: string): Promise<ActiveBookin
     const base = list[0];
     const bookingDoc = bookingById.get(key);
     const schedulePaused = !!bookingDoc?.schedulePausedAt;
+    // The header note is the booking's OWN note (booking_requests.notes), not
+    // the newest visit's (2026-09-28) — falls back to the shift copy only for
+    // a group with no booking doc.
+    const bookingNote: string | null = bookingDoc ? (bookingDoc.notes ? String(bookingDoc.notes) : null) : (base.notes ? String(base.notes) : null);
     const sorted = [...list].sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")) || String(a.startTime ?? "").localeCompare(String(b.startTime ?? "")));
     const schedule = (base.schedule ?? {}) as Record<string, unknown>;
     const dst = (schedule.dayShiftTimes ?? {}) as Record<string, Array<{ start?: string; end?: string }>>;
@@ -197,10 +201,10 @@ export async function listActiveBookings(clientId: string): Promise<ActiveBookin
       rate:              (base.rate as number | undefined) ?? null,
       paymentMethod,
       paymentLabel:      paymentMethod === "credit" ? "Card" : paymentMethod,
-      notes:             base.notes ? String(base.notes) : null,
+      notes:             bookingNote,
       careRecipients:    Array.isArray(base.careRecipients) ? (base.careRecipients as Array<Record<string, unknown>>) : [],
       emergencyContact:  (base.emergencyContact as Record<string, unknown> | undefined) ?? null,
-      upcomingShifts:    sorted.map((s) => shiftRow(s, base)),
+      upcomingShifts:    sorted.map((s) => shiftRow(s, bookingNote)),
       actions:           ["message", "cancel_booking"],
       schedulePaused,
       schedulePausedNote: schedulePaused ? "Schedule paused — the family's membership is inactive. Visits already on the calendar still happen; reactivating the membership resumes new visits." : null,

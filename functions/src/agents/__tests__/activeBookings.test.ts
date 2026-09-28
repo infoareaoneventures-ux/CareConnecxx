@@ -128,15 +128,16 @@ describe("listActiveBookings", () => {
     expect(byId.mine).toMatchObject({ actions: ["cancel_visit", "withdraw_reschedule"], reschedulePending: { proposedBy: "client", waitingOn: "caregiver" } });
   });
 
-  it("shows a visit's own note only when it differs from the booking note, and 'Until <date>' for a non-ongoing booking", async () => {
+  it("header note = the booking's own note; a visit shows its note only when it differs (a schedule-change note); 'Until <date>' for a non-ongoing booking", async () => {
+    hoisted.docState.set("booking_requests/br1", { notes: "testing" });
     shift("s1", { date: "2099-09-22", notes: "testing" });
     shift("s2", { date: "2099-09-23", notes: "this is adding a shift", schedule: { ...SCHEDULE, ongoing: false, endDate: "2099-10-31" }, recurringWeekly: false });
     const [b] = await listActiveBookings("c1");
-    // base = latest shift (s2) → its schedule drives the card
-    expect(b).toMatchObject({ ongoing: false, endDate: "2099-10-31", notes: "this is adding a shift" });
+    // base = latest shift (s2) → its schedule drives the card; the note is the booking's (2026-09-28)
+    expect(b).toMatchObject({ ongoing: false, endDate: "2099-10-31", notes: "testing" });
     const byId = Object.fromEntries(b.upcomingShifts.map((s) => [s.id, s]));
-    expect(byId.s1.notes).toBe("testing");
-    expect(byId.s2.notes).toBeUndefined();
+    expect(byId.s1.notes).toBeUndefined();
+    expect(byId.s2.notes).toBe("this is adding a shift");
   });
 
   it("returns an empty tab when nothing is active", async () => {

@@ -2,9 +2,8 @@ import * as admin from "firebase-admin";
 
 export const STATE_MACHINE_FLAGS = [
   "pendingMatches",
-  "awaitingCareNotes",
-  "awaitingLateMinutes",
-  "awaitingIssueDescription",
+  // "What should I tell the family?" after LATE (agents/familyRelay.ts, 2026-09-28)
+  "pendingFamilyMessage",
   "pendingShiftApproval",
   "collectingCredential",
   "collectingCredentialSetAt",
@@ -46,10 +45,6 @@ export const STATE_MACHINE_FLAGS = [
   "applyFlowData",
   "interviewRescheduleFlowStep",
   "interviewRescheduleFlowData",
-  // Mid-shift task acknowledgment flow
-  "awaitingTaskAck",
-  // Day-before shift confirmation from caregiver
-  "pendingShiftConfirmation",
   // Healthcare agentic flows (provider search, appointment booking, Rx refill, new Rx)
   "healthcareFlowStep",
   "healthcareFlowData",
@@ -148,8 +143,8 @@ export function isFlowStale(
 // When the expiry sweep clears a mid-flow state machine, the user used to be
 // dropped silently — they'd started a booking/dispute/cancellation and never heard
 // another word about it. This map names the flows worth a resume nudge, in
-// user language. Passive ack/confirmation flags (pendingShiftConfirmation,
-// awaitingTaskAck, pendingBgCheckAck, …) are deliberately absent: they have
+// user language. Passive ack flags (pendingBgCheckAck, pendingPayoutNotificationAck, …)
+// are deliberately absent: they have
 // their own reminder flows or are too low-stakes to re-ping.
 export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["jobPostingStep",          "posting your care job"],
@@ -164,7 +159,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["applyFlowStep",           "applying to that job"],
   ["interviewRescheduleFlowStep", "proposing a new interview time"],
   ["healthcareFlowStep",      "that healthcare request"],
-  ["awaitingIssueDescription", "the issue you started telling me about"],
+  ["pendingFamilyMessage",    "your message for the family"],
   ["cancelStep",              "cancelling that shift"],
   ["availabilityStep",        "updating your availability"],
   ["profileUpdateStep",       "updating your profile"],
@@ -292,9 +287,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   // matching turn (find_nearby_caregivers / get_callout_backups) would wedge every subsequent
   // web turn forever (pendingMatches carries no stateExpiresAt).
   ["pendingMatches", { setAtField: "pendingMatchesSetAt", ttlMs: PENDING_MATCHES_TTL_MS }],
-  ["awaitingCareNotes", "generic"],
-  ["awaitingLateMinutes", "generic"],
-  ["awaitingIssueDescription", "generic"],
+  ["pendingFamilyMessage", "generic"],
   // Set by approvalNoticeDispatcher.ts alongside pendingShiftApprovalSetAt.
   ["pendingShiftApproval", { setAtField: "pendingShiftApprovalSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
   // SMS router parity: credentialCollector.ts clears this flow after
@@ -341,8 +334,6 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "reviewFlowData",
   "applyFlowData",
   "interviewRescheduleFlowData",
-  "awaitingTaskAck",
-  "pendingShiftConfirmation",
   "healthcareFlowData",
   "pendingAvailability",
   "cancelCandidates",

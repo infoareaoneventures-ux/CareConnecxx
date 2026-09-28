@@ -103,7 +103,7 @@ describe("communication tools", () => {
     });
 
     it("blocks caregivers with no active or recent engagement", async () => {
-      // No appointments — caregiver should be blocked
+      // No shifts — caregiver should be blocked
       hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi" }) as any;
       expect(r._toolError).toBe(true);
@@ -111,8 +111,8 @@ describe("communication tools", () => {
     });
 
     it("allows when caregiver has a CONFIRMED appointment with the explicit clientId", async () => {
-      hoisted.collState.set("appointments", [
-        { caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" },
+      hoisted.collState.set("shifts", [
+        { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
       ]);
       hoisted.docState.set("users/c1", { phone: "+15555550100" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
@@ -125,7 +125,7 @@ describe("communication tools", () => {
     });
 
     it("blocks an explicit clientId when no relationship exists", async () => {
-      // collState is empty for appointments — no relationship
+      // collState is empty for shifts — no relationship
       hoisted.docState.set("users/c1", { phone: "+15555550100" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
@@ -134,7 +134,7 @@ describe("communication tools", () => {
     });
 
     it("posts into the shared thread and does not text the family directly (the trigger does, like a website message)", async () => {
-      hoisted.collState.set("appointments", [{ caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" }]);
+      hoisted.collState.set("shifts", [{ caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" }]);
       hoisted.docState.set("users/c1", { phone: "+15555550100", name: "Sarah" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "on my way", clientId: "c1" }) as any;
@@ -145,8 +145,8 @@ describe("communication tools", () => {
 
     describe("caregiver membership gate (Messages/Inbox parity)", () => {
       it("blocks when the caregiver has no membershipStatus/membershipPaid at all", async () => {
-        hoisted.collState.set("appointments", [
-          { caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" },
+        hoisted.collState.set("shifts", [
+          { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
         ]);
         hoisted.docState.set("users/c1", { phone: "+15555550100" });
         hoisted.docState.set("caregivers/cg1", { name: "Alice" });
@@ -164,8 +164,8 @@ describe("communication tools", () => {
       });
 
       it("allows a legacy caregiver with no membershipStatus but membershipPaid:true", async () => {
-        hoisted.collState.set("appointments", [
-          { caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" },
+        hoisted.collState.set("shifts", [
+          { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
         ]);
         hoisted.docState.set("users/c1", { phone: "+15555550100" });
         hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipPaid: true });
@@ -174,8 +174,8 @@ describe("communication tools", () => {
       });
 
       it("allows membershipStatus: 'trialing'", async () => {
-        hoisted.collState.set("appointments", [
-          { caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" },
+        hoisted.collState.set("shifts", [
+          { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
         ]);
         hoisted.docState.set("users/c1", { phone: "+15555550100" });
         hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "trialing" });
@@ -284,8 +284,8 @@ describe("communication tools", () => {
     });
 
     it("send_client_message posts into the same chatRooms thread as the caregiver sender", async () => {
-      hoisted.collState.set("appointments", [
-        { caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" },
+      hoisted.collState.set("shifts", [
+        { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
       ]);
       hoisted.docState.set("users/c1", { phone: "+15555550100", name: "Sarah" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });

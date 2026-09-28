@@ -261,6 +261,8 @@ export { sendInterviewFeedbackNudges } from './scheduled/interviewFeedbackNudge'
 
 // BOOKING FOLLOW-UP NUDGE (every 15min — a 'strong' fit decision with no real booking started yet gets followed up)
 export { sendBookingFollowupNudges } from './scheduled/bookingFollowupNudge';
+// Caregiver "still waiting on you" nudges: interview / booking / replacement / schedule-change requests (2026-09-28).
+export { sendPendingDecisionNudges } from './scheduled/pendingDecisionNudge';
 
 // GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
 export { submitGpsCheckin } from './agents/gpsCheckin';

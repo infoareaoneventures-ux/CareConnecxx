@@ -59,12 +59,16 @@ beforeEach(() => {
 });
 
 describe("matching — the exact words the notice asked for, no LLM", () => {
-  it("matches the offered words regardless of case/punctuation; yes/no map to the positive/negative option", () => {
+  it("matches the offered word alone; a bare yes/no only where YES/NO were offered", () => {
     expect(matchDecisionWord("Accept!", OPTIONS.interview_request)).toBe("ACCEPT");
     expect(matchDecisionWord(" decline ", OPTIONS.booking_request)).toBe("DECLINE");
-    expect(matchDecisionWord("yes", OPTIONS.interview_proposal)).toBe("CONFIRM");
-    expect(matchDecisionWord("no", OPTIONS.amendment)).toBe("DECLINE");
-    expect(matchDecisionWord("no", OPTIONS.interview_proposal)).toBeNull(); // no negative option offered
+    expect(matchDecisionWord("please decline the booking request", OPTIONS.booking_request)).toBeNull(); // a sentence → the classifier, never a keyword scan
+    // 2026-09-28: a bare "yes" must never accept a booking — the agent may have asked its own yes/no question.
+    expect(matchDecisionWord("yes", OPTIONS.booking_request)).toBeNull();
+    expect(matchDecisionWord("yes", OPTIONS.interview_proposal)).toBeNull();
+    expect(matchDecisionWord("no", OPTIONS.amendment)).toBeNull();
+    expect(matchDecisionWord("yes", OPTIONS.booking_request_decline)).toBe("YES");
+    expect(matchDecisionWord("no", OPTIONS.booking_request_decline)).toBe("NO");
     expect(matchDecisionWord("what time is it?", OPTIONS.interview_request)).toBeNull();
   });
   it("parks with the kind's options and a 3-day expiry", () => {
@@ -86,6 +90,11 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
     expect(await handlePendingDecisionReply("+1", "chat", "what jobs are near me?", session(parkedDecision("interview_request", "iv1", "x", "caregiver")))).toBe("passthrough");
     expect(hoisted.sessionUpdates).toHaveLength(0); // still parked
     expect(hoisted.respondInterview).not.toHaveBeenCalled();
+    // 2026-09-28: a bare "yes" while a booking request is parked never reaches the classifier (it may answer the agent's own question)
+    hoisted.quick.mockClear();
+    expect(await handlePendingDecisionReply("+1", "chat", "Yes", session(parkedDecision("booking_request", "br1", "x", "caregiver")))).toBe("passthrough");
+    expect(hoisted.quick).not.toHaveBeenCalled();
+    expect(hoisted.respondBooking).not.toHaveBeenCalled();
   });
 
   it("interview request: ACCEPT runs the site's accept and texts its toast; DECLINE declines; PROPOSE opens the reschedule flow", async () => {
@@ -118,14 +127,14 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
   });
 
   it("booking request: DETAILS texts the request whole and stays parked; DECLINE asks the page's confirm; YES then declines", async () => {
-    const pd = parkedDecision("booking_request", "br1", "a booking request from Fam", "caregiver");
+    const pd = parkedDecision("booking_request", "br1", "a booking request from Fam", "caregiver", Date.now(), "Basra Yousuf");
     await handlePendingDecisionReply("+1", "chat", "details", session(pd));
     expect(hoisted.sent[0]).toContain("Booking requests:");
     expect(hoisted.sessionUpdates).toHaveLength(0); // still parked
     await handlePendingDecisionReply("+1", "chat", "decline", session(pd));
-    expect(hoisted.sent.at(-1)).toBe("Decline this booking request? Reply YES or NO.");
+    expect(hoisted.sent.at(-1)).toBe("Decline Basra Yousuf's booking request? Reply YES or NO."); // names the family (2026-09-28)
     const confirm = hoisted.sessionSets.at(-1)?.d.pendingDecision;
-    expect(confirm).toMatchObject({ kind: "booking_request_decline", recordId: "br1", options: ["YES", "NO"] });
+    expect(confirm).toMatchObject({ kind: "booking_request_decline", recordId: "br1", options: ["YES", "NO"], party: "Basra Yousuf" });
     await handlePendingDecisionReply("+1", "chat", "yes", session(confirm));
     expect(hoisted.respondBooking).toHaveBeenCalledWith("cg1", "br1", "decline");
     expect(hoisted.sent.at(-1)).toBe("Request declined");
@@ -143,7 +152,7 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
     await handlePendingDecisionReply("+1", "chat", "accept", session(pd));
     expect(hoisted.acceptAmendment).toHaveBeenCalledWith("cg1", "am1");
     expect(hoisted.sent).toEqual(["Schedule updated — new visits added."]);
-    await handlePendingDecisionReply("+1", "chat", "no", session(pd));
+    await handlePendingDecisionReply("+1", "chat", "decline", session(pd));
     expect(hoisted.declineAmendment).toHaveBeenCalledWith("cg1", "am1");
   });
 

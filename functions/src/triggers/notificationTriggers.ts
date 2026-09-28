@@ -412,7 +412,7 @@ export const onBookingRequestWrite = functions.firestore
         if (!after.agentTaskId) {
           await notifyCaregiverByText(after.caregiverId,
             bookingRequestText(context.params.bookingId, after as Record<string, unknown>, `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request.`),
-            parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver")));
+            parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)));
         }
         return;
       }
@@ -433,7 +433,7 @@ export const onBookingRequestWrite = functions.firestore
         if (!after.agentTaskId) {
           await notifyCaregiverByText(after.caregiverId,
             bookingRequestText(context.params.bookingId, after as Record<string, unknown>, `${after.clientName || 'A client'} resent their booking request.`),
-            parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver")));
+            parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)));
         }
         return;
       }
@@ -518,7 +518,7 @@ export const onBookingAmendmentWrite = functions.firestore
             : `${after.clientName || 'A family'} would like to add ${days} to your regular schedule.`}\n\n${
             amendmentCardLines({ ...(after as Record<string, unknown>), id: context.params.amendmentId } as Parameters<typeof amendmentCardLines>[0]).join("\n")
           }\n\nReply ACCEPT or DECLINE.`,
-          parkDecision(parkedDecision("amendment", context.params.amendmentId, `a schedule change from ${after.clientName || 'a family'}`, "caregiver")));
+          parkDecision(parkedDecision("amendment", context.params.amendmentId, `a schedule change from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)));
         return;
       }
 

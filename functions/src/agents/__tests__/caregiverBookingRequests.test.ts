@@ -165,7 +165,7 @@ describe("the list", () => {
     expect(hoisted.sent[0]).toContain("1. The Nguyen Family");
     expect(hoisted.sessionWrites[0].data.lastBookingRequestList.items).toEqual([{ number: 1, kind: "request", bookingRequestId: "br1", clientName: "The Nguyen Family" }]);
     // the only request is parked, so a plain "accept" runs the page's button
-    expect(hoisted.sessionWrites[0].data.pendingDecision).toMatchObject({ kind: "booking_request", recordId: "br1", options: ["ACCEPT", "DECLINE", "DETAILS"] });
+    expect(hoisted.sessionWrites[0].data.pendingDecision).toMatchObject({ kind: "booking_request", recordId: "br1", options: ["ACCEPT", "DECLINE", "DETAILS"], party: "The Nguyen Family" });
   });
 });
 
@@ -173,13 +173,13 @@ describe("Accept / Decline — the page's exact writes", () => {
   it("accept writes {status:'accepted', updatedAt} and nothing else; toast is the page's", async () => {
     hoisted.docs.set("booking_requests/br1", { ...req(), caregiverId: "cg1" });
     const r = await respondToBookingRequest("cg1", "br1", "accept");
-    expect(r).toMatchObject({ ok: true, status: "accepted", toast: "Booking request accepted!" });
+    expect(r).toMatchObject({ ok: true, status: "accepted", toast: "Booking request from The Nguyen Family accepted!" });
     expect(hoisted.updates).toEqual([{ path: "booking_requests/br1", data: { status: "accepted", updatedAt: "__serverTimestamp__" } }]);
   });
   it("decline writes {status:'declined', updatedAt}; toast 'Request declined'", async () => {
     hoisted.docs.set("booking_requests/br1", { ...req(), caregiverId: "cg1" });
     const r = await respondToBookingRequest("cg1", "br1", "decline");
-    expect(r).toMatchObject({ ok: true, status: "declined", toast: "Request declined" });
+    expect(r).toMatchObject({ ok: true, status: "declined", toast: "Request from The Nguyen Family declined" });
     expect(hoisted.updates[0].data).toEqual({ status: "declined", updatedAt: "__serverTimestamp__" });
   });
   it("refuses another caregiver's request, a missing one, or one no longer pending", async () => {
@@ -248,7 +248,7 @@ describe("schedule-change cards — the page's card and its Accept/Decline, verb
       careNeeds: ["Companionship"], lifestylePreferences: ["No pets"], rate: 25, paymentMethod: "credit", notes: "general note",
       careRecipients: [{ name: "Mai" }], emergencyContact: { name: "Linh" }, schedule: { ongoing: true, startDate: "2099-01-01", dayShiftTimes: { Mon: [{ start: "09:00", end: "13:00" }] } } });
     const r = await acceptAmendment("cg1", "am1");
-    expect(r).toMatchObject({ ok: true, status: "accepted", shiftsCreated: 4, toast: "Schedule updated — new visits added." });
+    expect(r).toMatchObject({ ok: true, status: "accepted", shiftsCreated: 4, toast: "Schedule updated for The Nguyen Family — new visits added." });
     // the booking's permanent schedule gains the new day
     const bookingUpdate = hoisted.updates.find((u) => u.path === "booking_requests/br1")!;
     expect(bookingUpdate.data).toEqual({ "schedule.dayShiftTimes": { Mon: [{ start: "09:00", end: "13:00" }], Fri: [{ start: "09:00", end: "11:00" }] }, updatedAt: "__serverTimestamp__" });

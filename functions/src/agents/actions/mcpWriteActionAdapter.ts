@@ -220,6 +220,7 @@ function targetDocIdFromResult(output: unknown): string | undefined {
     "taskId",
     "referralId",
     "entryId",
+    "bookingRequestId", // respond_to_booking_request — 2026-09-28: an unverifiable receipt made the agent ask for confirmation twice
   ]) {
     const value = record[key];
     if (typeof value === "string" && value) return value;

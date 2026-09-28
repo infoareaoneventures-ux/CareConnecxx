@@ -292,8 +292,8 @@ export async function sendBookingRequestList(phone: string, chatId: string, care
   const only = all.length === 1 ? all[0] : null;
   const pendingDecision = only
     ? (only.kind === "amendment"
-        ? parkedDecision("amendment", only.amendment.id, `a schedule change from ${only.amendment.clientName || "a family"}`, "caregiver")
-        : parkedDecision("booking_request", only.req.id, `a booking request from ${only.req.clientName || "a family"}`, "caregiver"))
+        ? parkedDecision("amendment", only.amendment.id, `a schedule change from ${only.amendment.clientName || "a family"}`, "caregiver", Date.now(), only.amendment.clientName)
+        : parkedDecision("booking_request", only.req.id, `a booking request from ${only.req.clientName || "a family"}`, "caregiver", Date.now(), only.req.clientName))
     : admin.firestore.FieldValue.delete();
   await db.collection("agent_sessions").doc(phone).set(
     { lastBookingRequestList: { at: new Date().toISOString(), items, offset: from + shown.length, total: all.length } satisfies LastRequestList, pendingDecision },
@@ -332,7 +332,9 @@ export async function respondToBookingRequest(caregiverId: string, id: string, d
   if (r.req.status !== "pending") return { ok: false, reason: "not_pending", status: r.req.status };
   const status = decision === "accept" ? "accepted" : "declined";
   await db.collection("booking_requests").doc(id).update({ status, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, status, toast: decision === "accept" ? "Booking request accepted!" : "Request declined", clientName: r.req.clientName };
+  // The page's toasts, naming the family — over text there is no card in view (founder, 2026-09-28).
+  const who = r.req.clientName || "the family";
+  return { ok: true, status, toast: decision === "accept" ? `Booking request from ${who} accepted!` : `Request from ${who} declined`, clientName: r.req.clientName };
 }
 
 // ── The amendment card's buttons — CaregiverBookingsPage.handleAcceptAmendment / Decline, verbatim ──
@@ -368,7 +370,7 @@ export async function declineAmendment(caregiverId: string, id: string): Promise
   const r = await loadAmendmentFor(caregiverId, id);
   if (!r.ok) return r;
   await r.ref.update({ status: "declined", respondedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, status: "declined", shiftsCreated: 0, toast: "Declined." };
+  return { ok: true, status: "declined", shiftsCreated: 0, toast: `Schedule change from ${r.a.clientName || "the family"} declined.` };
 }
 
 /** The Accept button: merge an ongoing change into the booking's schedule, create the visits for the next 4 weeks, mark accepted. */
@@ -438,5 +440,5 @@ export async function acceptAmendment(caregiverId: string, id: string): Promise<
     }
   }
   await r.ref.update({ status: "accepted", respondedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, status: "accepted", shiftsCreated: count, toast: "Schedule updated — new visits added." };
+  return { ok: true, status: "accepted", shiftsCreated: count, toast: `Schedule updated for ${amendment.clientName || "the family"} — new visits added.` };
 }

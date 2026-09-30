@@ -25,7 +25,6 @@ describe('AvailabilityService', () => {
     personalityTags: ['Patient'],
     matchScore: 80,
     distance: 5,
-    availability: [],
     weeklyAvailability: {
       monday: [{ start: '09:00', end: '17:00' }],
       tuesday: [{ start: '09:00', end: '17:00' }],

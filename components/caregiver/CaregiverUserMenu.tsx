@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { User, Settings, Wallet, BookOpen, MessageCircle, LogOut, ChevronDown, Users } from 'lucide-react';
+import { User, Settings, Wallet, LogOut, ChevronDown, Users } from 'lucide-react';
 import { authService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver } from '../../types';
@@ -50,15 +50,6 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
     }
   };
 
-  const scrollToSuccessGuide = () => {
-    setOpen(false);
-    navigate('/caregiver/dashboard');
-    requestAnimationFrame(() => {
-      const el = document.getElementById('success-guide');
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  };
-
   const initials = (profile?.name || currentUser?.displayName || 'C')
     .split(' ')
     .map(s => s[0])
@@ -73,8 +64,6 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
     { label: 'My Families', onClick: () => go('/caregiver/families'), icon: <Users className="w-4 h-4" /> },
     { label: 'Payments', onClick: () => go('/caregiver/payments'), icon: <Wallet className="w-4 h-4" /> },
     { label: 'Settings', onClick: () => go('/caregiver/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
-    { label: 'Success guide', onClick: scrollToSuccessGuide, icon: <BookOpen className="w-4 h-4" /> },
-    { label: 'Give feedback', onClick: () => { window.location.href = 'mailto:support@eviacares.com?subject=Caregiver%20feedback'; setOpen(false); }, icon: <MessageCircle className="w-4 h-4" />, divider: true },
   ];
 
   return (

@@ -12,7 +12,7 @@ import {
 const MORNING = { start: "06:00", end: "12:00" };
 const AFTERNOON = { start: "12:00", end: "18:00" };
 const EVENING = { start: "18:00", end: "23:00" };
-const OVERNIGHT = { start: "23:00", end: "23:59" };
+const OVERNIGHT = { start: "23:00", end: "06:00" }; // = the site's BLOCK_TO_TIMESLOT.overnight (2026-09-30)
 
 // Mirror of services/availabilityService.ts weeklySlotsToBl block detection —
 // inlined (that file is frontend-only and imports firebase). This proves the

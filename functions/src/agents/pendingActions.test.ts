@@ -191,7 +191,7 @@ describe("buildActionPreview", () => {
   });
 
   it("handles missing ID fields gracefully", async () => {
-    expect(await buildActionPreview("cancel_job_post", {})).toBe("Cancel job post ?");
+    expect(await buildActionPreview("cancel_job_post", {})).toBe("Cancel this job post");
   });
 
   // 2026-09-12 live incident: schedule_interview resolved and confirmed with
@@ -210,7 +210,7 @@ describe("buildActionPreview", () => {
 
     it("falls back gracefully when the caregiverId doesn't resolve to a profile", async () => {
       const preview = await buildActionPreview("schedule_interview", { caregiverId: "cg_missing" });
-      expect(preview).toBe("Schedule an interview with caregiver cg_missing");
+      expect(preview).toBe("Schedule an interview with this caregiver"); // never the raw id
     });
   });
 
@@ -232,7 +232,7 @@ describe("proposePendingAction", () => {
     expect(action.userId).toBe("user-1");
     expect(action.toolName).toBe("cancel_job_post");
     expect(action.status).toBe("awaiting");
-    expect(action.preview).toBe("Cancel job post j-9876");
+    expect(action.preview).toBe("Cancel this job post");
 
     const expiresAt = new Date(action.expiresAt).getTime();
     const proposedAt = new Date(action.proposedAt).getTime();

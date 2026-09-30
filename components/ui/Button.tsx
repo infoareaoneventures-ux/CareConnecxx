@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'accent' | 'outline';
+  variant?: 'primary' | 'secondary' | 'accent' | 'outline' | 'brand';
   size?: 'sm' | 'md' | 'lg';
   fullWidth?: boolean;
 }
@@ -31,7 +31,9 @@ export const Button: React.FC<ButtonProps> = ({
     primary: "btn-depth-primary focus:ring-[var(--color-ink-600)]",
     secondary: "bg-white text-[var(--color-ink-600)] border hairline hover:text-[var(--color-ink-900)] hover:bg-[var(--color-paper-100)] focus:ring-[var(--color-ink-400)] shadow-sm",
     accent: "btn-depth-primary focus:ring-[var(--color-ink-600)]",
-    outline: "border border-[var(--color-ink-900)] text-[var(--color-ink-900)] hover:bg-[var(--color-paper-100)] focus:ring-[var(--color-ink-400)]"
+    outline: "border border-[var(--color-ink-900)] text-[var(--color-ink-900)] hover:bg-[var(--color-paper-100)] focus:ring-[var(--color-ink-400)]",
+    // The caregiver pages' blue CTA (the dashboard's Nearby Jobs "Apply Now") — founder 2026-09-30: the Jobs page matches the dashboard, not the other way round.
+    brand: "bg-primary-600 hover:bg-primary-700 text-white focus:ring-primary-300"
   };
 
   const sizes = {

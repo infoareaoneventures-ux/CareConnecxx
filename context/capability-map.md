@@ -59,6 +59,7 @@
 |---|---|---|---|---|---|---|---|
 | caregiver | Update caregiver profile (rate/skills/bio) | components/CaregiverProfile.tsx | caregivers | `update_caregiver_profile` | caregiver | shipped |  |
 | caregiver | Update availability | components/caregiver/CaregiverCalendarPage.tsx | caregivers | `update_caregiver_availability` | caregiver | shipped |  |
+| caregiver | Block / report a family from the Inbox menu | components/InboxView.tsx | users | `set_block_status` | caregiver | shipped | Same tool as the family side (2026-09-30); like the page, not offered for a care-team contact or the Evia team thread. |
 | caregiver | Browse the job board | components/caregiver/JobBoard.tsx | job_posts | `browse_job_board` | caregiver | shipped |  |
 | caregiver | Apply to a job post | components/caregiver/JobBoard.tsx | job_posts | `start_apply_flow` | caregiver | shipped | The Apply modal as a scripted flow (agents/caregiverJobFlows.ts): optional cover letter, then SUBMIT / CANCEL; writes the site's job_applications document via jobApplicationSubmit.ts. The old apply_to_job tool was removed 2026-09-27. |
 | caregiver | Withdraw a job application | components/caregiver/JobBoard.tsx | job_posts | `withdraw_job_application` | caregiver | shipped | Sets job_applications.{id}.status='withdrawn' (the shape the client/admin applicant views read). |

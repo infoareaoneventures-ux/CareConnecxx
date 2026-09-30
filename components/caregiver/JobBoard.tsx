@@ -911,7 +911,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                             <Car className="w-3 h-3" /> Transportation Badge Required
                                                         </button>
                                                     );
-                                                    return <Button fullWidth size="sm" onClick={() => setApplyingJob(job)}>Apply Now</Button>;
+                                                    return <Button variant="brand" fullWidth size="sm" onClick={() => setApplyingJob(job)}>Apply Now</Button>;
                                                 })()}
                                                 <Button variant="secondary" size="sm" onClick={() => setViewingJob(job)}>Details</Button>
                                                 <button
@@ -1544,7 +1544,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                         </button>
                                     );
                                     return (
-                                        <Button fullWidth onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }}>Apply Now</Button>
+                                        <Button variant="brand" fullWidth onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }}>Apply Now</Button>
                                     );
                                 })()}
                             </div>
@@ -1599,7 +1599,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
                         <div className="border-t border-[var(--color-neutral-100)] p-4 flex gap-3 bg-white rounded-b-3xl">
                             <Button type="button" variant="secondary" fullWidth onClick={() => setApplyingJob(null)}>Cancel</Button>
-                            <Button type="submit" form="apply-form" fullWidth disabled={acceptingGigId === applyingJob.id}>
+                            <Button type="submit" form="apply-form" variant="brand" fullWidth disabled={acceptingGigId === applyingJob.id}>
                                 {acceptingGigId === applyingJob.id ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Submitting...</> : 'Submit Application'}
                             </Button>
                         </div>

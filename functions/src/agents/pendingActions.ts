@@ -134,10 +134,35 @@ async function resolveCaregiverNameForPreview(caregiverId: unknown): Promise<str
   try {
     const snap = await db.collection("publicCaregiverProfiles").doc(caregiverId).get();
     const name = snap.data()?.name as string | undefined;
-    return name || `caregiver ${caregiverId}`;
+    return name || "this caregiver"; // never the raw id (founder 2026-09-30: names, not numbers, in anything a person reads)
   } catch {
-    return `caregiver ${caregiverId}`;
+    return "this caregiver";
   }
+}
+
+/** A person (family or caregiver) by id, for a preview — users doc, then the public caregiver profile; never the raw id. */
+async function resolvePersonNameForPreview(userId: unknown): Promise<string> {
+  if (typeof userId !== "string" || !userId) return "this person";
+  try {
+    const u = await db.collection("users").doc(userId).get();
+    const d = (u.data() ?? {}) as Record<string, unknown>;
+    const name = (d.name as string | undefined) || (d.displayName as string | undefined) || [d.firstName, d.lastName].filter(Boolean).join(" ");
+    if (name) return name;
+  } catch { /* fall through */ }
+  try {
+    const p = await db.collection("publicCaregiverProfiles").doc(userId).get();
+    const name = p.data()?.name as string | undefined;
+    if (name) return name;
+  } catch { /* fall through */ }
+  return "this person";
+}
+async function resolveJobTitleForPreview(jobId: unknown): Promise<string | null> {
+  if (typeof jobId !== "string" || !jobId) return null;
+  try { const t = (await db.collection("job_posts").doc(jobId).get()).data()?.title as string | undefined; return t || null; } catch { return null; }
+}
+async function resolveApplicantForPreview(applicationId: unknown): Promise<string | null> {
+  if (typeof applicationId !== "string" || !applicationId) return null;
+  try { const n = (await db.collection("job_applications").doc(applicationId).get()).data()?.caregiverName as string | undefined; return n || null; } catch { return null; }
 }
 
 // Build a short human-readable preview of the action so support / debugging
@@ -156,15 +181,19 @@ export async function buildActionPreview(toolName: string, toolInput: Record<str
     case "delete_account":
       return `Permanently delete this Evia account`;
     case "set_block_status": {
-      const who = String(toolInput.targetUserId ?? toolInput.targetPhone ?? "?");
-      if (toolInput.action === "unblock") return `Unblock user ${who}`;
-      if (toolInput.action === "report") return `Report user ${who}`;
-      return `Block user ${who}`;
+      const who = await resolvePersonNameForPreview(toolInput.targetUserId);
+      if (toolInput.action === "unblock") return `Unblock ${who}`;
+      if (toolInput.action === "report") return `Report ${who}`;
+      return `Block ${who}`;
     }
-    case "cancel_job_post":
-      return `Cancel job post ${String(toolInput.jobId ?? "?")}`;
-    case "respond_to_job_application":
-      return `${String(toolInput.decision ?? "respond to")} application ${String(toolInput.applicationId ?? "")}`.trim();
+    case "cancel_job_post": {
+      const title = await resolveJobTitleForPreview(toolInput.jobId);
+      return title ? `Cancel job post "${title}"` : "Cancel this job post";
+    }
+    case "respond_to_job_application": {
+      const applicant = await resolveApplicantForPreview(toolInput.applicationId);
+      return `${String(toolInput.decision ?? "respond to")} ${applicant ? `${applicant}'s application` : "this application"}`;
+    }
     case "respond_to_booking_request":
       return "Decline this booking request?";
     case "update_care_plan":

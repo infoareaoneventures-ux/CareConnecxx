@@ -1,324 +1,132 @@
+// agents/availabilityHandler.ts — the Calendar page's "Update Availability"
+// modal as a short scripted flow (the UPDATE_AVAILABILITY intent's handler).
+//
+// The modal: a 7-day × 4-block grid, Save writes caregivers/{uid}.weeklyAvailability
+// as the whole map of canonical slots (services/availabilityService.ts
+// blocksToWeeklySlots). This flow ends in that exact write — nothing else
+// (rewritten 2026-09-30: plain fixed sentences, no model-written copy; same
+// field and values as the modal; caregiverAvailabilityGrid.ts owns the grid).
+//
+//   start           → which day(s), and add / remove / replace (LLM-parsed)
+//   awaiting_blocks → which blocks (LLM-parsed against the modal's four labels)
+//   confirm         → shows the whole grid like the modal; SAVE saves, CANCEL backs out
 import * as admin from "firebase-admin";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { generateCaraMessage } from "../utils/caraMessage";
+import {
+  gridFromWeekly, weeklyFromGrid, applyGridPatch, gridText, gridsEqual, normalizeDay,
+  BLOCK_IDS, BLOCK_CHOICES, DAY_KEYS, type Grid, type BlockId, type GridPatch,
+} from "./caregiverAvailabilityGrid";
 
 const db = admin.firestore();
+const FLOW_TTL_MS = 30 * 60 * 1000;
 
-const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-
-/**
- * Canonical time blocks — same as the UI grid.
- * Evia always asks caregivers to pick from these explicitly so there
- * is zero ambiguity and no approximate time-to-block mapping.
- */
-const BLOCKS: Record<string, { start: string; end: string; label: string; hours: string }> = {
-  morning:   { start: "06:00", end: "12:00", label: "Morning",   hours: "6am–12pm" },
-  afternoon: { start: "12:00", end: "18:00", label: "Afternoon", hours: "12pm–6pm" },
-  evening:   { start: "18:00", end: "23:00", label: "Evening",   hours: "6pm–11pm" },
-  overnight: { start: "23:00", end: "06:00", label: "Overnight", hours: "11pm–6am" },
-};
-const BLOCK_IDS = ["morning", "afternoon", "evening", "overnight"] as const;
-type BlockId = typeof BLOCK_IDS[number];
-
-interface DaySlot { start: string; end: string; }
-type WeeklyAvailability = Record<string, DaySlot[]>;
-
-/** Convert block ID array → TimeSlot array for Firestore */
-function blocksToSlots(blockIds: string[]): DaySlot[] {
-  return blockIds.filter(id => BLOCKS[id]).map(id => ({ start: BLOCKS[id].start, end: BLOCKS[id].end }));
-}
-
-/** Convert stored TimeSlots → block IDs (handles both formats in Firestore) */
-function slotsToBlocks(slots: DaySlot[]): BlockId[] {
-  const active = new Set<BlockId>();
-  const blockMins: Record<string, { s: number; e: number }> = {
-    morning:   { s: 360,  e: 720  },
-    afternoon: { s: 720,  e: 1080 },
-    evening:   { s: 1080, e: 1380 },
-    overnight: { s: 1380, e: 1440 },
-  };
-  const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-  for (const slot of slots) {
-    const s = toMin(slot.start);
-    const eRaw = toMin(slot.end);
-    const e = eRaw <= s ? eRaw + 1440 : eRaw;
-    for (const b of BLOCK_IDS) {
-      const r = blockMins[b];
-      if (s < r.e && e > r.s) active.add(b);
-    }
-  }
-  return BLOCK_IDS.filter(b => active.has(b));
-}
-
-/** Format the weekly schedule as readable block names for confirmation SMS */
-function formatAvailability(weekly: WeeklyAvailability): string {
-  const lines: string[] = [];
-  for (const day of DAYS) {
-    const slots = weekly[day] ?? [];
-    if (slots.length > 0) {
-      const blockNames = slotsToBlocks(slots)
-        .map(id => `${BLOCKS[id].label} (${BLOCKS[id].hours})`)
-        .join(", ");
-      lines.push(`  ${day.charAt(0).toUpperCase() + day.slice(1)}: ${blockNames}`);
-    }
-  }
-  return lines.length > 0 ? lines.join("\n") : "  (no availability set)";
-}
-
-/** The time blocks described in prose when caregivers pick availability
- *  (voice contract 2026-07-11: no numbered menus — the parser still accepts
- *  numbers, names, "all", or "none"). */
-const BLOCK_CHOICES =
-  `morning (6am–12pm), afternoon (12pm–6pm), evening (6pm–11pm), or overnight (11pm–6am)`;
+export const WHICH_DAYS_Q = "Which day(s) would you like to update? For example \"Monday\", \"Monday and Wednesday\", or \"weekdays\".";
+export const CONFIRM_LINE = "Reply SAVE to save this, or CANCEL to leave it as it is.";
+const blocksQ = (days: string[], action: string) =>
+  `Which time blocks ${action === "add" ? "should I add for" : "are you available on"} ${days.map(cap).join(", ")} — ${BLOCK_CHOICES}? Reply the names, ALL, or NONE to clear ${days.length === 1 ? "that day" : "those days"}.`;
+const cap = (d: string) => d.charAt(0).toUpperCase() + d.slice(1);
 
 async function isQuestionOrOther(text: string): Promise<boolean> {
-  const result = await parseWithClaude(
-    "Reply YES if this is a general question or off-topic comment unrelated to confirming a schedule change or picking time blocks. Reply NO if it is a direct answer. Only reply YES or NO.",
-    text,
-    5
-  );
-  return result.toUpperCase().startsWith("Y");
+  const v = await parseWithClaude(
+    "Is this message a QUESTION or an unrelated remark, rather than an answer naming days, time blocks, or yes/no/save/cancel? Reply exactly QUESTION or ANSWER.",
+    text, 5,
+  ).catch(() => "ANSWER");
+  return v.trim().toUpperCase().startsWith("Q");
 }
 
-/**
- * UPDATE_AVAILABILITY handler — caregiver updates their weekly schedule.
- *
- * Flow:
- *   start           → parse which day(s) and action from message,
- *                      then ask caregiver to pick blocks explicitly
- *   awaiting_blocks → parse block selections, build proposed schedule, ask to confirm
- *   confirm         → YES saves to Firestore; NO cancels
- */
 export async function handleAvailabilityUpdate(
   caregiverId: string,
-  phone:       string,
-  text:        string,
-  session:     Record<string, unknown>,
-  sendMessage: (msg: string) => Promise<unknown>
+  phone: string,
+  text: string,
+  session: Record<string, unknown>,
+  sendMessage: (msg: string) => Promise<unknown>,
 ): Promise<void> {
   const step = (session.availabilityStep as string) ?? "start";
+  const ref = db.collection("agent_sessions").doc(phone);
+  const clear = () => ref.update({
+    availabilityStep: admin.firestore.FieldValue.delete(), pendingAvailability: admin.firestore.FieldValue.delete(),
+    pendingDays: admin.firestore.FieldValue.delete(), pendingAction: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete(),
+  }).catch(() => {});
+  const loadGrid = async (): Promise<Grid> => gridFromWeekly((await db.collection("caregivers").doc(caregiverId).get()).data()?.weeklyAvailability);
+  // Goal 4 (founder): Evia wakes once per text and the site can change the grid
+  // meanwhile — so the session keeps the TAPS, not the resulting grid, and SAVE
+  // re-applies them to whatever the record holds at that moment.
+  const toConfirm = async (patch: GridPatch, current: Grid) => {
+    const grid = applyGridPatch(current, patch).grid;
+    if (gridsEqual(grid, current)) { await clear(); await sendMessage(`That's already how your availability is set:\n${gridText(current)}`); return; }
+    await ref.update({ availabilityStep: "confirm", pendingAvailability: JSON.stringify(patch), pendingDays: admin.firestore.FieldValue.delete(), pendingAction: admin.firestore.FieldValue.delete(), stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() });
+    await sendMessage(`Your availability would be:\n${gridText(grid)}\n\n${CONFIRM_LINE}`);
+  };
 
-  // ── start — identify days + action, then ask which blocks ────────────────
   if (step === "start") {
-    // isQuestionOrOther check first
-    if (await isQuestionOrOther(text)) {
-      await sendMessage(
-        "I can update your availability! Just let me know which day(s) you'd like to change.\n\n" +
-        "For example:\n" +
-        "• \"Add Monday\"\n" +
-        "• \"Remove Fridays\"\n" +
-        "• \"Change my Tuesday schedule\""
-      );
-      return;
-    }
-
+    if (await isQuestionOrOther(text)) { await sendMessage(`I can update your availability — it's the same grid as Update Availability on your Calendar. ${WHICH_DAYS_Q}`); return; }
     const raw = await parseWithClaude(
-      `Extract which days and what action the caregiver wants for their availability. ` +
-      `Return ONLY valid JSON: {"action":"add"|"remove"|"replace","days":["monday","tuesday",...]}. ` +
-      `"add" = add new availability to those days. ` +
-      `"remove" = remove all availability on those days. ` +
-      `"replace" = replace existing availability on those days. ` +
-      `Use lowercase full day names. ` +
-      `If action is unclear but days are mentioned, default to "replace". ` +
-      `If you cannot identify any days, return {"action":"unclear","days":[]}.`,
-      text,
-      200
-    );
-
-    let parsed: { action: string; days: string[] } = { action: "unclear", days: [] };
-    try {
-      const stripped = raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "");
-      parsed = JSON.parse(stripped);
-    } catch { /* keep unclear */ }
-
-    const validDays = (parsed.days ?? []).map(d => d.toLowerCase()).filter(d => DAYS.includes(d));
-
-    if (parsed.action === "unclear" || validDays.length === 0) {
-      await sendMessage(
-        "Which day(s) would you like to update?\n\n" +
-        "For example: \"Monday\", \"Monday and Wednesday\", or \"weekdays\""
-      );
-      return;
+      `The caregiver wants to change their weekly availability. Extract the days and the action. Return ONLY JSON: {"action":"add"|"remove"|"replace","days":["monday",...],"blocks":["morning","afternoon","evening","overnight"]}. ` +
+      `"weekdays" = monday..friday, "weekends" = saturday+sunday, "every day" = all seven. "remove"/"not available"/"take off" = remove. "add" when they add hours. Otherwise "replace". ` +
+      `Include "blocks" only when they named parts of the day (morning 6am-12pm, afternoon 12pm-6pm, evening 6pm-12am, overnight 12am-6am; a clock range maps to every block it touches). If no day is named return {"action":"unclear","days":[]}.`,
+      text, 200,
+    ).catch(() => "");
+    let parsed: { action?: string; days?: string[]; blocks?: string[] } = {};
+    try { parsed = JSON.parse(raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "")); } catch { /* unclear */ }
+    const days = [...new Set((parsed.days ?? []).map(normalizeDay).filter((d): d is Grid extends Record<infer K, unknown> ? K & string : never => !!d))];
+    const action = parsed.action === "add" || parsed.action === "remove" || parsed.action === "replace" ? parsed.action : "unclear";
+    if (action === "unclear" || days.length === 0) { await sendMessage(WHICH_DAYS_Q); return; }
+    const current = await loadGrid();
+    if (action === "remove") {
+      return toConfirm({ remove: Object.fromEntries(days.map((d) => [d, "all" as const])) }, current);
     }
-
-    const dayList = validDays.map(d => d.charAt(0).toUpperCase() + d.slice(1)).join(", ");
-
-    // "remove" doesn't need block selection — go straight to confirm
-    if (parsed.action === "remove") {
-      const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-      const current: WeeklyAvailability = (cgSnap.data()?.weeklyAvailability ?? {}) as WeeklyAvailability;
-      const proposed: WeeklyAvailability = JSON.parse(JSON.stringify(current));
-      for (const day of validDays) delete proposed[day];
-
-      await db.collection("agent_sessions").doc(phone).update({
-        availabilityStep:    "confirm",
-        pendingAvailability: JSON.stringify(proposed),
-        stateExpiresAt:      new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      });
-
-      const opener = await generateCaraMessage({
-        audience: "caregiver",
-        context:  "Evia is about to show the caregiver their updated availability after removing a day. Write a brief 1-sentence intro asking them to confirm.",
-        fallback:  "Here's your updated schedule — does this look right?",
-        maxTokens: 60,
-      });
-
-      await sendMessage(
-        `${opener}\n\n` +
-        formatAvailability(proposed) +
-        `\n\nJust say yes to save it, or no to cancel.`
-      );
-      return;
+    const namedBlocks = (parsed.blocks ?? []).map((b) => String(b).toLowerCase()).filter((b): b is BlockId => (BLOCK_IDS as string[]).includes(b));
+    if (namedBlocks.length) {
+      const patch: GridPatch = action === "add" ? { add: Object.fromEntries(days.map((d) => [d, namedBlocks])) } : { set: Object.fromEntries(days.map((d) => [d, namedBlocks])) };
+      return toConfirm(patch, current);
     }
-
-    // For add/replace — ask which blocks
-    await db.collection("agent_sessions").doc(phone).update({
-      availabilityStep: "awaiting_blocks",
-      pendingDays:      JSON.stringify(validDays),
-      pendingAction:    parsed.action,
-      stateExpiresAt:   new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    });
-
-    const verb = parsed.action === "add" ? "add for" : "set for";
-    await sendMessage(
-      `Got it — ${dayList}. Which time blocks would you like to ${verb} ${validDays.length === 1 ? "that day" : "those days"} — ` +
-      `${BLOCK_CHOICES}? You can pick a few, say "all", or "none" to clear ${validDays.length === 1 ? "it" : "them"}.`
-    );
+    await ref.update({ availabilityStep: "awaiting_blocks", pendingDays: JSON.stringify(days), pendingAction: action, stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() });
+    await sendMessage(blocksQ(days, action));
     return;
   }
 
-  // ── awaiting_blocks — parse block selections, build proposed, ask confirm ─
   if (step === "awaiting_blocks") {
-    // isQuestionOrOther check first
-    if (await isQuestionOrOther(text)) {
-      await sendMessage(
-        `So — which time blocks would you like: ${BLOCK_CHOICES}? You can pick a few, say "all", or "none".`
-      );
-      return;
+    const days = (JSON.parse((session.pendingDays as string) ?? "[]") as string[]).filter((d) => (DAY_KEYS as readonly string[]).includes(d));
+    const action = (session.pendingAction as string) === "add" ? "add" : "replace";
+    const norm = text.trim().toUpperCase();
+    let blocks: BlockId[] | null = null;
+    if (norm === "ALL") blocks = [...BLOCK_IDS];
+    else if (norm === "NONE") blocks = [];
+    else if (norm === "CANCEL" || norm === "NO") { await clear(); await sendMessage("Okay — your availability wasn't changed."); return; }
+    else {
+      if (await isQuestionOrOther(text)) { await sendMessage(blocksQ(days, action)); return; }
+      const raw = await parseWithClaude(
+        `Map the caregiver's reply to time blocks: morning (6am-12pm), afternoon (12pm-6pm), evening (6pm-12am), overnight (12am-6am). "1"/"2"/"3"/"4" are those in order. "all" = all four; "none" = []. A clock range maps to every block it touches. Return ONLY a JSON array of block ids, e.g. ["morning","afternoon"].`,
+        text, 100,
+      ).catch(() => "");
+      try { const p = JSON.parse(raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "")); if (Array.isArray(p)) blocks = p.map((b) => String(b).toLowerCase()).filter((b): b is BlockId => (BLOCK_IDS as string[]).includes(b)); } catch { /* unparsed */ }
+      if (blocks === null) { await sendMessage(`Sorry, I didn't quite catch that. ${blocksQ(days, action)}`); return; }
     }
-
-    const pendingDays: string[] = JSON.parse((session.pendingDays as string) ?? "[]");
-    const pendingAction = (session.pendingAction as string) ?? "replace";
-
-    const raw = await parseWithClaude(
-      `The caregiver is selecting which time blocks they are available. ` +
-      `The blocks are: morning (6am–12pm), afternoon (12pm–6pm), evening (6pm–11pm), overnight (11pm–6am). ` +
-      `Map their reply to block IDs. Rules:\n` +
-      `- "1" or "morning" → "morning"\n` +
-      `- "2" or "afternoon" → "afternoon"\n` +
-      `- "3" or "evening" → "evening"\n` +
-      `- "4" or "overnight" → "overnight"\n` +
-      `- "all" or "all day" or "everything" → all four blocks\n` +
-      `- "none" or "not available" or "remove" → empty array\n` +
-      `- "1 and 2" → morning and afternoon\n` +
-      `- "morning and afternoon" → morning and afternoon\n` +
-      `Return ONLY a JSON array of block IDs, e.g. ["morning","afternoon"] or [].`,
-      text,
-      100
-    );
-
-    let selectedBlocks: BlockId[] = [];
-    try {
-      const stripped = raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "");
-      const parsed = JSON.parse(stripped);
-      selectedBlocks = (Array.isArray(parsed) ? parsed : []).filter((b: string) => BLOCKS[b]) as BlockId[];
-    } catch { /* empty blocks */ }
-
-    // Load current availability and apply the patch
-    const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-    const current: WeeklyAvailability = (cgSnap.data()?.weeklyAvailability ?? {}) as WeeklyAvailability;
-    const proposed: WeeklyAvailability = JSON.parse(JSON.stringify(current));
-
-    if (selectedBlocks.length === 0) {
-      // "none" — remove those days
-      for (const day of pendingDays) delete proposed[day];
-    } else if (pendingAction === "add") {
-      for (const day of pendingDays) {
-        const existingBlocks = slotsToBlocks(proposed[day] ?? []);
-        const merged = Array.from(new Set([...existingBlocks, ...selectedBlocks]));
-        proposed[day] = blocksToSlots(merged);
-      }
-    } else {
-      // replace
-      for (const day of pendingDays) {
-        proposed[day] = blocksToSlots(selectedBlocks);
-      }
-    }
-
-    // Move to confirm step
-    await db.collection("agent_sessions").doc(phone).update({
-      availabilityStep: "confirm",
-      pendingAvailability: JSON.stringify(proposed),
-      pendingDays:      admin.firestore.FieldValue.delete(),
-      pendingAction:    admin.firestore.FieldValue.delete(),
-      stateExpiresAt:   new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    });
-
-    const opener = await generateCaraMessage({
-      audience: "caregiver",
-      context:  "Evia is about to show the caregiver their updated availability schedule for confirmation. Write a brief 1-sentence intro asking them to confirm it looks right.",
-      fallback:  "Here's your updated schedule — does this look right?",
-      maxTokens: 60,
-    });
-
-    await sendMessage(
-      `${opener}\n\n` +
-      formatAvailability(proposed) +
-      `\n\nJust say yes to save it, or no to cancel.`
-    );
-    return;
+    const current = await loadGrid();
+    const patch: GridPatch = blocks.length === 0 ? { set: Object.fromEntries(days.map((d) => [d, [] as string[]])) } : action === "add" ? { add: Object.fromEntries(days.map((d) => [d, blocks!])) } : { set: Object.fromEntries(days.map((d) => [d, blocks!])) };
+    return toConfirm(patch, current);
   }
 
-  // ── confirm — apply update or cancel ─────────────────────────────────────
   if (step === "confirm") {
-    const proposed = JSON.parse((session.pendingAvailability as string) ?? "{}") as WeeklyAvailability;
-
-    if (await isQuestionOrOther(text)) {
-      await sendMessage(
-        `Your proposed schedule:\n\n` +
-        formatAvailability(proposed) +
-        `\n\nJust say yes to save it, or no to cancel.`
-      );
-      return;
+    let patch: GridPatch;
+    try { patch = JSON.parse((session.pendingAvailability as string) ?? "") as GridPatch; } catch { await clear(); await sendMessage(WHICH_DAYS_Q); return; }
+    const proposed = applyGridPatch(await loadGrid(), patch).grid; // the live grid + their taps
+    const norm = text.trim().toUpperCase();
+    let decision: "save" | "cancel" | "other";
+    if (norm === "SAVE" || norm === "YES" || norm === "CONFIRM" || norm === "SAVE AVAILABILITY") decision = "save";
+    else if (norm === "CANCEL" || norm === "NO") decision = "cancel";
+    else {
+      const v = await parseWithClaude("Evia asked the caregiver to reply SAVE to save their availability or CANCEL. Classify the reply: SAVE, CANCEL, or OTHER (a question or a change).", text, 5).catch(() => "OTHER");
+      decision = v.toUpperCase().startsWith("SAVE") ? "save" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
-
-    const decision = await parseWithClaude(
-      '"yes", "yeah", "looks good", "correct", "that\'s right", "save it", "confirm", "go ahead" → YES. ' +
-      '"no", "cancel", "never mind", "wait", "wrong", "change it", "nope" → NO. ' +
-      'Reply with exactly YES or NO.',
-      text,
-      5
-    );
-
-    // Clear session state regardless of decision
-    await db.collection("agent_sessions").doc(phone).update({
-      availabilityStep:    admin.firestore.FieldValue.delete(),
-      pendingAvailability: admin.firestore.FieldValue.delete(),
-      stateExpiresAt:      admin.firestore.FieldValue.delete(),
-    }).catch(() => {});
-
-    if (decision === "YES") {
-      await db.collection("caregivers").doc(caregiverId).update({
-        weeklyAvailability:    proposed,
-        availabilityUpdatedAt: new Date().toISOString(),
-      });
-
-      const saveMsg = await generateCaraMessage({
-        audience: "caregiver",
-        context:  "A caregiver just confirmed their updated availability schedule. Evia saved it. Write a warm 1-sentence confirmation.",
-        fallback:  "Done — your availability has been updated.",
-        maxTokens: 60,
-      });
-      await sendMessage(saveMsg);
-    } else {
-      const cancelMsg = await generateCaraMessage({
-        audience: "caregiver",
-        context:  "A caregiver decided not to apply their proposed availability change. Write a brief 1-sentence acknowledgment and invite them to try again when they're ready.",
-        fallback:  "No problem — your availability wasn't changed. Let me know whenever you'd like to update it.",
-        maxTokens: 60,
-      });
-      await sendMessage(cancelMsg);
-    }
+    if (decision === "other") { await sendMessage(`Your availability would be:\n${gridText(proposed)}\n\n${CONFIRM_LINE}`); return; }
+    await clear();
+    if (decision === "cancel") { await sendMessage("Okay — your availability wasn't changed."); return; }
+    // The modal's Save, field for field.
+    await db.collection("caregivers").doc(caregiverId).update({ weeklyAvailability: weeklyFromGrid(proposed) });
+    await sendMessage(`Saved. Your availability:\n${gridText(proposed)}`);
     return;
   }
+
+  await clear();
 }

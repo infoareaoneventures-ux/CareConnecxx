@@ -134,14 +134,17 @@ export async function resolveVisit(caregiverId: string, shiftId: unknown, want: 
     .sort((a, b) => String(a.data().startTime ?? "").localeCompare(String(b.data().startTime ?? "")));
   if (scheduled.length === 0) return { ok: false, reason: "none_today", message: "I don't see a visit on your schedule today." };
   const open = scheduled.filter((d) => { const m = startsInMinutes(d.data() as Doc); return m !== null && m <= START_WINDOW_MINUTES; });
-  const pick = open[0] ?? scheduled[0];
+  // Two visits could be meant → ask, never take the earlier one (founder 2026-09-30: the record's id decides, not a guess).
+  const pool = open.length > 0 ? open : scheduled;
+  if (pool.length > 1) return { ok: false, reason: "ambiguous", message: "Which visit?", candidates: pool.map((d) => ({ shiftId: d.id, line: visitLine(d.data() as Doc) })) };
+  const pick = pool[0];
   return { ok: true, id: pick.id, shift: pick.data() as Doc, ref: pick.ref };
 }
 
 // ── Start Shift ──────────────────────────────────────────────────────────────
 export type StartResult =
   | { ok: true; shiftId: string; alreadyStarted: boolean; text: string; tasks: TaskItem[]; startedAt: string }
-  | { ok: false; reason: string; message: string };
+  | { ok: false; reason: string; message: string; candidates?: Array<{ shiftId: string; line: string }> };
 
 export async function startVisit(caregiverId: string, shiftId: unknown, nowMs = Date.now()): Promise<StartResult> {
   const v = await resolveVisit(caregiverId, shiftId, "start");
@@ -175,7 +178,7 @@ export async function startVisit(caregiverId: string, shiftId: unknown, nowMs = 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 export type TasksResult =
   | { ok: true; shiftId: string; tasksCompleted: string[]; text: string; tasks: TaskItem[] }
-  | { ok: false; reason: string; message: string };
+  | { ok: false; reason: string; message: string; candidates?: Array<{ shiftId: string; line: string }> };
 
 /**
  * The page's toggleTask / toggleCategory writes. Over text a repeated "DONE 3"
@@ -185,7 +188,7 @@ export type TasksResult =
  */
 export async function checkTasks(caregiverId: string, shiftId: unknown, sel: { numbers?: number[]; keys?: string[]; completed?: boolean }): Promise<TasksResult> {
   const v = await resolveVisit(caregiverId, shiftId, "in_progress");
-  if (!v.ok) return { ok: false, reason: v.reason, message: v.message };
+  if (!v.ok) return { ok: false, reason: v.reason, message: v.message, candidates: v.candidates };
   if (v.shift.status !== "in-progress") return { ok: false, reason: "not_in_progress", message: "Tasks can only be checked off while the visit is in progress — text START when you're there." };
   const items = taskItems(v.shift);
   const keys = new Set<string>();
@@ -204,12 +207,12 @@ export async function checkTasks(caregiverId: string, shiftId: unknown, sel: { n
 }
 
 // ── Visit notes ──────────────────────────────────────────────────────────────
-export type NoteResult = { ok: true; shiftId: string; text: string; note: { at: string; text: string; by: "caregiver" } } | { ok: false; reason: string; message: string };
+export type NoteResult = { ok: true; shiftId: string; text: string; note: { at: string; text: string; by: "caregiver" } } | { ok: false; reason: string; message: string; candidates?: Array<{ shiftId: string; line: string }> };
 export async function addVisitNote(caregiverId: string, shiftId: unknown, noteText: unknown, nowMs = Date.now()): Promise<NoteResult> {
   const text = String(noteText ?? "").trim();
   if (!text) return { ok: false, reason: "empty", message: "What should the note say?" };
   const v = await resolveVisit(caregiverId, shiftId, "in_progress");
-  if (!v.ok) return { ok: false, reason: v.reason, message: v.message };
+  if (!v.ok) return { ok: false, reason: v.reason, message: v.message, candidates: v.candidates };
   if (v.shift.status !== "in-progress") return { ok: false, reason: "not_in_progress", message: "Visit notes can only be added while the visit is in progress." };
   const note = { at: new Date(nowMs).toISOString(), text, by: "caregiver" as const };
   await v.ref.update({ notesLog: admin.firestore.FieldValue.arrayUnion(note), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -219,10 +222,10 @@ export async function addVisitNote(caregiverId: string, shiftId: unknown, noteTe
 // ── End ──────────────────────────────────────────────────────────────────────
 export type EndResult =
   | { ok: true; shiftId: string; alreadyCompleted: boolean; text: string; completedAt: string }
-  | { ok: false; reason: string; message: string };
+  | { ok: false; reason: string; message: string; candidates?: Array<{ shiftId: string; line: string }> };
 export async function endVisit(caregiverId: string, shiftId: unknown, closingNote: unknown, nowMs = Date.now()): Promise<EndResult> {
   const v = await resolveVisit(caregiverId, shiftId, "in_progress");
-  if (!v.ok) return { ok: false, reason: v.reason, message: v.message };
+  if (!v.ok) return { ok: false, reason: v.reason, message: v.message, candidates: v.candidates };
   const { shift } = v;
   if (shift.status === "completed") return { ok: true, shiftId: v.id, alreadyCompleted: true, completedAt: String(shift.completedAt ?? ""), text: `That visit is already ended — ${visitLine(shift)}.` };
   if (shift.status !== "in-progress") return { ok: false, reason: "not_in_progress", message: `That visit hasn't been started (${String(shift.status)}) — only a visit in progress can be ended.` };
@@ -248,6 +251,20 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
   const raw = text.trim();
   const upper = raw.toUpperCase();
   const say = (m: string) => sendMessage(chatId, m);
+  // "Which visit?" parked by an ambiguous keyword: a number (or a family name the list holds) picks, then the keyword runs against THAT shift id.
+  const choice = session.pendingVisitChoice as { candidates: Array<{ shiftId: string; line: string }>; keyword: string } | undefined;
+  if (choice?.candidates?.length) {
+    const clearChoice = () => db.collection("agent_sessions").doc(phone).update({ pendingVisitChoice: admin.firestore.FieldValue.delete() }).catch(() => {});
+    if (upper === "CANCEL" || upper === "NO") { await clearChoice(); await say("Okay — nothing changed."); return "handled"; }
+    const n = /^\d+$/.test(raw) ? Number(raw) : null;
+    const lower = raw.toLowerCase();
+    const byName = choice.candidates.filter((c) => c.line.toLowerCase().includes(lower));
+    const picked = n !== null ? choice.candidates[n - 1] : byName.length === 1 ? byName[0] : undefined;
+    if (!picked) { await say(whichVisitPrompt(choice.candidates)); return "handled"; }
+    await clearChoice();
+    await runKeywordOnShift(phone, chatId, caregiverId, choice.keyword, picked.shiftId, say);
+    return "handled";
+  }
   const pendingEnd = session.pendingShiftEnd as { shiftId: string } | undefined;
   if (pendingEnd?.shiftId) {
     if (upper === "CANCEL" || upper === "NO") {
@@ -270,13 +287,16 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     return "handled";
   }
   if (upper === "START" || upper === "ARRIVED") {
-    const r = await startVisit(caregiverId, undefined);
+    const v = await resolveVisit(caregiverId, undefined, "start");
+    if (!v.ok && v.reason === "ambiguous" && v.candidates) { await parkVisitChoice(phone, v.candidates, "START"); await say(whichVisitPrompt(v.candidates)); return "handled"; }
+    const r = await startVisit(caregiverId, v.ok ? v.id : undefined);
     await say(r.ok ? r.text : r.message);
     return "handled";
   }
   // FINISH (or "end shift" / "finish shift" / "end visit") — never the bare word END, which is the SMS opt-out keyword.
   if (upper === "FINISH" || upper === "FINISH SHIFT" || upper === "FINISH VISIT" || upper === "END SHIFT" || upper === "END VISIT" || upper === "END THE SHIFT" || upper === "END MY SHIFT") {
     const v = await resolveVisit(caregiverId, undefined, "in_progress");
+    if (!v.ok && v.reason === "ambiguous" && v.candidates) { await parkVisitChoice(phone, v.candidates, "FINISH"); await say(whichVisitPrompt(v.candidates)); return "handled"; }
     if (!v.ok) { await say(v.message); return "handled"; }
     await db.collection("agent_sessions").doc(phone).set({ pendingShiftEnd: { shiftId: v.id, at: new Date().toISOString() } }, { merge: true }).catch(() => {});
     await say(END_PROMPT);
@@ -285,6 +305,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
   if (upper === "TASKS") {
     // The page's Tasks panel, re-listed mid-visit.
     const v = await resolveVisit(caregiverId, undefined, "in_progress");
+    if (!v.ok && v.reason === "ambiguous" && v.candidates) { await parkVisitChoice(phone, v.candidates, "TASKS"); await say(whichVisitPrompt(v.candidates)); return "handled"; }
     if (!v.ok) { await say(v.message); return "handled"; }
     const items = taskItems(v.shift);
     if (items.length === 0) { await say("This visit has no care plan tasks."); return "handled"; }
@@ -297,6 +318,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     const numbers = (undo[1].match(/\d+/g) ?? []).map(Number);
     if (numbers.length === 0) { await say("Which task should I un-check? Reply UNDO with its number (e.g. UNDO 2)."); return "handled"; }
     const r = await checkTasks(caregiverId, undefined, { numbers, completed: false });
+    if (!r.ok && r.reason === "ambiguous" && r.candidates) { await parkVisitChoice(phone, r.candidates, raw); await say(whichVisitPrompt(r.candidates)); return "handled"; }
     await say(r.ok ? r.text : r.message);
     return "handled";
   }
@@ -305,14 +327,44 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     const numbers = (done[1].match(/\d+/g) ?? []).map(Number);
     if (numbers.length === 0) { await say("Done with a task? Reply DONE with its number (e.g. DONE 2). Done with the visit? Reply FINISH."); return "handled"; }
     const r = await checkTasks(caregiverId, undefined, { numbers });
+    if (!r.ok && r.reason === "ambiguous" && r.candidates) { await parkVisitChoice(phone, r.candidates, raw); await say(whichVisitPrompt(r.candidates)); return "handled"; }
     await say(r.ok ? r.text : r.message);
     return "handled";
   }
   const note = /^NOTE\b[:\s-]*([\s\S]*)$/i.exec(raw);
   if (note) {
     const r = await addVisitNote(caregiverId, undefined, note[1]);
+    if (!r.ok && r.reason === "ambiguous" && r.candidates) { await parkVisitChoice(phone, r.candidates, raw); await say(whichVisitPrompt(r.candidates)); return "handled"; }
     await say(r.ok ? r.text : r.message);
     return "handled";
   }
   return "passthrough";
+}
+
+export const whichVisitPrompt = (candidates: Array<{ line: string }>) => `Which visit? ${candidates.map((c, i) => `Reply ${i + 1} for ${c.line}`).join(", ")}.`;
+async function parkVisitChoice(phone: string, candidates: Array<{ shiftId: string; line: string }>, keyword: string): Promise<void> {
+  await db.collection("agent_sessions").doc(phone).set({ pendingVisitChoice: { candidates, keyword, at: new Date().toISOString() }, stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString() }, { merge: true }).catch(() => {});
+}
+/** The keyword the caregiver texted, run against the visit they then picked. */
+async function runKeywordOnShift(phone: string, chatId: string, caregiverId: string, keyword: string, shiftId: string, say: (m: string) => Promise<unknown>): Promise<void> {
+  const upper = keyword.trim().toUpperCase();
+  if (upper === "START") { const r = await startVisit(caregiverId, shiftId); await say(r.ok ? r.text : r.message); return; }
+  if (upper === "FINISH") {
+    await db.collection("agent_sessions").doc(phone).set({ pendingShiftEnd: { shiftId, at: new Date().toISOString() } }, { merge: true }).catch(() => {});
+    await say(END_PROMPT); return;
+  }
+  if (upper === "TASKS") {
+    const v = await resolveVisit(caregiverId, shiftId, "in_progress");
+    if (!v.ok) { await say(v.message); return; }
+    const items = taskItems(v.shift); const doneCount = items.filter((t) => t.done).length;
+    await say(items.length ? [`Tasks (${doneCount}/${items.length} done):`, "", ...recipientBlocks(v.shift, items, { withDone: true }), "", "Reply DONE with a number to check one off."].join("\n") : "This visit has no care plan tasks.");
+    return;
+  }
+  const undo = /^UNDO\b\s*(.*)$/i.exec(keyword);
+  if (undo) { const r = await checkTasks(caregiverId, shiftId, { numbers: (undo[1].match(/\d+/g) ?? []).map(Number), completed: false }); await say(r.ok ? r.text : r.message); return; }
+  const done = /^DONE\b\s*(.*)$/i.exec(keyword);
+  if (done) { const r = await checkTasks(caregiverId, shiftId, { numbers: (done[1].match(/\d+/g) ?? []).map(Number) }); await say(r.ok ? r.text : r.message); return; }
+  const note = /^NOTE\b[:\s-]*([\s\S]*)$/i.exec(keyword);
+  if (note) { const r = await addVisitNote(caregiverId, shiftId, note[1]); await say(r.ok ? r.text : r.message); return; }
+  await say("Okay.");
 }

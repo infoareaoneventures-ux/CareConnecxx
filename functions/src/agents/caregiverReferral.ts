@@ -78,7 +78,7 @@ export async function createCaregiverReferralInvite(
   });
 
   const inviteText =
-    `${input.referrerName ?? input.referrerPhone} thought you might be a good fit as an Evia caregiver.\n\n` +
+    `${input.referrerName ?? "A fellow caregiver"} thought you might be a good fit as an Evia caregiver.\n\n` +
     `You can start here: ${inviteUrl}\n\n` +
     `Evia caregivers complete onboarding and Checkr background screening before they can accept visits. Reply STOP to opt out.`;
 

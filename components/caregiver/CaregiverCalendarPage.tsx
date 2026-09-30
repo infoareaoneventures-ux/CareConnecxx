@@ -222,9 +222,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
   const handleStartShift = async (shiftId: string) => {
     if (!db) return;
+    // Same write as the Bookings page's Start Shift (CaregiverBookingsPage.tsx handleStart).
     await db.collection('shifts').doc(shiftId).update({
       status: 'in-progress',
       startedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     setSelectedShift(prev => prev ? { ...prev, status: 'in-progress' } : prev);
     fetchShifts();
@@ -232,9 +234,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
   const handleEndShift = async (shiftId: string, notes?: string) => {
     if (!db) return;
+    // Same write as the Bookings page's End Shift (handleEnd).
     const update: Record<string, any> = {
       status: 'completed',
       completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
     if (notes?.trim()) update.completionNotes = notes.trim();
     await db.collection('shifts').doc(shiftId).update(update);
@@ -243,13 +247,19 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   };
 
   const handleCancelShift = async (shiftId: string) => {
-    if (!confirm('Cancel this shift? The client will be notified.')) return;
-    if (!db || !user) return;
+    // Same dialog and write as the Bookings page's per-visit ✕ (handleCancelShift):
+    // within 24h of the start the family gets the fast replacement picker
+    // (needs_replacement); further out it is a plain cancellation.
+    if (!db || !user || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
     const shift = shifts.find(s => s.id === shiftId);
+    if (!shift) return;
+    const startsAt = new Date(`${shift.date}T${shift.startTime}`);
+    const hoursUntilStart = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
+    const isUrgent = hoursUntilStart <= 24;
     await db.collection('shifts').doc(shiftId).update({
-      status: 'cancelled',
-      cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: isUrgent ? 'needs_replacement' : 'cancelled',
       cancelledBy: 'caregiver',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     // Notification handled by onShiftStatusChanged Cloud Function
     setSelectedShift(null);
@@ -471,8 +481,10 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         .finally(() => setFetchingTasks(false));
     }, [shift.id]);
 
+    // Like the Bookings page (toggleTask / toggleCategory): tasks change only while the shift is in progress.
+    const canEditTasks = shift.status === 'in-progress';
     const handleToggleTask = async (task: string) => {
-      if (!db) return;
+      if (!db || !canEditTasks) return;
       const updated = tasksCompleted.includes(task)
         ? tasksCompleted.filter(t => t !== task)
         : [...tasksCompleted, task];
@@ -481,7 +493,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     };
 
     const handleToggleCategory = async (keys: string[]) => {
-      if (!db) return;
+      if (!db || !canEditTasks) return;
       const allDone = keys.every(k => tasksCompleted.includes(k));
       const updated = allDone
         ? tasksCompleted.filter(k => !keys.includes(k))
@@ -545,7 +557,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
               )}
             </div>
           )}
-          {shift.notes && (
+          {/* The booking's own note (booking_requests.notes) first, like the Bookings page; the visit's note only when it differs (a schedule-change note). */}
+          {bookingData?.notes && (
+            <div className="p-3 bg-slate-50 rounded-xl text-slate-600 text-xs">{bookingData.notes}</div>
+          )}
+          {shift.notes && shift.notes !== bookingData?.notes && (
             <div className="p-3 bg-slate-50 rounded-xl text-slate-600 text-xs">{shift.notes}</div>
           )}
         </div>
@@ -604,6 +620,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 </div>
               );
             })()}
+            {shift.status === 'scheduled' && <p className="text-xs text-slate-400 italic mb-2">Start the shift to check off tasks</p>}
             {fetchingTasks && !bookingData ? (
               <p className="text-xs text-slate-400">Loading tasks…</p>
             ) : bookingData?.careRecipients?.length > 0 ? (
@@ -612,7 +629,8 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                   const categories: string[] = r.careNeeds || [];
                   const details: Record<string, string[]> = r.careNeedDetails || {};
                   if (categories.length === 0) return null;
-                  const isCompleted = shift.status === 'completed' || shift.status === 'cancelled';
+                  // Read-only unless in progress (the Bookings page's rule); completed/cancelled keep the done marks.
+                  const isCompleted = !canEditTasks;
                   return (
                     <div key={ri}>
                       <div className="flex items-center gap-1.5 mb-1.5">
@@ -686,7 +704,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
               <div className="space-y-1.5">
                 {careNeeds.map((task, i) => {
                   const done = tasksCompleted.includes(task);
-                  const isCompleted = shift.status === 'completed' || shift.status === 'cancelled';
+                  const isCompleted = !canEditTasks;
                   if (isCompleted) return (
                     <div key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs font-medium ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
                       <CheckCircle className={`w-4 h-4 flex-shrink-0 ${done ? 'text-green-500' : 'text-slate-200'}`} />
@@ -903,8 +921,9 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       if (!fdb) return;
       setAccepting(true);
       try {
+        // Same write as the Jobs tab's Accept (JobBoard.tsx).
         await fdb.collection('video_interviews').doc(interview.id).update({
-          status: 'accepted', acceptedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          status: 'accepted', updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
         // Notification handled by onVideoInterviewWrite Cloud Function
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'accepted' as const } : iv));
@@ -918,8 +937,10 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       if (!fdb) return;
       setDeclining(true);
       try {
+        // Same write as the Jobs tab's Decline (JobBoard.tsx) — a pending proposal goes with it.
         await fdb.collection('video_interviews').doc(interview.id).update({
-          status: 'declined', declinedBy: 'caregiver', declinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          status: 'declined', updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          reschedulePendingTime: firebase.firestore.FieldValue.delete(), rescheduledBy: firebase.firestore.FieldValue.delete(),
         });
         // Notification handled by onVideoInterviewWrite Cloud Function
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
@@ -961,8 +982,10 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       if (!fdb) return;
       setCancelling(true);
       try {
+        // Same write as the Jobs tab's Cancel (JobBoard.tsx).
         await fdb.collection('video_interviews').doc(interview.id).update({
-          status: 'cancelled', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+          status: 'cancelled', cancelledBy: 'caregiver', updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          reschedulePendingTime: firebase.firestore.FieldValue.delete(), rescheduledBy: firebase.firestore.FieldValue.delete(),
         });
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);

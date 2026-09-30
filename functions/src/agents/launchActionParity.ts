@@ -293,6 +293,17 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     status: "shipped",
     notes: "Read primitive over users.{uid}.blockedUsers (the array set_block_status maintains).",
   },
+  {
+    id: "caregiver-inbox-block-report",
+    actor: "caregiver",
+    action: "Block / report a family from the Inbox menu",
+    webSurface: "components/InboxView.tsx",
+    collection: "users",
+    tool: "set_block_status",
+    promptActor: "caregiver",
+    status: "shipped",
+    notes: "Same tool as the family side (2026-09-30); like the page, not offered for a care-team contact or the Evia team thread.",
+  },
 
   // ── Caregiver (R2) ────────────────────────────────────────────────────────
   {

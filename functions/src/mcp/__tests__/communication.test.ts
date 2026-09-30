@@ -124,6 +124,31 @@ describe("communication tools", () => {
       expect(trySend).not.toHaveBeenCalled();
     });
 
+    it("no clientId: ONE related family resolves by the visit's clientId; several → the families come back and nothing is sent", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.docState.set("users/c1", { name: "Sarah" });
+      hoisted.collState.set("shifts", [{ caregiverId: "cg1", clientId: "c1", clientName: "Sarah", status: "scheduled", date: "2099-06-01" }]);
+      const one = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi" }) as any;
+      expect(one).toMatchObject({ success: true, sentTo: "c1" });
+      hoisted.collState.set("shifts", [
+        { caregiverId: "cg1", clientId: "c1", clientName: "Sarah", status: "scheduled", date: "2099-06-01" },
+        { caregiverId: "cg1", clientId: "c2", clientName: "Tom", status: "in-progress", date: "2099-06-01" },
+      ]);
+      const many = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi" }) as any;
+      expect(many.success).toBe(false);
+      expect(many.reason).toBe("ambiguous_family");
+      expect(many.families).toEqual([{ clientId: "c1", clientName: "Sarah" }, { clientId: "c2", clientName: "Tom" }]);
+      expect(hoisted.sets.some((s) => s.path.includes("/messages/") && s.data?.text === "hi" && s.data?.senderId === "cg1" && s.path.includes("c2"))).toBe(false);
+    });
+
+    it("a PAST family (a finished booking, no visit in 30 days) can still be messaged — the My Families page's Message button", async () => {
+      hoisted.docState.set("users/c7", { name: "Old Family" });
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.collState.set("booking_requests", [{ id: "br7", caregiverId: "cg1", clientId: "c7", clientName: "Old Family", status: "completed" }]);
+      const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hello again", clientId: "c7" }) as any;
+      expect(r).toMatchObject({ success: true, sentTo: "c7" });
+    });
+
     it("blocks an explicit clientId when no relationship exists", async () => {
       // collState is empty for shifts — no relationship
       hoisted.docState.set("users/c1", { phone: "+15555550100" });
@@ -415,6 +440,63 @@ describe("communication tools", () => {
       expect(list.rooms).toEqual([]);
       const open = await handleToolCall("get_recent_messages", { userId: "c1", counterpartId: "cg1" }) as any;
       expect(open.thread).toBeNull();
+    });
+  });
+
+  // 2026-09-30: the caregiver's Inbox page — the same page, sections My Families /
+  // Other Clients / Support; rooms the site created with a random id
+  // (Families page getOrCreateChatRoom) are found by participants; the ⋮ menu
+  // (Block / Report / Delete) is not offered for a care-team contact or the
+  // Evia team thread.
+  describe("caregiver Inbox", () => {
+    it("role caregiver: My Families = partners on an accepted booking", async () => {
+      hoisted.collState.set("chatRooms", [
+        { id: "rAnDoM1", participants: ["cg1", "c1"], participantNames: ["Alice", "Sarah"], lastMessage: "see you at 7", unreadCount: { cg1: 1 } },
+        { id: "c2_cg1", participants: ["c2", "cg1"], participantNames: ["Tom", "Alice"], lastMessage: "", unreadCount: { cg1: 0 } },
+      ]);
+      hoisted.collState.set("booking_requests", [{ id: "br1", clientId: "c1", caregiverId: "cg1", status: "accepted" }]);
+      const r = await handleToolCall("get_recent_messages", { userId: "cg1", role: "caregiver" }) as any;
+      expect(r.sections.careTeam.map((x: any) => x.withName)).toEqual(["Sarah"]);
+      expect(r.sections.other.map((x: any) => x.withName)).toEqual(["Tom"]);
+      expect(r.unreadTotal).toBe(1);
+    });
+
+    it("opens / marks read / deletes the room that EXISTS, even under a random id", async () => {
+      hoisted.collState.set("chatRooms", [{ id: "rAnDoM1", participants: ["cg1", "c1"], participantNames: ["Alice", "Sarah"], unreadCount: { cg1: 1 } }]);
+      hoisted.docState.set("chatRooms/rAnDoM1", { participants: ["cg1", "c1"], participantNames: ["Alice", "Sarah"], unreadCount: { cg1: 1 } });
+      hoisted.collState.set("chatRooms/rAnDoM1/messages", [{ id: "m1", senderId: "c1", senderName: "Sarah", text: "see you at 7", timestamp: "2026-09-30T01:00:00.000Z", isRead: false, readBy: [] }]);
+      const open = await handleToolCall("get_recent_messages", { userId: "cg1", counterpartId: "c1", role: "caregiver" }) as any;
+      expect(open.thread).toMatchObject({ roomId: "rAnDoM1", withName: "Sarah" });
+      expect(open.thread.messages.map((m: any) => m.text)).toEqual(["see you at 7"]);
+      const marked = await handleToolCall("mark_messages_read", { userId: "cg1", counterpartId: "c1" }) as any;
+      expect(marked.success).toBe(true);
+      expect(hoisted.sets.some((s) => s.path === "chatRooms/rAnDoM1" && s.data["unreadCount.cg1"] === 0)).toBe(true);
+      const del = await handleToolCall("delete_conversation", { userId: "cg1", counterpartId: "c1" }) as any;
+      expect(del.deleted).toBe(true);
+      expect(hoisted.sets.some((s) => s.path === "chatRooms/rAnDoM1" && s.data["deletedAt.cg1"])).toBe(true);
+      expect(hoisted.sets.some((s) => s.path === `chatRooms/${["c1", "cg1"].sort().join("_")}`)).toBe(false); // no second room
+    });
+
+    it("the ⋮ menu rule: no delete / block / report for a care-team family or the Evia team thread", async () => {
+      hoisted.docState.set("chatRooms/c1_cg1", { participants: ["c1", "cg1"] });
+      hoisted.collState.set("booking_requests", [{ id: "br1", clientId: "c1", caregiverId: "cg1", status: "accepted" }]);
+      const del = await handleToolCall("delete_conversation", { userId: "cg1", counterpartId: "c1" }) as any;
+      expect(del._toolError).toBe(true);
+      expect(del.message ?? del.error ?? JSON.stringify(del)).toMatch(/care team/);
+      // _confirmedActionId bypasses the runtime HITL gate once a pending doc exists (see safety.test.ts).
+      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }); 
+      const block = await handleToolCall("set_block_status", { userId: "cg1", targetUserId: "c1", action: "block", _confirmedActionId: "test" }) as any;
+      expect(block._toolError).toBe(true);
+      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }); 
+      const report = await handleToolCall("set_block_status", { userId: "cg1", targetUserId: "careconnex-support", action: "report", category: "other", description: "x", _confirmedActionId: "test" }) as any;
+      expect(report._toolError).toBe(true);
+      expect(JSON.stringify(report)).toMatch(/Evia team thread/);
+      // Someone NOT on the care team can still be blocked, like the page.
+      hoisted.collState.set("booking_requests", []);
+      hoisted.docState.set("users/c9", { name: "Stranger" });
+      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }); 
+      const ok = await handleToolCall("set_block_status", { userId: "cg1", targetUserId: "c9", action: "block", _confirmedActionId: "test" }) as any;
+      expect(ok.blocked).toBe(true);
     });
   });
 

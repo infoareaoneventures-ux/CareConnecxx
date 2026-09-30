@@ -263,6 +263,20 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (inShift === "handled") return "handled";
     }
 
+    // ── FAMILIES · PAST FAMILIES · FAMILY n — the My Families page (agents/caregiverFamilies.ts) ──
+    if (session.caregiverId) {
+      const { handleFamiliesKeyword } = await import("../agents/caregiverFamilies");
+      const fam = await handleFamiliesKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (fam === "handled") return "handled";
+    }
+
+    // ── CALENDAR · TODAY · TOMORROW · WEEK · NEXT WEEK · MONTH · INTERVIEW n — the My Calendar page (agents/caregiverCalendar.ts) ──
+    if (session.caregiverId) {
+      const { handleCalendarKeyword } = await import("../agents/caregiverCalendar");
+      const cal = await handleCalendarKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (cal === "handled") return "handled";
+    }
+
     // ── PAST · PAST VISITS · VISIT n · LOG n — the Past Bookings tab (agents/caregiverPastBookings.ts) ──
     if (session.caregiverId) {
       const { handlePastBookingsKeyword } = await import("../agents/caregiverPastBookings");
@@ -453,7 +467,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (lateRaw.trim().toUpperCase() === "LATE") {
         const { relayLateSentence } = await import("../agents/familyRelay");
         if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-        try { await relayLateSentence(chatId, session.caregiverId, text); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+        try { await relayLateSentence(phone, chatId, session.caregiverId, text); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
         return "handled";
       }
     }

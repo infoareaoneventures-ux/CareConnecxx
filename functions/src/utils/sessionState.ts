@@ -4,6 +4,13 @@ export const STATE_MACHINE_FLAGS = [
   "pendingMatches",
   // "What should I tell the family?" after LATE (agents/familyRelay.ts, 2026-09-28)
   "pendingFamilyMessage",
+  // "Which family?" when today holds visits for several families (familyRelay.ts, 2026-09-30)
+  "pendingFamilyChoice",
+  // "Send to <family> as your message: '…'? Reply YES or NO." for an inferred late sentence (familyRelay.ts, 2026-09-30)
+  "pendingRelayConfirm",
+  // In-shift parked steps (agents/inShift.ts): the closing-note question after FINISH; "which visit?" when two qualify (2026-09-30)
+  "pendingShiftEnd",
+  "pendingVisitChoice",
   "pendingShiftApproval",
   "collectingCredential",
   "collectingCredentialSetAt",
@@ -164,6 +171,10 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["interviewRescheduleFlowStep", "proposing a new interview time"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["pendingFamilyMessage",    "your message for the family"],
+  ["pendingFamilyChoice",     "choosing which family to message"],
+  ["pendingRelayConfirm",     "confirming your message to the family"],
+  ["pendingShiftEnd",         "your closing note for the visit"],
+  ["pendingVisitChoice",      "choosing which visit you meant"],
   ["cancelStep",              "cancelling that shift"],
   ["availabilityStep",        "updating your availability"],
   ["profileUpdateStep",       "updating your profile"],
@@ -292,6 +303,10 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   // web turn forever (pendingMatches carries no stateExpiresAt).
   ["pendingMatches", { setAtField: "pendingMatchesSetAt", ttlMs: PENDING_MATCHES_TTL_MS }],
   ["pendingFamilyMessage", "generic"],
+  ["pendingFamilyChoice", "generic"],
+  ["pendingRelayConfirm", "generic"],
+  ["pendingShiftEnd", "generic"],
+  ["pendingVisitChoice", "generic"],
   // Set by approvalNoticeDispatcher.ts alongside pendingShiftApprovalSetAt.
   ["pendingShiftApproval", { setAtField: "pendingShiftApprovalSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
   // SMS router parity: credentialCollector.ts clears this flow after

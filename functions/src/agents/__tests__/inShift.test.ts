@@ -143,6 +143,23 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
     expect(hoisted.docs.get("shifts/s1")).toMatchObject({ status: "completed", completionNotes: "Mai was in great spirits today." });
     expect(hoisted.sent.at(-1)).toMatch(/^Ended /);
   });
+  it("two visits today and no id → START asks WHICH (numbered, by shift id); the number starts that one, never the earlier by default", async () => {
+    const { date, time } = la(new Date(Date.now() + 5 * 60 * 1000));
+    shift("s1", { date, startTime: time, endTime: "23:59", clientName: "Basra Yousuf" });
+    shift("s2", { date, startTime: time, endTime: "23:59", clientName: "Tom Nguyen" });
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "START", {})).toBe("handled");
+    expect(hoisted.sent.at(-1)).toMatch(/^Which visit\? Reply 1 for .*Basra Yousuf.*, Reply 2 for .*Tom Nguyen/);
+    const choice = hoisted.sessionWrites.at(-1).pendingVisitChoice;
+    expect(choice.candidates.map((c: any) => c.shiftId)).toEqual(["s1", "s2"]);
+    expect(hoisted.docs.get("shifts/s1").status).toBe("scheduled");
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "2", { pendingVisitChoice: choice })).toBe("handled");
+    expect(hoisted.docs.get("shifts/s2").status).toBe("in-progress");
+    expect(hoisted.docs.get("shifts/s1").status).toBe("scheduled");
+    expect(hoisted.sent.at(-1)).toMatch(/^Started .*Tom Nguyen/);
+    // an unknown answer re-asks; a family name picks too
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "9", { pendingVisitChoice: choice })).toBe("handled");
+    expect(hoisted.sent.at(-1)).toMatch(/^Which visit\?/);
+  });
   it("a repeated DONE never un-checks; UNDO n does (and END alone is left to the opt-out handler)", async () => {
     shift("s1", { status: "in-progress", date: businessTodayStr(), tasksCompleted: ["0_Companionship"] });
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "DONE 1", {})).toBe("handled");

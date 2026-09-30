@@ -1008,6 +1008,18 @@ describe("finished-profile guard — Evia's record writers never re-open the sit
   // day) rule, so wizardStepForDraft would now say "availability".
   const OLD_DRAFT = { ...FULL_DATA, street: "1 Main St", state: "CA", hourlyRate: 24, availability: { days: ["Monday"], hours: "" } };
 
+  it("profileMirrorForExisting keeps a grid the site holds unless the availability answer changed (goal 5)", () => {
+    const answer = { days: ["Monday"], hours: "mornings" };
+    const siteGrid = { monday: [{ start: "06:00", end: "12:00" }], friday: [{ start: "12:00", end: "18:00" }] };
+    const mirror = { availability: answer, weeklyAvailability: { monday: [{ start: "06:00", end: "12:00" }] } };
+    // same answer as before, the site added Friday afternoons → the mirror must not touch the grid
+    expect(profileMirrorForExisting(mirror, { availability: answer, weeklyAvailability: siteGrid })).toEqual({ availability: answer });
+    // the caregiver changed her answer → the re-derived grid flows
+    expect(profileMirrorForExisting(mirror, { availability: { days: ["Tuesday"], hours: "mornings" }, weeklyAvailability: siteGrid })).toEqual(mirror);
+    // no grid on the record yet → first write flows
+    expect(profileMirrorForExisting(mirror, { availability: answer })).toEqual(mirror);
+  });
+
   it("profileMirrorForExisting drops wizardStep only for a profile_complete record", () => {
     expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, FINISHED))
       .toEqual({ bio: "x" });

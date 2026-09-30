@@ -269,8 +269,17 @@ export function profileMirrorForExisting(
   mirror: Record<string, unknown>,
   existing: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (existing.onboardingStatus !== "profile_complete") return mirror;
-  const { wizardStep: _finished, ...rest } = mirror;
+  // weeklyAvailability (2026-09-30, founder goal 5 "updates flow both ways"):
+  // the Calendar / Profile grid on the site writes this same field. Once the
+  // record has a grid, the mirror re-derives it ONLY when the availability
+  // answer itself changed this save — otherwise a caregiver who fixed her grid
+  // on the site had it silently reverted on her next text.
+  const hasGrid = existing.weeklyAvailability && typeof existing.weeklyAvailability === "object"
+    && Object.values(existing.weeklyAvailability as Record<string, unknown>).some((v) => Array.isArray(v) && v.length > 0);
+  const answerUnchanged = JSON.stringify(mirror.availability ?? null) === JSON.stringify(existing.availability ?? null);
+  const guarded = hasGrid && answerUnchanged ? (({ weeklyAvailability: _keep, ...rest }) => rest)(mirror) : mirror;
+  if (existing.onboardingStatus !== "profile_complete") return guarded;
+  const { wizardStep: _finished, ...rest } = guarded;
   return rest;
 }
 

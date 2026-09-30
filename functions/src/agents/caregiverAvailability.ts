@@ -35,7 +35,7 @@ const BLOCK_SLOT: Record<BlockId, TimeSlot> = {
   morning:   { start: "06:00", end: "12:00" },
   afternoon: { start: "12:00", end: "18:00" },
   evening:   { start: "18:00", end: "23:00" },
-  overnight: { start: "23:00", end: "23:59" },
+  overnight: { start: "23:00", end: "06:00" }, // the site's value (blocksToWeeklySlots); the matcher handles the wrap since 2026-09-30
 };
 
 // The "intent window" (in minutes) used to decide which block(s) a stated clock

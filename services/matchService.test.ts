@@ -37,7 +37,6 @@ describe('MatchService', () => {
     personalityTags: [], // No tags to reduce score
     matchScore: 50,
     distance: 15, // Medium distance
-    availability: [],
     weeklyAvailability: {
       monday: [{ start: '09:00', end: '17:00' }],
       tuesday: [{ start: '09:00', end: '17:00' }],

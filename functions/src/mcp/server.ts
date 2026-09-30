@@ -971,7 +971,6 @@ export const MCP_TOOLS: McpTool[] = [
         phone:              { type: "string",  description: "Your current session phone; used to verify account ownership and never changed by this tool" },
         requestPhoneChange: { type: "boolean", description: "Set true to start a phone number change (see description) — a request flag, not the new number itself" },
         city:               { type: "string",  description: "Your city" },
-        weeklyAvailability: { type: "object",  description: "Object mapping day abbreviations to time windows" },
       },
       required: ["caregiverId", "phone"],
     },
@@ -1501,7 +1500,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        clientId:    { type: "string", description: "The client's user ID (optional — resolved from recent appointments if omitted)" },
+        clientId:    { type: "string", description: "The family's clientId from the booking / calendar / inbox data (the shift's own clientId — never typed by the caregiver). Optional only when the caregiver works with ONE family; with several the tool returns them and you must ask which." },
         message:     { type: "string", description: "The message to send to the client" },
       },
       required: ["caregiverId", "message"],
@@ -1592,14 +1591,17 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_caregiver_availability",
     description:
-      "Add or remove days from a caregiver's weekly availability. Changes take effect immediately for job matching.",
+      "The Calendar page's Update Availability modal — a 7-day × 4-block grid (Morning 6am–12pm, Afternoon 12pm–6pm, Evening 6pm–12am, Overnight 12am–6am). " +
+      "Pass taps as day → blocks: set (replace a whole day; [] clears it), add (turn cells on), remove (turn cells off; [] or \"all\" clears the day). Days: monday…sunday (or mon…sun); blocks: morning/afternoon/evening/overnight/all. " +
+      "Saves exactly what the modal saves: caregivers.weeklyAvailability as the whole week of canonical slots. Nothing else changes. Returns the grid as text to read back. " +
+      "For a multi-step conversation about their week, prefer letting the caregiver's own words start the availability flow; call this for a clear one-shot change like 'add Tuesday afternoons'.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:        { type: "string", description: "The caregiver's Firestore document ID" },
-        availableDays:      { type: "array", items: { type: "string" }, description: "Days to add (Monday, Tuesday, etc.)" },
-        unavailableDays:    { type: "array", items: { type: "string" }, description: "Days to remove from availability" },
-        preferredTimeOfDay: { type: "string", description: "Preferred time: morning, afternoon, evening, overnight, or flexible" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        set:    { type: "object", description: "day → blocks to REPLACE that day with, e.g. {\"monday\":[\"morning\",\"afternoon\"],\"friday\":[]}" },
+        add:    { type: "object", description: "day → blocks to add, e.g. {\"tuesday\":[\"afternoon\"]}" },
+        remove: { type: "object", description: "day → blocks to remove, or \"all\" / [] to clear the day, e.g. {\"sunday\":\"all\"}" },
       },
       required: ["caregiverId"],
     },
@@ -2000,7 +2002,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        userId:        { type: "string", description: "The acting user's ID (the family)" },
+        userId:        { type: "string", description: "The acting user's ID (the family's userId, or the caregiver's caregiverId — the same uid)" },
         targetUserId:  { type: "string", description: "The user being blocked, unblocked, or reported" },
         action:        { type: "string", enum: ["block", "unblock", "report"], description: "block, unblock, or report" },
         reason:        { type: "string", description: "Optional reason for a block (helps ops triage)" },
@@ -2170,6 +2172,48 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "show_families",
+    description:
+      "The caregiver's My Families page — this tool TEXTS it itself. tab 'active' (default): every family with an accepted booking that still has a visit; 'past': the most recent finished / cancelled booking per family not currently active. " +
+      "Each card = name, Active/Past pill, $rate/hr, the schedule's days, 'Caring for: <recipients>'; 2 per text, more:true continues; query = the search box (name). Numbered so FAMILY n texts the View Details modal (per recipient: relationship · age, the family's note, Care Plan needs, Lifestyle; then Emergency Contact). " +
+      "Pass familyNumber to text ONE family's details. The Message button = send_client_message with that family's clientId from this list. Call it for 'who do I work with', 'my families', 'which families have I worked with', 'details on the Nguyen family'. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:  { type: "string", description: "The caregiver's Firestore document ID" },
+        tab:          { type: "string", enum: ["active", "past"], description: "Active (default) or Past" },
+        query:        { type: "string", description: "Search by family name, like the page's search box" },
+        more:         { type: "boolean", description: "true to continue the last list" },
+        familyNumber: { type: "number", description: "text one family's View Details from the last texted list" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "show_calendar",
+    description:
+      "The caregiver's My Calendar page — this tool TEXTS the view itself. view: 'day' (a date; default today), 'week' (offset 0 = this week, 1 = next), 'month' (YYYY-MM; default this month; includes the page's Upcoming panel), " +
+      "'list' (filter all / upcoming / this-week / this-month / last-30; 5 days per text, more:true continues). Same reads as the page: their shifts (all statuses), their interviews (pending / accepted / completed), and the Available blocks from Update Availability. " +
+      "Day and Week hide cancelled visits like the page; Month and List show them. Events are numbered so VISIT n / INTERVIEW n open the detail panel. " +
+      "Pass visitNumber or interviewNumber to text ONE event's detail panel (a shift: status, times, address, notes, tasks per recipient, the actions available; an interview: time, type, job details, Accept/Decline/propose/Join). " +
+      "Call it for 'what's my week', 'what do I have tomorrow', 'anything on Friday', 'my calendar', 'this month'. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:     { type: "string", description: "The caregiver's Firestore document ID" },
+        view:            { type: "string", enum: ["day", "week", "month", "list"], description: "Which view (default week)" },
+        date:            { type: "string", description: "day view: YYYY-MM-DD (default today)" },
+        offset:          { type: "number", description: "week view: 0 this week, 1 next week, -1 last week" },
+        month:           { type: "string", description: "month view: YYYY-MM (default this month)" },
+        filter:          { type: "string", enum: ["all", "upcoming", "this-week", "this-month", "last-30"], description: "list view filter (default upcoming)" },
+        more:            { type: "boolean", description: "list view: continue the last list" },
+        visitNumber:     { type: "number", description: "text one visit's detail panel from the last calendar list" },
+        interviewNumber: { type: "number", description: "text one interview's detail panel from the last calendar list" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "show_booking_requests",
     description:
       "The caregiver Bookings page's Requests tab — this tool TEXTS the requests itself, each one WHOLE (2 at a time, MORE for the rest): the card (family, client rating, Pending, " +
@@ -2203,8 +2247,8 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_caregiver_availability",
     description:
-      "Read a caregiver's current weekly availability before proposing changes — the day list, the weeklyAvailability time-window map, and preferred time of day. " +
-      "Use this to confirm what's already set before calling update_caregiver_availability, so you don't re-ask for days the caregiver already has.",
+      "Read the caregiver's weekly availability as the Calendar page's Update Availability grid reads it (Sun → Sat, each day's blocks: Morning / Afternoon / Evening / Overnight). " +
+      "Returns grid (day → blocks) and text (one line per day). Call before update_caregiver_availability so you change only what they asked.",
     input_schema: {
       type: "object",
       properties: {
@@ -2342,6 +2386,8 @@ export const MCP_TOOLS: McpTool[] = [
 // Tools available to caregivers — scoped to what's relevant to their role
 const CAREGIVER_TOOL_NAMES = new Set([
   "show_active_bookings",
+  "show_calendar",
+  "show_families",
   "show_past_bookings",
   "start_log_hours_flow",
   "get_active_bookings",
@@ -2374,6 +2420,9 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_recent_messages",
   "delete_conversation",
   "mark_messages_read",
+  // The Inbox's ⋮ menu for caregivers too (2026-09-30): Block / Report + the Account Settings Blocked list.
+  "set_block_status",
+  "list_blocked_users",
   "get_tax_summary",
   "send_onboarding_link",
   "get_background_check_status",
@@ -2427,6 +2476,8 @@ export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_N
 // send_onboarding_link, get_caregiver_info/reviews) stay client-visible.
 const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "show_active_bookings",
+  "show_calendar",
+  "show_families",
   "show_past_bookings",
   "start_log_hours_flow",
   "add_visit_note",
@@ -4517,7 +4568,7 @@ async function executeToolCall(
     // ── New write tools ────────────────────────────────────────────────────────
 
     if (name === "update_caregiver_profile") {
-      const { caregiverId, hourlyRate, bio, phone: actingPhone, requestPhoneChange, city, weeklyAvailability } = input as Record<string, unknown>;
+      const { caregiverId, hourlyRate, bio, phone: actingPhone, requestPhoneChange, city } = input as Record<string, unknown>;
       if (!caregiverId || !actingPhone) return toolError("INVALID_INPUT", "caregiverId and phone are required");
       const caregiverRef = db.collection("caregivers").doc(caregiverId as string);
       const caregiverSnap = await caregiverRef.get();
@@ -4570,7 +4621,6 @@ async function executeToolCall(
       if (hourlyRate         != null) patch.hourlyRate         = Number(hourlyRate);
       if (bio                != null) patch.bio                = bio;
       if (city               != null) patch.city               = city;
-      if (weeklyAvailability != null) patch.weeklyAvailability = weeklyAvailability;
       if (Object.keys(patch).length === 1) return toolError("INVALID_INPUT", "At least one field to update is required");
       await caregiverRef.set(patch, { merge: true });
       logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_profile", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
@@ -5133,6 +5183,50 @@ async function executeToolCall(
       return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, bookings: r.items, note: "The bookings were texted in full — send nothing else this turn. They can reply MORE for the rest." };
     }
 
+    // ── show_families (the My Families page, texted — 2026-09-30) ──
+    if (name === "show_families") {
+      const { caregiverId, tab, query, more, familyNumber, phone: sfPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, sfPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const fam = await import("../agents/caregiverFamilies");
+      if (familyNumber != null) {
+        const sessionData = ((await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {}) as Record<string, unknown>;
+        const ref = fam.resolveFamilyRef(sessionData, { number: familyNumber });
+        if (!ref) return { success: false, reason: "no_such_number", note: "That number isn't on their last families list — call show_families without a number first." };
+        const ok = await fam.sendFamilyDetails(sess.chatId, caregiverId as string, ref);
+        return { success: ok, clientId: ref.clientId, note: "The family's details were texted — send nothing else this turn." };
+      }
+      const r = await fam.sendCaregiverFamilies(sess.phone, sess.chatId, caregiverId as string, { tab: tab === "past" ? "past" : "active", query: typeof query === "string" ? query : undefined, more: more === true });
+      return { success: true, sent: true, tab: r.tab, count: r.count, total: r.total, remaining: r.remaining, families: r.families, note: "The families were texted — send nothing else this turn. They can reply FAMILY n, PAST FAMILIES / FAMILIES, or MORE; to message one, call send_client_message with that family's clientId." };
+    }
+
+    // ── show_calendar (the My Calendar page, texted — 2026-09-30) ──
+    if (name === "show_calendar") {
+      const { caregiverId, view, date, offset, month, filter, more, visitNumber, interviewNumber, phone: scPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, scPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const cal = await import("../agents/caregiverCalendar");
+      if (visitNumber != null || interviewNumber != null) {
+        const sessionData = ((await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {}) as Record<string, unknown>;
+        const ref = cal.resolveCalendarRef(sessionData, Number(visitNumber ?? interviewNumber), visitNumber != null ? "shift" : "interview");
+        if (!ref) return { success: false, reason: "no_such_number", note: "That number isn't on their last calendar list — call show_calendar without a number first." };
+        const ok = ref.kind === "shift" ? await cal.sendCalendarShiftDetail(sess.chatId, caregiverId as string, ref.id) : await cal.sendCalendarInterviewDetail(sess.chatId, caregiverId as string, ref.id);
+        return { success: ok, kind: ref.kind, id: ref.id, note: "The detail panel was texted — send nothing else this turn." };
+      }
+      const v = String(view ?? "week");
+      const req: import("../agents/caregiverCalendar").CalendarView =
+        v === "day" ? { view: "day", date: typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined }
+        : v === "month" ? { view: "month", month: typeof month === "string" && /^\d{4}-\d{2}$/.test(month) ? month : undefined }
+        : v === "list" ? { view: "list", filter: (["all", "upcoming", "this-week", "this-month", "last-30"] as const).find((x) => x === filter) ?? "upcoming", more: more === true }
+        : { view: "week", offset: typeof offset === "number" ? Math.trunc(offset) : 0 };
+      const r = await cal.sendCaregiverCalendar(sess.phone, sess.chatId, caregiverId as string, req);
+      return { success: true, sent: true, view: req.view, count: r.count, remaining: r.remaining, events: r.items, note: "The calendar was texted — send nothing else this turn. They can reply VISIT n / INTERVIEW n, TODAY, TOMORROW, WEEK, NEXT WEEK, MONTH, or MORE." };
+    }
+
     // ── show_past_bookings (the Past Bookings tab, texted — 2026-09-29) ──
     if (name === "show_past_bookings") {
       const { caregiverId, more, allVisits, visitNumber, phone: spbPhone } = input as Record<string, unknown>;
@@ -5604,19 +5698,39 @@ async function executeToolCall(
       // queries (2026-09-28: this used to read the retired `appointments`
       // collection, so it refused every caregiver on the new pipeline).
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      const [activeSnap, pastSnap] = await Promise.all([
+      const [activeSnap, pastSnap, bookingsSnap] = await Promise.all([
         db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "in", ["scheduled", "in-progress"]).orderBy("date", "asc").get(),
         db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "in", ["completed", "cancelled"]).orderBy("date", "desc").limit(50).get(),
+        // The My Families page (CaregiverFamiliesPage.tsx) has a Message button on EVERY
+        // family card, Active and Past alike — any booking between them opens the room
+        // (getOrCreateChatRoom). Same door here (2026-09-30).
+        db.collection("booking_requests").where("caregiverId", "==", caregiverId).limit(100).get().catch(() => null),
       ]);
       const related = [
         ...activeSnap.docs.map((d) => d.data()).filter((s) => s.status === "scheduled" || s.status === "in-progress"),
         ...pastSnap.docs.map((d) => d.data()).filter((s) => s.status === "completed" && String(s.date ?? "") >= thirtyDaysAgo),
+        ...(bookingsSnap?.docs ?? []).map((d) => d.data()).filter((b) => b.clientId && ["accepted", "completed", "cancelled"].includes(String(b.status))),
       ].filter((s) => s.caregiverId === caregiverId);
       if (!resolvedClientId) {
+        // No clientId given: the family is decided by the visits' own clientId — ONE
+        // related family resolves; several never guess (founder 2026-09-30: "how does
+        // it know it's for that client") — the agent must ask by name and pass the id.
+        const seenFam = new Map<string, string>();
+        for (const s of related) if (s.clientId && !seenFam.has(String(s.clientId))) seenFam.set(String(s.clientId), String(s.clientName || "the family"));
+        if (seenFam.size > 1) {
+          return { success: false, reason: "ambiguous_family", families: [...seenFam.entries()].map(([clientId, clientName]) => ({ clientId, clientName })),
+            note: "This caregiver works with several families. Ask which one (by name), then call again with that family's clientId. Never read the ids out." };
+        }
         const first = related.find((s) => s.clientId);
         if (first) resolvedClientId = String(first.clientId);
       } else if (!related.some((s) => s.clientId === resolvedClientId)) {
-        return toolError("FORBIDDEN", "No active or recent engagement with that client — cannot send message.");
+        // The Inbox (InboxView.tsx) lists every chatRooms thread the caregiver is
+        // in — a family who messaged her about an interview, say — and she can
+        // reply there. Same door here (2026-09-30, Calendar page's Message button
+        // on an interview): an existing thread with that family counts.
+        const roomsSnap = await db.collection("chatRooms").where("participants", "array-contains", caregiverId).get().catch(() => null);
+        const hasThread = !!roomsSnap?.docs.some((d) => (d.data().participants as string[] | undefined)?.includes(resolvedClientId as string) && !d.data().isSupport);
+        if (!hasThread) return toolError("FORBIDDEN", "No active or recent engagement with that client, and no conversation with them in your Inbox — cannot send message.");
       }
 
       if (!resolvedClientId) {
@@ -6172,56 +6286,25 @@ async function executeToolCall(
 
     // ── update_caregiver_availability ───────────────────────────────────────
     if (name === "update_caregiver_availability") {
-      const { caregiverId, availableDays, unavailableDays, preferredTimeOfDay } = input as Record<string, unknown>;
+      // The Calendar page's Update Availability modal (2026-09-30): the grid's
+      // taps applied to the current grid, then the modal's ONE write —
+      // caregivers.weeklyAvailability as the whole week of canonical slots
+      // (blocksToWeeklySlots). No day list, no preferred time of day.
+      const { caregiverId, set, add, remove } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const cgSnap6 = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!cgSnap6.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const upd6: Record<string, unknown> = { updatedAt: nowIso, availabilityUpdatedAt: nowIso };
-      // arrayUnion and arrayRemove can't share the same update key — assigning both
-      // to upd6["availability"] silently discarded the additions when a single call
-      // carried availableDays AND unavailableDays. Compute the final list instead.
-      const currentAvail = Array.isArray(cgSnap6.data()?.availability)
-        ? [...(cgSnap6.data()!.availability as string[])]
-        : [];
-      let nextAvail: string[] | null = null;
-      if (Array.isArray(availableDays) && availableDays.length > 0)
-        nextAvail = [...new Set([...currentAvail, ...(availableDays as string[])])];
-      if (Array.isArray(unavailableDays) && unavailableDays.length > 0) {
-        const removed = new Set(unavailableDays as string[]);
-        nextAvail = (nextAvail ?? currentAvail).filter((d) => !removed.has(d));
-      }
-      if (nextAvail !== null) upd6["availability"] = nextAvail;
-      if (typeof preferredTimeOfDay === "string")
-        upd6["preferredTimeOfDay"] = preferredTimeOfDay;
-      // Web parity: the caregiver calendar and replacement matching read the
-      // weeklyAvailability map ({ monday: [{start,end}], ... }) — keep it in sync
-      // with the day list. Added days get a default day-window slot if absent.
-      const existingWeekly = (cgSnap6.data()?.weeklyAvailability ?? {}) as Record<string, Array<{ start: string; end: string }>>;
-      if (Array.isArray(availableDays)) {
-        for (const day of availableDays as string[]) {
-          const key = day.toLowerCase();
-          if (!existingWeekly[key]?.length) {
-            const slotStart = preferredTimeOfDay === "evening" ? "16:00" : preferredTimeOfDay === "afternoon" ? "12:00" : "08:00";
-            const slotEnd   = preferredTimeOfDay === "morning" ? "12:00" : preferredTimeOfDay === "afternoon" ? "17:00" : "20:00";
-            upd6[`weeklyAvailability.${key}`] = [{ start: slotStart, end: slotEnd }];
-          }
-        }
-      }
-      if (Array.isArray(unavailableDays)) {
-        for (const day of unavailableDays as string[]) {
-          upd6[`weeklyAvailability.${day.toLowerCase()}`] = admin.firestore.FieldValue.delete();
-        }
-      }
-      await cgSnap6.ref.update(upd6);
-      logAudit({ eventType: "caregiver_availability_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_availability", availableDays, unavailableDays } }).catch(() => {});
-
-      // 2026-09-09 (Hamse's call): interview_requests removed entirely — this
-      // used to auto-reject pending candidate-presentation/negotiation
-      // records that conflicted with newly-unavailable days. With no new
-      // interview_requests docs ever created going forward, there's nothing
-      // left for this to find; a real, already-scheduled interview conflict
-      // is a video_interviews concern, not something this tool handled.
-      return { success: true, updated: { availableDays: availableDays ?? [], unavailableDays: unavailableDays ?? [], preferredTimeOfDay: preferredTimeOfDay ?? null }, conflictingInterviewsCancelled: 0 };
+      const gridMod = await import("../agents/caregiverAvailabilityGrid");
+      const current = gridMod.gridFromWeekly(cgSnap6.data()?.weeklyAvailability);
+      const asMap = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, string[] | "all">) : undefined);
+      const patch = { set: asMap(set), add: asMap(add), remove: asMap(remove) };
+      if (!patch.set && !patch.add && !patch.remove) return toolError("INVALID_INPUT", "Pass set, add, or remove (day → blocks)");
+      const { grid, unknownDays } = gridMod.applyGridPatch(current, patch);
+      if (unknownDays.length) return toolError("INVALID_INPUT", `Unknown day(s): ${unknownDays.join(", ")} — use monday…sunday`);
+      if (gridMod.gridsEqual(grid, current)) return { success: true, changed: false, grid, text: gridMod.gridText(grid), note: "Already set that way — nothing written." };
+      await cgSnap6.ref.update({ weeklyAvailability: gridMod.weeklyFromGrid(grid) });
+      logAudit({ eventType: "caregiver_availability_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_availability", set, add, remove } }).catch(() => {});
+      return { success: true, changed: true, grid, text: gridMod.gridText(grid), note: "Saved — read the grid back to them in one line per changed day." };
     }
 
     // ── browse_job_board ────────────────────────────────────────────────────
@@ -7154,6 +7237,21 @@ async function executeToolCall(
       return { success: true, unsaved: true };
     }
 
+    // The Inbox's ⋮ menu (Block User / Report / Delete Conversation) is not
+    // offered for someone on the user's care team — an accepted booking between
+    // them, in either role — nor for the Evia team thread (InboxView.tsx
+    // careTeamIds / isSupport). Same rule here (2026-09-30, caregiver Inbox page).
+    const inboxMenuBlock = async (actingUserId: string, otherId: string): Promise<string | null> => {
+      const { SUPPORT_AGENT_ID } = await import("../utils/supportRoom");
+      if (otherId === SUPPORT_AGENT_ID) return "That's the Evia team thread — the Inbox doesn't offer block, report or delete for it. To reach the team, just say what you need.";
+      const [asClient, asCaregiver] = await Promise.all([
+        db.collection("booking_requests").where("clientId", "==", actingUserId).where("caregiverId", "==", otherId).where("status", "==", "accepted").limit(1).get().catch(() => null),
+        db.collection("booking_requests").where("caregiverId", "==", actingUserId).where("clientId", "==", otherId).where("status", "==", "accepted").limit(1).get().catch(() => null),
+      ]);
+      const careTeam = [...(asClient?.docs ?? []), ...(asCaregiver?.docs ?? [])].some((d) => d.data().status === "accepted" && [d.data().clientId, d.data().caregiverId].includes(otherId));
+      return careTeam ? "They're on your care team (an active booking) — the Inbox doesn't offer block, report or delete for a care-team contact. Cancel the booking first if that's what you want." : null;
+    };
+
     // ── set_block_status (block_user + unblock_user merged, 2026-08-31 — kept
     // both role tool surfaces under OpenAI's 128-tool cap when delete_conversation
     // was added) ──────────────────────────────────────────────────────────────
@@ -7161,6 +7259,10 @@ async function executeToolCall(
       const { userId, targetUserId, action: blockAction, reason } = input as Record<string, unknown>;
       if (!userId || !targetUserId || !blockAction) return toolError("INVALID_INPUT", "userId, targetUserId, and action are required");
 
+      if (blockAction === "block" || blockAction === "report") {
+        const menuBlock = await inboxMenuBlock(userId as string, targetUserId as string);
+        if (menuBlock) return toolError("FORBIDDEN", menuBlock);
+      }
       if (blockAction === "block") {
         if (userId === targetUserId) return toolError("INVALID_INPUT", "Cannot block yourself");
         // The Inbox menu's Block User (InboxView.tsx handleBlock): blockedUsers +
@@ -7197,10 +7299,10 @@ async function executeToolCall(
           [`blockedUserProfiles.${targetUserId}`]: admin.firestore.FieldValue.delete(),
         }, { merge: true }).catch(() => {}); // field may not exist on legacy blocks — safe to ignore
         try {
-          const roomId = [userId, targetUserId].sort().join("_");
-          const roomRef = db.collection("chatRooms").doc(roomId as string);
-          const roomSnap = await roomRef.get();
-          if (roomSnap.exists) {
+          const { findChatRoomFor: findRoomForUnblock } = await import("../utils/chatThread");
+          const found = await findRoomForUnblock(userId as string, targetUserId as string);
+          const roomRef = found ? db.collection("chatRooms").doc(found.id) : null;
+          if (roomRef) {
             await roomRef.set({
               [`messagesCutoff.${userId}`]: admin.firestore.FieldValue.serverTimestamp(),
               [`deletedAt.${userId}`]:      admin.firestore.FieldValue.serverTimestamp(),
@@ -7260,11 +7362,12 @@ async function executeToolCall(
     if (name === "delete_conversation") {
       const { userId, counterpartId } = input as Record<string, unknown>;
       if (!userId || !counterpartId) return toolError("INVALID_INPUT", "userId and counterpartId are required");
-      const { chatRoomIdFor } = await import("../utils/chatThread");
-      const roomId = chatRoomIdFor(userId as string, counterpartId as string);
-      const roomRef = db.collection("chatRooms").doc(roomId);
-      const roomSnap = await roomRef.get();
-      if (!roomSnap.exists) return toolError("NOT_FOUND", "No conversation found with that person.");
+      const { findChatRoomFor } = await import("../utils/chatThread");
+      const found = await findChatRoomFor(userId as string, counterpartId as string);
+      if (!found) return toolError("NOT_FOUND", "No conversation found with that person.");
+      const menuBlock = await inboxMenuBlock(userId as string, counterpartId as string);
+      if (menuBlock) return toolError("FORBIDDEN", menuBlock);
+      const roomRef = db.collection("chatRooms").doc(found.id);
       // Mirrors services/chatService.ts's deleteConversation exactly: only sets
       // deletedAt for the requesting user — the other party's copy, and the
       // message history itself, are untouched. relayIntoSharedChatThread /
@@ -7279,11 +7382,10 @@ async function executeToolCall(
     if (name === "mark_messages_read") {
       const { userId, counterpartId } = input as Record<string, unknown>;
       if (!userId || !counterpartId) return toolError("INVALID_INPUT", "userId and counterpartId are required");
-      const { chatRoomIdFor } = await import("../utils/chatThread");
-      const roomId = chatRoomIdFor(userId as string, counterpartId as string);
-      const roomRef = db.collection("chatRooms").doc(roomId);
-      const roomSnap = await roomRef.get();
-      if (!roomSnap.exists) return toolError("NOT_FOUND", "No conversation found with that person.");
+      const { findChatRoomFor } = await import("../utils/chatThread");
+      const found = await findChatRoomFor(userId as string, counterpartId as string);
+      if (!found) return toolError("NOT_FOUND", "No conversation found with that person.");
+      const roomRef = db.collection("chatRooms").doc(found.id);
       // Mirrors services/chatService.ts's markMessagesAsRead exactly: every
       // still-unread message in the room gets isRead:true + this user added to
       // readBy (the site's own query has no senderId filter — it marks ANY
@@ -7503,13 +7605,10 @@ async function executeToolCall(
       if (!gaCgId) return toolError("INVALID_INPUT", "caregiverId is required");
       const gaSnap = await db.collection("caregivers").doc(gaCgId as string).get();
       if (!gaSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const ga = gaSnap.data()!;
-      return {
-        success:            true,
-        availability:       ga.availability ?? [],
-        weeklyAvailability: ga.weeklyAvailability ?? {},
-        preferredTimeOfDay: ga.preferredTimeOfDay ?? null,
-      };
+      // The Update Availability grid, as the modal reads it (weeklySlotsToBl).
+      const gridMod = await import("../agents/caregiverAvailabilityGrid");
+      const grid = gridMod.gridFromWeekly(gaSnap.data()?.weeklyAvailability);
+      return { success: true, grid, text: gridMod.gridText(grid), weeklyAvailability: gaSnap.data()?.weeklyAvailability ?? {} };
     }
 
     // ── update_care_journal_entry ───────────────────────────────────────────

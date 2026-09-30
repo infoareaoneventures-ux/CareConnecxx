@@ -382,7 +382,6 @@ export default function FindCaregivers() {
           bio: data.bio || data.about || '',
           lastActive: data.lastActive || new Date().toISOString(),
           repeatFamilies: data.repeatFamilies ?? 0,
-          availability: Array.isArray(data.availability) ? data.availability : [],
           serviceRadius: data.serviceRadius ?? data.travelRadius,
         });
       };
@@ -904,7 +903,6 @@ export default function FindCaregivers() {
             rating: interviewCaregiver.rating,
             distance: interviewCaregiver.distance,
             skills: interviewCaregiver.skills || [],
-            availability: interviewCaregiver.availability || [],
             experience: typeof interviewCaregiver.experience === 'number' ? interviewCaregiver.experience : 0,
           } as any}
           jobPosts={clientOpenPosts}

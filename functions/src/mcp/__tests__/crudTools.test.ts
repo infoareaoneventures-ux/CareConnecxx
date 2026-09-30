@@ -407,25 +407,23 @@ describe("missing CRUD tools", () => {
       expect(r.code).toBe("NOT_FOUND");
     });
 
-    it("returns availability, weekly map, and preferred time", async () => {
+    it("returns the Update Availability grid the way the modal reads it (weeklySlotsToBl)", async () => {
       hoisted.docState.set("caregivers/cg1", {
-        availability: ["monday", "tuesday"],
-        weeklyAvailability: { monday: [{ start: "08:00", end: "12:00" }] },
-        preferredTimeOfDay: "morning",
+        weeklyAvailability: { monday: [{ start: "08:00", end: "12:00" }], friday: [{ start: "18:00", end: "23:00" }] },
       });
       const r = await handleToolCall("get_caregiver_availability", { caregiverId: "cg1" }) as any;
       expect(r.success).toBe(true);
-      expect(r.availability).toEqual(["monday", "tuesday"]);
+      expect(r.grid.monday).toEqual(["morning"]);
+      expect(r.grid.friday).toEqual(["evening"]);
+      expect(r.text).toBe("Sun: —\nMon: Morning\nTue: —\nWed: —\nThu: —\nFri: Evening\nSat: —");
       expect(r.weeklyAvailability.monday).toHaveLength(1);
-      expect(r.preferredTimeOfDay).toBe("morning");
     });
 
-    it("defaults missing fields to empty values", async () => {
+    it("an empty record is an empty grid", async () => {
       hoisted.docState.set("caregivers/cg2", { name: "Maria" });
       const r = await handleToolCall("get_caregiver_availability", { caregiverId: "cg2" }) as any;
-      expect(r.availability).toEqual([]);
+      expect(Object.values(r.grid).every((b: any) => b.length === 0)).toBe(true);
       expect(r.weeklyAvailability).toEqual({});
-      expect(r.preferredTimeOfDay).toBeNull();
     });
   });
 

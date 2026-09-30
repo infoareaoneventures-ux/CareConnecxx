@@ -54,15 +54,55 @@ describe("LATE — the caregiver's words, posted as their Inbox message", () => 
     expect(await handleLateKeyword("+1", "chat", "cg1", "Running about 15 minutes late, on my way!", { pendingFamilyMessage: { clientId: "fam1", clientName: "Basra Yousuf" } })).toBe("handled");
     expect(hoisted.relayed[0]).toEqual({ clientId: "fam1", clientName: "Basra Yousuf", caregiverId: "cg1", caregiverName: "Maria Garcia", senderId: "cg1", senderName: "Maria Garcia", text: "Running about 15 minutes late, on my way!" });
     expect(hoisted.sent.at(-1)).toBe("Sent to Basra Yousuf as your message.");
-    expect(hoisted.sessionWrites.at(-1)).toEqual({ pendingFamilyMessage: "__delete__" });
+    expect(hoisted.sessionWrites.at(-1)).toMatchObject({ pendingFamilyMessage: "__delete__" }); // clear() also drops a parked family choice
   });
   it("NO / CANCEL backs out without sending; a plain late sentence is relayed as is", async () => {
     expect(await handleLateKeyword("+1", "chat", "cg1", "no", { pendingFamilyMessage: { clientId: "fam1", clientName: "Basra Yousuf" } })).toBe("handled");
     expect(hoisted.relayed).toHaveLength(0);
     expect(hoisted.sent.at(-1)).toBe("Okay — nothing sent.");
-    expect(await relayLateSentence("chat", "cg1", "stuck in traffic, there by 2:15")).toBe(true);
+    // an INFERRED late sentence is confirmed first — nothing reaches the family until YES
+    expect(await relayLateSentence("+1", "chat", "cg1", "stuck in traffic, there by 2:15")).toBe(true);
+    expect(hoisted.relayed).toHaveLength(0);
+    expect(hoisted.sent.at(-1)).toBe('Send to Basra Yousuf as your message: "stuck in traffic, there by 2:15"? Reply YES or NO.');
+    const confirm = hoisted.sessionWrites.at(-1).pendingRelayConfirm;
+    expect(confirm).toMatchObject({ clientId: "fam1", text: "stuck in traffic, there by 2:15" });
+    expect(await handleLateKeyword("+1", "chat", "cg1", "maybe", { pendingRelayConfirm: confirm })).toBe("handled");
+    expect(hoisted.sent.at(-1)).toMatch(/^Send to Basra Yousuf as your message/); // re-asks, still nothing sent
+    expect(hoisted.relayed).toHaveLength(0);
+    expect(await handleLateKeyword("+1", "chat", "cg1", "yes", { pendingRelayConfirm: confirm })).toBe("handled");
     expect(hoisted.relayed[0].text).toBe("stuck in traffic, there by 2:15");
-    expect(hoisted.sent.at(-1)).toBe('Sent to Basra Yousuf as your message: "stuck in traffic, there by 2:15"');
+    expect(hoisted.sent.at(-1)).toBe("Sent to Basra Yousuf as your message.");
+    expect(await handleLateKeyword("+1", "chat", "cg1", "no", { pendingRelayConfirm: confirm })).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe("Okay — nothing sent.");
+  });
+  it("two families today and none in progress → asks WHICH (numbered, by the visits' clientIds); the number or the name picks; then the usual question / the parked sentence", async () => {
+    hoisted.docs.set("shifts/s2", { caregiverId: "cg1", clientId: "fam2", clientName: "Tom Nguyen", status: "scheduled", date: businessTodayStr(), startTime: "18:00" });
+    expect(await handleLateKeyword("+1", "chat", "cg1", "LATE", {})).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe("Which family? Reply 1 for Basra Yousuf, Reply 2 for Tom Nguyen.");
+    const choice = hoisted.sessionWrites.at(-1).pendingFamilyChoice;
+    expect(choice.candidates.map((c: any) => c.clientId)).toEqual(["fam1", "fam2"]);
+    expect(await handleLateKeyword("+1", "chat", "cg1", "2", { pendingFamilyChoice: choice })).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe("What should I tell Tom Nguyen? I'll send it as your message.");
+    expect(hoisted.sessionWrites.at(-1).pendingFamilyMessage).toMatchObject({ clientId: "fam2" });
+    // a plain sentence with two families parks the sentence and asks; the name then sends it to that family only
+    expect(await relayLateSentence("+1", "chat", "cg1", "running 10 late")).toBe(true);
+    expect(hoisted.sent.at(-1)).toMatch(/^Which family?/);
+    const parked = hoisted.sessionWrites.at(-1).pendingFamilyChoice;
+    expect(parked.text).toBe("running 10 late");
+    expect(await handleLateKeyword("+1", "chat", "cg1", "basra", { pendingFamilyChoice: parked })).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe('Send to Basra Yousuf as your message: "running 10 late"? Reply YES or NO.'); // picked → confirm, not send
+    const conf2 = hoisted.sessionWrites.at(-1).pendingRelayConfirm;
+    expect(await handleLateKeyword("+1", "chat", "cg1", "YES", { pendingRelayConfirm: conf2 })).toBe("handled");
+    expect(hoisted.relayed.at(-1)).toMatchObject({ clientId: "fam1", text: "running 10 late" });
+    // an in-progress visit decides on its own, even with another family later today
+    hoisted.docs.set("shifts/s2", { ...hoisted.docs.get("shifts/s2"), status: "in-progress" });
+    expect(await handleLateKeyword("+1", "chat", "cg1", "LATE", {})).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe("What should I tell Tom Nguyen? I'll send it as your message.");
+    // an unknown answer re-asks; NO backs out
+    expect(await handleLateKeyword("+1", "chat", "cg1", "7", { pendingFamilyChoice: choice })).toBe("handled");
+    expect(hoisted.sent.at(-1)).toMatch(/^Which family?/);
+    expect(await handleLateKeyword("+1", "chat", "cg1", "no", { pendingFamilyChoice: choice })).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe("Okay — nothing sent.");
   });
   it("no visit on the schedule → says so; inactive membership → the Inbox's own block; anything else → passthrough", async () => {
     hoisted.docs.delete("shifts/s1");

@@ -225,10 +225,10 @@ export const matchService = {
 
         // --- STEP 5: SCHEDULE COMPATIBILITY ---
         const neededSchedule = seniorProfile.scheduleNeeded || [];
-        const availableTimes = caregiver.availability || [];
+        const availableTimes = availableDaysOf(caregiver);
 
         const scheduleMatch = neededSchedule.filter(time => 
-            availableTimes.includes(time)
+            availableTimes.includes(time.toLowerCase().slice(0, 3))
         );
 
         if (scheduleMatch.length > 0) {
@@ -586,10 +586,10 @@ export function computeObjectiveSignals(
 
     // Schedule overlap
     const neededSchedule = senior.scheduleNeeded || [];
-    const availableTimes = caregiver.availability || [];
+    const availableTimes = availableDaysOf(caregiver);
     const scheduleOverlapPercent = neededSchedule.length > 0
         ? Math.round(
-            (neededSchedule.filter(time => availableTimes.includes(time)).length / neededSchedule.length) * 100
+            (neededSchedule.filter(time => availableTimes.includes(time.toLowerCase().slice(0, 3))).length / neededSchedule.length) * 100
         )
         : 80;
 
@@ -621,4 +621,12 @@ export function computeObjectiveSignals(
         hourlyRate: caregiver.hourlyRate || 0,
         feedbackSummary
     };
+}
+
+/** Days (lowercase 3-letter) that carry at least one slot in weeklyAvailability — the one availability field every page writes
+ *  (2026-09-30; the legacy `availability` day array was removed from the Caregiver type). */
+function availableDaysOf(caregiver: Caregiver): string[] {
+    return Object.entries(caregiver.weeklyAvailability || {})
+        .filter(([, slots]) => Array.isArray(slots) && slots.length > 0)
+        .map(([day]) => day.toLowerCase().slice(0, 3)); // scheduleNeeded stores MON/TUE… (ClientJobPostingWizard DAYS)
 }

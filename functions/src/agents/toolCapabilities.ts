@@ -36,6 +36,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_upcoming_appointments:    ["booking", "scheduling"],
   show_active_bookings:         ["booking", "scheduling"],  // Active Bookings tab, texted whole (2026-09-28)
   show_past_bookings:           ["booking", "scheduling"],  // Past Bookings tab, texted whole (2026-09-29)
+  show_calendar:                ["booking", "scheduling"],  // My Calendar page, texted whole (2026-09-30)
+  show_families:                ["booking", "messaging"],   // My Families page, texted whole (2026-09-30)
   start_log_hours_flow:         ["booking", "scheduling"],  // Past Bookings › Log Hours flow (2026-09-29)
   get_pending_booking_requests: ["booking", "scheduling"],
   show_booking_requests:        ["booking", "scheduling"],

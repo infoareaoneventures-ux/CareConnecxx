@@ -12,7 +12,7 @@
 //     the thread read exactly like chatService.markMessagesAsRead.
 // Sending lives in utils/chatThread.ts (= chatService.sendMessage).
 import * as admin from "firebase-admin";
-import { chatRoomIdFor } from "../utils/chatThread";
+import { findChatRoomFor } from "../utils/chatThread";
 import { businessTodayStr, formatInterviewTime } from "../utils/scheduledTime";
 
 const db = admin.firestore();
@@ -148,11 +148,11 @@ export async function markThreadRead(userId: string, roomId: string): Promise<nu
 }
 
 export async function readInboxThread(userId: string, counterpartId: string, limit = 20): Promise<InboxThread | null> {
-  const roomId = chatRoomIdFor(userId, counterpartId);
+  const found = await findChatRoomFor(userId, counterpartId);
+  if (!found) return null;
+  const roomId = found.id;
   const roomRef = db.collection("chatRooms").doc(roomId);
-  const roomSnap = await roomRef.get();
-  if (!roomSnap.exists) return null;
-  const room = (roomSnap.data() ?? {}) as Record<string, unknown>;
+  const room = found.data;
   const deletedAt = (room.deletedAt as Record<string, unknown> | undefined)?.[userId];
   const cutoff = (room.messagesCutoff as Record<string, unknown> | undefined)?.[userId];
   // The page hides a soft-deleted room from the list entirely.

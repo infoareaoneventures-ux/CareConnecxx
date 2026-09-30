@@ -182,7 +182,6 @@ export interface Caregiver {
   rating?: number;
   reviewCount?: number;
   distance: number;
-  availability: string[];  // Legacy field, will migrate to weeklyAvailability
   backgroundCheckStatus?: 'none' | 'pending' | 'clear' | 'flagged' | 'consider';
   backgroundCheckId?: string;
   stripeAccountId?: string;

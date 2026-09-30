@@ -336,7 +336,13 @@ function caregiverDayRanges(
     for (const slot of slots) {
         if (!slot?.start || !slot?.end) continue;
         const s = hhmmToMin(String(slot.start));
-        const e = hhmmToMin(String(slot.end));
+        let e = hhmmToMin(String(slot.end));
+        // A slot whose end is at or before its start crosses midnight (the site's
+        // overnight block is stored 23:00–06:00) — it runs into the next day's
+        // minutes, the same way the client's overnight block is 22:00–30:00.
+        // Before 2026-09-30 these were dropped, so an overnight caregiver never
+        // matched an overnight need.
+        if (e <= s) e += 24 * 60;
         if (e > s) ranges.push({ startMin: s, endMin: e });
     }
     return mergeRanges(ranges);

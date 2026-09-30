@@ -48,6 +48,7 @@ Common usage: page bg `bg-neutral-50`, surfaces `bg-white`, primary text `text-n
 - **Modals/overlays:** centered overlay, often with a backdrop; multi-step wizards use a top progress bar (e.g. `CaregiverOnboardingWizard`).
 - **Mobile-first:** min touch target 44×44px under 640px; safe-area insets for notched devices (`.safe-area-bottom`, `.safe-area-inset`); larger video controls on mobile.
 - **Motion:** respects `prefers-reduced-motion`. Helpers: `.fade-in`, `.animate-slide-in`, `.skeleton` loading shimmer, `.mic-active` pulse for the voice interface.
+- **Button variants:** `primary` (dark tactile pill), `secondary`, `outline`, and `brand` — the caregiver pages' blue `bg-primary-600` CTA (Apply Now on the dashboard and Jobs page match, 2026-09-30).
 - **Special button styles:** `.btn-depth-primary` / `.btn-depth-secondary` (depth-gradient buttons), `.bg-noise-overlay` (subtle texture).
 
 ## Rules

@@ -13,6 +13,30 @@ export function chatRoomIdFor(clientId: string, caregiverId: string): string {
   return [clientId, caregiverId].sort().join("_");
 }
 
+/**
+ * The pair's existing conversation, whatever its document id. The site creates
+ * rooms two ways: the family's Message buttons use the sorted-ids id above, but
+ * chatService.getOrCreateChatRoom (the caregiver Families page, admin) uses
+ * addDoc — a random id — and finds it back by participants, never by id. Evia
+ * must do the same (2026-09-30, Inbox parity): read, mark read, delete and reply
+ * in the room that exists, never a second one for the same two people.
+ * Non-support rooms only; the most recently active one wins if there are several.
+ */
+export async function findChatRoomFor(userA: string, userB: string): Promise<{ id: string; data: Record<string, unknown> } | null> {
+  let snap: FirebaseFirestore.QuerySnapshot | null = null;
+  try { snap = await db.collection("chatRooms").where("participants", "array-contains", userA).get(); } catch { snap = null; }
+  const ms = (v: unknown): number => { const t = v as { toMillis?: () => number; seconds?: number } | string | null; if (!t) return 0; if (typeof t === "string") return Date.parse(t) || 0; if (typeof t.toMillis === "function") return t.toMillis(); return typeof t.seconds === "number" ? t.seconds * 1000 : 0; };
+  const rooms = (snap?.docs ?? [])
+    .map((d) => ({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> }))
+    .filter((r) => r.data.isSupport !== true && Array.isArray(r.data.participants) && (r.data.participants as string[]).includes(userB) && (r.data.participants as string[]).includes(userA))
+    .sort((a, b) => ms(b.data.lastMessageTimestamp) - ms(a.data.lastMessageTimestamp) || (a.id === chatRoomIdFor(userA, userB) ? -1 : 1));
+  if (rooms.length) return rooms[0];
+  // No room yet — the deterministic id is where a new one would go; report it if it already exists (query index lag).
+  const detId = chatRoomIdFor(userA, userB);
+  const det = await db.collection("chatRooms").doc(detId).get().catch(() => null);
+  return det?.exists ? { id: detId, data: (det.data() ?? {}) as Record<string, unknown> } : null;
+}
+
 export async function relayIntoSharedChatThread(opts: {
   clientId: string; clientName: string;
   caregiverId: string; caregiverName: string;
@@ -23,7 +47,9 @@ export async function relayIntoSharedChatThread(opts: {
   const participants = [clientId, caregiverId].sort();
   const nameById: Record<string, string> = { [clientId]: clientName, [caregiverId]: caregiverName };
   const participantNames = participants.map((id) => nameById[id] ?? "");
-  const roomId = participants.join("_");
+  // Reuse the pair's existing room whatever its id (see findChatRoomFor); only a brand-new pair gets the sorted-ids id.
+  const existing = await findChatRoomFor(clientId, caregiverId);
+  const roomId = existing?.id ?? participants.join("_");
   const roomRef = db.collection("chatRooms").doc(roomId);
   const roomSnap = await roomRef.get();
   const recipientId = participants.find((id) => id !== senderId) ?? participants[0];

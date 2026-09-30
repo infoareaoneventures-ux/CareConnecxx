@@ -654,7 +654,8 @@ export function buildCaregiverCoreContext(caregiver: any): string {
   if (caregiver.canDrive === true) skillsBits.push("can drive");
   if (skillsBits.length) parts.push(`SKILLS AND EXPERIENCE: ${skillsBits.join("; ")}.`);
 
-  const availability = summarizeWeeklyAvailability(caregiver.availability);
+  // The Calendar page's grid reads weeklyAvailability; the older `availability` shapes are a fallback for legacy docs.
+  const availability = summarizeWeeklyAvailability(caregiver.weeklyAvailability ?? caregiver.availability);
   if (availability) {
     parts.push(
       `WEEKLY AVAILABILITY (on file - a snapshot, so verify with get_caregiver_info before asserting; ` +
@@ -780,6 +781,7 @@ export function buildClientSystemPrompt(
     apptLine,
     ``,
     `KNOWLEDGE BOUNDARY (non-negotiable):`,
+    `Identifiers in tool results — clientId, caregiverId, userId, shiftId, bookingRequestId, room ids — and any phone number or email a tool returns are INTERNAL: pass them between tools, never read them out, never ask the user for one. Refer to people by name. Who a message goes to is decided by the record's own id (the visit's clientId), never by a name or number the user types.`,
     `The only facts you may state about ${seniorName}'s care situation are what appears in:`,
     `the cached context above, the learned facts above, the Zep context above, or tool results from this conversation.`,
     `The cached context above is a snapshot (up to 60s old). For time-sensitive questions about appointments or visit status, call the relevant tool to get fresh data.`,
@@ -958,7 +960,7 @@ export function buildCaregiverSystemPrompt(
   const rate = typeof caregiver?.hourlyRate === "number" ? (caregiver.hourlyRate as number) : null;
 
   const apptLine = todayAppt
-    ? `Today's visit: ${formatDateWithWeekday(todayAppt.date)} at ${todayAppt.startTime ? formatHHMMForDisplay(todayAppt.startTime) : "TBD"} for client ${todayAppt.clientId ?? ""}. Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
+    ? `Today's visit: ${formatDateWithWeekday(todayAppt.date)} at ${todayAppt.startTime ? formatHHMMForDisplay(todayAppt.startTime) : "TBD"} with ${todayAppt.clientName || "the family"} (clientId ${todayAppt.clientId ?? ""} — for tools only, never say it). Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
     : "No visits scheduled for today.";
 
   const zepSection = zepContext ? `\n${zepContext}\n` : "";
@@ -1041,8 +1043,10 @@ export function buildCaregiverSystemPrompt(
     `- get_shifts: list your shift records with hours and payment status`,
     `- request_instant_payout: cash out your instantly-available balance — Stripe's 1% instant fee (min $0.50) comes off it, arrives in ~30 min; always say the fee and the amount that arrives (regular earnings pay out automatically every day, free)`,
     `- get_payout_history: see your recent payout records from Stripe`,
-    `- update_caregiver_availability: add or remove days from your weekly availability`,
-    `- get_caregiver_availability: read your current weekly availability before changing it`,
+    `- show_families: your My Families page — it TEXTS the cards itself (Active: families with a booking that still has visits; Past: finished or cancelled; name, $rate/hr, days, who you care for; FAMILY n = the View Details modal). Call it for "who do I work with", "my families", "details on the Nguyen family". Message = send_client_message with that family's clientId from the list. Send nothing else that turn.`,
+    `- show_calendar: your My Calendar page — it TEXTS the view itself (day / week / month / list; shifts, interviews and your Available blocks; numbered so VISIT n / INTERVIEW n open a detail panel). Call it for "what's my week", "what do I have tomorrow", "anything Friday?", "my calendar". Send nothing else that turn.`,
+    `- get_caregiver_availability: your Update Availability grid (Sun → Sat, Morning / Afternoon / Evening / Overnight) — read it before changing it.`,
+    `- update_caregiver_availability: the Update Availability modal's Save — pass the taps (set / add / remove day → blocks); it writes the same field the page does and returns the grid to read back.`,
     `- get_caregiver_info: look up your own profile details (rate, bio, city, availability), AND your ratings/recent reviews from families, in one call`,
     `- get_background_check_status: check the status of your background check`,
     `- get_payout_status: check whether your Stripe payout (getting paid) setup is finished. Use when they ask "is my payout set up", "can I get paid yet", or "did my bank connect". NEVER say payouts are live, ready, or set up unless summary is "active" — when it's anything else, send the setup link with send_onboarding_link (caregiver_payouts) and tell them tapping it finishes their Stripe setup.`,
@@ -1050,12 +1054,17 @@ export function buildCaregiverSystemPrompt(
     `- request_checkr_verification / verify_checkr_otp / get_checkr_report: pull your FULL background-check report details live from Checkr (which screenings ran, results, exceptions). Checkr requires identity verification first: confirm the caregiver's email, call request_checkr_verification (Checkr emails them a one-time code), then verify_checkr_otp with the code, then get_checkr_report. For a quick status answer just use get_background_check_status.`,
     `- get_tax_summary: see your 1099 / earnings tax summary`,
     `- send_onboarding_link: (re)send yourself a setup link — membership payment, profile photo, documents, background check, or payout setup. Picks linkType caregiver_membership / caregiver_photo / caregiver_documents / caregiver_background_check / caregiver_payouts. The tool sends the link itself; just briefly confirm after. NEVER tell the caregiver a link is coming or being pulled up unless you have CALLED this tool in the same turn — narration does not send anything.`,
-    `- send_client_message: the Inbox's Message — posts THEIR words, verbatim, to the family's thread (never a sentence you wrote); the family gets it as a message from them. Running late or a problem during a visit goes here, to the family — the team (contact_support) only if they ask for the team.`,
-    `- get_recent_messages: see recent messages with a client`,
+    `- send_client_message (caregiverId, clientId from the booking / calendar data, message): the Inbox's Message — posts THEIR words, verbatim, to the family's thread (never a sentence you wrote); the family gets it as a message from them. Always pass the family's clientId from tool data; if the tool answers with several families, ask which one by name and call again. Running late or a problem during a visit goes here, to the family — the team (contact_support) only if they ask for the team.`,
+    `- get_recent_messages (userId = your caregiverId, role: "caregiver"): your Inbox page — without counterpartId the thread list (My Families / Other Clients / Support, last message or "Start a conversation", unread counts; 'query' = the search box); with counterpartId that conversation's messages, which also marks it read like opening it on the page. Use for "any new messages", "what did she say", "catch me up".`,
+    `- mark_messages_read (userId, counterpartId): clear a conversation's unread badge, the way opening it on the page does.`,
+    `- delete_conversation (userId, counterpartId): the Inbox menu's Delete Conversation — hides the thread from YOUR Inbox only. Like the page, not offered for a family on your care team (an active booking) or the Evia team thread; the tool says so.`,
+    `- set_block_status (userId, targetUserId, action 'block'|'unblock'|'report'): the Inbox menu's Block User / Report. MANDATORY for 'block': read back who and wait for an explicit YES. MANDATORY for 'report': confirm the category and what happened, then call, and say the team follows up within 24 hours. Not offered for a care-team family or the Evia team thread, like the page.`,
+    `- list_blocked_users (userId): who you've blocked (Account Settings › Blocked). Use before set_block_status or when asked "who have I blocked?".`,
     `- react_to_message: add an iMessage tapback (like/thumbs-up) to the caregiver's last message — a silent acknowledgment for quick confirmations ("got it", "on my way") that needs no reply text. iMessage only; if the tool reports a fallback, acknowledge briefly in text instead.`,
     `- create_caregiver_referral: refer a fellow caregiver to join Evia — sends them an invite text with the caregiver's name attached`,
     ``,
     `KNOWLEDGE BOUNDARY (non-negotiable):`,
+    `Identifiers in tool results — clientId, caregiverId, userId, shiftId, bookingRequestId, room ids — and any phone number or email a tool returns are INTERNAL: pass them between tools, never read them out, never ask the caregiver for one. Refer to families by name. Who a message goes to is decided by the visit's own clientId, never by a name or number the caregiver types; when a tool returns several families, ask which by name.`,
     `The only facts you may state about ${name}'s clients, schedule, pay, or account are what appears in:`,
     `the appointment details above, the cached context above, the Zep context above, or tool results from this conversation.`,
     `If asked something outside those sources, say "I don't have that information yet" — or call the tool that would know.`,
@@ -2810,6 +2819,8 @@ export async function runQaAgent(params: {
       "show_active_bookings", "start_shift", "update_shift_task", "add_visit_note", "complete_shift",
       // Caregiver Bookings page, Past Bookings tab (2026-09-29): the tab, a visit's detail and the Log Hours flow text themselves.
       "show_past_bookings", "start_log_hours_flow",
+      // My Calendar page (2026-09-30): the views and detail panels text themselves.
+      "show_calendar", "show_families",
     ]);
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early

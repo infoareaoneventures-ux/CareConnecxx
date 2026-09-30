@@ -658,7 +658,6 @@ export default function ClientCaregiverProfile({
             rating: caregiver.rating,
             distance: caregiver.distance,
             skills: caregiver.skills,
-            availability: [],
             experience: Number(caregiver.experience) || 0,
           } as any}
           jobPosts={clientOpenPosts}

@@ -172,7 +172,7 @@ async function getNextAppointment(userId: string) {
 
 async function getActiveVisit(userId: string) {
   // A visit the caregiver has started shows as 'in-progress' on the site's
-  // `shifts` doc (start_shift / GPS check-in).
+  // `shifts` doc (start_shift).
   const snap = await db
     .collection("shifts")
     .where("clientId", "==", userId)
@@ -968,7 +968,7 @@ export function buildCaregiverSystemPrompt(
   if (contextFlags?.pendingPayoutNotificationAck) {
     ctxLines.push(
       `RECENT CONTEXT: This caregiver was just notified about a payout (${contextFlags.pendingPayoutNotificationAck}). ` +
-      `If their message is a question about the payment (timing, amount, fees, status), use get_payout_history / get_caregiver_earnings / get_membership_page (role: "caregiver") to answer accurately.`,
+      `If their message is a question about the payment (timing, amount, fees, status), use get_payout_history / get_membership_page (role: "caregiver") to answer accurately.`,
     );
   }
   if (contextFlags?.pendingBgCheckAck) {
@@ -1007,6 +1007,8 @@ export function buildCaregiverSystemPrompt(
     ``,
     `TOOLS — call them when needed:`,
     `- show_active_bookings: your Bookings page's Active Bookings tab — it TEXTS each booking in full itself (2 at a time; MORE → more:true; VISITS → allVisits:true). Call it ONLY when they ask to SEE their bookings or schedule. Send nothing else that turn.`,
+    `- show_past_bookings: your Bookings page's Past Bookings tab — it TEXTS the cards itself (completed / missed / cancelled counts; each visit numbered; MORE, PAST VISITS). With visitNumber it texts one completed visit's tasks and notes. Call it for "my past visits", "did I miss a shift", "what did I do last week", "visit 3". Send nothing else that turn.`,
+    `- start_log_hours_flow: the Past Bookings tab's Log Hours button for a MISSED visit — the ONLY way to log it. Pass the number they said ("log 2"); it asks actual start, end, tasks, a note, then LOG saves. Send nothing else that turn.`,
     `- get_active_bookings (caregiverId): the same tab as DATA — use it to ANSWER a question ("do I have another shift today?", "when's my next visit?", "what's the note for tomorrow?") in one or two sentences. Never text the whole tab for a question.`,
     `- get_care_journal / get_senior_profile: review care history or client details before a visit`,
     `- update_memory_file: remember a lasting preference about how to work with them — NEVER anything that happened during a visit (that is add_visit_note)`,
@@ -1035,12 +1037,10 @@ export function buildCaregiverSystemPrompt(
     `- update_shift_task: the Tasks checklist while the visit is in progress — pass numbers from the texted list ("done 1 and 3" → numbers:[1,3]). It TEXTS the result itself. (They can also text TASKS to see the list again.)`,
     `- add_visit_note: the visit-notes box while the visit is in progress — when they tell you something about the visit for the family ("she ate well"), pass it as text. The family sees it right away. It TEXTS the confirmation itself.`,
     `- complete_shift: the End button on the visit in progress — when they say they're done, ask ONCE if they want to add a closing note for the family, then call it with notes (or without). It TEXTS the confirmation itself. Send nothing else that turn.`,
-    `- submit_shift_hours: submit your clock-in/out times after a visit for client approval`,
     `- respond_to_shift_hour_correction: accept or dispute the family's proposed correction to hours you submitted`,
     `- get_shifts: list your shift records with hours and payment status`,
     `- request_instant_payout: cash out your instantly-available balance — Stripe's 1% instant fee (min $0.50) comes off it, arrives in ~30 min; always say the fee and the amount that arrives (regular earnings pay out automatically every day, free)`,
     `- get_payout_history: see your recent payout records from Stripe`,
-    `- get_caregiver_earnings: see how much you've earned in the last 30 days`,
     `- update_caregiver_availability: add or remove days from your weekly availability`,
     `- get_caregiver_availability: read your current weekly availability before changing it`,
     `- get_caregiver_info: look up your own profile details (rate, bio, city, availability), AND your ratings/recent reviews from families, in one call`,
@@ -1048,7 +1048,6 @@ export function buildCaregiverSystemPrompt(
     `- get_payout_status: check whether your Stripe payout (getting paid) setup is finished. Use when they ask "is my payout set up", "can I get paid yet", or "did my bank connect". NEVER say payouts are live, ready, or set up unless summary is "active" — when it's anything else, send the setup link with send_onboarding_link (caregiver_payouts) and tell them tapping it finishes their Stripe setup.`,
     `- get_signup_completeness: FINAL SIGNUP CHECK — audit their whole account for anything signup missed (profile fields, photo, membership, background check, payouts, visibility to families). Use right after signup finishes or when they ask "did I miss anything" / "am I all set". Answer ONLY from its result: report each item in \`missing\` with its fix (offer to send links via send_onboarding_link), mention \`optionalGaps\` as optional, and if \`complete\` is true tell them plainly they're all set.`,
     `- request_checkr_verification / verify_checkr_otp / get_checkr_report: pull your FULL background-check report details live from Checkr (which screenings ran, results, exceptions). Checkr requires identity verification first: confirm the caregiver's email, call request_checkr_verification (Checkr emails them a one-time code), then verify_checkr_otp with the code, then get_checkr_report. For a quick status answer just use get_background_check_status.`,
-    `- submit_gps_checkin: record a GPS check-in at the start of a visit`,
     `- get_tax_summary: see your 1099 / earnings tax summary`,
     `- send_onboarding_link: (re)send yourself a setup link — membership payment, profile photo, documents, background check, or payout setup. Picks linkType caregiver_membership / caregiver_photo / caregiver_documents / caregiver_background_check / caregiver_payouts. The tool sends the link itself; just briefly confirm after. NEVER tell the caregiver a link is coming or being pulled up unless you have CALLED this tool in the same turn — narration does not send anything.`,
     `- send_client_message: the Inbox's Message — posts THEIR words, verbatim, to the family's thread (never a sentence you wrote); the family gets it as a message from them. Running late or a problem during a visit goes here, to the family — the team (contact_support) only if they ask for the team.`,
@@ -2809,6 +2808,8 @@ export async function runQaAgent(params: {
       // Caregiver Bookings page, Active Bookings tab (2026-09-28): texted whole by the tool,
       // and the per-visit buttons (Start / Tasks / notes / End) text their own confirmations.
       "show_active_bookings", "start_shift", "update_shift_task", "add_visit_note", "complete_shift",
+      // Caregiver Bookings page, Past Bookings tab (2026-09-29): the tab, a visit's detail and the Log Hours flow text themselves.
+      "show_past_bookings", "start_log_hours_flow",
     ]);
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early

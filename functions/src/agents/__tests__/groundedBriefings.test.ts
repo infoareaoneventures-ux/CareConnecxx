@@ -18,7 +18,7 @@ import { resolve } from "path";
  *     they classify as "no" instead of "unclear" (whose re-ask loop is what
  *     hallucinated Marcus). The strict YES/NO fast path stays untouched.
  *
- * Behavior coverage for the other U7 sites lives in gpsCheckin.test.ts and
+ * Behavior coverage for the other U7 sites lives in
  * routeIntent.characterization.test.ts; a count backstop for the routeIntent
  * cancellation briefings is included here.
  */

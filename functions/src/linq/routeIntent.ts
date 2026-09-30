@@ -13,7 +13,6 @@ import { handleEmailChangeReply } from "../agents/emailChangeReply";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
-import { handleEarningsView } from "../agents/earningsHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
@@ -467,17 +466,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         intent,
         ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
       });
-      return;
-    }
-
-    if (intent === "VIEW_EARNINGS" && session.userType === "caregiver") {
-      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-      try {
-        const cgId = (session.caregiverId ?? session.userId ?? phone) as string;
-        await handleEarningsView(cgId, (msg: string) => sendMessage(chatId, msg));
-      } finally {
-        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-      }
       return;
     }
 

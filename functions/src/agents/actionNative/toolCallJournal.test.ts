@@ -66,7 +66,7 @@ describe("toolCallJournal", () => {
     const journal = classifyToolCallJournal([
       { type: "tool_start", tool: "send_setup_link", input: { clientId: "c1" } },
       { type: "tool_done", tool: "send_setup_link", result: "sent" },
-      { type: "tool_start", tool: "submit_shift_hours", input: { appointmentId: "a1" } },
+      { type: "tool_start", tool: "complete_shift", input: { shiftId: "s1" } },
     ]);
 
     const note = buildResumeJournalNote(journal);
@@ -74,6 +74,6 @@ describe("toolCallJournal", () => {
     expect(note).toContain("Already completed");
     expect(note).toContain("send_setup_link");
     expect(note).toContain("Interrupted or unknown outcome");
-    expect(note).toContain("submit_shift_hours");
+    expect(note).toContain("complete_shift");
   });
 });

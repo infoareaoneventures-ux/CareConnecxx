@@ -161,6 +161,8 @@ export { flushFamilyVisitUpdates } from './scheduled/flushFamilyVisitUpdates';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
 export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminder';
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
+// 15 min after a visit's scheduled end: still in progress → FINISH; never started → LOG (founder 2026-09-29)
+export { sendShiftEndReminders } from './scheduled/shiftEndReminder';
 export { processDndQueue } from './scheduled/dndQueueProcessor';
 export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';
 // Agentic-reliability wave (2026-07): alert aging digest, hourly failure-spike
@@ -169,9 +171,7 @@ export { adminAlertAgingDaily } from './scheduled/adminAlertAging';
 export { opsAnomalyWatchHourly } from './scheduled/opsAnomalyWatch';
 export { inferActiveHoursWeekly } from './scheduled/inferActiveHours';
 export { expireAccountRecoveryRequests } from './scheduled/accountRecoveryExpiry';
-export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
 export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
-export { wellbeingCheckinJob } from './scheduled/wellbeingCheckin';
 export { dispatchBillingApprovalNotices } from './billing/approvalNoticeDispatcher';
 
 // Proactive trigger engine (runs every 5 min)
@@ -261,9 +261,6 @@ export { sendInterviewFeedbackNudges } from './scheduled/interviewFeedbackNudge'
 export { sendBookingFollowupNudges } from './scheduled/bookingFollowupNudge';
 // Caregiver "still waiting on you" nudges: interview / booking / replacement / schedule-change requests (2026-09-28).
 export { sendPendingDecisionNudges } from './scheduled/pendingDecisionNudge';
-
-// GPS CHECK-IN (callable — validates caregiver arrival within 200m, notifies family)
-export { submitGpsCheckin } from './agents/gpsCheckin';
 
 // 1099 TAX NOTIFICATIONS (Jan 31 — notifies eligible caregivers of earnings summary)
 export { send1099Notifications } from './scheduled/taxReminder';

@@ -184,9 +184,9 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // turn, back-out at any step, Submit/Send or Cancel at the end — checked
     // before any keyword/NLU so a short answer like "9/28 at 9am" is the
     // flow's answer, not something else's.
-    for (const flow of ["applyFlowStep", "interviewRescheduleFlowStep"] as const) {
+    for (const flow of ["applyFlowStep", "interviewRescheduleFlowStep", "logHoursFlowStep"] as const) {
       if (!(session as any)[flow]) continue;
-      const dataKey = flow === "applyFlowStep" ? "applyFlowData" : "interviewRescheduleFlowData";
+      const dataKey = flow === "applyFlowStep" ? "applyFlowData" : flow === "interviewRescheduleFlowStep" ? "interviewRescheduleFlowData" : "logHoursFlowData";
       const expiry = (session as any).stateExpiresAt as string | undefined;
       if (expiry && new Date(expiry) < new Date()) {
         await db.collection("agent_sessions").doc(phone).update({
@@ -197,9 +197,14 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       }
       if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
       try {
-        const flows = await import("../agents/caregiverJobFlows");
-        if (flow === "applyFlowStep") await flows.handleApplyFlowStep(phone, chatId, text, session);
-        else await flows.handleInterviewRescheduleFlowStep(phone, chatId, text, session);
+        if (flow === "logHoursFlowStep") {
+          const { handleLogHoursFlowStep } = await import("../agents/caregiverPastBookings");
+          await handleLogHoursFlowStep(phone, chatId, text, session);
+        } else {
+          const flows = await import("../agents/caregiverJobFlows");
+          if (flow === "applyFlowStep") await flows.handleApplyFlowStep(phone, chatId, text, session);
+          else await flows.handleInterviewRescheduleFlowStep(phone, chatId, text, session);
+        }
       } finally {
         if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
       }
@@ -256,6 +261,13 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       const { handleInShiftKeyword } = await import("../agents/inShift");
       const inShift = await handleInShiftKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
       if (inShift === "handled") return "handled";
+    }
+
+    // ── PAST · PAST VISITS · VISIT n · LOG n — the Past Bookings tab (agents/caregiverPastBookings.ts) ──
+    if (session.caregiverId) {
+      const { handlePastBookingsKeyword } = await import("../agents/caregiverPastBookings");
+      const past = await handlePastBookingsKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (past === "handled") return "handled";
     }
 
     // ── VISITS — the page's "Show more" on the Active Bookings card ──────────
@@ -326,51 +338,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (session.service === "iMessage") await startTyping(chatId).catch(() => {/* non-critical */});
       try { await KEYWORDS[norm](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
       return "handled";
-    }
-
-    // ── Wellbeing check-in response: "4 3 5" style reply ──────────────────────
-    // Only fires if the message is ONLY three numbers separated by whitespace
-    // — otherwise "I'm 32, need help 3 mornings" used to hijack this handler.
-    // Also gated to 7 days of staleness from when the check-in was sent.
-    if ((session as any).pendingWellbeingCheckin) {
-      const sentAtIso = (session as any).wellbeingCheckinSentAt as string | undefined;
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const isFresh = !sentAtIso || sentAtIso > sevenDaysAgo;
-      const trimmed = text.trim();
-      const isPureRatingReply = /^[1-5](?:\s+[1-5]){2}$/.test(trimmed);
-
-      if (!isFresh) {
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingWellbeingCheckin: admin.firestore.FieldValue.delete(),
-          wellbeingCheckinSentAt:  admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-        (session as any).pendingWellbeingCheckin = undefined;
-      } else if (!isPureRatingReply) {
-        // Don't hijack — message isn't a rating answer. Fall through.
-      } else {
-        const parts = trimmed.split(/\s+/).map(Number).filter(n => !isNaN(n) && n >= 1 && n <= 5);
-        if (parts.length === 3) {
-          const [energy, stress, satisfaction] = parts;
-          await db.collection("wellbeing_checkins").add({
-            caregiverId: session.caregiverId ?? session.userId ?? phone,
-            phone,
-            energy,
-            stress,
-            satisfaction,
-            recordedAt: new Date().toISOString(),
-          });
-          await db.collection("agent_sessions").doc(phone).update({
-            pendingWellbeingCheckin: admin.firestore.FieldValue.delete(),
-            wellbeingCheckinSentAt:  admin.firestore.FieldValue.delete(),
-          });
-          const avg = (energy + stress + satisfaction) / 3;
-          const reply = avg < 3
-            ? `Thank you for being honest 💙 Your scores tell me you might need some support. Would you like to:\n\n1. Adjust your schedule\n2. Talk to our support team\n3. Get info on mental health resources\n\nReply 1, 2, or 3 — or just ignore this if you're okay.`
-            : `Checked in. Sounds like things are going well — your clients are in good hands.`;
-          await sendMessage(chatId, reply);
-          return "handled";
-        }
-      }
     }
 
     // Caregiver rescheduling — parse new times and acknowledge.

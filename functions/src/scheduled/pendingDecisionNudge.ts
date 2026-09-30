@@ -9,9 +9,11 @@
 //   • replacement request (booking_requests pending + isShiftReplacement) —
 //     time-critical, so a faster cycle
 //   • schedule change  (booking_amendments pending)
-// 24h after the request, then every 48h while it's pending (replacements: 2h,
-// then every 12h until the visit date passes); stops the moment it's answered
-// or withdrawn (the record is no longer pending). Each nudge is the same words
+// 24h after the request, then every 48h while it's pending, AT MOST THREE
+// TIMES (day 1, 3, 5 — founder 2026-09-29: a caregiver who ignored three is not
+// accepting on the fourth; replacements: 2h, then every 12h with no cap — they
+// stop when the visit date passes); stops the moment it's answered or withdrawn
+// (the record is no longer pending). Each nudge is the same words
 // as the original notice, texted AND mirrored to the bell (idempotent per
 // window), and re-parks the decision so a plain ACCEPT / DECLINE reply runs the
 // page's button (agents/decisionNotices.ts).
@@ -29,12 +31,15 @@ export const NUDGE_DELAY_MS       = 24 * 60 * 60 * 1000;
 export const RENUDGE_COOLDOWN_MS  = 48 * 60 * 60 * 1000;
 export const REPLACEMENT_DELAY_MS    = 2 * 60 * 60 * 1000;
 export const REPLACEMENT_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+/** Non-replacement requests are nudged at most this many times (founder, 2026-09-29). */
+export const MAX_NUDGES = 3;
 
 /** Pure decision: nudge now? (createdMs/lastNudgedMs may be null when unparseable → never). */
 export function shouldNudgePendingDecision(p: {
-  createdMs: number | null; lastNudgedMs: number | null; nowMs: number; replacement?: boolean; visitDate?: string | null; today?: string;
+  createdMs: number | null; lastNudgedMs: number | null; nowMs: number; replacement?: boolean; visitDate?: string | null; today?: string; nudgeCount?: number;
 }): boolean {
   if (p.createdMs === null) return false;
+  if (!p.replacement && (p.nudgeCount ?? 0) >= MAX_NUDGES) return false; // three and done
   const delay = p.replacement ? REPLACEMENT_DELAY_MS : NUDGE_DELAY_MS;
   const cooldown = p.replacement ? REPLACEMENT_COOLDOWN_MS : RENUDGE_COOLDOWN_MS;
   if (p.nowMs - p.createdMs < delay) return false;
@@ -148,7 +153,7 @@ export async function runPendingDecisionNudges(nowMs = Date.now()): Promise<{ nu
   const items = await loadPendingItems();
   for (const it of items) {
     try {
-      if (!shouldNudgePendingDecision({ createdMs: it.createdMs, lastNudgedMs: it.lastNudgedMs, nowMs, replacement: it.replacement, visitDate: it.visitDate, today })) { result.skipped++; continue; }
+      if (!shouldNudgePendingDecision({ createdMs: it.createdMs, lastNudgedMs: it.lastNudgedMs, nowMs, replacement: it.replacement, visitDate: it.visitDate, today, nudgeCount: it.nudgeCount })) { result.skipped++; continue; }
       const text = `${it.body} ${it.replyLine}`;
       // Bell first (idempotent per nudge number), then the text with the same words.
       await writeUserNotification({

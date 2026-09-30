@@ -19,7 +19,7 @@ import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingAct
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
-import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay, weekdayForDate } from "../utils/scheduledTime";
+import { businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay, weekdayForDate } from "../utils/scheduledTime";
 import { loadReschedulableShift, proposeShiftReschedule, isShiftOverdue, shiftDisplayStatus, acceptRescheduleProposal, clearRescheduleProposal, findCaregiverOwnShiftConflict } from "../agents/shiftReschedule";
 import { listActiveBookings } from "../agents/activeBookings";
 import { listClientInterviews } from "../agents/interviewsTab";
@@ -30,7 +30,6 @@ import {
 } from "../agents/carePlanPage";
 import { cancelVisit, cancelWholeBooking, cancelPendingRequest, cancelPendingAmendment, withdrawReplacementRequest } from "../agents/bookingCancel";
 import { createScheduleAmendment, loadCaregiverAvailability, checkVisitBlock, normDayAbbr, blockToRange, describeBlock, describeRange, ABBR_TO_FULL as VISIT_DAY_FULL, type TimeBlock as VisitTimeBlock } from "../agents/visitRequest";
-import { bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 
@@ -43,7 +42,7 @@ import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 // INVARIANT (enforced by toolCapabilities.test.ts): every entry MUST be a real
 // MCP tool AND high-risk — otherwise it never receives a _confirmedActionId and
 // this guard is dead code. That guard caught the original mis-wiring: payouts
-// and submit_shift_hours are NOT confirmation-gated (they carry their own
+// (payouts) are NOT confirmation-gated (they carry their own
 // idempotency — payoutCommon.executeInstantPayout's replay window + doc-keyed
 // Stripe idempotency key, appointmentId dedup), so keying them here did
 // nothing. This ledger is defense-in-depth layered over claimPendingAction's
@@ -1193,23 +1192,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "submit_shift_hours",
-    description:
-      "Submit your actual clock-in and clock-out times for a completed visit. " +
-      "The client will review and approve before payment is processed.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:   { type: "string",  description: "Your caregiver document ID" },
-        appointmentId: { type: "string",  description: "The appointment document ID" },
-        clockInTime:   { type: "string",  description: "Clock-in time in HH:MM format" },
-        clockOutTime:  { type: "string",  description: "Clock-out time in HH:MM format" },
-        breakMinutes:  { type: "integer", description: "Break duration in minutes (default 0)" },
-      },
-      required: ["caregiverId", "appointmentId", "clockInTime", "clockOutTime"],
-    },
-  },
-  {
     name: "review_shift_hours",
     description:
       "Approve, correct, or resolve a dispute on a caregiver's submitted shift hours — mirrors the website's Timesheets review modal exactly, action for action. " +
@@ -1608,19 +1590,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "get_caregiver_earnings",
-    description:
-      "Get an earnings summary for a caregiver — total earned, pending balance, and recent visit count.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        daysBack:    { type: "number", description: "Days of history to include (default 30, max 90)" },
-      },
-      required: ["caregiverId"],
-    },
-  },
-  {
     name: "update_caregiver_availability",
     description:
       "Add or remove days from a caregiver's weekly availability. Changes take effect immediately for job matching.",
@@ -1708,22 +1677,6 @@ export const MCP_TOOLS: McpTool[] = [
         jobId:       { type: "string", description: "The job_posts document ID to unhide; omit to list hidden jobs" },
       },
       required: ["caregiverId"],
-    },
-  },
-  {
-    name: "submit_gps_checkin",
-    description:
-      "Submit a GPS-validated check-in for a caregiver arriving at a care visit. " +
-      "Verifies the caregiver is within 200m of the address and notifies the family.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
-        appointmentId: { type: "string", description: "The appointment document ID" },
-        latitude:      { type: "number", description: "Caregiver's current latitude" },
-        longitude:     { type: "number", description: "Caregiver's current longitude" },
-      },
-      required: ["caregiverId", "appointmentId", "latitude", "longitude"],
     },
   },
   {
@@ -2183,6 +2136,40 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "show_past_bookings",
+    description:
+      "The caregiver Bookings page's Past Bookings tab — this tool TEXTS it itself: one card per past booking (family · N completed · N missed · N cancelled), " +
+      "two visits per card (a completed visit with its actual Started – Ended stamps and duration; a missed visit with 'reply LOG n'; a cancelled visit), numbered across the tab; " +
+      "2 cards per text, MORE for the rest; PAST VISITS shows every visit. Pass visitNumber to text ONE completed visit's detail (scheduled + actual times, tasks per recipient done / not done, " +
+      "visit notes, closing note) — the page's click-through. Call it for 'my past visits', 'what did I do last week', 'which visits got cancelled', 'did I miss a shift'. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        more:        { type: "boolean", description: "true when they ask for more — continues the last list" },
+        allVisits:   { type: "boolean", description: "true to list every visit of each booking (PAST VISITS)" },
+        visitNumber: { type: "number", description: "the number of a visit from the last texted list — texts that visit's detail instead of the tab" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "start_log_hours_flow",
+    description:
+      "The Past Bookings tab's Log Hours button on a MISSED visit (scheduled, its time passed, never started) — the ONLY way to log it over text. Starts Evia's scripted flow: " +
+      "actual start, actual end, which tasks were done, a note, then LOG saves the page's exact write (completed + the times + loggedManually) and texts 'Hours logged successfully'. " +
+      "Pass number = the visit's number from the last past-bookings list ('log 3'), or shiftId. Gated like the page (membership, then background check). Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        number:      { type: "number", description: "The visit number from the last texted Past Bookings list" },
+        shiftId:     { type: "string", description: "The shifts document ID (instead of number)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "show_booking_requests",
     description:
       "The caregiver Bookings page's Requests tab — this tool TEXTS the requests itself, each one WHOLE (2 at a time, MORE for the rest): the card (family, client rating, Pending, " +
@@ -2355,6 +2342,8 @@ export const MCP_TOOLS: McpTool[] = [
 // Tools available to caregivers — scoped to what's relevant to their role
 const CAREGIVER_TOOL_NAMES = new Set([
   "show_active_bookings",
+  "show_past_bookings",
+  "start_log_hours_flow",
   "get_active_bookings",
   "add_visit_note",
   "get_caregiver_info",
@@ -2373,8 +2362,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "reactivate_account",
   "complete_task",
   "request_instant_payout",
-  "submit_shift_hours",
-  "get_caregiver_earnings",
   "update_caregiver_availability",
   "browse_job_board",
   "get_job_details",
@@ -2387,7 +2374,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_recent_messages",
   "delete_conversation",
   "mark_messages_read",
-  "submit_gps_checkin",
   "get_tax_summary",
   "send_onboarding_link",
   "get_background_check_status",
@@ -2441,6 +2427,8 @@ export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_N
 // send_onboarding_link, get_caregiver_info/reviews) stay client-visible.
 const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "show_active_bookings",
+  "show_past_bookings",
+  "start_log_hours_flow",
   "add_visit_note",
   "update_caregiver_profile",
   // Scoping fix 2026-09-05 (client-tool capability audit): both operate on
@@ -2451,8 +2439,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "start_apply_flow",
   "start_interview_reschedule_flow",
   "request_instant_payout",
-  "submit_shift_hours",
-  "get_caregiver_earnings",
   "update_caregiver_availability",
   "browse_job_board",
   "get_job_details",
@@ -2462,7 +2448,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "respond_to_interview_request",
   "send_client_message",
   "get_payout_history",
-  "submit_gps_checkin",
   "get_tax_summary",
   "get_background_check_status",
   "get_payout_status",
@@ -2876,7 +2861,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   // that got the old tool off this list.
   "get_active_bookings",
   "get_membership_page", "contact_support",
-  "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
+  "get_payout_history", "get_pending_timesheets", "get_tax_summary",
   "get_care_journal_client", "get_care_plan",
   "get_recent_messages",
   "read_memory_file", "search_memory",
@@ -3163,8 +3148,6 @@ async function executeToolCall(
   confirmedActionId?: string,
 ): Promise<unknown> {
   const nowIso = new Date().toISOString();
-  const daysBack  = Math.min((input.daysBack as number) ?? 30, 90);
-  const daysAgo   = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
   const trackTool = shouldTrackMcpTool(name) && !confirmedActionId;
   if (trackTool) {
     // Await so the "proposed" audit entry is durably persisted BEFORE the tool's
@@ -5021,86 +5004,6 @@ async function executeToolCall(
       }
     }
 
-    if (name === "submit_shift_hours") {
-      // Bookings › Past: "Log hours" is replaced by the gate button while blocked.
-      {
-        const hoursGateCg = (input as Record<string, unknown>).caregiverId as string | undefined;
-        if (hoursGateCg) {
-          const hoursGate = await checkCaregiverAccessGate(hoursGateCg, "logging shift hours", { phone: (input as Record<string, unknown>).phone });
-          if (hoursGate) return hoursGate;
-        }
-      }
-      return runActionNativeMcpWrite(name, input, async () => {
-        const { caregiverId, appointmentId, clockInTime, clockOutTime, breakMinutes } = input as Record<string, unknown>;
-        if (!caregiverId || !appointmentId || !clockInTime || !clockOutTime) {
-          return toolError("INVALID_INPUT", "caregiverId, appointmentId, clockInTime, and clockOutTime are required");
-        }
-        if (Number(breakMinutes) > 0) {
-          return toolError("INVALID_INPUT", "Break adjustments require billing review and cannot be submitted here");
-        }
-
-        const apptSnap = await db.collection("appointments").doc(String(appointmentId)).get();
-        if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
-        const appointment = apptSnap.data()!;
-        if (appointment.caregiverId !== caregiverId) {
-          return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
-        }
-
-        const startMs = apptStartMs(appointment.date, clockInTime);
-        let endMs = apptStartMs(appointment.date, clockOutTime);
-        const bookedWindow = bookedWindowMillis(appointment);
-        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !bookedWindow) {
-          return toolError("INVALID_INPUT", "Appointment or submitted times are not valid");
-        }
-        if (endMs <= startMs) {
-          if (bookedWindow.end <= bookedWindow.start + 24 * 60 * 60 * 1000 && bookedWindow.end > startMs) {
-            endMs += 24 * 60 * 60 * 1000;
-          } else {
-            return toolError("INVALID_INPUT", "Clock-out time must be after clock-in time");
-          }
-        }
-
-        try {
-          const result = await createValidatedShiftHours({
-            appointmentId: String(appointmentId),
-            actorUid: String(caregiverId),
-            submittedStartTime: new Date(startMs).toISOString(),
-            submittedEndTime: new Date(endMs).toISOString(),
-            source: "mcp",
-          });
-          logAudit({
-            eventType: "shift_hours_submitted",
-            userId: String(caregiverId),
-            data: {
-              source: "mcp:submit_shift_hours",
-              appointmentId,
-              durationHours: result.totalHours,
-              amountCents: result.grossPayCents,
-              status: result.status,
-            },
-          }).catch(() => {});
-          return {
-            success: true,
-            durationHours: result.totalHours,
-            amountCents: result.grossPayCents,
-            amountDollars: `$${(result.grossPayCents / 100).toFixed(2)}`,
-            status: result.status,
-            alreadyExisted: result.alreadyExisted,
-          };
-        } catch (error) {
-          if (error instanceof ValidatedShiftHoursError) {
-            const code = error.code === "not_found"
-              ? "NOT_FOUND"
-              : error.code === "forbidden"
-                ? "PERMISSION_DENIED"
-                : "INVALID_INPUT";
-            return toolError(code, error.message);
-          }
-          throw error;
-        }
-      });
-    }
-
     if (name === "review_shift_hours") {
       return runActionNativeMcpWrite(name, input, async () => {
       // The Timesheets review modal, exactly: the SAME server function the
@@ -5228,6 +5131,44 @@ async function executeToolCall(
       const { sendCaregiverActiveBookings } = await import("../agents/caregiverActiveBookings");
       const r = await sendCaregiverActiveBookings(sess.phone, sess.chatId, caregiverId as string, { more: more === true, allVisits: allVisits === true });
       return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, bookings: r.items, note: "The bookings were texted in full — send nothing else this turn. They can reply MORE for the rest." };
+    }
+
+    // ── show_past_bookings (the Past Bookings tab, texted — 2026-09-29) ──
+    if (name === "show_past_bookings") {
+      const { caregiverId, more, allVisits, visitNumber, phone: spbPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, spbPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const pb = await import("../agents/caregiverPastBookings");
+      if (visitNumber !== undefined && visitNumber !== null) {
+        const sessSnap = await db.collection("agent_sessions").doc(sess.phone).get();
+        const ref = pb.resolvePastRef((sessSnap.data() ?? {}) as Record<string, unknown>, { number: visitNumber });
+        if (!ref) return { success: false, reason: "no_such_number", note: "That number isn't on their last past-bookings list — call show_past_bookings without visitNumber first." };
+        const ok = await pb.sendPastVisitDetail(sess.chatId, caregiverId as string, ref.shiftId);
+        return { success: ok, shiftId: ref.shiftId, note: "The visit's detail was texted — send nothing else this turn." };
+      }
+      const r = await pb.sendCaregiverPastBookings(sess.phone, sess.chatId, caregiverId as string, { more: more === true, allVisits: allVisits === true });
+      return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, visits: r.items, note: "The past bookings were texted — send nothing else this turn. They can reply VISIT n, LOG n, PAST VISITS or MORE." };
+    }
+
+    // ── start_log_hours_flow (Past Bookings › Log Hours — 2026-09-29) ──
+    if (name === "start_log_hours_flow") {
+      const { caregiverId, number, shiftId, phone: slPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, slPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const pb = await import("../agents/caregiverPastBookings");
+      const sessSnap = await db.collection("agent_sessions").doc(sess.phone).get();
+      const sessionData = (sessSnap.data() ?? {}) as Record<string, unknown>;
+      const ref = pb.resolvePastRef(sessionData, { number, shiftId });
+      if (!ref) {
+        await pb.sendCaregiverPastBookings(sess.phone, sess.chatId, caregiverId as string);
+        return { success: false, reason: "no_visit_ref", note: "The past bookings were texted so they can answer with a number — send nothing else." };
+      }
+      const r = await pb.startLogHoursFlow(sess.phone, sess.chatId, sessionData as never, { caregiverId: caregiverId as string, shiftId: ref.shiftId });
+      return { success: r.started, reason: r.reason, note: "The flow (or its refusal) was texted — send nothing else this turn." };
     }
 
     if (name === "show_booking_requests") {
@@ -5874,35 +5815,6 @@ async function executeToolCall(
           })
       );
       return { success: true, applicants, total: applicants.length };
-    }
-
-    // ── get_caregiver_earnings ──────────────────────────────────────────────
-    if (name === "get_caregiver_earnings") {
-      const { caregiverId } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const cgSnap5 = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap5.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const cg5 = cgSnap5.data()!;
-      const earnSnap = await db
-        .collection("appointments")
-        .where("caregiverId", "==", caregiverId)
-        .where("status", "==", "completed")
-        .where("isoDate", ">=", daysAgo)
-        .orderBy("isoDate", "desc")
-        .limit(50)
-        .get();
-      const totalEarned = earnSnap.docs.reduce((sum, d) => sum + ((d.data().cost as number) ?? 0), 0);
-      const { getCaregiverPayoutFields: getPayoutEarn } = await import("../caregiverPrivate");
-      const payoutFieldsEarn = await getPayoutEarn(caregiverId as string, cg5);
-      return {
-        success:          true,
-        totalEarned:      Math.round(totalEarned * 100) / 100,
-        pendingBalance:   cg5.pendingBalance    ?? 0,
-        stripeSetup:      !!payoutFieldsEarn.stripeAccountId,
-        payoutsEnabled:   !!payoutFieldsEarn.payoutsEnabled,
-        recentVisitCount: earnSnap.size,
-        periodDays:       daysBack,
-      };
     }
 
     // ── get_background_check_status ─────────────────────────────────────────
@@ -7017,36 +6929,6 @@ async function executeToolCall(
         await stampCaregiverProfileComplete((snap.data()?.caregiverId ?? snap.data()?.userId) as string | undefined);
       }
       return { ok: true, complete: true, nextStep, status: "collection_complete" };
-    }
-
-
-
-    // ── submit_gps_checkin ──────────────────────────────────────────────────
-    if (name === "submit_gps_checkin") {
-      const { caregiverId, appointmentId } = input as Record<string, string>;
-      const latitude  = input.latitude  as number;
-      const longitude = input.longitude as number;
-      if (!caregiverId || !appointmentId || latitude == null || longitude == null) {
-        return toolError("INVALID_INPUT", "caregiverId, appointmentId, latitude, and longitude are required");
-      }
-      const apptSnap = await db.collection("appointments").doc(appointmentId).get();
-      if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const appt = apptSnap.data()!;
-      const seniorSnap = await db.collection("senior_profiles").doc(appt.clientId).get();
-      const senior = seniorSnap.data();
-      await db.collection("shift_checkins").add({
-        appointmentId, caregiverId,
-        caregiverName: appt.caregiverName,
-        clientId: appt.clientId,
-        checkinAt: nowIso,
-        status: "arrived",
-        gpsProvided: true,
-        caregiverLat: latitude,
-        caregiverLon: longitude,
-        clientLat: senior?.latitude ?? null,
-        clientLon: senior?.longitude ?? null,
-      });
-      return { success: true, message: "Checked in. The family has been notified." };
     }
 
     // ── get_tax_summary ─────────────────────────────────────────────────────

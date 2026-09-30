@@ -347,7 +347,7 @@ describe("IDEMPOTENT_CONFIRMED_TOOLS (U7 guard)", () => {
     // The ledger only engages on a CONFIRMED action. A tool that is never
     // high-risk never receives a _confirmedActionId, so listing it here would
     // silently do nothing. This guard is what caught the original mis-wiring
-    // (payouts / submit_shift_hours are not confirmation-gated).
+    // (payouts are not confirmation-gated).
     const notGated = [...IDEMPOTENT_CONFIRMED_TOOLS].filter(
       n => !isHighRisk(n, HIGH_RISK_INPUT[n] ?? {}),
     );

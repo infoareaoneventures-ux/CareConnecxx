@@ -247,7 +247,6 @@ vi.mock("../../agents/jobPostingFlow", () => ({
   handleJobPostingStep: vi.fn(async () => {}),
   startJobPostingFlow:  vi.fn(async () => {}),
 }));
-vi.mock("../../agents/earningsHandler", () => ({ handleEarningsView: vi.fn(async () => {}) }));
 vi.mock("../../agents/availabilityHandler", () => ({ handleAvailabilityUpdate: vi.fn(async () => {}) }));
 vi.mock("../../agents/caregiverCancelShiftHandler", () => ({ handleCaregiverCancelShift: vi.fn(async () => {}) }));
 vi.mock("../../agents/caregiverProfileHandler", () => ({

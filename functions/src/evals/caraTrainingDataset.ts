@@ -588,7 +588,7 @@ export const STARTER_CARA_TRAINING_EXAMPLES: CaraTrainingExample[] = [
       intent: "caregiver_shift_closeout",
       risk: "medium",
       missingInfo: [],
-      expectedTools: ["complete_shift", "submit_shift_hours"],
+      expectedTools: ["complete_shift"],
       expectedCollections: ["appointments", "care_journal", "shiftHours", "agent_action_ledger"],
       expectedPageVisibility: ["caregiver_dashboard", "client_care_journal", "client_timesheets"],
       forbidden: ["paid already", "approved by family", "contact support"],

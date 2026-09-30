@@ -415,16 +415,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
   // (caregiver-submit-media-update / caregiver-create-journal-entry rows removed 2026-09-28: the tools were retired —
   // the site's caregiver pages never read care_journal; visit notes are shifts.notesLog via add_visit_note.)
   {
-    id: "caregiver-submit-shift-hours",
-    actor: "caregiver",
-    action: "Submit shift hours / timesheet",
-    webSurface: "components/caregiver/CaregiverHomeDashboard.tsx",
-    collection: "shiftHours",
-    tool: "submit_shift_hours",
-    promptActor: "caregiver",
-    status: "shipped",
-  },
-  {
     id: "caregiver-respond-hour-correction",
     actor: "caregiver",
     action: "Respond to a shift-hour correction",
@@ -448,17 +438,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
   },
   // caregiver-request-standard-payout removed 2026-07-06: standard payouts are
   // automatic (Stripe daily schedule) — there is no user action to mirror.
-  {
-    id: "caregiver-view-earnings",
-    actor: "caregiver",
-    action: "View earnings",
-    webSurface: "components/caregiver/CaregiverPaymentsPage.tsx",
-    collection: "n/a",
-    tool: "get_caregiver_earnings",
-    promptActor: "caregiver",
-    status: "shipped",
-    notes: "Earnings are derived from Stripe/shiftHours; no dedicated contract collection.",
-  },
   {
     id: "caregiver-tax-summary",
     actor: "caregiver",

@@ -7,20 +7,6 @@ const anyObjectOutput = z.object({}).passthrough();
 const stringValue = z.string().min(1);
 
 const writeActionConfigs = {
-  submit_shift_hours: {
-    role: "caregiver",
-    inputSchema: z.object({
-      caregiverId: stringValue,
-      appointmentId: stringValue,
-      clockInTime: stringValue,
-      clockOutTime: stringValue,
-    }).passthrough(),
-    auditType: "shift_hours_submitted",
-    targetCollection: "shiftHours",
-    idempotencyKey: (input: Record<string, unknown>) =>
-      `submit_shift_hours:${input.caregiverId}:${input.appointmentId}:${input.clockInTime}:${input.clockOutTime}:${input.breakMinutes ?? 0}`,
-    failClosed: true,
-  },
   review_shift_hours: {
     role: "client",
     // 2026-08-31 (Payments/Timesheets audit): matches reviewShiftHours

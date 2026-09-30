@@ -2510,6 +2510,8 @@ export const CaregiverBookingsPage: React.FC = () => {
                         return (
                           <div key={ri}>
                             <p className="text-xs font-semibold text-slate-500 mb-1.5">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}</p>
+                            {/* The recipient note, as the expanded completed visit shows it (founder 2026-09-29: a note can read like a task). */}
+                            {(r as any).notes && <p className="text-xs text-slate-500 italic mb-1.5">"{(r as any).notes}"</p>}
                             <div className="space-y-1.5">
                               {cats.map((cat, ci) => {
                                 const subs = det[cat] || [];
@@ -2613,7 +2615,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                 }}
                 className="flex-1 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 transition-colors"
               >
-                {loggingHours ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Confirm'}
+                {loggingHours ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Log Hours'}
               </button>
             </div>
           </div>

@@ -123,7 +123,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "appointmentId",
     caraWrites: true,
     webReads: true,
-    notes: "Clock-in/out + payroll. Evia writes via clock_in_shift / submit_shift_hours tools.",
+    notes: "Timesheets. Created server-side when a shift completes (shiftHours.ts) or by Log Hours on a missed visit; Evia answers corrections via respond_to_shift_hour_correction.",
   },
   threads: {
     path: "threads/{threadId}/messages",

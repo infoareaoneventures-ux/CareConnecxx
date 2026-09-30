@@ -537,8 +537,6 @@ import { businessTodayStr } from "../../utils/scheduledTime";
 
 describe("caregiver action tools enforce the website's gate (hooks/useCaregiverGate.tsx) — 2026-09-26", () => {
   beforeEach(() => { hoisted.reset(); });
-  const openJob = (extra: Record<string, unknown> = {}) =>
-    hoisted.docState.set("job_posts/job1", { status: "open", clientId: "client1", careTypes: ["Companionship"], ...extra });
 
   // (the apply_to_job gate tests moved to agents/__tests__/caregiverJobFlows.test.ts
   // when the Apply modal became a scripted flow, 2026-09-27)

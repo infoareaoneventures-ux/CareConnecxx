@@ -26,7 +26,7 @@ export async function familyForCaregiver(caregiverId: string): Promise<FamilyRef
   const todaySnap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("date", "==", today).get();
   const todays = todaySnap.docs.map((d) => d.data()).filter((s) => s.caregiverId === caregiverId && (s.status === "in-progress" || s.status === "scheduled"))
     .sort((a, b) => (a.status === "in-progress" ? -1 : 1) - (b.status === "in-progress" ? -1 : 1) || String(a.startTime ?? "").localeCompare(String(b.startTime ?? "")));
-  let pick = todays[0];
+  let pick: FirebaseFirestore.DocumentData | undefined = todays[0];
   if (!pick) {
     const next = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "in", ["scheduled", "in-progress"]).orderBy("date", "asc").limit(5).get();
     pick = next.docs.map((d) => d.data()).find((s) => s.caregiverId === caregiverId && s.clientId);

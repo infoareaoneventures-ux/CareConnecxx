@@ -57,8 +57,7 @@ export const sendDayBeforeShiftReminders = functions.pubsub
         const message =
           `Reminder: ${seniorName}'s visit tomorrow, ${tomorrowDisplay}` +
           `${startTime ? `, ${formatHHMMForDisplay(startTime)}${endTime ? ` – ${formatHHMMForDisplay(endTime)}` : ""}` : ""}` +
-          `${address ? ` at ${address}` : ""}. ` +
-          `If anything's changed, text CANCEL SHIFT and I'll walk you through it, or text me to move it.`;
+          `${address ? ` at ${address}` : ""}.`; // just the reminder — no cancel prompt (founder, 2026-09-29: "does it have to say cancel shift")
 
         await sendViaInteractionAgent(cgPhone, {
           content:     message,

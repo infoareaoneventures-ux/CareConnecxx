@@ -1821,7 +1821,8 @@ export const ClientVisitsPage: React.FC = () => {
     // visit's, so the booking note never reached them.
     const bookingNote = bookingNotes.get(String(shift.bookingRequestId ?? '')) || null;
     const visitNote = shift.notes || null;
-    const replacementNotes = [bookingNote, visitNote && visitNote !== bookingNote ? visitNote : null].filter(Boolean).join('\n') || null;
+    // Labelled so the Requests card (one Notes field) reads the same as the START text (founder, 2026-09-29).
+    const replacementNotes = [bookingNote ? `Booking note: ${bookingNote}` : null, visitNote && visitNote !== bookingNote ? `Visit note: ${visitNote}` : null].filter(Boolean).join('\n') || null;
     const bookingRef = await db.collection('booking_requests').add({
       clientId: user.uid,
       clientName: user.displayName || '',

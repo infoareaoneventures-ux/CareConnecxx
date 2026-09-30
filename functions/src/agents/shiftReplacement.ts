@@ -142,7 +142,8 @@ export async function createReplacementRequest(args: {
   const origBookingSnap = shift.bookingRequestId ? await db.collection("booking_requests").doc(String(shift.bookingRequestId)).get().catch(() => null) : null;
   const bookingNote = (origBookingSnap?.exists ? (origBookingSnap.data()?.notes as string | undefined) : undefined) || null;
   const visitNote = (shift.notes as string | undefined) || null;
-  const replacementNotes = [bookingNote, visitNote && visitNote !== bookingNote ? visitNote : null].filter(Boolean).join("\n") || null;
+  // Labelled so the Requests card (one Notes field) reads the same as the START text (founder, 2026-09-29).
+  const replacementNotes = [bookingNote ? `Booking note: ${bookingNote}` : null, visitNote && visitNote !== bookingNote ? `Visit note: ${visitNote}` : null].filter(Boolean).join("\n") || null;
   const bookingRef = db.collection("booking_requests").doc();
   await bookingRef.set({
     clientId,

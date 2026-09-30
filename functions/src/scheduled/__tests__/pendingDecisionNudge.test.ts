@@ -36,7 +36,7 @@ vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async 
 vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (n: any) => { hoisted.bells.push(n); return true; }) }));
 vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(async (id: string) => (id === "cg1" ? "+1408" : undefined)) }));
 
-import { shouldNudgePendingDecision, runPendingDecisionNudges, toMs, NUDGE_DELAY_MS, RENUDGE_COOLDOWN_MS, REPLACEMENT_DELAY_MS, REPLACEMENT_COOLDOWN_MS } from "../pendingDecisionNudge";
+import { shouldNudgePendingDecision, runPendingDecisionNudges, toMs, NUDGE_DELAY_MS, RENUDGE_COOLDOWN_MS, REPLACEMENT_DELAY_MS, REPLACEMENT_COOLDOWN_MS, MAX_NUDGES } from "../pendingDecisionNudge";
 
 const NOW = Date.parse("2099-03-10T18:00:00.000Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -54,6 +54,10 @@ describe("shouldNudgePendingDecision", () => {
     expect(shouldNudgePendingDecision({ createdMs: NOW - 3 * REPLACEMENT_DELAY_MS, lastNudgedMs: NOW - REPLACEMENT_COOLDOWN_MS + 1000, nowMs: NOW, replacement: true })).toBe(false);
     expect(shouldNudgePendingDecision({ createdMs: NOW - 3 * REPLACEMENT_DELAY_MS, lastNudgedMs: null, nowMs: NOW, replacement: true, visitDate: "2099-03-09", today: "2099-03-10" })).toBe(false);
     expect(shouldNudgePendingDecision({ createdMs: null, lastNudgedMs: null, nowMs: NOW })).toBe(false);
+    // Cap (founder 2026-09-29): three nudges for a booking request / schedule change / interview, then silence; replacements have no cap (they stop at the visit date).
+    expect(shouldNudgePendingDecision({ createdMs: NOW - 9 * NUDGE_DELAY_MS, lastNudgedMs: NOW - RENUDGE_COOLDOWN_MS - 1000, nowMs: NOW, nudgeCount: 2 })).toBe(true);
+    expect(shouldNudgePendingDecision({ createdMs: NOW - 9 * NUDGE_DELAY_MS, lastNudgedMs: NOW - RENUDGE_COOLDOWN_MS - 1000, nowMs: NOW, nudgeCount: MAX_NUDGES })).toBe(false);
+    expect(shouldNudgePendingDecision({ createdMs: NOW - 9 * REPLACEMENT_DELAY_MS, lastNudgedMs: NOW - REPLACEMENT_COOLDOWN_MS - 1000, nowMs: NOW, replacement: true, visitDate: "2099-03-11", today: "2099-03-10", nudgeCount: 7 })).toBe(true);
   });
   it("reads either side's timestamp shape", () => {
     expect(toMs("2099-03-10T00:00:00.000Z")).toBe(Date.parse("2099-03-10T00:00:00.000Z"));

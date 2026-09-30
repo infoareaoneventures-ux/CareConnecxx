@@ -43,6 +43,9 @@ export const STATE_MACHINE_FLAGS = [
   // modal and the interview Propose new time form, step for step.
   "applyFlowStep",
   "applyFlowData",
+  // Past Bookings › Log Hours modal as a flow (caregiverPastBookings.ts, 2026-09-29)
+  "logHoursFlowStep",
+  "logHoursFlowData",
   "interviewRescheduleFlowStep",
   "interviewRescheduleFlowData",
   // Healthcare agentic flows (provider search, appointment booking, Rx refill, new Rx)
@@ -157,6 +160,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["interviewFlowStep",       "setting up your interview request"],
   ["reviewFlowStep",          "leaving your review"],
   ["applyFlowStep",           "applying to that job"],
+  ["logHoursFlowStep",        "logging hours for that visit"],
   ["interviewRescheduleFlowStep", "proposing a new interview time"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["pendingFamilyMessage",    "your message for the family"],
@@ -302,6 +306,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["correctionFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
   ["applyFlowStep", "generic"],
+  ["logHoursFlowStep", "generic"],
   ["interviewRescheduleFlowStep", "generic"],
   ["reviewFlowStep", "generic"],
   ["healthcareFlowStep", "generic"],
@@ -334,6 +339,7 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "reviewFlowData",
   "applyFlowData",
   "interviewRescheduleFlowData",
+  "logHoursFlowData",
   "healthcareFlowData",
   "pendingAvailability",
   "cancelCandidates",

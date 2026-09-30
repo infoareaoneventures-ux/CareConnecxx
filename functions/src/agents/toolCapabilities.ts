@@ -35,6 +35,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_caregiver_info:           ["booking"],
   get_upcoming_appointments:    ["booking", "scheduling"],
   show_active_bookings:         ["booking", "scheduling"],  // Active Bookings tab, texted whole (2026-09-28)
+  show_past_bookings:           ["booking", "scheduling"],  // Past Bookings tab, texted whole (2026-09-29)
+  start_log_hours_flow:         ["booking", "scheduling"],  // Past Bookings › Log Hours flow (2026-09-29)
   get_pending_booking_requests: ["booking", "scheduling"],
   show_booking_requests:        ["booking", "scheduling"],
   get_pending_schedule_amendments: ["booking", "scheduling"],  // Requests tab, schedule-change cards (2026-09-16)
@@ -86,8 +88,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   respond_to_shift_hour_correction: ["billing"],
   get_payout_history:       ["billing"],
   get_payout_status:        ["billing"],
-  get_caregiver_earnings:   ["billing"],
-  submit_shift_hours:       ["billing"],
   review_shift_hours:       ["billing", "care_plan"],
   get_pending_timesheets:   ["billing"],
   get_tax_summary:          ["billing"],
@@ -107,7 +107,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   reactivate_account:        ["scheduling"],
   update_user_profile:       ["care_plan"],
   delete_account:            ["care_plan"],
-  submit_gps_checkin:        ["care_plan"],
   start_shift:               ["care_plan", "scheduling"],
   complete_shift:            ["care_plan", "scheduling"],
   update_shift_task:         ["care_plan"],
@@ -272,8 +271,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "complete_interview", "respond_to_job_application",
   "create_job_post", "edit_job_post", "cancel_job_post",
   // shifts
-  "submit_shift_hours", "review_shift_hours",
-  "submit_gps_checkin",
+  "review_shift_hours",
   // money
   "set_subscription_status",
   "request_instant_payout", "retry_shift_payment",

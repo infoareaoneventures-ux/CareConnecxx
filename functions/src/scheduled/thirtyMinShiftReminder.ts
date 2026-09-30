@@ -54,7 +54,7 @@ export const sendThirtyMinShiftReminders = functions.pubsub
         const endTime = (appt.endTime ?? "") as string;
         const message =
           `${seniorName}'s visit starts at ${formatHHMMForDisplay(startTime)}${endTime ? ` – ${formatHHMMForDisplay(endTime)}` : ""}` +
-          `${address ? ` at ${address}` : ""}. Text START when you arrive. ` +
+          `${address ? ` at ${address}` : ""}. Text START when your shift starts. ` +
           `Running behind? Text LATE and I'll send your message to the family. ` +
           `Or open it here: ${visitPageLink(apptId)}`;
 

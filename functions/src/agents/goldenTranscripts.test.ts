@@ -473,19 +473,19 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-pathway-uses-caregiver-toolset",
-    description: "Caregiver asks about earnings — handled via the caregiver tool handler, not the client one.",
+    description: "Caregiver asks about pay — handled via the caregiver tool handler, not the client one.",
     userType: "caregiver",
     toolMocks: {
-      get_caregiver_earnings: { last30Days: 1450 },
+      get_payout_history: { payouts: [{ amount: 1450, status: "paid" }] },
     },
     claudeScript: [
-      { tools: [{ name: "get_caregiver_earnings", input: {} }] },
+      { tools: [{ name: "get_payout_history", input: {} }] },
       { text: "You've earned $1,450 in the last 30 days." },
     ],
     input: { text: "how much have I made this month?" },
     expect: {
       replyContains: ["1,450", "30 days"],
-      toolsCalled:   ["get_caregiver_earnings"],
+      toolsCalled:   ["get_payout_history"],
       noListShape:   true,
     },
   },

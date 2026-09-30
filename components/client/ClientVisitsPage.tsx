@@ -1816,6 +1816,12 @@ export const ClientVisitsPage: React.FC = () => {
     if (!db || !user) return;
     const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const dayName = DAY_ABBR[new Date(when.date + 'T12:00:00').getDay()];
+    // The replacement caregiver needs BOTH the booking's own note and this visit's
+    // note (a schedule-change note) — 2026-09-29 the request carried only the
+    // visit's, so the booking note never reached them.
+    const bookingNote = bookingNotes.get(String(shift.bookingRequestId ?? '')) || null;
+    const visitNote = shift.notes || null;
+    const replacementNotes = [bookingNote, visitNote && visitNote !== bookingNote ? visitNote : null].filter(Boolean).join('\n') || null;
     const bookingRef = await db.collection('booking_requests').add({
       clientId: user.uid,
       clientName: user.displayName || '',
@@ -1827,7 +1833,7 @@ export const ClientVisitsPage: React.FC = () => {
       paymentMethod: 'credit',
       careNeeds: [...new Set((shift.careRecipients || []).flatMap(r => r.careNeeds || []))],
       careRecipients: shift.careRecipients || [],
-      notes: shift.notes || null,
+      notes: replacementNotes,
       emergencyContact: shift.emergencyContact || null,
       schedule: {
         days: [dayName],

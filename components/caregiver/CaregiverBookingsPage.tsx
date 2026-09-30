@@ -63,6 +63,8 @@ interface BookingRequest {
   };
   address?: string;
   rate?: number;
+  /** A replacement request for one visit (the family picked this caregiver to cover it) — no interview, the caregiver's own rate. */
+  isShiftReplacement?: boolean;
   paymentMethod?: string;
   lifestylePreferences?: string[];
   emergencyContact?: { name?: string; phone?: string; relationship?: string };
@@ -452,7 +454,7 @@ const RequestCard: React.FC<{
                   <span className="font-semibold text-slate-800">
                     ${req.rate}/hr · Card
                   </span>
-                  <span className="text-xs text-slate-400">(agreed rate)</span>
+                  {!req.isShiftReplacement && <span className="text-xs text-slate-400">(agreed rate)</span>}
                 </div>
               )}
             </div>
@@ -691,7 +693,9 @@ const BookingGroupCard: React.FC<{
   schedulePaused?: boolean;
   /** The booking's own note (booking_requests.notes); undefined while the requests haven't loaded. */
   bookingNote?: string | null;
-}> = ({ shifts, amendments, onCancel, onAcceptAmendment, schedulePaused, bookingNote }) => {
+  /** ?visit=<shiftId> from an Evia text — open this visit's tasks and scroll to it (2026-09-29). */
+  focusShiftId?: string | null;
+}> = ({ shifts, amendments, onCancel, onAcceptAmendment, schedulePaused, bookingNote, focusShiftId }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
   const { setMembershipModalOpen } = useCareConnex();
@@ -706,8 +710,14 @@ const BookingGroupCard: React.FC<{
   // own note below only when it differs — i.e. a schedule-change note.
   const headerNote = bookingNote !== undefined ? bookingNote : base.notes;
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [expandedShift, setExpandedShift] = useState<string | null>(null);
-  const [showAllShifts, setShowAllShifts] = useState(false);
+  const focusHere = !!focusShiftId && shifts.some(s => s.id === focusShiftId);
+  const [expandedShift, setExpandedShift] = useState<string | null>(focusHere ? focusShiftId! : null);
+  const [showAllShifts, setShowAllShifts] = useState(focusHere);
+  useEffect(() => {
+    if (!focusHere) return;
+    const el = document.getElementById(`visit-${focusShiftId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusHere, focusShiftId]);
   const [tasksByShift, setTasksByShift] = useState<Record<string, string[]>>(
     () => Object.fromEntries(shifts.map(s => [s.id, s.tasksCompleted || []]))
   );
@@ -1195,7 +1205,7 @@ const BookingGroupCard: React.FC<{
           const isExpanded = expandedShift === shift.id;
 
           return (
-            <div key={shift.id} className="border-t border-slate-100 first:border-t-0">
+            <div key={shift.id} id={`visit-${shift.id}`} className="border-t border-slate-100 first:border-t-0">
               {/* Shift row */}
               <div className="px-5 py-3 flex items-center gap-3">
                 {/* Cancel single shift — far left */}
@@ -1897,8 +1907,10 @@ export const CaregiverBookingsPage: React.FC = () => {
   const { blockReason } = useCaregiverGate();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const focusShiftId = searchParams.get('visit');
   const [tab, setTab] = useState<Tab>(() => {
     const t = searchParams.get('tab');
+    if (focusShiftId) return 'active'; // an Evia text's "Open this visit" link
     return (t === 'active' || t === 'past' || t === 'requests') ? t : 'requests';
   });
 
@@ -2371,6 +2383,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                     onAcceptAmendment={handleAcceptAmendment}
                     schedulePaused={!!(requests.find(r => r.id === groupShifts[0]?.bookingRequestId) as any)?.schedulePausedAt}
                     bookingNote={(() => { const r = requests.find(x => x.id === groupShifts[0]?.bookingRequestId); return r ? (r.notes || null) : undefined; })()}
+                    focusShiftId={focusShiftId}
                   />
                 ));
               })()

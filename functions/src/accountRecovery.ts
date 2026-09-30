@@ -168,6 +168,11 @@ export async function startPhoneChangeVerification(token: string, newPhone: stri
     message: `Your Evia verification code is ${otp.code}. It expires in 15 minutes.`,
   });
   if (!smsResult.success) {
+    // An opted-out number (STOP / END texted to Evia earlier) can't receive the
+    // code — say what to do instead of surfacing the raw send error (2026-09-29).
+    if (/opted out/i.test(smsResult.error ?? "")) {
+      throw new Error("That number has texts from Evia turned off. Text START to Evia from that phone, then try again — or change your number from Account Settings on the site.");
+    }
     throw new Error(smsResult.error || "Could not send a verification code to that number.");
   }
 }

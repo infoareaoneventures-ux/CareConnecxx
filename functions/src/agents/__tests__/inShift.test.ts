@@ -42,12 +42,30 @@ const shift = (id: string, over: Record<string, unknown>) => hoisted.docs.set(`s
 
 beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sessionWrites.length = 0; hoisted.sent.length = 0; hoisted.quick.mockReset(); hoisted.quick.mockResolvedValue("NOTE"); });
 
+describe("two care recipients — one block each, numbers run across (DONE n stays unambiguous)", () => {
+  it("groups tasks under each recipient with their note; a check-off names the recipient", async () => {
+    const two = [
+      { name: "Mai", relationship: "Mother", notes: "Likes her tea at 3.", careNeeds: ["Companionship"] },
+      { name: "Bao", relationship: "Father", careNeeds: ["Mobility Assistance"], careNeedDetails: { "Mobility Assistance": ["Walking"] } },
+    ];
+    const { date, time } = la(new Date(Date.now() + 5 * 60 * 1000));
+    shift("s1", { date, startTime: time, endTime: "23:59", careRecipients: two });
+    const r = await startVisit("cg1", "s1");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.text).toContain("\nMai (Mother)\nNote: Likes her tea at 3.\nTasks:\n1. Companionship\n\nBao (Father)\nTasks:\n2. Mobility Assistance — Walking\n");
+    hoisted.docs.set("shifts/s1", { ...hoisted.docs.get("shifts/s1"), date: businessTodayStr() });
+    const t = await checkTasks("cg1", undefined, { numbers: [2] });
+    expect(t.ok && t.text).toBe("Checked off: Mobility Assistance — Walking (Bao) (1/2 done).");
+  });
+});
+
 describe("taskItems — the page's keys and labels", () => {
   it("one task per need, or per subtask; keys are recipientIndex_need[_subtask]", () => {
     expect(taskItems({ careRecipients: RECIPIENTS, tasksCompleted: ["0_Mobility Assistance_Walking"] })).toEqual([
-      { number: 1, key: "0_Companionship", label: "Companionship", done: false },
-      { number: 2, key: "0_Mobility Assistance_Transfer Assist", label: "Mobility Assistance — Transfer Assist", done: false },
-      { number: 3, key: "0_Mobility Assistance_Walking", label: "Mobility Assistance — Walking", done: true },
+      { number: 1, key: "0_Companionship", label: "Companionship", done: false, recipientIndex: 0, recipientName: "Mai" },
+      { number: 2, key: "0_Mobility Assistance_Transfer Assist", label: "Mobility Assistance — Transfer Assist", done: false, recipientIndex: 0, recipientName: "Mai" },
+      { number: 3, key: "0_Mobility Assistance_Walking", label: "Mobility Assistance — Walking", done: true, recipientIndex: 0, recipientName: "Mai" },
     ]);
   });
 });
@@ -61,7 +79,7 @@ describe("startVisit — the Start Shift button", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(hoisted.updates[0]).toEqual({ path: "shifts/s1", data: { status: "in-progress", startedAt: "__ts__", updatedAt: "__ts__" } });
-    expect(r.text).toMatch(/^Started \d{1,2}:\d{2} [AP]M — .+ with Basra Yousuf\.\nBooking note: This is an additional shift\nVisit note: testing as additional shift\nMai \(Mother\): Likes her tea at 3\.\n\nTasks:\n1\. Companionship\n2\. Mobility Assistance — Transfer Assist\n3\. Mobility Assistance — Walking\n\nReply DONE 1 \(or DONE 1, 3\) as you finish, NOTE followed by anything the family should see, and END when the visit is over\.$/);
+    expect(r.text).toMatch(/^Started \d{1,2}:\d{2} [AP]M — .+ with Basra Yousuf\.\nBooking note: This is an additional shift\nVisit note: testing as additional shift\n\nMai \(Mother\)\nNote: Likes her tea at 3\.\nTasks:\n1\. Companionship\n2\. Mobility Assistance — Transfer Assist\n3\. Mobility Assistance — Walking\n\nReply DONE 1 \(or DONE 1, 3\) as you finish, NOTE followed by anything the family should see, and FINISH when the visit is over\.\nPrefer the page\? Open this visit: https?:\/\/\S+\/caregiver\/bookings\?tab=active&visit=s1$/);
   });
   it("too early → told when Start opens; nothing written", async () => {
     const soon = la(new Date(Date.now() + 90 * 60 * 1000));
@@ -114,7 +132,7 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
     expect(hoisted.sent.at(-1)).toBe("Noted — the family can see it on the visit.");
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "done", {})).toBe("handled");
     expect(hoisted.sent.at(-1)).toMatch(/^Done with a task\?/);
-    expect(await handleInShiftKeyword("+1", "chat", "cg1", "END", {})).toBe("handled");
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "FINISH", {})).toBe("handled");
     expect(hoisted.sent.at(-1)).toBe(END_PROMPT);
     expect(hoisted.sessionWrites.at(-1).pendingShiftEnd).toMatchObject({ shiftId: "s1" });
     // a question while the END prompt is parked goes to the agent, the prompt stays parked
@@ -125,10 +143,22 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
     expect(hoisted.docs.get("shifts/s1")).toMatchObject({ status: "completed", completionNotes: "Mai was in great spirits today." });
     expect(hoisted.sent.at(-1)).toMatch(/^Ended /);
   });
+  it("a repeated DONE never un-checks; UNDO n does (and END alone is left to the opt-out handler)", async () => {
+    shift("s1", { status: "in-progress", date: businessTodayStr(), tasksCompleted: ["0_Companionship"] });
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "DONE 1", {})).toBe("handled");
+    expect(hoisted.docs.get("shifts/s1").tasksCompleted).toEqual(["0_Companionship"]);
+    expect(hoisted.sent.at(-1)).toBe("Checked off: Companionship (1/3 done).");
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "undo 1", {})).toBe("handled");
+    expect(hoisted.docs.get("shifts/s1").tasksCompleted).toEqual([]);
+    expect(hoisted.sent.at(-1)).toBe("Unchecked: Companionship (0/3 done).");
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "END", {})).toBe("passthrough");
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "end shift", {})).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe(END_PROMPT);
+  });
   it("TASKS re-lists the checklist mid-visit with what is done", async () => {
     shift("s1", { status: "in-progress", date: businessTodayStr(), tasksCompleted: ["0_Companionship"] });
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "tasks", {})).toBe("handled");
-    expect(hoisted.sent[0]).toBe("Tasks (1/3 done):\n1. Companionship — done\n2. Mobility Assistance — Transfer Assist\n3. Mobility Assistance — Walking\n\nReply DONE with a number to check one off.");
+    expect(hoisted.sent[0]).toBe("Tasks (1/3 done):\n\nMai (Mother)\nTasks:\n1. Companionship — done\n2. Mobility Assistance — Transfer Assist\n3. Mobility Assistance — Walking\n\nReply DONE with a number to check one off.");
   });
   it("SKIP ends without a note; anything else falls through", async () => {
     shift("s1", { status: "in-progress", date: businessTodayStr() });

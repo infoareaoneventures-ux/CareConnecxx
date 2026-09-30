@@ -169,6 +169,14 @@ describe("the list", () => {
   });
 });
 
+describe("a replacement request shows the caregiver's own rate with no label", () => {
+  it("drops '(agreed rate)' when isShiftReplacement", () => {
+    const lines = requestCardLines(req({ isShiftReplacement: true, schedule: { startDate: "2099-09-30", endDate: "2099-09-30", ongoing: false, dayShiftTimes: { Wed: [{ start: "00:00", end: "00:15" }] } } }) as any);
+    expect(lines).toContain("$25/hr · Card");
+    expect(lines.join("\n")).not.toContain("agreed rate");
+  });
+});
+
 describe("Accept / Decline — the page's exact writes", () => {
   it("accept writes {status:'accepted', updatedAt} and nothing else; toast is the page's", async () => {
     hoisted.docs.set("booking_requests/br1", { ...req(), caregiverId: "cg1" });

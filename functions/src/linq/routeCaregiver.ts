@@ -313,6 +313,15 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       },
     };
 
+    // CANCEL is a carrier opt-out word on plain SMS (CTIA: STOP/END/CANCEL/UNSUBSCRIBE/QUIT), so the
+    // announced door is the two-word CANCEL SHIFT; the bare word still opens the flow if it reaches us.
+    const CANCEL_PHRASES = new Set(["CANCEL SHIFT", "CANCEL VISIT", "CANCEL BOOKING", "CANCEL MY SHIFT", "CANCEL A SHIFT", "CANCEL MY BOOKING", "CANCEL MY VISIT"]);
+    if (CANCEL_PHRASES.has(norm)) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try { await KEYWORDS.CANCEL(); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+      return "handled";
+    }
+
     if (norm in KEYWORDS) {
       if (session.service === "iMessage") await startTyping(chatId).catch(() => {/* non-critical */});
       try { await KEYWORDS[norm](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }

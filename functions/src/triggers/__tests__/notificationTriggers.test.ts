@@ -217,6 +217,13 @@ describe("onShiftStatusChanged — SMS parity", () => {
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("replacement") }));
   });
 
+  it("a visit closed out because a REPLACEMENT was accepted (supersededByBookingId) sends nothing — the family already heard the new caregiver accepted (live 2026-09-28)", async () => {
+    const before = { status: "needs_replacement", clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice" };
+    const after  = { ...before, status: "cancelled", cancelledBy: "caregiver", supersededByBookingId: "br-repl" };
+    await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+  });
+
   it("a bulk-cancelled shift (whole-booking cancel) sends no per-shift text — onBookingRequestWrite already sent one consolidated text", async () => {
     const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER };
     const after  = { ...before, status: "cancelled", bulkCancelled: true };

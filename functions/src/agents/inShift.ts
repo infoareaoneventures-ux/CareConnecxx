@@ -13,7 +13,9 @@
 //
 // One implementation behind the MCP tools (start_shift / update_shift_task /
 // add_visit_note / complete_shift) AND the texted keywords START / DONE n /
-// NOTE … / END, so both paths write and say the same thing. The family's
+// UNDO n / NOTE … / TASKS / FINISH, so both paths write and say the same thing.
+// (FINISH, not END: END is a carrier opt-out word — live 2026-09-28 a caregiver
+// texting END to close a visit was unsubscribed from Evia instead.) The family's
 // texts on start / end come from onShiftStatusChanged, same as the site.
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
@@ -21,14 +23,18 @@ import { quickComplete } from "../utils/openaiClient";
 import { businessTodayStr, parseScheduledTimeMs, DEFAULT_TZ } from "../utils/scheduledTime";
 import { isShiftOverdue } from "./shiftReschedule";
 import { fmtDate, fmtTime, type CareRecipient } from "./caregiverBookingRequests";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 export const START_WINDOW_MINUTES = 15;
 
-type Doc = Record<string, unknown>;
-export interface TaskItem { number: number; key: string; label: string; done: boolean }
+/** The real Bookings page opened at this visit (login required — the link carries no secret). */
+export const visitPageLink = (shiftId: string) => `${getAppUrl()}/caregiver/bookings?tab=active&visit=${encodeURIComponent(shiftId)}`;
 
-/** The page's task keys: `${recipientIndex}_${need}` or `${recipientIndex}_${need}_${subtask}`; a need with no subtasks is one task. */
+type Doc = Record<string, unknown>;
+export interface TaskItem { number: number; key: string; label: string; done: boolean; recipientIndex: number; recipientName: string }
+
+/** The page's task keys: `${recipientIndex}_${need}` or `${recipientIndex}_${need}_${subtask}`; a need with no subtasks is one task. Numbers run across recipients so DONE n is never ambiguous. */
 export function taskItems(shift: Doc): TaskItem[] {
   const recipients = (Array.isArray(shift.careRecipients) ? shift.careRecipients : []) as Array<CareRecipient | string>;
   const done = new Set(Array.isArray(shift.tasksCompleted) ? (shift.tasksCompleted as string[]) : []);
@@ -39,14 +45,13 @@ export function taskItems(shift: Doc): TaskItem[] {
     const det = r.careNeedDetails ?? {};
     for (const need of needs) {
       const subs = det[need] ?? [];
-      const who = recipients.length > 1 ? `${r.name} · ` : "";
       if (subs.length === 0) {
         const key = `${ri}_${need}`;
-        out.push({ number: out.length + 1, key, label: `${who}${need}`, done: done.has(key) });
+        out.push({ number: out.length + 1, key, label: need, done: done.has(key), recipientIndex: ri, recipientName: String(r.name ?? "") });
       } else {
         for (const sub of subs) {
           const key = `${ri}_${need}_${sub}`;
-          out.push({ number: out.length + 1, key, label: `${who}${need} — ${sub}`, done: done.has(key) });
+          out.push({ number: out.length + 1, key, label: `${need} — ${sub}`, done: done.has(key), recipientIndex: ri, recipientName: String(r.name ?? "") });
         }
       }
     }
@@ -55,10 +60,31 @@ export function taskItems(shift: Doc): TaskItem[] {
 }
 
 /**
- * The notes that belong to this visit, part of the start text (founder,
- * 2026-09-28): the booking's own note (booking_requests.notes), the visit's
- * own note when it differs (the schedule-change note on a visit that request
- * created), and each care recipient's note.
+ * The page's Tasks panel as text: one block per care recipient — their name
+ * (relationship), their note when asked for, then their numbered tasks
+ * (founder 2026-09-29: "the care recipient and the notes… if it's more than
+ * one will it separate for each recipient").
+ */
+export function recipientBlocks(shift: Doc, items: TaskItem[], opts: { withNotes?: boolean; withDone?: boolean } = {}): string[] {
+  const recipients = (Array.isArray(shift.careRecipients) ? shift.careRecipients : []) as Array<CareRecipient | string>;
+  const out: string[] = [];
+  recipients.forEach((r, ri) => {
+    if (typeof r === "string") return;
+    if (out.length) out.push("");
+    out.push(`${r.name}${r.relationship ? ` (${r.relationship})` : ""}`);
+    if (opts.withNotes && typeof r.notes === "string" && r.notes.trim()) out.push(`Note: ${r.notes.trim()}`);
+    const mine = items.filter((t) => t.recipientIndex === ri);
+    if (mine.length === 0) { out.push("Tasks: none"); return; }
+    out.push("Tasks:", ...mine.map((t) => `${t.number}. ${t.label}${opts.withDone && t.done ? " — done" : ""}`));
+  });
+  return out;
+}
+
+/**
+ * The visit-level notes at the top of the start text: the booking's own note
+ * (booking_requests.notes) and the visit's own note when it differs (the
+ * schedule-change note on a visit that request created). Each recipient's
+ * note is in that recipient's block (recipientBlocks).
  */
 export function noteLines(shift: Doc, bookingNote?: string | null): string[] {
   const out: string[] = [];
@@ -66,11 +92,6 @@ export function noteLines(shift: Doc, bookingNote?: string | null): string[] {
   const booking = typeof bookingNote === "string" && bookingNote.trim() ? bookingNote.trim() : "";
   if (booking) out.push(`Booking note: ${booking}`);
   if (visitNote && visitNote !== booking) out.push(`${booking ? "Visit note" : "Note"}: ${visitNote}`);
-  const recipients = (Array.isArray(shift.careRecipients) ? shift.careRecipients : []) as Array<CareRecipient | string>;
-  for (const r of recipients) {
-    if (typeof r === "string" || typeof r.notes !== "string" || !r.notes.trim()) continue;
-    out.push(`${r.name}${r.relationship ? ` (${r.relationship})` : ""}: ${r.notes.trim()}`);
-  }
   return out;
 }
 
@@ -142,11 +163,12 @@ export async function startVisit(caregiverId: string, shiftId: unknown, nowMs = 
   const bookingSnap = shift.bookingRequestId ? await db.collection("booking_requests").doc(String(shift.bookingRequestId)).get().catch(() => null) : null;
   const bookingNote = bookingSnap?.exists ? ((bookingSnap.data()?.notes as string | undefined) ?? null) : null;
   const lines = [`Started ${started} — ${visitLine(shift)}.`, ...noteLines(shift, bookingNote)];
-  if (tasks.length > 0) {
-    lines.push("", "Tasks:", ...tasks.map((t) => `${t.number}. ${t.label}`), "", `Reply DONE 1 (or DONE 1, 3) as you finish, NOTE followed by anything the family should see, and END when the visit is over.`);
-  } else {
-    lines.push("Text NOTE followed by anything the family should see, and END when the visit is over.");
-  }
+  const blocks = recipientBlocks(shift, tasks, { withNotes: true });
+  if (blocks.length) lines.push("", ...blocks);
+  lines.push("", tasks.length > 0
+    ? `Reply DONE 1 (or DONE 1, 3) as you finish, NOTE followed by anything the family should see, and FINISH when the visit is over.`
+    : "Text NOTE followed by anything the family should see, and FINISH when the visit is over.");
+  lines.push(`Prefer the page? Open this visit: ${visitPageLink(v.id)}`);
   return { ok: true, shiftId: v.id, alreadyStarted: false, startedAt: new Date(nowMs).toISOString(), tasks, text: lines.join("\n") };
 }
 
@@ -155,7 +177,12 @@ export type TasksResult =
   | { ok: true; shiftId: string; tasksCompleted: string[]; text: string; tasks: TaskItem[] }
   | { ok: false; reason: string; message: string };
 
-/** The page's toggleTask / toggleCategory: `completed` forces a state; omitted = the page's toggle (a whole row: all done → clear it, else complete it). */
+/**
+ * The page's toggleTask / toggleCategory writes. Over text a repeated "DONE 3"
+ * must never UN-check (live 2026-09-28: the agent re-sent a done task and the
+ * family was told "unchecked … not done after all"), so `completed` omitted
+ * means check off; UNDO n / completed:false un-checks.
+ */
 export async function checkTasks(caregiverId: string, shiftId: unknown, sel: { numbers?: number[]; keys?: string[]; completed?: boolean }): Promise<TasksResult> {
   const v = await resolveVisit(caregiverId, shiftId, "in_progress");
   if (!v.ok) return { ok: false, reason: v.reason, message: v.message };
@@ -166,12 +193,12 @@ export async function checkTasks(caregiverId: string, shiftId: unknown, sel: { n
   for (const k of sel.keys ?? []) keys.add(k);
   if (keys.size === 0) return { ok: false, reason: "no_selection", message: "Which task? Reply DONE with its number." };
   const prev: string[] = Array.isArray(v.shift.tasksCompleted) ? (v.shift.tasksCompleted as string[]) : [];
-  const allDone = [...keys].every((k) => prev.includes(k));
-  const complete = sel.completed ?? !allDone;
+  const complete = sel.completed ?? true;
   const next = complete ? [...new Set([...prev, ...keys])] : prev.filter((k) => !keys.has(k));
   await v.ref.update({ tasksCompleted: next });
   const after = items.map((t) => ({ ...t, done: next.includes(t.key) }));
-  const touched = after.filter((t) => keys.has(t.key)).map((t) => t.label);
+  const manyRecipients = new Set(after.map((t) => t.recipientIndex)).size > 1;
+  const touched = after.filter((t) => keys.has(t.key)).map((t) => (manyRecipients && t.recipientName ? `${t.label} (${t.recipientName})` : t.label));
   const doneCount = after.filter((t) => t.done).length;
   return { ok: true, shiftId: v.id, tasksCompleted: next, tasks: after, text: `${complete ? "Checked off" : "Unchecked"}: ${touched.join(", ")} (${doneCount}/${after.length} done).` };
 }
@@ -209,7 +236,7 @@ export async function endVisit(caregiverId: string, shiftId: unknown, closingNot
   return { ok: true, shiftId: v.id, alreadyCompleted: false, completedAt: new Date(nowMs).toISOString(), text: `Ended ${clock(nowMs)} — ${visitLine(shift)}.${items.length ? ` Tasks ${doneCount}/${items.length}.` : ""}${notes ? " Your closing note is on the visit." : ""} Thank you.` };
 }
 
-// ── The texted keywords (routeCaregiver): START · DONE n · NOTE … · END · SKIP ──
+// ── The texted keywords (routeCaregiver): START · DONE n · UNDO n · NOTE … · TASKS · FINISH · SKIP ──
 export const END_PROMPT = "Ending the visit — any closing note for the family? Reply with the note, or SKIP to end without one.";
 
 /**
@@ -247,7 +274,8 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     await say(r.ok ? r.text : r.message);
     return "handled";
   }
-  if (upper === "END") {
+  // FINISH (or "end shift" / "finish shift" / "end visit") — never the bare word END, which is the SMS opt-out keyword.
+  if (upper === "FINISH" || upper === "FINISH SHIFT" || upper === "FINISH VISIT" || upper === "END SHIFT" || upper === "END VISIT" || upper === "END THE SHIFT" || upper === "END MY SHIFT") {
     const v = await resolveVisit(caregiverId, undefined, "in_progress");
     if (!v.ok) { await say(v.message); return "handled"; }
     await db.collection("agent_sessions").doc(phone).set({ pendingShiftEnd: { shiftId: v.id, at: new Date().toISOString() } }, { merge: true }).catch(() => {});
@@ -261,13 +289,21 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     const items = taskItems(v.shift);
     if (items.length === 0) { await say("This visit has no care plan tasks."); return "handled"; }
     const doneCount = items.filter((t) => t.done).length;
-    await say([`Tasks (${doneCount}/${items.length} done):`, ...items.map((t) => `${t.number}. ${t.label}${t.done ? " — done" : ""}`), "", "Reply DONE with a number to check one off."].join("\n"));
+    await say([`Tasks (${doneCount}/${items.length} done):`, "", ...recipientBlocks(v.shift, items, { withDone: true }), "", "Reply DONE with a number to check one off."].join("\n"));
+    return "handled";
+  }
+  const undo = /^UNDO\b\s*(.*)$/i.exec(raw);
+  if (undo) {
+    const numbers = (undo[1].match(/\d+/g) ?? []).map(Number);
+    if (numbers.length === 0) { await say("Which task should I un-check? Reply UNDO with its number (e.g. UNDO 2)."); return "handled"; }
+    const r = await checkTasks(caregiverId, undefined, { numbers, completed: false });
+    await say(r.ok ? r.text : r.message);
     return "handled";
   }
   const done = /^DONE\b\s*(.*)$/i.exec(raw);
   if (done) {
     const numbers = (done[1].match(/\d+/g) ?? []).map(Number);
-    if (numbers.length === 0) { await say("Done with a task? Reply DONE with its number (e.g. DONE 2). Done with the visit? Reply END."); return "handled"; }
+    if (numbers.length === 0) { await say("Done with a task? Reply DONE with its number (e.g. DONE 2). Done with the visit? Reply FINISH."); return "handled"; }
     const r = await checkTasks(caregiverId, undefined, { numbers });
     await say(r.ok ? r.text : r.message);
     return "handled";

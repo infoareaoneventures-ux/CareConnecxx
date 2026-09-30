@@ -1,7 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTomorrowStr, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
@@ -49,28 +48,17 @@ export const sendDayBeforeShiftReminders = functions.pubsub
         if (!cgPhone) continue;
 
         const cgSessionSnap = await db.collection("agent_sessions").doc(cgPhone).get();
-        if (!cgSessionSnap.exists || (cgSessionSnap.data() as any)?.optedOut) continue;
-
-        const cgFirstName   = ((cgData?.name ?? "there") as string).split(" ")[0];
-        const seniorName    = visitSeniorName(appt, "your client");
+        if (!cgSessionSnap.exists || (cgSessionSnap.data() as any)?.optedOut) continue;        const seniorName    = visitSeniorName(appt, "your client");
         const startTime     = (appt.startTime ?? appt.time ?? "") as string;
         const address       = (appt.address ?? appt.location ?? "") as string;
 
-        const message = await generateCaraMessage({
-          audience: "caregiver",
-          context:
-            `Write a casual, warm evening text to ${cgFirstName} reminding them about their shift tomorrow.\n` +
-            `Senior: ${seniorName}\n` +
-            `Date: ${tomorrowDisplay}\n` +
-            `Start time: ${startTime ? formatHHMMForDisplay(startTime) : "time TBD"}\n` +
-            `Location: ${address || "client's home"}\n` +
-            `End by saying that if anything has changed they can text CANCEL and you will walk them through it, or text you to move the visit. ` +
-            `Do NOT ask them to confirm. Sound like you're genuinely checking in — not sending an automated alert.`,
-          fallback:
-            `Hey ${cgFirstName}! Just a reminder — you've got ` +
-            `${seniorName}'s visit tomorrow${startTime ? " at " + formatHHMMForDisplay(startTime) : ""}${address ? " at " + address : ""}` +
-            `. If anything's changed, text CANCEL and I'll walk you through it, or text me to move it.`,
-        });
+        // Plain, fixed wording (founder, 2026-09-29) — no model, no "checking in".
+        const endTime = (appt.endTime ?? "") as string;
+        const message =
+          `Reminder: ${seniorName}'s visit tomorrow, ${tomorrowDisplay}` +
+          `${startTime ? `, ${formatHHMMForDisplay(startTime)}${endTime ? ` – ${formatHHMMForDisplay(endTime)}` : ""}` : ""}` +
+          `${address ? ` at ${address}` : ""}. ` +
+          `If anything's changed, text CANCEL SHIFT and I'll walk you through it, or text me to move it.`;
 
         await sendViaInteractionAgent(cgPhone, {
           content:     message,

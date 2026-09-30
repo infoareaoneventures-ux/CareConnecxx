@@ -52,6 +52,8 @@ export interface BookingRequest {
   notes?: string;
   status: string;
   createdAt?: unknown;
+  /** A replacement request for one visit — no interview, the caregiver's own listed rate. */
+  isShiftReplacement?: boolean;
 }
 
 // ── The page's own helpers (CaregiverBookingsPage.tsx), verbatim in behavior ──
@@ -133,7 +135,7 @@ export function requestCardLines(req: BookingRequest): string[] {
     out.push(req.address);
     if (req.lifestylePreferences?.length) out.push(req.lifestylePreferences.join(" · "));
   }
-  if (req.rate != null) out.push(`$${req.rate}/hr · Card (agreed rate)`);
+  if (req.rate != null) out.push(`$${req.rate}/hr · Card${req.isShiftReplacement ? "" : " (agreed rate)"}`); // a replacement is the caregiver's own listed rate — no label (founder, 2026-09-29)
   return out;
 }
 

@@ -113,7 +113,7 @@ export function buildFamilyUpdateText(caregiverName: unknown, items: FamilyUpdat
 
 // The Past Booking card in words.
 export function buildVisitCompletionText(shift: Record<string, unknown>): string {
-  const cgFull = String(shift.caregiverName ?? "Your caregiver");
+  const cgFull = String(shift.caregiverName ?? "Your caregiver").trim() || "Your caregiver";
   const cg = firstName(cgFull);
   const startMs = toMs(shift.startedAt);
   const endMs = toMs(shift.completedAt) || Date.now();

@@ -137,6 +137,12 @@ export async function createReplacementRequest(args: {
   const effStartTime = args.startTime ?? (shift.startTime as string);
   const effEndTime   = args.endTime ?? (shift.endTime as string | undefined) ?? effStartTime;
   const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${effDate}T12:00:00`).getDay()];
+  // The booking's own note + this visit's note when it differs — the same
+  // composition as ClientVisitsPage.handleConfirmReplacement (2026-09-29).
+  const origBookingSnap = shift.bookingRequestId ? await db.collection("booking_requests").doc(String(shift.bookingRequestId)).get().catch(() => null) : null;
+  const bookingNote = (origBookingSnap?.exists ? (origBookingSnap.data()?.notes as string | undefined) : undefined) || null;
+  const visitNote = (shift.notes as string | undefined) || null;
+  const replacementNotes = [bookingNote, visitNote && visitNote !== bookingNote ? visitNote : null].filter(Boolean).join("\n") || null;
   const bookingRef = db.collection("booking_requests").doc();
   await bookingRef.set({
     clientId,
@@ -148,7 +154,7 @@ export async function createReplacementRequest(args: {
     paymentMethod: shift.paymentMethod ?? "credit",
     careNeeds:     [...new Set(((shift.careRecipients ?? []) as Array<{ careNeeds?: string[] }>).flatMap((r) => r.careNeeds || []))],
     careRecipients: shift.careRecipients ?? [],
-    notes:         shift.notes ?? null,
+    notes:         replacementNotes,
     emergencyContact: shift.emergencyContact ?? null,
     schedule: {
       days: [dayName],

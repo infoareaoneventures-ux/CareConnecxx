@@ -744,9 +744,10 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        clientId: { type: "string", description: "The client's user ID" },
+        clientId:    { type: "string", description: "The client's user ID (family side)" },
+        caregiverId: { type: "string", description: "The caregiver's document ID — the caregiver's own Active Bookings tab as data (bookings → visits with shiftId, date, time, status, tasks), for ANSWERING a question in a sentence; to show them the tab, use show_active_bookings instead" },
       },
-      required: ["clientId"],
+      required: [],
     },
   },
   {
@@ -2169,7 +2170,8 @@ export const MCP_TOOLS: McpTool[] = [
       "family · Ongoing (· Schedule paused), Starts, day-by-day shift times with hours, address + lifestyle chips, $rate/hr · Card, the booking note, " +
       "the Care plan & preferences details (care recipients with relationship · age and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact), " +
       "then UPCOMING SHIFTS — two per booking like the page, every one with allVisits:true (they text VISITS) — each visit: date, time, Scheduled / In Progress, tasks done, its own schedule-change note when it has one, a pending reschedule proposal. " +
-      "Call it for 'my schedule', 'my bookings', 'when am I with X', 'what's my next shift', 'any notes for my visit'; when they say MORE call it again with more:true. Send nothing else this turn.",
+      "Call it ONLY when they ask to SEE their bookings / schedule ('show my bookings', 'my schedule'); when they say MORE call it again with more:true. Send nothing else this turn. " +
+      "For a QUESTION ('do I have another shift today?', 'when is my next visit?', 'what's the note for tomorrow?') use get_active_bookings with caregiverId and answer in a sentence — never text the whole tab for a question.",
     input_schema: {
       type: "object",
       properties: {
@@ -2353,6 +2355,7 @@ export const MCP_TOOLS: McpTool[] = [
 // Tools available to caregivers — scoped to what's relevant to their role
 const CAREGIVER_TOOL_NAMES = new Set([
   "show_active_bookings",
+  "get_active_bookings",
   "add_visit_note",
   "get_caregiver_info",
   "get_upcoming_appointments",
@@ -4272,6 +4275,22 @@ async function executeToolCall(
       }
 
       case "get_active_bookings": {
+        if (input.caregiverId && !input.clientId) {
+          // The caregiver's tab as data (2026-09-28): "do I have another shift
+          // today?" deserves a sentence, not the whole card texted twice.
+          const cab = await import("../agents/caregiverActiveBookings");
+          const groups = cab.groupActiveShifts(await cab.loadCaregiverActiveShifts(input.caregiverId as string));
+          const today = businessTodayStr();
+          const bookings = groups.map((g) => ({
+            bookingRequestId: g.key, clientName: g.base.clientName ?? null, address: g.base.address ?? null, rate: g.base.rate ?? null,
+            schedule: (g.base.schedule as Record<string, unknown> | undefined) ?? null, notes: g.base.notes ?? null,
+            visits: g.shifts.filter((s) => cab.shiftStatusLabel(shiftDisplayStatus(s)) !== "Overdue")
+              .sort((a, b) => a.date.localeCompare(b.date) || String(a.startTime ?? "").localeCompare(String(b.startTime ?? "")))
+              .map((s) => ({ shiftId: s.id, date: s.date, dayOfWeek: weekdayForDate(s.date), isToday: s.date === today, startTime: s.startTime ?? null, endTime: s.endTime ?? null,
+                status: shiftDisplayStatus(s), notes: s.notes ?? null, tasksCompleted: Array.isArray(s.tasksCompleted) ? s.tasksCompleted : [], startedAt: s.startedAt ?? null })),
+          }));
+          return { success: true, today, bookings, total: bookings.length, instruction: "Answer their question from these rows in one or two sentences (dates/times are already the family's local values). Do not list every visit unless asked; to SHOW the tab, call show_active_bookings." };
+        }
         if (!input.clientId) return toolError("INVALID_INPUT", "clientId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.clientId as string, data: { source: "mcp:get_active_bookings" } }).catch(() => {});
         const bookings = await listActiveBookings(input.clientId as string);

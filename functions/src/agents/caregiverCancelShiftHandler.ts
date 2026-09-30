@@ -204,7 +204,8 @@ export async function handleCaregiverCancelShift(
     }
     await sessionRef.update({ cancelStep: "confirm_shift", cancelCandidates: JSON.stringify(options), stateExpiresAt: expires() });
     // A message that already names one thing skips the list (the bare CANCEL keyword never does).
-    const named = text.trim().toUpperCase() === "CANCEL" ? null : await resolveOptionFromText(text, options);
+    const bare = /^CANCEL(s+(MYs+|As+)?(SHIFT|VISIT|BOOKING))?$/i.test(text.trim());
+    const named = bare ? null : await resolveOptionFromText(text, options);
     if (named) {
       await parkChoice(sessionRef, named, expires());
       await sendMessage(chatId, confirmFor(named));

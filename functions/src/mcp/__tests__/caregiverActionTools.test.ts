@@ -354,12 +354,14 @@ describe("U2 caregiver action tools", () => {
       expect(hoisted.docState.get("shifts/s1").tasksCompleted).toEqual(["0_Companionship", "0_Mobility Assistance_Walking"]);
     });
 
-    it("a key with completed=false unchecks; omitted completed toggles like the page's row", async () => {
+    it("completed=false unchecks; omitted completed always checks off — a repeated call never un-checks (live 2026-09-28)", async () => {
       hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00", careRecipients: RECIPIENTS, tasksCompleted: ["0_Companionship"] });
       let r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", taskKey: "0_Companionship", completed: false }) as any;
       expect(r.success).toBe(true);
       expect(hoisted.docState.get("shifts/s1").tasksCompleted).toEqual([]);
       r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", taskKeys: ["0_Mobility Assistance_Transfer Assist", "0_Mobility Assistance_Walking"] }) as any;
+      expect(hoisted.docState.get("shifts/s1").tasksCompleted).toEqual(["0_Mobility Assistance_Transfer Assist", "0_Mobility Assistance_Walking"]);
+      r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", numbers: [3] }) as any; // already done → stays done
       expect(hoisted.docState.get("shifts/s1").tasksCompleted).toEqual(["0_Mobility Assistance_Transfer Assist", "0_Mobility Assistance_Walking"]);
     });
 

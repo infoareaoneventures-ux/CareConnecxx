@@ -772,6 +772,11 @@ export const onShiftStatusChanged = functions.firestore
         });
         await notifyClientByText(after.clientId,
           `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}. Text me and I'll pull up replacement caregivers, or open the app to see options.`);
+      } else if (after.status === 'cancelled' && after.supersededByBookingId) {
+        // The original visit closed out because a REPLACEMENT was accepted
+        // (shiftGenerator writes cancelled + supersededByBookingId). The family
+        // already got "X accepted your booking request" — a second "cancelled
+        // the visit" text here read as a new cancellation (live, 2026-09-28).
       } else if (after.status === 'cancelled' && !after.bulkCancelled) {
         // Cancelled — direction depends on who cancelled. (fmtDate is hoisted
         // above and already includes the " on <date>" prefix, or '' if no date.)

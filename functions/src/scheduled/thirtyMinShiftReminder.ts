@@ -1,8 +1,8 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { generateCaraMessage } from "../utils/caraMessage";
-import { businessTodayStr, parseScheduledTimeMs } from "../utils/scheduledTime";
+import { businessTodayStr, parseScheduledTimeMs, formatHHMMForDisplay } from "../utils/scheduledTime";
+import { visitPageLink } from "../agents/inShift";
 import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
@@ -46,26 +46,17 @@ export const sendThirtyMinShiftReminders = functions.pubsub
         if (!cgPhone) continue;
 
         const cgSessionSnap = await db.collection("agent_sessions").doc(cgPhone).get();
-        if (!cgSessionSnap.exists || (cgSessionSnap.data() as any)?.optedOut) continue;
-
-        const cgFirstName = ((cgData?.name ?? "there") as string).split(" ")[0];
-        const seniorName  = visitSeniorName(appt, "your client");
+        if (!cgSessionSnap.exists || (cgSessionSnap.data() as any)?.optedOut) continue;        const seniorName  = visitSeniorName(appt, "your client");
         const address     = (appt.address ?? appt.location ?? "") as string;
 
-        const message = await generateCaraMessage({
-          audience: "caregiver",
-          context:
-            `Write a short, upbeat heads-up text to ${cgFirstName} — their shift starts in 30 minutes.\n` +
-            `Senior: ${seniorName}\n` +
-            `Start time: ${startTime}\n` +
-            `Address: ${address || "client's home"}\n` +
-            `Remind them to text START when they get there (that's the Start Shift button), and that if they're running behind they can text LATE and you'll pass their message to the family. ` +
-            `Keep it light and encouraging — like a quick text from a friend.`,
-          fallback:
-            `Hey ${cgFirstName}, just a heads-up — ${seniorName}'s visit starts in about 30 minutes` +
-            `${address ? " at " + address : ""}. ` +
-            `Safe travels! Text START when you're there — or LATE and I'll pass your message to the family.`,
-        });
+        // Plain, fixed wording — the model's "upbeat" version read as chatty and
+        // claimed Evia would "let the family know" (founder, 2026-09-29).
+        const endTime = (appt.endTime ?? "") as string;
+        const message =
+          `${seniorName}'s visit starts at ${formatHHMMForDisplay(startTime)}${endTime ? ` – ${formatHHMMForDisplay(endTime)}` : ""}` +
+          `${address ? ` at ${address}` : ""}. Text START when you arrive. ` +
+          `Running behind? Text LATE and I'll send your message to the family. ` +
+          `Or open it here: ${visitPageLink(apptId)}`;
 
         await sendViaInteractionAgent(cgPhone, {
           content:     message,

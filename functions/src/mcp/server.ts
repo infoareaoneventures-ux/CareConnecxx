@@ -1311,22 +1311,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "respond_to_shift_hour_correction",
-    description:
-      "Respond to a client/admin correction on your submitted shift hours: accept the corrected hours, or push back to dispute them. " +
-      "Only works when the shift hours are in a correction_proposed state (legacy correction_requested/disputed records are also accepted).",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:   { type: "string", description: "Your caregiver document ID" },
-        appointmentId: { type: "string", description: "The appointment document ID (shiftHours doc id)" },
-        decision:      { type: "string", enum: ["accept", "pushback"], description: "accept the corrected hours, or pushback to dispute" },
-        message:       { type: "string", description: "Optional note (recommended when pushing back)" },
-      },
-      required: ["caregiverId", "appointmentId", "decision"],
-    },
-  },
-  {
     name: "create_caregiver_referral",
     description:
       "Invite a referred caregiver by SMS. Writes a non-bookable referral record, sends the application link, " +
@@ -1796,7 +1780,7 @@ export const MCP_TOOLS: McpTool[] = [
       "Retry a failed visit payment. Use when the family says a payment failed and asks to run it again — " +
       "typically after they've fixed their card (get_payment_update_link). Only works on a shift whose " +
       "payment is currently in the failed state; re-charges the amount already owed for that visit. " +
-      "Use get_shifts first if you don't know which visit's payment failed.",
+      "Use get_pending_timesheets first if you don't know which visit's payment failed.",
     input_schema: {
       type: "object",
       properties: {
@@ -2050,22 +2034,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "get_shifts",
-    description:
-      "List submitted shift-hour / timesheet records and their status (pending review, approved, paid, correction requested). " +
-      "Pass caregiverId to see a caregiver's shifts, or clientId to see shifts logged against a family's account. " +
-      "Use when someone asks 'did my hours go through?', 'which timesheets are still pending?', or 'what did I get paid for last week?'.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
-        clientId:    { type: "string", description: "The client's Firestore document ID (provide this OR caregiverId)" },
-        status:      { type: "string", description: "Optional filter, e.g. 'pending_client_review', 'approved', 'paid'" },
-      },
-      required: [],
-    },
-  },
-  {
     name: "get_pending_schedule_amendments",
     description:
       "List schedule-change requests still awaiting the caregiver's answer — the OTHER kind of card on the site's " +
@@ -2168,6 +2136,53 @@ export const MCP_TOOLS: McpTool[] = [
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
         number:      { type: "number", description: "The visit number from the last texted Past Bookings list" },
         shiftId:     { type: "string", description: "The shifts document ID (instead of number)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "show_timesheets",
+    description:
+      "The caregiver Payments page's Timesheets tab, TEXTED by the tool itself (agents/caregiverTimesheets.ts): chip 'unsubmitted' (completed visits with no hours submitted — each numbered, with clock in/out, duration, est. pay, Not submitted), " +
+      "'pending' (Pending client review / Correction Received / Counter sent / Awaiting Payment) or 'history' (Approved / Auto-approved / Paid …, grouped by month, 5 at a time, MORE → more:true). " +
+      "With number it texts that row's full card (rate, clock in/out, charges, total, auto-approve time, the correction history). Call it for 'my timesheets', 'did my hours go through', 'what's pending', 'what did I get paid'. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        chip:        { type: "string", enum: ["unsubmitted", "pending", "history"], description: "Which chip to text (default unsubmitted)" },
+        number:      { type: "number", description: "A row number from the last texted Timesheets list → its full card instead of a list" },
+        more:        { type: "boolean", description: "History only: the next 5 older rows" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "start_submit_hours_flow",
+    description:
+      "The Timesheets tab's Submit hours button on an Unsubmitted completed visit — the ONLY way to submit hours over text. Starts Evia's scripted flow: it texts the modal (clock in / out from the visit itself, duration, base pay), asks for additional charges (or NONE), shows the total and the page's payment note, then SUBMIT runs the site's own server write and texts 'Hours submitted — awaiting client approval'. " +
+      "Pass number = the visit's number from the last texted Timesheets list ('submit 2'), or shiftId; with neither and exactly one unsubmitted visit it uses that one. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        number:      { type: "number", description: "The visit number from the last texted Timesheets list" },
+        shiftId:     { type: "string", description: "The shifts document ID (instead of number)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "start_review_correction_flow",
+    description:
+      "The Timesheets tab's Review & Respond button on a timesheet the family corrected (Correction Received) — the ONLY way to answer a correction over text. Starts Evia's scripted flow: it texts what the family proposed (time, base, charges, total, their reason), then ACCEPT runs the site's accept write and texts 'Correction accepted', or COUNTER asks start, end, charge amounts, a note, then SEND runs the site's counter write and texts 'Counter-proposal sent to client'. " +
+      "Pass number from the last texted Timesheets list ('review 1'), or appointmentId; with neither and exactly one correction waiting it uses that one. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
+        number:        { type: "number", description: "The row number from the last texted Timesheets list" },
+        appointmentId: { type: "string", description: "The shiftHours document ID (instead of number)" },
       },
       required: ["caregiverId"],
     },
@@ -2435,9 +2450,8 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "start_shift",
   "complete_shift",
   "update_shift_task",
-  "respond_to_shift_hour_correction",
+  "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
   "create_caregiver_referral",
-  "get_shifts",
   "get_caregiver_availability",
   // Requests-tab Q&A parity (2026-09-14) — matches CaregiverBookingsPage's
   // own Requests tab (booking_requests where caregiverId + status:'pending').
@@ -2508,9 +2522,8 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "start_shift",
   "complete_shift",
   "update_shift_task",
-  "respond_to_shift_hour_correction",
+  "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
   "create_caregiver_referral",
-  "get_shifts",
   "get_caregiver_availability",
   // Checkr Candidate MCP bridge (2026-07-09) — a caregiver's own report only
   "request_checkr_verification",
@@ -5271,6 +5284,53 @@ async function executeToolCall(
       return { success: r.started, reason: r.reason, note: "The flow (or its refusal) was texted — send nothing else this turn." };
     }
 
+    // ── Payments › Timesheets (2026-10-01): the tab, the Submit hours modal and the Review correction modal, texted ──
+    if (name === "show_timesheets" || name === "start_submit_hours_flow" || name === "start_review_correction_flow") {
+      const { caregiverId, chip, number, more, shiftId, appointmentId, phone: tsPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, tsPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const ts = await import("../agents/caregiverTimesheets");
+      const sessSnap = await db.collection("agent_sessions").doc(sess.phone).get();
+      const sessionData = (sessSnap.data() ?? {}) as Record<string, unknown>;
+      if (name === "show_timesheets") {
+        if (number != null) {
+          const ref = ts.resolveTimesheetRef(sessionData, { number });
+          if (!ref) return { success: false, reason: "no_such_number", note: "That number isn't on their last Timesheets list — call show_timesheets without number first." };
+          const ok = await ts.sendTimesheetDetail(sess.chatId, caregiverId as string, ref);
+          return { success: ok, note: "The card (or its refusal) was texted — send nothing else this turn." };
+        }
+        const which = chip === "pending" || chip === "history" ? chip : "unsubmitted";
+        const r = await ts.sendCaregiverTimesheets(sess.phone, sess.chatId, caregiverId as string, which, { more: more === true });
+        return { success: true, ...r, note: "The tab was texted — send nothing else this turn." };
+      }
+      if (name === "start_submit_hours_flow") {
+        let target = typeof shiftId === "string" && shiftId ? shiftId : ts.resolveTimesheetRef(sessionData, { number })?.id;
+        if (!target || (number != null && ts.resolveTimesheetRef(sessionData, { number })?.kind !== "shift")) {
+          const tab = await ts.loadTimesheetsTab(caregiverId as string);
+          if (number == null && tab.submittable.length === 1) target = tab.submittable[0].id;
+          else {
+            await ts.sendCaregiverTimesheets(sess.phone, sess.chatId, caregiverId as string, "unsubmitted");
+            return { success: false, reason: tab.submittable.length === 0 ? "nothing_to_submit" : "no_visit_ref", note: "The Unsubmitted list was texted so they can answer with a number — send nothing else." };
+          }
+        }
+        const r = await ts.startSubmitHoursFlow(sess.phone, sess.chatId, sessionData as never, { caregiverId: caregiverId as string, shiftId: target });
+        return { success: r.started, reason: r.reason, note: "The flow (or its refusal) was texted — send nothing else this turn." };
+      }
+      let target = typeof appointmentId === "string" && appointmentId ? appointmentId : ts.resolveTimesheetRef(sessionData, { number })?.id;
+      if (!target || (number != null && ts.resolveTimesheetRef(sessionData, { number })?.kind !== "timesheet")) {
+        const tab = await ts.loadTimesheetsTab(caregiverId as string);
+        if (number == null && tab.corrections.length === 1) target = tab.corrections[0].id;
+        else {
+          await ts.sendCaregiverTimesheets(sess.phone, sess.chatId, caregiverId as string, "pending");
+          return { success: false, reason: tab.corrections.length === 0 ? "no_correction_waiting" : "no_row_ref", note: "The Pending list was texted so they can answer with a number — send nothing else." };
+        }
+      }
+      const r = await ts.startReviewCorrectionFlow(sess.phone, sess.chatId, sessionData as never, { caregiverId: caregiverId as string, appointmentId: target });
+      return { success: r.started, reason: r.reason, note: "The flow (or its refusal) was texted — send nothing else this turn." };
+    }
+
     if (name === "show_booking_requests") {
       const { caregiverId, more, phone: sbPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
@@ -5371,59 +5431,6 @@ async function executeToolCall(
       return { success: true, shiftId: r.shiftId, note: r.note, instruction: sess ? "The confirmation was texted — send nothing else this turn." : text };
     }
 
-    // ── respond_to_shift_hour_correction (U2) ───────────────────────────────────
-    if (name === "respond_to_shift_hour_correction") {
-      return runActionNativeMcpWrite(name, input, async () => {
-      const { caregiverId, appointmentId, decision, message: corrMsg } = input as Record<string, unknown>;
-      if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
-      if (decision !== "accept" && decision !== "pushback") return toolError("INVALID_INPUT", "decision must be 'accept' or 'pushback'");
-      const shiftSnap = await db.collection("shiftHours").doc(appointmentId as string).get();
-      if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours submission not found");
-      const shift = shiftSnap.data()!;
-      if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this caregiver");
-      const correctionStates = ["correction_proposed", "correction_requested", "disputed"];
-      if (!correctionStates.includes(shift.status as string)) {
-        return toolError("INVALID_INPUT", `These shift hours are not awaiting a correction response (status: ${shift.status})`);
-      }
-      const correctedHours = shift.correctedHours as number | null | undefined;
-      if (decision === "accept") {
-        // Accept the corrected hours: adopt them as the billable duration and
-        // re-submit for the standard client review (auto-approve window).
-        const upd: Record<string, unknown> = {
-          status: "pending_client_review",
-          caregiverCorrectionResponse: "accepted",
-          correctionRespondedAt: nowIso,
-          autoApproveAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        };
-        if (correctedHours != null) {
-          const rate = (shift.hourlyRate as number) ?? (shift.payRate as number) ?? 22;
-          upd.durationHours = correctedHours;
-          upd.submittedTotalHours = correctedHours;
-          upd.amountCents = Math.round(correctedHours * rate * 100);
-          upd.basePay = Math.round(correctedHours * rate * 100) / 100;
-          upd.grossPay = Math.round(correctedHours * rate * 100) / 100;
-        }
-        await shiftSnap.ref.update(upd);
-      } else {
-        // Pushback requires admin mediation; never write the retired `disputed` state.
-        await shiftSnap.ref.update({ status: "disputed_admin_review", caregiverCorrectionResponse: "pushback", correctionRespondedAt: nowIso, caregiverDisputeNote: corrMsg ?? "" });
-        await db.collection("admin_alerts").add({ type: "shift_hour_dispute", appointmentId, caregiverId, clientId: shift.clientId ?? null, priority: "medium", resolved: false, createdAt: nowIso }).catch(() => {});
-      }
-      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_client_session" };
-      if (shift.clientId) {
-        const clientSessSnap = await db.collection("agent_sessions").where("userId", "==", shift.clientId).limit(1).get();
-        if (!clientSessSnap.empty) {
-          const { trySend } = await import("../utils/toolNotify");
-          const msg = decision === "accept"
-            ? `Your caregiver accepted the corrected hours${correctedHours != null ? ` (${correctedHours}h)` : ""}. Reply APPROVE to finalize payment.`
-            : `Your caregiver pushed back on the hour correction. ${(corrMsg as string) ?? "I flagged it for admin review."}`;
-          notification = await trySend(clientSessSnap.docs[0].id, msg, "mcp:respond_to_shift_hour_correction");
-        }
-      }
-      logAudit({ eventType: "shift_hour_correction_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_shift_hour_correction", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, decision, appointmentId, status: decision === "accept" ? "pending_client_review" : "disputed_admin_review", notification };
-      });
-    }
 
     // request_standard_payout was removed 2026-07-06: Stripe rejects manual
     // standard payouts on the automatic daily schedule our Connect accounts
@@ -7430,39 +7437,6 @@ async function executeToolCall(
 
 
     // ── get_refund_requests ─────────────────────────────────────────────────
-    if (name === "get_shifts") {
-      const { caregiverId: gsCgId, clientId: gsClientId, status: gsStatus } = input as Record<string, unknown>;
-      if (!gsCgId && !gsClientId) return toolError("INVALID_INPUT", "Provide caregiverId or clientId");
-      const gsField = gsCgId ? "caregiverId" : "clientId";
-      const gsValue = gsCgId ?? gsClientId;
-      const gsSnap = await db.collection("shiftHours").where(gsField, "==", gsValue).get();
-      let shifts = gsSnap.docs.map(d => {
-        const s = d.data() as Record<string, unknown>;
-        // Real shiftHours fields — date/clockInTime/clockOutTime are never
-        // written (createValidatedShiftHours.ts), so these always came back
-        // null; final* wins over submitted* once a review has happened,
-        // matching Payments.tsx's own display priority.
-        const startTime = (s.finalStartTime ?? s.submittedStartTime) as string | undefined;
-        const endTime   = (s.finalEndTime   ?? s.submittedEndTime)   as string | undefined;
-        return {
-          appointmentId: d.id,
-          date:          startTime ? new Date(startTime).toISOString().slice(0, 10) : null,
-          status:        s.status ?? null,
-          durationHours: s.finalTotalHours ?? s.submittedTotalHours ?? null,
-          amountCents:   s.amountCents ?? null,
-          amountDollars: s.amountCents != null ? `$${(Number(s.amountCents) / 100).toFixed(2)}` : null,
-          clockInTime:   startTime ?? null,
-          clockOutTime:  endTime ?? null,
-          caregiverName: s.caregiverName ?? null,
-          clientName:    s.clientName ?? null,
-        };
-      });
-      if (gsStatus) shifts = shifts.filter(s => s.status === gsStatus);
-      shifts = shifts
-        .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))
-        .slice(0, 20);
-      return { success: true, shifts, count: shifts.length };
-    }
 
     // ── get_resendable_booking_requests ──────────────────────────────────────
     // Same eligibility function the scripted resend flow uses (bookingFlow.ts

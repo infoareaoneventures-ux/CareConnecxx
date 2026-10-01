@@ -184,9 +184,9 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // turn, back-out at any step, Submit/Send or Cancel at the end — checked
     // before any keyword/NLU so a short answer like "9/28 at 9am" is the
     // flow's answer, not something else's.
-    for (const flow of ["applyFlowStep", "interviewRescheduleFlowStep", "logHoursFlowStep"] as const) {
+    for (const flow of ["applyFlowStep", "interviewRescheduleFlowStep", "logHoursFlowStep", "submitHoursFlowStep", "reviewCorrectionFlowStep"] as const) {
       if (!(session as any)[flow]) continue;
-      const dataKey = flow === "applyFlowStep" ? "applyFlowData" : flow === "interviewRescheduleFlowStep" ? "interviewRescheduleFlowData" : "logHoursFlowData";
+      const dataKey = flow.replace(/Step$/, "Data");
       const expiry = (session as any).stateExpiresAt as string | undefined;
       if (expiry && new Date(expiry) < new Date()) {
         await db.collection("agent_sessions").doc(phone).update({
@@ -200,6 +200,11 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         if (flow === "logHoursFlowStep") {
           const { handleLogHoursFlowStep } = await import("../agents/caregiverPastBookings");
           await handleLogHoursFlowStep(phone, chatId, text, session);
+        } else if (flow === "submitHoursFlowStep" || flow === "reviewCorrectionFlowStep") {
+          // Payments › Timesheets: the Submit hours modal and the Review correction modal (agents/caregiverTimesheets.ts).
+          const ts = await import("../agents/caregiverTimesheets");
+          if (flow === "submitHoursFlowStep") await ts.handleSubmitHoursFlowStep(phone, chatId, text, session);
+          else await ts.handleReviewCorrectionFlowStep(phone, chatId, text, session);
         } else {
           const flows = await import("../agents/caregiverJobFlows");
           if (flow === "applyFlowStep") await flows.handleApplyFlowStep(phone, chatId, text, session);
@@ -282,6 +287,13 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       const { handlePastBookingsKeyword } = await import("../agents/caregiverPastBookings");
       const past = await handlePastBookingsKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
       if (past === "handled") return "handled";
+    }
+
+    // ── TIMESHEETS · PENDING · HISTORY · REPORT · SUBMIT n · REVIEW n · DETAILS n · VIEW n — the Payments page's Timesheets tab (agents/caregiverTimesheets.ts) ──
+    if (session.caregiverId) {
+      const { handleTimesheetsKeyword } = await import("../agents/caregiverTimesheets");
+      const ts = await handleTimesheetsKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (ts === "handled") return "handled";
     }
 
     // ── VISITS — the page's "Show more" on the Active Bookings card ──────────

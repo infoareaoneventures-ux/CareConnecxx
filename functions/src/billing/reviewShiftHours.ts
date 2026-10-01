@@ -15,6 +15,12 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 export type ReviewShiftHoursAction = "approve" | "propose_correction" | "accept_counter" | "escalate";
 export const REVIEW_SHIFT_HOURS_ACTIONS: ReviewShiftHoursAction[] = ["approve", "propose_correction", "accept_counter", "escalate"];
 
+/** "Sep 18" for a stored ISO instant, business timezone. */
+export function fmtDay(iso: unknown): string {
+  const ms = typeof iso === "string" ? Date.parse(iso) : NaN;
+  return Number.isFinite(ms) ? new Date(ms).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }) : "";
+}
+
 export function fmtHours(hours: number): string {
   const totalSecs = Math.round(hours * 3600);
   const h = Math.floor(totalSecs / 3600);
@@ -34,6 +40,17 @@ export function resolveBillableOrHttpsError(input: Parameters<typeof resolveShif
   }
 }
 
+/** Text a caregiver by uid (caregivers/{uid}.phone, then users/{uid}.phone) — every Timesheets
+ *  event the page shows them as a bell reaches them over Evia as it happens (founder, 2026-10-01). */
+export async function textCaregiver(caregiverId: string, message: string): Promise<void> {
+  try {
+    const { sendSMSToUser } = await import("../sms");
+    await sendSMSToUser(caregiverId, `Evia: ${message}`);
+  } catch (err) {
+    console.warn("shiftHours: caregiver text failed (in-app notification still written)", err instanceof Error ? err.message : err);
+  }
+}
+
 export async function pushNotification(userId: string, type: string, title: string, message: string, data: any) {
   await db.collection("users").doc(userId).collection("notifications").add({
     userId,
@@ -49,6 +66,14 @@ export async function pushNotification(userId: string, type: string, title: stri
 export async function notifyAdmins(type: string, title: string, message: string, data: any) {
   const admins = await db.collection("users").where("userType", "==", "admin").get();
   const batch = db.batch();
+  // Until 2026-10-01 these were admin BELLS only — nobody was texted or emailed when a
+  // timesheet reached the team. One admin_alerts doc per hand-off puts it on the same
+  // path as "Message our team" (triggers/adminAlertNotifier.ts: email + ADMIN_PHONE text).
+  batch.set(db.collection("admin_alerts").doc(), {
+    type, title, message, priority: "high", resolved: false,
+    ...(data && typeof data === "object" ? data : {}),
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
   admins.docs.forEach((docSnap) => {
     const ref = db.collection("users").doc(docSnap.id).collection("notifications").doc();
     batch.set(ref, {
@@ -144,6 +169,7 @@ export async function reviewShiftHoursAs(uid: string, data: ReviewShiftHoursInpu
       `Client approved ${fmtHours(approved.totalHours)}.`,
       { appointmentId },
     );
+    await textCaregiver(shift.caregiverId, `${shift.clientName ?? "The family"} approved your hours — ${fmtHours(approved.totalHours)}, $${approved.grossPay.toFixed(2)}. Payment is being processed; it's under History on your Timesheets.`);
     return { success: true };
   }
 
@@ -195,6 +221,8 @@ export async function reviewShiftHoursAs(uid: string, data: ReviewShiftHoursInpu
       `Client proposed ${fmtHours(proposed.totalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)})${proposed.lineItemsTotal !== (Number(shift.lineItemsTotal) || 0) ? ` and changed the additional charges to $${proposed.lineItemsTotal.toFixed(2)} (from $${(Number(shift.lineItemsTotal) || 0).toFixed(2)})` : ""}. Respond within 24h or it auto-accepts.`,
       { appointmentId, proposedTotalHours: proposed.totalHours },
     );
+    // The caregiver has 24 hours to answer — the bell alone was easy to miss.
+    await textCaregiver(shift.caregiverId, `${shift.clientName ?? "The family"} proposed a correction to your hours: ${fmtHours(proposed.totalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)})${proposed.lineItemsTotal !== (Number(shift.lineItemsTotal) || 0) ? ` and changed the additional charges to $${proposed.lineItemsTotal.toFixed(2)} (from $${(Number(shift.lineItemsTotal) || 0).toFixed(2)})` : ""}${proposalReason ? ` — "${proposalReason}"` : ""}. Reply REVIEW to accept it or send a counter. It auto-accepts in 24 hours.`);
     return { success: true };
   }
 
@@ -245,6 +273,7 @@ export async function reviewShiftHoursAs(uid: string, data: ReviewShiftHoursInpu
       `Client accepted ${accepted.totalHours}h. Payment will be processed shortly.`,
       { appointmentId },
     );
+    await textCaregiver(shift.caregiverId, `${shift.clientName ?? "The family"} accepted your counter — ${fmtHours(accepted.totalHours)}, $${accepted.grossPay.toFixed(2)}. Payment is being processed.`);
     return { success: true };
   }
 
@@ -266,6 +295,16 @@ export async function reviewShiftHoursAs(uid: string, data: ReviewShiftHoursInpu
     `${shift.clientName} escalated a dispute with ${shift.caregiverName} for appointment ${appointmentId}.`,
     { appointmentId },
   );
+  // The caregiver's Timesheets row now reads "Admin reviewing" — tell them (bell + text), same information as the row.
+  const day = fmtDay(shift.submittedStartTime);
+  await pushNotification(
+    shift.caregiverId,
+    "shift_hours_escalated",
+    "Sent to our team",
+    `${shift.clientName ?? "The family"} asked our team to review the hours${day ? ` for ${day}` : ""}. Nothing changes until they decide.`,
+    { appointmentId },
+  );
+  await textCaregiver(shift.caregiverId, `${shift.clientName ?? "The family"} asked our team to review your hours${day ? ` for ${day}` : ""} instead of accepting your counter. Nothing changes until they decide; we'll text you the outcome.`);
 
   return { success: true };
 }

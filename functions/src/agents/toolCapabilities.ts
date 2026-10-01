@@ -83,11 +83,12 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_notifications:        ["messaging"],  // the website's bell as data — see agents/notificationsPage.ts
   get_account_settings:     ["care_plan"],   // the website's Account Settings page as data — see agents/accountSettingsPage.ts
   set_subscription_status:  ["billing"],
-  get_shifts:               ["billing"],
+  show_timesheets:          ["billing"],            // Payments › Timesheets tab, texted whole (2026-10-01)
+  start_submit_hours_flow:  ["billing"],            // Timesheets › Submit hours modal as a flow (2026-10-01)
+  start_review_correction_flow: ["billing"],        // Timesheets › Review correction modal as a flow (2026-10-01)
   get_payment_update_link:  ["billing"],
   retry_shift_payment:      ["billing"],            // parity 2026-07-06: agent mirror of v1-retryShiftPayment
   request_instant_payout:   ["billing"],
-  respond_to_shift_hour_correction: ["billing"],
   get_payout_history:       ["billing"],
   get_payout_status:        ["billing"],
   review_shift_hours:       ["billing", "care_plan"],

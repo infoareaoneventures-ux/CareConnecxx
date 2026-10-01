@@ -153,7 +153,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
     ? 'submissions with extra charges'
     : isOutsideScheduledWindow
       ? "hours that don't match the scheduled time"
-      : `totals over ${EXPLICIT_APPROVAL_THRESHOLD_DOLLARS}`;
+      : `totals over $${EXPLICIT_APPROVAL_THRESHOLD_DOLLARS}`;
 
   // ── line item helpers ──
 

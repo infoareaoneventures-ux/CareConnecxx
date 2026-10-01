@@ -106,7 +106,7 @@ describe("checkTasks / addVisitNote / endVisit — in progress only, the page's 
     const e = await endVisit("cg1", undefined, "Good visit.");
     expect(e.ok).toBe(true);
     expect(hoisted.updates.at(-1)).toEqual({ path: "shifts/s1", data: { status: "completed", completedAt: "__ts__", updatedAt: "__ts__", completionNotes: "Good visit." } });
-    if (e.ok) expect(e.text).toMatch(/^Ended \d{1,2}:\d{2} [AP]M — .+\. Tasks 2\/3\. Your closing note is on the visit\. Thank you\.$/);
+    if (e.ok) expect(e.text).toMatch(/^Ended \d{1,2}:\d{2} [AP]M — .+\. Tasks 2\/3\. Your closing note is on the visit\. Thank you\. Reply SUBMIT to submit your hours\.$/);
   });
   it("nothing in progress → each refuses without writing", async () => {
     shift("s1", { status: "scheduled", date: businessTodayStr() });

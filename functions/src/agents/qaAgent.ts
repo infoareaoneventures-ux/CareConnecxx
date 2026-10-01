@@ -1004,8 +1004,8 @@ export function buildCaregiverSystemPrompt(
     zepSection,
     contextSection,
     rate !== null
-      ? `The caregiver earns $${rate}/hr. Payments are processed automatically after each visit.`
-      : `Payments are processed automatically after each visit. No hourly rate is on file for this caregiver — never state or guess a dollar rate; use get_caregiver_info or the tools below if they ask about pay.`,
+      ? `The caregiver earns $${rate}/hr. Getting paid for a visit works like the Timesheets tab: after the visit is ended, they SUBMIT its hours (start_submit_hours_flow); the family then has 24 hours to approve or propose a correction (auto-approves after that unless extra charges / off-schedule hours / over $500); a correction is answered with ACCEPT or a COUNTER (start_review_correction_flow); approved hours are paid out through Stripe. Nothing is paid until hours are submitted and approved.`
+      : `Getting paid for a visit works like the Timesheets tab: after the visit is ended, they SUBMIT its hours (start_submit_hours_flow); the family has 24 hours to approve or propose a correction; a correction is answered with ACCEPT or a COUNTER (start_review_correction_flow). No hourly rate is on file for this caregiver — never state or guess a dollar rate; use get_caregiver_info or the tools below if they ask about pay.`,
     ``,
     `TOOLS — call them when needed:`,
     `- show_active_bookings: your Bookings page's Active Bookings tab — it TEXTS each booking in full itself (2 at a time; MORE → more:true; VISITS → allVisits:true). Call it ONLY when they ask to SEE their bookings or schedule. Send nothing else that turn.`,
@@ -1039,8 +1039,9 @@ export function buildCaregiverSystemPrompt(
     `- update_shift_task: the Tasks checklist while the visit is in progress — pass numbers from the texted list ("done 1 and 3" → numbers:[1,3]). It TEXTS the result itself. (They can also text TASKS to see the list again.)`,
     `- add_visit_note: the visit-notes box while the visit is in progress — when they tell you something about the visit for the family ("she ate well"), pass it as text. The family sees it right away. It TEXTS the confirmation itself.`,
     `- complete_shift: the End button on the visit in progress — when they say they're done, ask ONCE if they want to add a closing note for the family, then call it with notes (or without). It TEXTS the confirmation itself. Send nothing else that turn.`,
-    `- respond_to_shift_hour_correction: accept or dispute the family's proposed correction to hours you submitted`,
-    `- get_shifts: list your shift records with hours and payment status`,
+    `- show_timesheets: your Payments page's Timesheets tab — it TEXTS the chip itself (chip: unsubmitted = completed visits waiting for you to submit hours; pending = Pending client review / Correction Received / Counter sent / Awaiting Payment; history = Approved / Auto-approved / Paid, grouped by month, MORE → more:true; number → that row's full card with the correction history). Call it for "my timesheets", "did my hours go through", "what's pending", "what did I get paid", "details on 2". Send nothing else that turn.`,
+    `- start_submit_hours_flow: the Submit hours button on an Unsubmitted visit — the ONLY way to submit hours. Call it the moment they want to submit ("submit my hours", "submit 2"); pass the number they said, or nothing when one visit is waiting. It texts the modal (clock in/out, duration, base pay, additional charges or NONE, the payment note, then SUBMIT / CANCEL) itself. Send nothing else that turn. Never write hours any other way.`,
+    `- start_review_correction_flow: the Review & Respond button on a timesheet the family corrected — the ONLY way to answer a correction. Pass the number they said ("review 1"), or nothing when one correction is waiting. It texts what the family proposed, then ACCEPT or COUNTER (start, end, charges, note, SEND) itself. Send nothing else that turn.`,
     `- request_instant_payout: cash out your instantly-available balance — Stripe's 1% instant fee (min $0.50) comes off it, arrives in ~30 min; always say the fee and the amount that arrives (regular earnings pay out automatically every day, free)`,
     `- get_payout_history: see your recent payout records from Stripe`,
     `- get_notifications (userId = your caregiverId, role: "caregiver"): your notification bell as data — newest first, the unread count, and for each one the page it opens (My Bookings, Jobs › Interviews, Payments, Account Settings). Use for "what's new", "what was that notification", "clear my notifications" (action mark_all_read), or to remove one (delete).`,
@@ -2822,6 +2823,8 @@ export async function runQaAgent(params: {
       "show_past_bookings", "start_log_hours_flow",
       // My Calendar page (2026-09-30): the views and detail panels text themselves.
       "show_calendar", "show_families",
+      // Payments › Timesheets (2026-10-01): the tab, the Submit hours flow and the Review correction flow text themselves.
+      "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
     ]);
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early

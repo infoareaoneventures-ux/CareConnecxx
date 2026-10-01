@@ -9,7 +9,7 @@ import { claimShiftPaymentOperation, shiftPaymentOperationKey, updateShiftPaymen
 import { resolveShiftBillableAmount, sanitizeShiftLineItems, ShiftLineItem, serviceFeeCentsFor } from './billing/shiftBillingAmounts';
 import { formatClockTime } from './utils/scheduledTime';
 import { resetShiftPaymentForRetry } from './billing/shiftPaymentRetry';
-import { fmtHours, resolveBillableOrHttpsError, pushNotification, notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
+import { fmtHours, fmtDay, resolveBillableOrHttpsError, pushNotification, notifyAdmins, reviewShiftHoursAs, textCaregiver } from './billing/reviewShiftHours';
 // One review path for the website's callable and Evia's review_shift_hours tool (2026-09-17).
 export { notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
 
@@ -74,13 +74,14 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   }
+  // The modal's write lives in submitShiftHoursAs so Evia's Submit hours flow
+  // (agents/caregiverTimesheets.ts) runs the very same function — one write path.
+  return submitShiftHoursAs(context.auth.uid, data ?? {});
+});
 
-  const { shiftId, startTime, endTime, lineItems: rawLineItems = [] } = data as {
-    shiftId: string;
-    startTime: string;
-    endTime: string;
-    lineItems?: any[];
-  };
+export interface SubmitShiftHoursInput { shiftId: string; startTime: string; endTime: string; lineItems?: any[] }
+export async function submitShiftHoursAs(uid: string, data: Partial<SubmitShiftHoursInput>) {
+  const { shiftId, startTime, endTime, lineItems: rawLineItems = [] } = data as SubmitShiftHoursInput;
   if (!shiftId || !startTime || !endTime) {
     throw new functions.https.HttpsError('invalid-argument', 'shiftId, startTime and endTime are required');
   }
@@ -117,7 +118,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
       throw new functions.https.HttpsError('not-found', 'Appointment not found');
     }
     const legacyShift = legacyShiftSnap.data()!;
-    if (legacyShift.caregiverId !== context.auth.uid) {
+    if (legacyShift.caregiverId !== uid) {
       throw new functions.https.HttpsError('permission-denied', 'Not your shift');
     }
     const linkedAppointmentId = typeof legacyShift.appointmentId === 'string' ? legacyShift.appointmentId : '';
@@ -144,7 +145,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     const result = useLegacyShiftPath
       ? await createValidatedShiftHoursFromShift({
           shiftId,
-          actorUid: context.auth.uid,
+          actorUid: uid,
           submittedStartTime: startTime,
           submittedEndTime: endTime,
           source: 'web',
@@ -152,7 +153,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
         })
       : await createValidatedShiftHours({
           appointmentId,
-          actorUid: context.auth.uid,
+          actorUid: uid,
           submittedStartTime: startTime,
           submittedEndTime: endTime,
           source: 'web',
@@ -184,7 +185,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     }
     throw error;
   }
-});
+}
 
 /**
  * Client approves, proposes a correction, accepts a counter-proposal, or escalates.
@@ -205,8 +206,21 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   }
+  // The Review-correction modal's two buttons live in respondToCorrectionAs so
+  // Evia's REVIEW flow (agents/caregiverTimesheets.ts) runs the same function.
+  return respondToCorrectionAs(context.auth.uid, data ?? {});
+});
 
-  const { appointmentId, action, counterStartTime, counterEndTime, counterNote, counterLineItems: rawCounterLineItems } = data;
+export interface RespondToCorrectionInput {
+  appointmentId: string;
+  action: 'accept' | 'counter_propose';
+  counterStartTime?: string;
+  counterEndTime?: string;
+  counterNote?: string;
+  counterLineItems?: any[];
+}
+export async function respondToCorrectionAs(uid: string, data: Partial<RespondToCorrectionInput>) {
+  const { appointmentId, action, counterStartTime, counterEndTime, counterNote, counterLineItems: rawCounterLineItems } = data as RespondToCorrectionInput;
   if (!appointmentId || (action !== 'accept' && action !== 'counter_propose')) {
     throw new functions.https.HttpsError('invalid-argument', 'appointmentId and valid action (accept | counter_propose) required');
   }
@@ -218,7 +232,7 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
   }
   const shift = snap.data()!;
 
-  if (shift.caregiverId !== context.auth.uid) {
+  if (shift.caregiverId !== uid) {
     throw new functions.https.HttpsError('permission-denied', 'Not your shift');
   }
   if (shift.status !== 'correction_proposed') {
@@ -328,7 +342,7 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
   await textClient(shift.clientId, `${shift.caregiverName} sent a counter-proposal of ${fmtHours(counter.totalHours)} on their hours${counter.lineItemsTotal !== (Number(shift.proposedLineItemsTotal ?? shift.lineItemsTotal) || 0) ? ` with additional charges of $${counter.lineItemsTotal.toFixed(2)}` : ''}. Reply here to accept it, or ask me to escalate it to our team.`);
 
   return { success: true };
-});
+}
 
 /**
  * Admin resolves a disputed shift.
@@ -411,6 +425,8 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
   );
   await textClient(shift.clientId,
     `our team resolved the dispute over ${shift.caregiverName || 'your caregiver'}'s hours. Final: ${fmtHours(finalAmount.totalHours)}. The charge is on your Timesheets page.`);
+  await textCaregiver(shift.caregiverId,
+    `Our team resolved the dispute over your hours${fmtDay(shift.submittedStartTime) ? ` for ${fmtDay(shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'}. Final: ${fmtHours(finalAmount.totalHours)} — $${finalAmount.grossPay.toFixed(2)}. Payment is being processed.`);
 
   return { success: true };
 });
@@ -492,6 +508,7 @@ export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').
     });
 
     await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in ${TIMESHEET_AUTO_APPROVE_HOURS}h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
+    await textCaregiver(shift.caregiverId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so your ${fmtHours(shift.submittedTotalHours)} for ${shift.clientName ?? 'the family'} were auto-approved — $${Number(autoGrossPay).toFixed(2)}. Payment is being processed.`);
     await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The ${TIMESHEET_AUTO_APPROVE_HOURS}h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
     await textClient(shift.clientId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so ${shift.caregiverName ?? 'your caregiver'}'s ${fmtHours(shift.submittedTotalHours)} were auto-approved ($${Number(autoGrossPay).toFixed(2)} to them) and your card is being charged $${((Math.round(Number(autoGrossPay) * 100) + serviceFeeCentsFor(Math.round(Number(autoGrossPay) * 100))) / 100).toFixed(2)} (incl. the 9% service fee).`);
   }
@@ -546,6 +563,14 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
         `Appointment ${doc.id} was blocked from auto-accept: ${billingReviewReason}.`,
         { appointmentId: doc.id, reason: billingReviewReason },
       );
+      // Both Timesheets rows now read "Admin reviewing" — tell both sides (bell + text), 2026-10-01.
+      {
+        const day = fmtDay(shift.submittedStartTime);
+        await pushNotification(shift.caregiverId, 'shift_hours_admin_review', "Correction needs our team's review", `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`, { appointmentId: doc.id });
+        await pushNotification(shift.clientId, 'shift_hours_admin_review', "Correction needs our team's review", `Your correction on ${shift.caregiverName ?? 'your caregiver'}'s hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`, { appointmentId: doc.id });
+        await textCaregiver(shift.caregiverId, `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. Nothing is paid until they decide; we'll text you the outcome.`);
+        await textClient(shift.clientId, `your correction on ${shift.caregiverName ?? 'your caregiver'}'s hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. We'll text you the outcome.`);
+      }
       continue;
     }
 
@@ -580,6 +605,7 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
     });
 
     await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${fmtHours(autoFinal.totalHours)} proposal was accepted.`, { appointmentId: doc.id });
+    await textCaregiver(shift.caregiverId, `You didn't respond to ${shift.clientName ?? 'the family'}'s correction in 24 hours, so their ${fmtHours(autoFinal.totalHours)} proposal is final — $${autoFinal.grossPay.toFixed(2)}.`);
     await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Caregiver did not respond; your proposed ${fmtHours(autoFinal.totalHours)} is final.`, { appointmentId: doc.id });
     await textClient(shift.clientId, `${shift.caregiverName ?? 'Your caregiver'} didn't respond to your correction in 24 hours, so your proposed ${fmtHours(autoFinal.totalHours)} ($${autoFinal.grossPay.toFixed(2)} to them) is final and your card is being charged $${(autoFinal.totalChargeCents / 100).toFixed(2)} (incl. the $${(autoFinal.serviceFeeCents / 100).toFixed(2)} service fee).`);
   }
@@ -807,6 +833,7 @@ export async function settleShiftTransfer(
   });
 
   await pushNotification(shift.caregiverId, 'shift_hours_paid', 'Payment sent', `${(grossCents / 100).toFixed(2)} is on its way.`, { appointmentId });
+  await textCaregiver(shift.caregiverId, `$${(grossCents / 100).toFixed(2)} for your visit with ${shift.clientName ?? 'the family'} is on its way to your bank. It's marked Paid on your Timesheets.`);
   // The family's Timesheets card flips to Paid on this write — tell them over
   // text too (client-notified-of-everything, founder 2026-09-23). Amount = what
   // the card was actually charged (stored at approval), not the caregiver gross.
@@ -1070,6 +1097,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
         pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment needs review', 'We could not complete this visit payment. Evia support is reviewing it.', { appointmentId }),
         textClient(shift.clientId, `We couldn't complete the payment for ${shift.caregiverName ?? 'your caregiver'}'s visit. Please check the card on file (say "update my card" and I'll send the link), then tell me to retry the payment.`),
         pushNotification(shift.caregiverId, 'shift_hours_payment_failed', 'Payment needs review', 'This visit payment could not be completed automatically. Evia support is reviewing it.', { appointmentId }),
+        textCaregiver(shift.caregiverId, `The payment for your visit${fmtDay(shift.finalStartTime ?? shift.submittedStartTime) ? ` on ${fmtDay(shift.finalStartTime ?? shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'} couldn't be completed automatically. Our team is reviewing it; we'll text you when it's resolved.`),
       ]);
     }
 

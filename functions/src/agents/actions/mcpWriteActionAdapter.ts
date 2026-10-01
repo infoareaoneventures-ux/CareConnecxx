@@ -64,18 +64,6 @@ const writeActionConfigs = {
     idempotencyKey: (input: Record<string, unknown>) =>
       `update_shift_task:${input.caregiverId}:${input.shiftId ?? "in_progress"}:${JSON.stringify(input.numbers ?? input.taskKeys ?? input.taskKey ?? "")}:${input.completed ?? "toggle"}`,
   },
-  respond_to_shift_hour_correction: {
-    role: "caregiver",
-    inputSchema: z.object({
-      caregiverId: stringValue,
-      appointmentId: stringValue,
-      decision: z.enum(["accept", "pushback"]),
-    }).passthrough(),
-    auditType: "shift_hour_correction_responded",
-    targetCollection: "shiftHours",
-    idempotencyKey: (input: Record<string, unknown>) =>
-      `respond_to_shift_hour_correction:${input.caregiverId}:${input.appointmentId}:${input.decision}:${input.message ?? ""}`,
-  },
   create_caregiver_referral: {
     role: "caregiver",
     inputSchema: z.object({

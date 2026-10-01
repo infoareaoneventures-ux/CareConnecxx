@@ -61,7 +61,9 @@ const NEW_AGENT_NATIVE_TOOLS = [
   // found them bound but invisible (schemas only, no prompt line).
   "start_shift", "complete_shift", "update_shift_task",
   "respond_to_booking_request", "withdraw_job_application",
-  "respond_to_shift_hour_correction", "create_caregiver_referral",
+  "create_caregiver_referral",
+  // Payments › Timesheets (2026-10-01): the tab + its two modals as flows replaced respond_to_shift_hour_correction / get_shifts.
+  "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
 ];
 
 // Client-side money tools added by the 2026-07-06 parity audit.

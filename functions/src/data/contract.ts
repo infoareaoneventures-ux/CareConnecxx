@@ -123,7 +123,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "appointmentId",
     caraWrites: true,
     webReads: true,
-    notes: "Timesheets. Created server-side when a shift completes (shiftHours.ts) or by Log Hours on a missed visit; Evia answers corrections via respond_to_shift_hour_correction.",
+    notes: "Timesheets. Created ONLY when the caregiver submits hours for a completed shift — the site's Submit hours modal and Evia's start_submit_hours_flow both run shiftHours.ts submitShiftHoursAs (ending a visit or Log Hours writes shifts only). Corrections are answered by the site's Review & Respond and Evia's start_review_correction_flow, both via respondToCorrectionAs.",
   },
   threads: {
     path: "threads/{threadId}/messages",

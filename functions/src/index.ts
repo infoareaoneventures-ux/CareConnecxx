@@ -163,6 +163,8 @@ export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminde
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 // 15 min after a visit's scheduled end: still in progress → FINISH; never started → LOG (founder 2026-09-29)
 export { sendShiftEndReminders } from './scheduled/shiftEndReminder';
+// Caregiver Timesheets reminders (2026-10-01): unsubmitted hours a day after the visit, a correction 3h before it auto-accepts — bell + text, once each
+export { sendCaregiverTimesheetReminders } from './scheduled/caregiverTimesheetReminders';
 export { processDndQueue } from './scheduled/dndQueueProcessor';
 export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';
 // Agentic-reliability wave (2026-07): alert aging digest, hourly failure-spike

@@ -368,7 +368,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
       ...(data.note ? { completionNotes: data.note } : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    await sendMessage(chatId, "Hours logged successfully"); // the page's toast
+    await sendMessage(chatId, "Hours logged successfully. Reply SUBMIT to submit them for payment."); // the page's toast + the Timesheets tab's next step
     return;
   }
   await clear();

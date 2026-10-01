@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // U2 — caregiver action-parity tools:
 //   withdraw_job_application, respond_to_booking_request, start_shift,
 //   complete_shift, update_shift_task, add_visit_note,
-//   respond_to_shift_hour_correction, request_instant_payout (delegation).
+//   request_instant_payout (delegation). (respond_to_shift_hour_correction was replaced by the Timesheets flows, 2026-10-01.)
 //
 // Same firebase-admin mock shape as booking.test.ts: docState backs .doc().get(),
 // collState backs .where().get() (filters are ignored — seed the queried path).
@@ -394,35 +394,6 @@ describe("U2 caregiver action tools", () => {
       hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00" });
       r = await handleToolCall("add_visit_note", { caregiverId: "cg1", shiftId: "s1", text: "   " }) as any;
       expect(r.reason).toBe("empty");
-    });
-  });
-
-  // ── respond_to_shift_hour_correction ───────────────────────────────────────
-  describe("respond_to_shift_hour_correction", () => {
-    it("accept adopts corrected hours and re-enters client review", async () => {
-      hoisted.docState.set("shiftHours/a1", { caregiverId: "cg1", clientId: "c1", status: "correction_requested", correctedHours: 4, hourlyRate: 25 });
-      const r = await handleToolCall("respond_to_shift_hour_correction", { caregiverId: "cg1", appointmentId: "a1", decision: "accept" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.status).toBe("pending_client_review");
-      const sh = hoisted.docState.get("shiftHours/a1");
-      expect(sh.status).toBe("pending_client_review");
-      expect(sh.durationHours).toBe(4);
-      expect(sh.amountCents).toBe(10000);
-    });
-
-    it("pushback sends the hours to admin review and raises an alert", async () => {
-      hoisted.docState.set("shiftHours/a1", { caregiverId: "cg1", clientId: "c1", status: "correction_proposed", correctedHours: 4 });
-      const r = await handleToolCall("respond_to_shift_hour_correction", { caregiverId: "cg1", appointmentId: "a1", decision: "pushback", message: "I was there 5h" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.status).toBe("disputed_admin_review");
-      expect(hoisted.docState.get("shiftHours/a1").status).toBe("disputed_admin_review");
-      expect(hoisted.adds.some((a) => a.path === "admin_alerts" && a.data.type === "shift_hour_dispute")).toBe(true);
-    });
-
-    it("rejects responding when shift hours are not awaiting a correction", async () => {
-      hoisted.docState.set("shiftHours/a1", { caregiverId: "cg1", status: "approved" });
-      const r = await handleToolCall("respond_to_shift_hour_correction", { caregiverId: "cg1", appointmentId: "a1", decision: "accept" }) as any;
-      expect(r._toolError).toBe(true);
     });
   });
 

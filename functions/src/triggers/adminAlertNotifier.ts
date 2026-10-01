@@ -30,6 +30,11 @@ const SMS_NOTIFY_TYPES = new Set([
   // Resend. (The family-emergency button/tool was removed 2026-09-27.)
   "cara_medical_emergency",
   "crisis_notify_requested",
+  // Timesheets reaching the team (2026-10-01): a family escalated a counter, a
+  // correction was blocked from auto-accept, a visit payment failed 5 times.
+  "shift_hours_admin_review",
+  "shift_hours_billing_review",
+  "shift_hours_payment_failed_escalated",
 ]);
 
 function adminSmsText(type: string, alert: Record<string, any>): string {
@@ -40,6 +45,10 @@ function adminSmsText(type: string, alert: Record<string, any>): string {
       return `🚨 Evia: a family texted what sounds like a medical emergency${alert.phone ? ` (${alert.phone})` : ""}. They were told to call 911. Open Admin › Alerts now.`;
     case "crisis_notify_requested":
       return `🚨 Evia: a family replied NOTIFY on a ${alert.crisisKind ?? "medical"} crisis and wants the team${alert.phone ? ` — call ${alert.phone}` : ""}. Open Admin › Alerts now.`;
+    case "shift_hours_admin_review":
+    case "shift_hours_billing_review":
+    case "shift_hours_payment_failed_escalated":
+      return `Evia: a timesheet needs the team — ${String(alert.message ?? alert.title ?? type).slice(0, 200)} Open Admin › Finance.`;
     default:
       return `Evia Alert: ${type} - check admin dashboard.`;
   }

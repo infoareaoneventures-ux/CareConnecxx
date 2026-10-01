@@ -236,7 +236,7 @@ export async function endVisit(caregiverId: string, shiftId: unknown, closingNot
   });
   const items = taskItems(shift);
   const doneCount = items.filter((t) => t.done).length;
-  return { ok: true, shiftId: v.id, alreadyCompleted: false, completedAt: new Date(nowMs).toISOString(), text: `Ended ${clock(nowMs)} — ${visitLine(shift)}.${items.length ? ` Tasks ${doneCount}/${items.length}.` : ""}${notes ? " Your closing note is on the visit." : ""} Thank you.` };
+  return { ok: true, shiftId: v.id, alreadyCompleted: false, completedAt: new Date(nowMs).toISOString(), text: `Ended ${clock(nowMs)} — ${visitLine(shift)}.${items.length ? ` Tasks ${doneCount}/${items.length}.` : ""}${notes ? " Your closing note is on the visit." : ""} Thank you. Reply SUBMIT to submit your hours.` };
 }
 
 // ── The texted keywords (routeCaregiver): START · DONE n · UNDO n · NOTE … · TASKS · FINISH · SKIP ──

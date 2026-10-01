@@ -554,8 +554,9 @@ describe("buildCaregiverSystemPrompt — earnings line (R9, no fabricated money 
     const prompt = buildCaregiverSystemPrompt({ name: "Maria" }, null);
     expect(prompt).not.toContain("$22");
     expect(prompt).not.toContain("earns $");
-    // The payments fact survives; the prompt explicitly forbids guessing a rate.
-    expect(prompt).toContain("Payments are processed automatically after each visit.");
+    // The payments fact survives (the Timesheets rule, 2026-10-01 — nothing is paid until hours are
+    // submitted and approved); the prompt explicitly forbids guessing a rate.
+    expect(prompt).toContain("Getting paid for a visit works like the Timesheets tab");
     expect(prompt).toContain("never state or guess a dollar rate");
   });
 

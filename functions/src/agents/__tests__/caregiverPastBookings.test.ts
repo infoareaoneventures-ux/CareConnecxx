@@ -147,7 +147,7 @@ describe("Log Hours — the modal as a flow, ending in the page's write", () => 
     expect(w).toMatchObject({ status: "completed", loggedManually: true, tasksCompleted: ["0_occasional help", "0_Mobility Assistance_Transfer Assist"], completionNotes: "She was tired but fine.", updatedAt: "__ts__" });
     expect(w.startedAt).toEqual({ __ms: Date.parse("2000-01-01T19:30:00-08:00") });
     expect(w.completedAt).toEqual({ __ms: Date.parse("2000-01-01T20:05:00-08:00") });
-    expect(hoisted.sent.at(-1)).toBe("Hours logged successfully");
+    expect(hoisted.sent.at(-1)).toBe("Hours logged successfully. Reply SUBMIT to submit them for payment.");
     expect(hoisted.sessionWrites.at(-1)).toMatchObject({ logHoursFlowStep: "__delete__" });
   });
 

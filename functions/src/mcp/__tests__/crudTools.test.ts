@@ -99,46 +99,6 @@ import { handleToolCall } from "../server";
 describe("missing CRUD tools", () => {
   beforeEach(() => { hoisted.reset(); });
 
-  describe("get_shifts", () => {
-    it("requires caregiverId or clientId", async () => {
-      const r = await handleToolCall("get_shifts", {}) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("INVALID_INPUT");
-    });
-
-    // 2026-08-31 (Payments/Timesheets audit): fixtures now use the REAL
-    // shiftHours fields (submittedStartTime/EndTime/TotalHours) instead of
-    // date/durationHours/clockInTime/clockOutTime — those never actually
-    // exist on a real doc (createValidatedShiftHours.ts writes only
-    // submitted*/final*), so this test used to pass while masking the exact
-    // bug found live: every real record came back with a null date/hours.
-    it("returns mapped shifts with dollar formatting, newest first", async () => {
-      hoisted.collState.set("shiftHours", [
-        { id: "a1", caregiverId: "cg1", status: "paid", submittedStartTime: "2026-02-01T09:00:00.000Z", submittedEndTime: "2026-02-01T13:00:00.000Z", submittedTotalHours: 4, amountCents: 8800 },
-        { id: "a2", caregiverId: "cg1", status: "pending_client_review", submittedStartTime: "2026-05-01T09:00:00.000Z", submittedEndTime: "2026-05-01T11:00:00.000Z", submittedTotalHours: 2, amountCents: 4400 },
-      ]);
-      const r = await handleToolCall("get_shifts", { caregiverId: "cg1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.shifts.map((s: any) => s.appointmentId)).toEqual(["a2", "a1"]);
-      const a1 = r.shifts.find((s: any) => s.appointmentId === "a1");
-      expect(a1.amountDollars).toBe("$88.00");
-      expect(a1.date).toBe("2026-02-01");
-      expect(a1.clockInTime).toBe("2026-02-01T09:00:00.000Z");
-      expect(a1.clockOutTime).toBe("2026-02-01T13:00:00.000Z");
-      expect(a1.durationHours).toBe(4);
-    });
-
-    it("filters by status when provided", async () => {
-      hoisted.collState.set("shiftHours", [
-        { id: "a1", caregiverId: "cg1", status: "paid", submittedStartTime: "2026-02-01T09:00:00.000Z", amountCents: 100 },
-        { id: "a2", caregiverId: "cg1", status: "pending_client_review", submittedStartTime: "2026-05-01T09:00:00.000Z", amountCents: 100 },
-      ]);
-      const r = await handleToolCall("get_shifts", { caregiverId: "cg1", status: "pending_client_review" }) as any;
-      expect(r.count).toBe(1);
-      expect(r.shifts[0].appointmentId).toBe("a2");
-    });
-  });
-
   // The Interviews tab's Resend rows as a read (2026-09-17, live-caught: the
   // agent inferred "nothing to resend" from unrelated tools).
   describe("get_resendable_booking_requests", () => {

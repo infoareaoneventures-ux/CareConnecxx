@@ -40,6 +40,7 @@ export function routeForNotification(n: RoutableNotification, role: Notification
   }
   if (t.startsWith("account")) return "/caregiver/settings";
   if (t.startsWith("interview") || t === "hire_decision") return "/caregiver/jobs?tab=interviews";
+  if (t.startsWith("shift_hours")) return "/caregiver/payments?tab=timesheets"; // Timesheets events (approved / correction / paid) live on Payments
   if (t.startsWith("booking") || t.startsWith("amendment") || t.startsWith("shift")) return "/caregiver/bookings";
   if (t.includes("payment") || t.includes("payout") || t.includes("membership")) return "/caregiver/payments";
   return "/caregiver/dashboard";
@@ -61,7 +62,7 @@ export function pageLabelFor(path: string): string {
     "/caregiver/settings": "Account Settings",
     "/caregiver/jobs": "Jobs › Interviews",
     "/caregiver/bookings": "My Bookings",
-    "/caregiver/payments": "Payments",
+    "/caregiver/payments": tab === "timesheets" ? "Payments › Timesheets" : "Payments",
     "/caregiver/dashboard": "Dashboard",
   };
   return labels[base] ?? base;

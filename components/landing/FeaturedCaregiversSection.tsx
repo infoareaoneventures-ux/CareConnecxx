@@ -62,7 +62,8 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
                         id: doc.id,
                         name: fullName,
                         location: d.city || d.location?.city || 'Nearby',
-                        rating: d.rating || 5.0,
+                        // No default rating: a caregiver nobody has reviewed shows "No reviews yet" (founder, 2026-09-30).
+                        rating: (d.reviewCount || 0) > 0 ? (d.rating || 0) : 0,
                         reviewCount: d.reviewCount || 0,
                         yearsExp: d.experience || d.yearsExperience || 0,
                         specialties: (d.skills || d.specializations || d.specialties || []).slice(0, 3),
@@ -131,9 +132,9 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
                                             {[...Array(5)].map((_, idx) => (
                                                 <Star key={idx} className={`w-[18px] h-[18px] ${idx < Math.floor(cg.rating) ? 'text-teal-500 fill-current' : 'text-slate-200'}`} />
                                             ))}
-                                            {cg.reviewCount > 0 && (
-                                                <span className="text-sm font-medium text-slate-500 ml-1.5">({cg.reviewCount})</span>
-                                            )}
+                                            {cg.reviewCount > 0
+                                                ? <span className="text-sm font-medium text-slate-500 ml-1.5">({cg.reviewCount})</span>
+                                                : <span className="text-sm text-slate-400 ml-1.5">No reviews yet</span>}
                                         </div>
 
                                         <CaregiverVerificationBadges verified={cg.verified} backgroundCheckStatus={cg.backgroundCheckStatus} />

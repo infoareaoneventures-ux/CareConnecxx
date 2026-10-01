@@ -656,6 +656,7 @@ export default function ClientCaregiverProfile({
             imageUrl: caregiver.photo,
             hourlyRate: caregiver.hourlyRate,
             rating: caregiver.rating,
+            reviewCount: caregiver.reviewCount ?? 0,
             distance: caregiver.distance,
             skills: caregiver.skills,
             experience: Number(caregiver.experience) || 0,

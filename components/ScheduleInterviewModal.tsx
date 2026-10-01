@@ -1,3 +1,4 @@
+import { billedHourlyRate } from '../utils/pricing';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Calendar, Clock, MessageSquare, Briefcase } from 'lucide-react';
@@ -194,11 +195,14 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                         <div>
                             <h3 className="font-bold text-slate-900">{caregiver.name}</h3>
                             {caregiver.hourlyRate && (
-                                <p className="text-sm text-slate-500">${caregiver.hourlyRate}/hr</p>
+                                <p className="text-sm text-slate-500">
+                                    ${caregiver.hourlyRate}/hr <span className="text-xs text-slate-400">· ${billedHourlyRate(Number(caregiver.hourlyRate)).toFixed(2)}/hr billed</span>
+                                </p>
                             )}
-                            {(caregiver.rating != null) && (
-                                <p className="text-sm text-accent-500">★ {Number(caregiver.rating).toFixed(1)}</p>
-                            )}
+                            {/* Same rule as the caregiver's profile page: a rating only once a family has reviewed them — never a default 5.0 (founder, 2026-09-30). */}
+                            {caregiver.rating != null && (caregiver.reviewCount ?? 0) > 0
+                                ? <p className="text-sm text-accent-500">★ {Number(caregiver.rating).toFixed(1)} <span className="text-xs text-slate-400">({caregiver.reviewCount})</span></p>
+                                : <p className="text-sm text-slate-400">No reviews yet</p>}
                         </div>
                     </div>
 

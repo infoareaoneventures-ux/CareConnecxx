@@ -37,7 +37,7 @@ const count = (src: string, needle: string) => src.split(needle).length - 1;
 // file (relative to this __tests__ dir) → minimum combined call count of
 // formatDateForDisplay(...) + formatHHMMForDisplay(...).
 const MIN_FORMATTER_CALLS: Array<[string, number]> = [
-  ["../sms.ts",                                10],
+  ["../sms.ts",                                 0], // only newMessage remains (2026-09-30) — no dates/times in it
   ["../triggers/notificationTriggers.ts",       7],
   // Dropped from 8 to 4 (2026-09-14): the caregiver-cancellation emergency-
   // replacement flow (handleCaregiverCancellation/onShiftUpdated) was removed

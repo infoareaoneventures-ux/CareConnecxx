@@ -225,13 +225,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_notifications",
     description:
-      "The website's notification bell as data: the family's notifications newest first (chat messages excluded — the Inbox owns them), the unread count, and for each one the " +
-      "page the bell opens (page.label / page.path). Use when they ask what's new, what a notification was about, or to clear the bell. action: list (default) | mark_all_read " +
+      "The website's notification bell as data, for a family OR a caregiver: their notifications newest first (chat messages excluded — the Inbox owns them), the unread count, and for each one the " +
+      "page the bell opens (page.label / page.path) — the caregiver's pages for a caregiver (My Bookings, Jobs › Interviews, Payments, Account Settings), the family's for a family. Use when they ask what's new, what a notification was about, or to clear the bell. action: list (default) | mark_all_read " +
       "(the bell's Mark all read) | mark_read (one, needs notificationId) | delete (the trash icon on one, needs notificationId).",
     input_schema: {
       type: "object",
       properties: {
-        userId:         { type: "string", description: "The family's user ID (auto-injected)" },
+        userId:         { type: "string", description: "The user's ID — the family's userId or the caregiver's caregiverId (the same uid; auto-injected)" },
+        role:           { type: "string", enum: ["client", "caregiver"], description: "Whose bell: 'caregiver' in a caregiver conversation. Defaults to the user's recorded role." },
         action:         { type: "string", enum: ["list", "mark_all_read", "mark_read", "delete"], description: "Default list" },
         notificationId: { type: "string", description: "For mark_read / delete: the id from a previous list" },
         show:           { type: "number", description: "How many to include in the summary line (default 5; items always has all of them)" },
@@ -3377,7 +3378,12 @@ async function executeToolCall(
           await deleteNotification(nfUid, String(input.notificationId));
           return { success: true, instruction: "Removed from their bell — confirm in a few words." };
         }
-        const nfPage = await readNotificationsPage(nfUid, "client", { show: typeof input.show === "number" ? input.show : 5 });
+        // Whose bell: the role the agent passes, else the user's recorded role —
+        // a caregiver's items open caregiver pages (2026-09-30; this was hard-coded "client").
+        const nfRole: "client" | "caregiver" = input.role === "caregiver" || input.role === "client"
+          ? input.role
+          : ((await db.collection("users").doc(nfUid).get().catch(() => null))?.data()?.userType === "caregiver" ? "caregiver" : "client");
+        const nfPage = await readNotificationsPage(nfUid, nfRole, { show: typeof input.show === "number" ? input.show : 5 });
         logAudit({ eventType: "health_data_accessed", userId: nfUid, data: { source: "mcp:get_notifications", total: nfPage.total, unread: nfPage.unreadCount } }).catch(() => {});
         return { success: true, results: nfPage, instruction: "This is the bell exactly as the site shows it. Answer from items; when you mention one, name the page it opens (page.label). Never invent a notification." };
       }

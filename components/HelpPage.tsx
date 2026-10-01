@@ -254,7 +254,7 @@ const generalContent = [
     faqs: [
       {
         q: 'The app is not loading. What should I do?',
-        a: 'Try refreshing the page or clearing your browser cache. If using the mobile app, close and reopen it or check for updates in the App Store / Google Play. If the issue persists, contact support@eviacares.com with a description of the problem.',
+        a: 'Try refreshing the page or clearing your browser cache. If the issue persists, contact support@eviacares.com with a description of the problem.',
       },
       {
         q: 'I forgot my password. How do I reset it?',

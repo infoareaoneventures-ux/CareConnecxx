@@ -21,7 +21,6 @@ import { useAccessGates } from '../hooks/useAccessGates';
 import { useCareConnex } from '../context/CareConnexContext';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import ClientCaregiverProfile from './ClientCaregiverProfile';
-import { SERVICE_FEE_PERCENT_LABEL } from '../utils/pricing';
 
 interface Caregiver {
   id: string;
@@ -832,7 +831,7 @@ export default function FindCaregivers() {
             </div>
 
             <p className="text-sm text-slate-500 mb-3">
-              {filteredCaregivers.length} caregiver{filteredCaregivers.length !== 1 ? 's' : ''} found <span className="font-normal text-slate-400">· rates are the caregiver's; a {SERVICE_FEE_PERCENT_LABEL} service fee is added to each visit</span>
+              {filteredCaregivers.length} caregiver{filteredCaregivers.length !== 1 ? 's' : ''} found
             </p>
 
             {filteredCaregivers.length === 0 ? (
@@ -901,6 +900,7 @@ export default function FindCaregivers() {
             imageUrl: interviewCaregiver.photoURL,
             hourlyRate: interviewCaregiver.hourlyRate,
             rating: interviewCaregiver.rating,
+            reviewCount: interviewCaregiver.reviewCount ?? 0,
             distance: interviewCaregiver.distance,
             skills: interviewCaregiver.skills || [],
             experience: typeof interviewCaregiver.experience === 'number' ? interviewCaregiver.experience : 0,

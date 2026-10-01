@@ -500,6 +500,31 @@ describe("communication tools", () => {
     });
   });
 
+  // 2026-09-30: the caregiver's bell — the same hook query, and each item names the
+  // CAREGIVER's page (My Bookings / Jobs › Interviews / Payments), not the family's.
+  describe("get_notifications — whose bell", () => {
+    const seed = () => hoisted.collState.set("users/cg1/notifications", [
+      { id: "n1", type: "booking_request", title: "New Booking Request", body: "Basra Yousuf sent you a booking request.", isRead: false, createdAt: "2026-09-29T19:31:00.000Z" },
+      { id: "n2", type: "interview_request", title: "New Interview Request", body: "…", isRead: true, createdAt: "2026-09-28T16:00:00.000Z" },
+      { id: "n3", type: "message", title: "msg", body: "hidden — the Inbox owns chat", isRead: false, createdAt: "2026-09-28T15:00:00.000Z" },
+    ]);
+    it("role caregiver → caregiver pages; chat messages excluded; unread counted like the badge", async () => {
+      seed();
+      const r = await handleToolCall("get_notifications", { userId: "cg1", role: "caregiver" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.results.items.map((i: any) => [i.type, i.page.path])).toEqual([["booking_request", "/caregiver/bookings"], ["interview_request", "/caregiver/jobs?tab=interviews"]]);
+      expect(r.results.unreadCount).toBe(1);
+    });
+    it("no role passed → the user's recorded role decides (a caregiver record → caregiver pages; a family → family pages)", async () => {
+      seed();
+      hoisted.docState.set("users/cg1", { userType: "caregiver" });
+      const cg = await handleToolCall("get_notifications", { userId: "cg1" }) as any;
+      expect(cg.results.items[0].page.path).toBe("/caregiver/bookings");
+      hoisted.docState.set("users/cg1", { userType: "client" });
+      const fam = await handleToolCall("get_notifications", { userId: "cg1" }) as any;
+      expect(fam.results.items[0].page.path).toBe("/client/bookings?tab=active");
+    });
+  });
   // 2026-08-31: Messages/Inbox parity — the website's "Delete conversation"
   // Inbox menu action (chatService.ts's deleteConversation) had no Evia
   // equivalent at all.

@@ -5465,7 +5465,7 @@ async function handleJobConfirmPost(
   if (norm === "YES" || norm === "Y" || norm === "YEP" || norm === "SURE" || norm === "OK" || norm === "OKAY") {
     const uid = session.userId as string | undefined;
     if (!uid) {
-      await sendMessage(chatId, "Something went wrong — please try again or head to the app to complete your care request.");
+      await sendMessage(chatId, "Something went wrong. Reply and we'll pick up where we left off.");
       return;
     }
 

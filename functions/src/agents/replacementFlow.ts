@@ -155,8 +155,8 @@ async function handleReplacementBackOut(phone: string, chatId: string, session: 
   await sendMessage(chatId, await generateCaraMessage({
     audience: "family",
     language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
-    context: "The family decided not to send a replacement request for their cancelled visit after all. Warmly confirm nothing was sent, and that the visit still shows Needs Replacement in the app whenever they want to pick this back up.",
-    fallback: "No problem — I haven't sent anything. The visit still shows Needs Replacement in the app whenever you want to pick this back up.",
+    context: "The family decided not to send a replacement request for their cancelled visit after all. Confirm nothing was sent and that the visit still shows Needs Replacement; invite them to text you whenever they want to pick it back up. Never send them to the website.",
+    fallback: "No problem — I haven't sent anything. The visit still shows Needs Replacement. Text me whenever you want to pick this back up.",
     maxTokens: 80,
   }));
 }
@@ -212,7 +212,7 @@ export async function startReplacementFlow(
   if (!loaded.ok) {
     await sendMessage(chatId, loaded.code === "INVALID_INPUT"
       ? "That visit isn't waiting on a replacement anymore — nothing to do there."
-      : "I couldn't find that visit. Please check your bookings in the app and try again.");
+      : "I couldn't find that visit. Tell me which day it is and I'll look again.");
     return { started: false, reason: loaded.code.toLowerCase() };
   }
   const shift = loaded.shift;
@@ -546,7 +546,7 @@ async function commitReplacement(phone: string, chatId: string, session: AgentSe
   });
   if (!created.ok) {
     await clearFlow(phone);
-    await sendMessage(chatId, `I couldn't reach ${data.caregiverName}'s profile to send that, so nothing was sent. You can pick someone else from the app's Find Replacement button, or ask me again.`);
+    await sendMessage(chatId, `I couldn't reach ${data.caregiverName}'s profile to send that, so nothing was sent. Tell me who else you'd like and I'll send it to them.`);
     return;
   }
   logAudit({

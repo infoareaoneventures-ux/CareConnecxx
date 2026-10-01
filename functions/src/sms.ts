@@ -9,7 +9,6 @@ import { sendToPhone, listPhoneNumbers, createOrUpdateContactCard, LinqService }
 import { checkRateLimit, RATE_LIMITS, getClientIdentifier } from "./rateLimit";
 import { getAppUrl } from "./config/appUrl";
 import { requireAdmin } from "./admin/requireAdmin";
-import { formatDateForDisplay, formatHHMMForDisplay } from "./utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -184,56 +183,20 @@ export async function sendSMSToUser(
 // originally — some callers formatted, most didn't). formatDateForDisplay /
 // formatHHMMForDisplay are no-ops on an already-formatted string, so this is
 // safe even if a caller does pass a pre-formatted value.
+// The one text template still in use (notifications.ts onMessageSent). The ten
+// others that lived here — booking confirmed / new request / cancelled,
+// interview scheduled / reminder, shift reminder, payment received, background
+// check, callout, backup assigned — were never called and all ended with "Open
+// app…"; removed 2026-09-30 (founder: Evia finishes the job by text; nothing
+// sends a person to the website).
 export const SMS_TEMPLATES = {
-  bookingConfirmed: (caregiverName: string, date: string, time: string) =>
-    `Evia: Your booking with ${caregiverName} is confirmed for ${formatDateForDisplay(date)} at ${formatHHMMForDisplay(time)}. View details in the app.`,
-
-  newBookingRequest: (clientName: string, date: string, time: string) =>
-    `Evia: New booking! ${clientName} booked you for ${formatDateForDisplay(date)} at ${formatHHMMForDisplay(time)}. Open app to confirm.`,
-
-  bookingCancelled: (name: string, date: string, reason?: string) =>
-    `Evia: ${name} cancelled the appointment on ${formatDateForDisplay(date)}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
-
   // The message itself rides along (Inbox parity, 2026-09-17); the recipient can
-  // reply right here and Evia posts it back into the same thread.
+  // reply right here and Evia posts it back into the same thread. An image-only
+  // message is the one thing text cannot carry, so that line names the Inbox.
   newMessage: (senderName: string, text?: string) =>
     text
       ? `Evia: New message from ${senderName}: "${text.slice(0, 1000)}" — reply here and I'll pass it along.`
-      : `Evia: New message from ${senderName}. Open the app to reply.`,
-
-  interviewScheduled: (name: string, dateTime: string) =>
-    `Evia: Video interview with ${name} scheduled for ${dateTime}. Open app to join when ready.`,
-
-  interviewReminder: (name: string, minutesUntil: number) =>
-    `Evia: Reminder! Your interview with ${name} starts in ${minutesUntil} minutes. Open app to join.`,
-
-  shiftReminder: (clientName: string, time: string) =>
-    `Evia: Reminder! Your shift with ${clientName} starts at ${formatHHMMForDisplay(time)}. Don't forget to clock in!`,
-
-  paymentReceived: (amount: string) =>
-    `Evia: Payment of ${amount} has been deposited to your account. View earnings in app.`,
-
-  backgroundCheckComplete: (status: "clear" | "flagged") =>
-    status === "clear"
-      ? `Evia: Great news! Your background check is complete and clear. You're ready to accept bookings!`
-      : `Evia: Your background check requires review. Please contact support for next steps.`,
-
-  caregiverCallout: (
-    caregiverName: string,
-    date: string,
-    time: string,
-    backupCount: number,
-    backupNames: string
-  ) =>
-    `Evia: ${caregiverName} cancelled your ${formatDateForDisplay(date)} at ${formatHHMMForDisplay(time)} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
-
-  backupCaregiverAssigned: (
-    clientName: string,
-    date: string,
-    time: string,
-    address?: string
-  ) =>
-    `Evia: You've been assigned to care for ${clientName} on ${formatDateForDisplay(date)} at ${formatHHMMForDisplay(time)}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
+      : `Evia: ${senderName} sent you a photo in your Inbox.`,
 };
 
 // ── Phone health check (Linq API) ────────────────────────────────────────────

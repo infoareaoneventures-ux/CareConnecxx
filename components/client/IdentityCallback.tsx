@@ -94,7 +94,7 @@ export default function IdentityCallback() {
                     onClick={() => navigate(next, { replace: true })}
                     className="text-xs text-slate-500 hover:text-slate-700 underline"
                   >
-                    Continue in the app
+                    Continue
                   </button>
                 </>
               ) : (
@@ -159,7 +159,7 @@ export default function IdentityCallback() {
                     onClick={() => navigate(next, { replace: true })}
                     className="text-xs text-slate-500 hover:text-slate-700 underline"
                   >
-                    Continue in the app
+                    Continue
                   </button>
                 </>
               ) : (

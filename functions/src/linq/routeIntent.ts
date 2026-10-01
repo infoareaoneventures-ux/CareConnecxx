@@ -435,13 +435,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           );
         } else {
           await sendMessage(chatId,
-            "I wasn't able to generate a payment update link right now. Please visit the app settings to update your billing, or reply again and I'll try once more."
+            "I couldn't make the payment link just now. Reply and I'll try once more."
           );
         }
       } catch (err) {
         console.error("UPDATE_PAYMENT_METHOD error:", err);
         await sendMessage(chatId,
-          "I ran into an issue generating your billing link. You can update your payment method in the app under Settings → Billing."
+          "I couldn't make the payment link just now. Reply and I'll try once more."
         );
       }
       return;

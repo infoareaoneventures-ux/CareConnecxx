@@ -767,11 +767,11 @@ export const onShiftStatusChanged = functions.firestore
         await addNotification(after.clientId, {
           type: 'shift_needs_replacement',
           title: 'Visit Needs a Replacement',
-          body: `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText} — find a replacement or skip it in the app.`,
+          body: `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText} — find a replacement or skip it.`,
           data: { shiftId: context.params.shiftId },
         });
         await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}. Text me and I'll pull up replacement caregivers, or open the app to see options.`);
+          `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}. Text me to find a replacement, or to skip that visit.`);
       } else if (after.status === 'cancelled' && after.supersededByBookingId) {
         // The original visit closed out because a REPLACEMENT was accepted
         // (shiftGenerator writes cancelled + supersededByBookingId). The family

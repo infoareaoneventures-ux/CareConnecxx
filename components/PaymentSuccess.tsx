@@ -55,7 +55,7 @@ export const PaymentSuccess: React.FC<PaymentSuccessProps> = ({ onNavigate }) =>
               onClick={() => onNavigate('client')}
               className="text-sm text-slate-500 hover:text-slate-700 underline"
             >
-              Continue in the app
+              Continue
             </button>
           </>
         ) : (

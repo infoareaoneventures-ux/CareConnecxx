@@ -1204,8 +1204,8 @@ async function handleJpConfirmPost(
     await sendMessage(chatId, await generateCaraMessage({
       audience: "family",
       language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
-      context: "You hit a snag finding the family's account while trying to post their job. Warmly apologize, ask them to try again, and mention they can also post from the app. Keep it reassuring, not technical.",
-      fallback: "I couldn't find your account. Please try again or visit the app to post.",
+      context: "You hit a snag finding the family's account while trying to post their job. Apologize briefly and ask them to reply so you can post it again. Never send them to the website. Reassuring, not technical.",
+      fallback: "Sorry, that didn't go through. Reply and I'll post it again.",
       maxTokens: 80,
     }));
     return;
@@ -1240,8 +1240,8 @@ async function handleJpConfirmPost(
     await sendMessage(chatId, await generateCaraMessage({
       audience: "family",
       language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
-      context: "Something went wrong while posting the family's job. Warmly apologize, ask them to try again, and mention they can also post directly in the app. Reassuring, not technical.",
-      fallback: "Sorry, I ran into a problem posting your job. Please try again or visit the app directly.",
+      context: "Something went wrong while posting the family's job. Apologize briefly and ask them to reply so you can post it again. Never send them to the website. Reassuring, not technical.",
+      fallback: "Sorry, that didn't go through. Reply and I'll post it again.",
       maxTokens: 80,
     }));
   }

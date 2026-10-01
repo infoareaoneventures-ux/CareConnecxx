@@ -203,7 +203,7 @@ describe("find_nearby_caregivers — the Find Caregivers page", () => {
       expect(r).toMatchObject({ success: true, total: 2, shownCount: 2, hasMore: false });
       expect(r.instruction).toContain("do NOT repeat");
       const texts = sentTexts();
-      expect(texts[0]).toBe("2 caregivers found:\n(Rates are the caregiver's — a 9% service fee is added to each visit.)");
+      expect(texts[0]).toBe("2 caregivers found:");
       expect(texts[1]).toBe("Basra Yousuf — $25/hr\n★ 4.9 (12 reviews) · 10 yrs experience · San Jose, CA 95134 · Mobility Assistance, Dementia / Memory Care +2 · Background checked\nTap to view Basra's profile: https://app.test/p/b");
       expect(texts[2]).toContain("No reviews yet");
       const sess = hoisted.docState.get(`agent_sessions/${PHONE}`);
@@ -219,12 +219,12 @@ describe("find_nearby_caregivers — the Find Caregivers page", () => {
       expect(first.shown.map((c: any) => c.id)).toEqual(["a", "b", "c", "d"]);
       expect(first.hasMore).toBe(true);
       expect(first.instruction).toContain("offset = 4");
-      expect(sentTexts()[0]).toBe("6 caregivers found — here are the first 4:\n(Rates are the caregiver's — a 9% service fee is added to each visit.)");
+      expect(sentTexts()[0]).toBe("6 caregivers found — here are the first 4:");
       sendMessage.mockClear();
       const more = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, offset: 4 }) as any;
       expect(more.shown.map((c: any) => c.id)).toEqual(["e", "f"]);
       expect(more.hasMore).toBe(false);
-      expect(sentTexts()[0]).toBe("6 caregivers found — here are the next 2:\n(Rates are the caregiver's — a 9% service fee is added to each visit.)");
+      expect(sentTexts()[0]).toBe("6 caregivers found — here are the next 2:");
     });
 
     it("texts the page's empty state: filters set → 'No caregivers match your filters'; none set → 'No caregivers available yet' + offer to post a care request", async () => {

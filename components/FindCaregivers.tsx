@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { billedHourlyRate } from '../utils/pricing';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Heart, MapPin, Star, CheckCircle, Sparkles, TrendingUp,
@@ -1037,7 +1038,7 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
             {caregiver.hourlyRate > 0 && (
               <>
                 <span className="text-slate-300">·</span>
-                <span className="text-[17px] font-semibold text-slate-800">${caregiver.hourlyRate}/hr</span>
+                <span className="text-[17px] font-semibold text-slate-800">${caregiver.hourlyRate}/hr <span className="text-xs font-normal text-slate-400">· ${billedHourlyRate(Number(caregiver.hourlyRate)).toFixed(2)}/hr billed</span></span>
               </>
             )}
           </div>

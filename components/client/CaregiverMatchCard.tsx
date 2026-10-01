@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { formatExperience } from '../../utils/experience';
+import { billedHourlyRate } from '../../utils/pricing';
 import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle, Briefcase, RefreshCw } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
@@ -117,7 +118,7 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
           {caregiver.hourlyRate > 0 && (
             <div className="flex items-center gap-3.5 text-slate-700">
               <DollarSign className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
-              <span className="text-[17px] font-semibold">${caregiver.hourlyRate}/hr</span>
+              <span className="text-[17px] font-semibold">${caregiver.hourlyRate}/hr <span className="text-xs font-normal text-slate-400">· ${billedHourlyRate(Number(caregiver.hourlyRate)).toFixed(2)}/hr billed</span></span>
             </div>
           )}
         </div>

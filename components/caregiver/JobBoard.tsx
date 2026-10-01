@@ -172,42 +172,6 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     const [cgLat, setCgLat] = useState<number | null>(null);
     const [cgLng, setCgLng] = useState<number | null>(null);
 
-    const LS_APPS_KEY = 'careconnex.jobboard.lastCheckedApps';
-    const LS_IVS_KEY  = 'careconnex.jobboard.lastCheckedInterviews';
-
-    const MIN_VALID_TS = new Date('2024-01-01').getTime();
-
-    const [lastCheckedApps, setLastCheckedApps] = useState<number>(() => {
-        const v = localStorage.getItem(LS_APPS_KEY);
-        const parsed = v ? parseInt(v, 10) : 0;
-        if (parsed > MIN_VALID_TS) return parsed;
-        const now = Date.now();
-        localStorage.setItem(LS_APPS_KEY, String(now));
-        return now;
-    });
-    const [lastCheckedIvs, setLastCheckedIvs] = useState<number>(() => {
-        const v = localStorage.getItem(LS_IVS_KEY);
-        const parsed = v ? parseInt(v, 10) : 0;
-        if (parsed > MIN_VALID_TS) return parsed;
-        const now = Date.now();
-        localStorage.setItem(LS_IVS_KEY, String(now));
-        return now;
-    });
-
-    const LS_IV_FILTER_KEY  = (f: string) => `careconnex.jobboard.lastChecked.iv.${f}`;
-
-    const [lastCheckedIvFilter, setLastCheckedIvFilter] = useState<Record<string, number>>(() => {
-        const now = Date.now();
-        const result: Record<string, number> = {};
-        (['pending', 'accepted', 'completed', 'declined', 'cancelled'] as const).forEach(f => {
-            const v = localStorage.getItem(`careconnex.jobboard.lastChecked.iv.${f}`);
-            const parsed = v ? parseInt(v, 10) : 0;
-            if (parsed > MIN_VALID_TS) { result[f] = parsed; }
-            else { localStorage.setItem(`careconnex.jobboard.lastChecked.iv.${f}`, String(now)); result[f] = now; }
-        });
-        return result;
-    });
-
     const { applications, loading: applicationsLoading, withdrawApplication } = useMyApplications(profile?.uid || null);
 
     useEffect(() => {
@@ -703,28 +667,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         <div className="animate-slide-in">
             {/* Tabs */}
             {(() => {
-                const tsMs = (v: any): number => {
-                    if (!v) return 0;
-                    if (typeof v.toMillis === 'function') return v.toMillis();
-                    if (typeof v.toDate === 'function') return v.toDate().getTime();
-                    const ms = new Date(v).getTime();
-                    return isNaN(ms) ? 0 : ms;
-                };
-                const newApps = applications.filter(a => tsMs(a.appliedAt) > lastCheckedApps).length;
-                const newIvs  = visibleInterviews.filter(iv => tsMs(iv.createdAt || iv.scheduledAt) > lastCheckedIvs).length;
-
-                const markApps = () => {
-                    const now = Date.now();
-                    localStorage.setItem(LS_APPS_KEY, String(now));
-                    setLastCheckedApps(now);
-                    setActiveTab('my-applications');
-                };
-                const markIvs = () => {
-                    const now = Date.now();
-                    localStorage.setItem(LS_IVS_KEY, String(now));
-                    setLastCheckedIvs(now);
-                    setActiveTab('interviews');
-                };
+                // Live count of interview requests waiting on the caregiver's answer —
+                // the same rule as the Bookings page's Requests badge (not "new since
+                // last clicked", which lived in this browser only).
+                const pendingIvCount = visibleInterviews.filter(iv => iv.status === 'pending').length;
 
                 return (
                     <div className="flex flex-wrap gap-2 mb-6">
@@ -736,25 +682,20 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                         </button>
                         {!hideApplicationsTab && (
                             <button
-                                onClick={markApps}
+                                onClick={() => setActiveTab('my-applications')}
                                 className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${activeTab === 'my-applications' ? 'bg-primary-500 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
                             >
                                 My Applications
-                                {newApps > 0 && activeTab !== 'my-applications' && (
-                                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
-                                        {newApps}
-                                    </span>
-                                )}
                             </button>
                         )}
                         <button
-                            onClick={markIvs}
+                            onClick={() => setActiveTab('interviews')}
                             className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${activeTab === 'interviews' ? 'bg-primary-500 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
                         >
                             Interviews
-                            {newIvs > 0 && activeTab !== 'interviews' && (
+                            {pendingIvCount > 0 && activeTab !== 'interviews' && (
                                 <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
-                                    {newIvs}
+                                    {pendingIvCount}
                                 </span>
                             )}
                         </button>
@@ -1087,26 +1028,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             {(['all', 'pending', 'accepted', 'completed', 'declined', 'cancelled'] as const).map(f => {
                                 const total = f === 'all' ? visibleInterviews.length : visibleInterviews.filter(iv => iv.status === f).length;
                                 if (f !== 'all' && total === 0) return null;
-                                const newCount = f === 'all' ? 0 : visibleInterviews.filter(iv => {
-                                    if (iv.status !== f) return false;
-                                    const tsMs = (v: any): number => {
-                                        if (!v) return 0;
-                                        if (typeof v.toMillis === 'function') return v.toMillis();
-                                        if (typeof v.toDate === 'function') return v.toDate().getTime();
-                                        const ms = new Date(v).getTime();
-                                        return isNaN(ms) ? 0 : ms;
-                                    };
-                                    return tsMs(iv.createdAt || iv.scheduledAt) > (lastCheckedIvFilter[f] ?? 0);
-                                }).length;
+                                // Only Pending waits on the caregiver — it carries the live count.
+                                const newCount = f === 'pending' ? total : 0;
                                 return (
-                                    <button key={f} onClick={() => {
-                                        setIvFilter(f);
-                                        if (f !== 'all') {
-                                            const now = Date.now();
-                                            localStorage.setItem(LS_IV_FILTER_KEY(f), String(now));
-                                            setLastCheckedIvFilter(prev => ({ ...prev, [f]: now }));
-                                        }
-                                    }} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${ivFilter === f ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
+                                    <button key={f} onClick={() => setIvFilter(f)} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${ivFilter === f ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
                                         {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
                                         {newCount > 0 && ivFilter !== f && (
                                             <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">{newCount}</span>

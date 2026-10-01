@@ -26,6 +26,7 @@ import * as admin from "firebase-admin";
 import { isCaregiverBookable, type CaregiverEligibilityFields } from "../utils/caregiverEligibility";
 import { haversineDistanceMiles, hasValidTransportDocs } from "./caregiverMatchScoring";
 import { getAppUrl } from "../config/appUrl";
+import { billedHourly } from "./caregiverProfilePage";
 
 const db = admin.firestore();
 
@@ -266,7 +267,8 @@ export function caregiverCardText(c: CaregiverCard): string {
     : c.state === "rebook" ? "Worked with you before — can re-book"
     : "";
   const bits = [ratingLabel, exp, where, skills, c.verified ? "Background checked" : "", c.isFavorite ? "♥ Favorite" : "", stateLabel].filter(Boolean);
-  return `${c.name} — $${c.hourlyRate}/hr\n${bits.join(" · ")}\nTap to view ${c.firstName || c.name.split(" ")[0]}'s profile: ${c.profileUrl}`;
+  // Rate line = the site's card (FindCaregivers / CaregiverMatchCard): caregiver rate + what the family is billed.
+  return `${c.name} — $${c.hourlyRate}/hr · $${billedHourly(c.hourlyRate).toFixed(2)}/hr billed\n${bits.join(" · ")}\nTap to view ${c.firstName || c.name.split(" ")[0]}'s profile: ${c.profileUrl}`;
 }
 
 export function describeActiveFilters(f: CaregiverSearchFilters): string[] {

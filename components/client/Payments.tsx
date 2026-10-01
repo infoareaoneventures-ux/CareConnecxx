@@ -850,9 +850,9 @@ export const Payments: React.FC = () => {
             {/* Status filter */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {([
-                { id: 'needs-review', label: 'Needs Review', count: pendingCount },
-                { id: 'history',      label: 'History',      count: historyRows.length },
-              ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
+                { id: 'needs-review', label: 'Needs Review', count: pendingCount,       alert: true  },
+                { id: 'history',      label: 'History',      count: historyRows.length, alert: false },
+              ] as { id: StatusFilter; label: string; count: number; alert: boolean }[]).map(f => (
                 <button
                   key={f.id}
                   onClick={() => { setStatusFilter(f.id); if (f.id !== 'history') setShowReport(false); }}
@@ -863,7 +863,11 @@ export const Payments: React.FC = () => {
                   }`}
                 >
                   {f.label}
-                  {f.count > 0 && <span className={`text-[10px] font-bold ${statusFilter === f.id ? 'text-white/80' : 'text-slate-400'}`}>{f.count}</span>}
+                  {f.count > 0 && (
+                    f.alert && statusFilter !== f.id
+                      ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">{f.count}</span>
+                      : <span className={`text-[10px] font-bold ${statusFilter === f.id ? 'text-white/80' : 'text-slate-400'}`}>{f.count}</span>
+                  )}
                 </button>
               ))}
               {statusFilter === 'history' && (

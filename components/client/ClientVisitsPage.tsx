@@ -1897,7 +1897,9 @@ export const ClientVisitsPage: React.FC = () => {
       <main className="max-w-3xl mx-auto px-4 py-6">
         <div className="flex gap-2 mb-6 flex-wrap">
           {([
-            { id: 'requests' as Tab, label: 'Requests', icon: <Clock className="w-4 h-4" />, badge: pendingBookings.length + pendingAmendments.length },
+            // No pill: everything on Requests was sent BY the family and waits on the caregiver
+            // (the only button is Cancel). A red number means "you have to act here" site-wide.
+            { id: 'requests' as Tab, label: 'Requests', icon: <Clock className="w-4 h-4" /> },
             { id: 'active'   as Tab, label: 'Active Bookings', icon: <CalendarCheck className="w-4 h-4" /> },
             { id: 'past'     as Tab, label: 'Past Bookings', icon: <History className="w-4 h-4" /> },
           ]).map(t => (
@@ -1911,11 +1913,6 @@ export const ClientVisitsPage: React.FC = () => {
               }`}
             >
               {t.icon}{t.label}
-              {t.badge ? (
-                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full leading-none ${tab === t.id ? 'bg-white text-primary-600' : 'bg-amber-100 text-amber-700'}`}>
-                  {t.badge}
-                </span>
-              ) : null}
             </button>
           ))}
         </div>

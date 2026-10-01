@@ -2,6 +2,7 @@ import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Sentry } from '../lib/sentry';
+import { isChunkLoadError, attemptChunkRecovery } from '../utils/chunkRecovery';
 
 interface Props {
     children: ReactNode;
@@ -13,48 +14,9 @@ interface State {
     recovering: boolean;
 }
 
-// Lazy-route chunk fetches fail with these messages when a cached app shell
-// references hashed assets purged by a newer deploy (the SPA rewrite returns
-// index.html for the missing chunk, so Safari says "Importing a module script
-// failed" instead of 404).
-const isChunkLoadError = (error: Error | null): boolean => {
-    const msg = error?.message ?? '';
-    return (
-        /Importing a module script failed/i.test(msg) ||
-        /Failed to fetch dynamically imported module/i.test(msg) ||
-        /error loading dynamically imported module/i.test(msg) ||
-        /ChunkLoadError/i.test(msg) ||
-        error?.name === 'ChunkLoadError'
-    );
-};
-
-const RECOVERY_FLAG = 'evia_chunk_recovery_attempted';
-
-// Drop every SW cache + registration so the reload fetches the current deploy,
-// then reload. Guarded to one attempt per tab session so a genuinely broken
-// deploy can't cause a reload loop.
-const attemptChunkRecovery = async (): Promise<boolean> => {
-    try {
-        if (sessionStorage.getItem(RECOVERY_FLAG)) return false;
-        sessionStorage.setItem(RECOVERY_FLAG, '1');
-    } catch {
-        return false;
-    }
-    try {
-        if ('caches' in window) {
-            const keys = await caches.keys();
-            await Promise.all(keys.map((k) => caches.delete(k)));
-        }
-        if ('serviceWorker' in navigator) {
-            const regs = await navigator.serviceWorker.getRegistrations();
-            await Promise.all(regs.map((r) => r.unregister()));
-        }
-    } catch {
-        // Even if cleanup partially fails, a reload is still the best next step.
-    }
-    window.location.reload();
-    return true;
-};
+// Lazy-route chunk fetches fail when a tab's app shell predates the latest
+// deploy — see utils/chunkRecovery.ts for the rule (one reload per failing
+// chunk per minute; the same chunk failing again falls through to the card).
 
 export class ErrorBoundary extends Component<Props, State> {
     public state: State = {
@@ -74,7 +36,7 @@ export class ErrorBoundary extends Component<Props, State> {
         });
         if (isChunkLoadError(error)) {
             this.setState({ recovering: true });
-            attemptChunkRecovery().then((reloading) => {
+            attemptChunkRecovery(error).then((reloading) => {
                 if (!reloading) this.setState({ recovering: false });
             });
         }

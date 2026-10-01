@@ -4,8 +4,13 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { preloadCriticalResources, reportWebVitals } from './utils/performance';
 import { initSentry } from './lib/sentry';
+import { installChunkRecovery } from './utils/chunkRecovery';
 
 initSentry();
+
+// A tab opened before the latest deploy reloads itself the moment one of its
+// stale lazy-route chunks fails to load (instead of showing the error card).
+installChunkRecovery();
 
 // Preload critical resources before React renders
 preloadCriticalResources();

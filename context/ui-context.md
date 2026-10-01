@@ -49,6 +49,7 @@ Common usage: page bg `bg-neutral-50`, surfaces `bg-white`, primary text `text-n
 - **Mobile-first:** min touch target 44×44px under 640px; safe-area insets for notched devices (`.safe-area-bottom`, `.safe-area-inset`); larger video controls on mobile.
 - **Motion:** respects `prefers-reduced-motion`. Helpers: `.fade-in`, `.animate-slide-in`, `.skeleton` loading shimmer, `.mic-active` pulse for the voice interface.
 - **Button variants:** `primary` (dark tactile pill), `secondary`, `outline`, and `brand` — the caregiver pages' blue `bg-primary-600` CTA (Apply Now on the dashboard and Jobs page match, 2026-09-30).
+- **Tab pills + alert badges (both roles, 2026-09-30):** selected tab = `bg-primary-500 text-white` pill, selected sub-chip = `bg-primary-600`; a red `bg-red-500` number pill on a tab/chip means "something here waits on you", computed from LIVE data (pending requests, pending interviews, unsubmitted shifts, corrections to answer) — never a per-browser "new since last clicked" timestamp, never amber. Informational totals are plain `(n)` text, not a pill. Family side: Posts = applicants to review, Interviews = caregiver-proposed times, Timesheets = hours to approve / counters; My Bookings Requests has NO pill (those wait on the caregiver).
 - **Special button styles:** `.btn-depth-primary` / `.btn-depth-secondary` (depth-gradient buttons), `.bg-noise-overlay` (subtle texture).
 
 ## Rules

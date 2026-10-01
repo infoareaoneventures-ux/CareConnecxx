@@ -224,29 +224,12 @@ export const PostsPage: React.FC = () => {
   const [cgWeeklyAvail, setCgWeeklyAvail] = useState<Record<string, any[]>>({});
   const [cgBookedSlots, setCgBookedSlots] = useState<Record<string, Array<{s:number;e:number}>>>({});
 
-  const LS_IVS_KEY = 'careconnex.posts.lastCheckedInterviews';
-  const MIN_VALID_TS = new Date('2024-01-01').getTime();
-  const [lastCheckedIvs, setLastCheckedIvs] = useState<number>(() => {
-    const v = localStorage.getItem(LS_IVS_KEY);
-    const parsed = v ? parseInt(v, 10) : 0;
-    if (parsed > MIN_VALID_TS) return parsed;
-    const now = Date.now();
-    localStorage.setItem(LS_IVS_KEY, String(now));
-    return now;
-  });
-
-  const LS_FILTER_KEY = (f: string) => `careconnex.posts.lastChecked.${f}`;
-  const [lastCheckedFilter, setLastCheckedFilter] = useState<Record<string, number>>(() => {
-    const now = Date.now();
-    const result: Record<string, number> = {};
-    (['pending', 'accepted', 'completed', 'declined', 'cancelled'] as const).forEach(f => {
-      const v = localStorage.getItem(`careconnex.posts.lastChecked.${f}`);
-      const parsed = v ? parseInt(v, 10) : 0;
-      if (parsed > MIN_VALID_TS) { result[f] = parsed; }
-      else { localStorage.setItem(`careconnex.posts.lastChecked.${f}`, String(now)); result[f] = now; }
-    });
-    return result;
-  });
+  // An interview waits on the FAMILY when the caregiver proposed a different time —
+  // a pending reschedule they must accept, or a decline with a counter-offer.
+  // (A plain pending request waits on the caregiver, not the family.)
+  const interviewNeedsFamily = (iv: Interview) =>
+    (!!iv.reschedulePendingTime && iv.rescheduledBy === 'caregiver') ||
+    (iv.status === 'declined' && !!iv.proposedTime);
 
   // Schedule interview modal (from applicants panel)
   const [schedulingFor, setSchedulingFor] = useState<Applicant | null>(null);
@@ -1100,16 +1083,10 @@ export const PostsPage: React.FC = () => {
 
         {/* Main tabs */}
         {(() => {
-          const newIvs = interviews.filter(iv => {
-            const ms = iv.createdAt ? new Date(iv.createdAt).getTime() : 0;
-            return ms > lastCheckedIvs;
-          }).length;
-          const markIvs = () => {
-            const now = Date.now();
-            localStorage.setItem(LS_IVS_KEY, String(now));
-            setLastCheckedIvs(now);
-            setMainTab('interviews');
-          };
+          // Live counts of what waits on the family (same rule as every other tab pill):
+          // applicants to review on open posts; interviews where the caregiver proposed a time.
+          const applicantsToReview = openPosts.reduce((n, p) => n + (applicantCounts[p.id] ?? 0), 0);
+          const proposalsToAnswer = interviews.filter(interviewNeedsFamily).length;
           return (
             <div className="flex items-center gap-2 mb-6">
               <button
@@ -1117,14 +1094,17 @@ export const PostsPage: React.FC = () => {
                 className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${mainTab === 'posts' ? 'bg-primary-500 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
               >
                 Posts
+                {applicantsToReview > 0 && mainTab !== 'posts' && (
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">{applicantsToReview}</span>
+                )}
               </button>
               <button
-                onClick={markIvs}
+                onClick={() => setMainTab('interviews')}
                 className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${mainTab === 'interviews' ? 'bg-primary-500 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
               >
                 Interviews
-                {newIvs > 0 && mainTab !== 'interviews' && (
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">{newIvs}</span>
+                {proposalsToAnswer > 0 && mainTab !== 'interviews' && (
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">{proposalsToAnswer}</span>
                 )}
               </button>
             </div>
@@ -1320,22 +1300,12 @@ export const PostsPage: React.FC = () => {
                   {(['all', 'pending', 'accepted', 'completed', 'declined', 'cancelled'] as const).map(f => {
                     const total = f === 'all' ? interviews.length : interviews.filter(i => i.status === f).length;
                     if (f !== 'all' && total === 0) return null;
-                    const newCount = f === 'all' ? 0 : interviews.filter(i => {
-                      if (i.status !== f) return false;
-                      const ms = i.createdAt ? new Date(i.createdAt).getTime() : 0;
-                      return ms > (lastCheckedFilter[f] ?? 0);
-                    }).length;
+                    // Pill on a status chip = interviews in that status that wait on the family.
+                    const newCount = f === 'all' ? 0 : interviews.filter(i => i.status === f && interviewNeedsFamily(i)).length;
                     return (
                       <button
                         key={f}
-                        onClick={() => {
-                          setInterviewFilter(f);
-                          if (f !== 'all') {
-                            const now = Date.now();
-                            localStorage.setItem(LS_FILTER_KEY(f), String(now));
-                            setLastCheckedFilter(prev => ({ ...prev, [f]: now }));
-                          }
-                        }}
+                        onClick={() => setInterviewFilter(f)}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${interviewFilter === f ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}
                       >
                         {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}

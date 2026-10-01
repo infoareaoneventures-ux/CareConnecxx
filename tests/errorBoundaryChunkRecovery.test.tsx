@@ -3,13 +3,16 @@
  *
  * A stale SW-cached app shell referencing purged hashed chunks surfaces as
  * "Importing a module script failed." (Safari) when a lazy route loads. The
- * boundary must clear SW caches/registrations and reload once — and must NOT
- * loop if the reload doesn't fix it, nor trigger on ordinary render errors.
+ * boundary must clear SW caches/registrations and reload — once per failing
+ * chunk per minute, so a tab left open across two deploys recovers both times
+ * but a genuinely broken deploy can't loop — and must not trigger on ordinary
+ * render errors.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { RECOVERY_KEY, RECOVERY_WINDOW_MS, chunkKeyFromError } from '../utils/chunkRecovery';
 
 vi.mock('../lib/sentry', () => ({ Sentry: { captureException: vi.fn() } }));
 
@@ -65,7 +68,9 @@ describe('ErrorBoundary chunk recovery', () => {
         await waitFor(() => expect(reloadSpy).toHaveBeenCalled());
         expect(cachesDelete).toHaveBeenCalledWith('evia-v4');
         expect(swUnregister).toHaveBeenCalled();
-        expect(sessionStorage.getItem('evia_chunk_recovery_attempted')).toBe('1');
+        const stored = JSON.parse(sessionStorage.getItem(RECOVERY_KEY) || 'null');
+        expect(stored.key).toBe(CHUNK_MSG);
+        expect(typeof stored.at).toBe('number');
     });
 
     it('recovers on Chrome/Firefox dynamic-import failure messages too', async () => {
@@ -77,8 +82,8 @@ describe('ErrorBoundary chunk recovery', () => {
         await waitFor(() => expect(reloadSpy).toHaveBeenCalled());
     });
 
-    it('does not reload twice — falls back to the error card after one attempt', async () => {
-        sessionStorage.setItem('evia_chunk_recovery_attempted', '1');
+    it('does not reload twice for the SAME chunk inside the window — falls back to the error card', async () => {
+        sessionStorage.setItem(RECOVERY_KEY, JSON.stringify({ key: CHUNK_MSG, at: Date.now() - 5_000 }));
         render(
             <ErrorBoundary>
                 <Thrower message={CHUNK_MSG} />
@@ -87,6 +92,29 @@ describe('ErrorBoundary chunk recovery', () => {
 
         await waitFor(() => expect(screen.getByText(/something went wrong/i)).toBeTruthy());
         expect(reloadSpy).not.toHaveBeenCalled();
+    });
+
+    it('DOES reload again for a different chunk (second deploy while the tab stayed open)', async () => {
+        const earlier = 'Failed to fetch dynamically imported module: https://www.eviacares.com/assets/CaregiverFamiliesPage-OLD111.js';
+        const later = 'Failed to fetch dynamically imported module: https://www.eviacares.com/assets/CaregiverFamiliesPage-NEW222.js';
+        sessionStorage.setItem(RECOVERY_KEY, JSON.stringify({ key: chunkKeyFromError(new Error(earlier)), at: Date.now() - 5_000 }));
+        render(
+            <ErrorBoundary>
+                <Thrower message={later} />
+            </ErrorBoundary>
+        );
+        await waitFor(() => expect(reloadSpy).toHaveBeenCalled());
+        expect(JSON.parse(sessionStorage.getItem(RECOVERY_KEY) || 'null').key).toBe('https://www.eviacares.com/assets/CaregiverFamiliesPage-NEW222.js');
+    });
+
+    it('DOES reload again for the same chunk once the window has passed', async () => {
+        sessionStorage.setItem(RECOVERY_KEY, JSON.stringify({ key: CHUNK_MSG, at: Date.now() - RECOVERY_WINDOW_MS - 1 }));
+        render(
+            <ErrorBoundary>
+                <Thrower message={CHUNK_MSG} />
+            </ErrorBoundary>
+        );
+        await waitFor(() => expect(reloadSpy).toHaveBeenCalled());
     });
 
     it('shows the normal error card for non-chunk errors without reloading', () => {

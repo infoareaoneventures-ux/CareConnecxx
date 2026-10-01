@@ -204,7 +204,7 @@ describe("find_nearby_caregivers — the Find Caregivers page", () => {
       expect(r.instruction).toContain("do NOT repeat");
       const texts = sentTexts();
       expect(texts[0]).toBe("2 caregivers found:");
-      expect(texts[1]).toBe("Basra Yousuf — $25/hr\n★ 4.9 (12 reviews) · 10 yrs experience · San Jose, CA 95134 · Mobility Assistance, Dementia / Memory Care +2 · Background checked\nTap to view Basra's profile: https://app.test/p/b");
+      expect(texts[1]).toBe("Basra Yousuf — $25/hr · $27.25/hr billed\n★ 4.9 (12 reviews) · 10 yrs experience · San Jose, CA 95134 · Mobility Assistance, Dementia / Memory Care +2 · Background checked\nTap to view Basra's profile: https://app.test/p/b");
       expect(texts[2]).toContain("No reviews yet");
       const sess = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(sess.pendingMatches).toEqual([{ id: "b", name: "Basra Yousuf", rate: 25 }, { id: "a", name: "Care a", rate: 25 }]);

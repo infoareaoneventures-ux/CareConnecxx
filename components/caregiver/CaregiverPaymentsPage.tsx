@@ -1453,7 +1453,10 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const historyRows = shiftRows.filter(r =>
     !['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status)
   );
-  const actionCount = submittableShifts.length + pendingRows.length;
+  // Timesheets the family corrected and the caregiver has to accept or counter —
+  // the only Pending rows that wait on the caregiver (the rest wait on the family).
+  const correctionRows = pendingRows.filter(r => r.status === 'correction_proposed');
+  const actionCount = submittableShifts.length + correctionRows.length;
 
   // Available balance: credit bookings that are approved/auto_approved but not paid yet
   const availableBalance = useMemo(() => {
@@ -1632,15 +1635,15 @@ export const CaregiverPaymentsPage: React.FC = () => {
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`relative flex items-center gap-2 px-5 py-2 rounded-full text-sm font-semibold transition-all ${
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
                 tab === t.id
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'
+                  ? 'bg-primary-500 text-white'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
               }`}
             >
               {t.label}
-              {t.badge > 0 && (
-                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${tab === t.id ? 'bg-white/20 text-white' : 'bg-amber-500 text-white'}`}>
+              {t.badge > 0 && tab !== t.id && (
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
                   {t.badge}
                 </span>
               )}
@@ -1657,29 +1660,24 @@ export const CaregiverPaymentsPage: React.FC = () => {
             <div className="flex items-center gap-2 flex-wrap">
               {([
                 { id: 'unsubmitted', label: 'Unsubmitted', count: submittableShifts.length, alert: true  },
-                { id: 'pending',     label: 'Pending',     count: pendingRows.length,        alert: true  },
+                // Red only when a correction needs the caregiver's answer; otherwise the plain total.
+                { id: 'pending',     label: 'Pending',     count: correctionRows.length > 0 ? correctionRows.length : pendingRows.length, alert: correctionRows.length > 0 },
                 { id: 'history',     label: 'History',     count: historyRows.length,        alert: false },
               ] as { id: typeof tsFilter; label: string; count: number; alert: boolean }[]).map(f => (
                 <button
                   key={f.id}
                   onClick={() => { setTsFilter(f.id); if (f.id !== 'history') { setShowReport(false); } }}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium transition-all border ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
                     tsFilter === f.id
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      ? 'bg-primary-600 border-primary-600 text-white'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
                   }`}
                 >
                   {f.label}
                   {f.count > 0 && (
-                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full leading-none ${
-                      tsFilter === f.id
-                        ? 'bg-white/20 text-white'
-                        : f.alert
-                        ? 'bg-amber-500 text-white'
-                        : 'bg-slate-100 text-slate-600'
-                    }`}>
-                      {f.count}
-                    </span>
+                    f.alert && tsFilter !== f.id
+                      ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">{f.count}</span>
+                      : <span className={`text-[11px] font-semibold ${tsFilter === f.id ? 'text-white/80' : 'text-slate-400'}`}>({f.count})</span>
                   )}
                 </button>
               ))}

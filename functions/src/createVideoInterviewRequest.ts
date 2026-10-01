@@ -31,7 +31,10 @@ export const createVideoInterviewRequest = functions.https.onCall(async (data, c
     return { interview };
   } catch (err) {
     if (err instanceof VideoInterviewRequestError) {
-      throw new functions.https.HttpsError(err.code, err.message);
+      // "ambiguous" is Evia's name-lookup code, not a Functions error code — HttpsError
+      // throws "Unknown error code" on it, which would surface as an opaque internal error.
+      const code = err.code === "ambiguous" ? "failed-precondition" : err.code;
+      throw new functions.https.HttpsError(code, err.message);
     }
     throw err;
   }

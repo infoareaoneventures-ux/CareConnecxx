@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // The caregiver My Calendar page, texted (caregiverCalendar.ts): the page's reads,
 // its Day / Week / Month / List views, the shift and interview detail panels,
@@ -50,7 +50,10 @@ const ivRow = (id: string, iso: string, status = "pending", rawStatus = "request
 });
 const grid = () => ({ ...emptyGrid(), monday: ["morning", "afternoon"] as any, wednesday: ["evening"] as any });
 
-beforeEach(() => { hoisted.docs.clear(); hoisted.sent.length = 0; hoisted.sessionWrites.length = 0; hoisted.interviews = []; });
+// Pin the clock as well as the business day: shiftDisplayStatus reads Date.now(), so the
+// 7:30 PM fixture visit would read Overdue when the suite runs after 7:45 PM Pacific.
+beforeEach(() => { vi.useFakeTimers({ now: Date.parse("2026-09-30T19:00:00.000Z"), toFake: ["Date"] }); hoisted.docs.clear(); hoisted.sent.length = 0; hoisted.sessionWrites.length = 0; hoisted.interviews = []; });
+afterEach(() => { vi.useRealTimers(); });
 
 describe("dates", () => {
   it("week starts Sunday like the page; labels match weekLabel; an interview's UTC instant lands on its Pacific day and clock", () => {

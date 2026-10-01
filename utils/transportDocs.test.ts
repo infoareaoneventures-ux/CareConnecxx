@@ -31,6 +31,10 @@ describe('hasValidTransportDocs (the badge)', () => {
   it('is true only when both halves are in', () => {
     expect(hasValidTransportDocs({ services: ['Transportation'], documents: approvedDocs, isApprovedDriver: true })).toBe(true);
   });
+  it('trusts the precomputed flag on a public profile copy (no documents there by design)', () => {
+    expect(hasValidTransportDocs({ hasValidTransportDocs: true, services: ['Transportation'] })).toBe(true);
+    expect(hasValidTransportDocs({ hasValidTransportDocs: false, services: ['Transportation'], documents: approvedDocs, isApprovedDriver: true })).toBe(false);
+  });
   it('handles missing profiles', () => {
     expect(hasValidTransportDocs(null)).toBe(false);
     expect(hasValidTransportDocs({})).toBe(false);

@@ -74,13 +74,22 @@ describe("hasValidTransportDocs", () => {
     })).toBe(false);
   });
 
-  it("true when Transportation is offered and all docs are approved, unexpired", () => {
-    expect(hasValidTransportDocs({ skills: ["Transportation"], documents: approvedDocs })).toBe(true);
+  it("true when Transportation is offered, all docs are approved and unexpired, AND the driving record cleared", () => {
+    expect(hasValidTransportDocs({ skills: ["Transportation"], documents: approvedDocs, isApprovedDriver: true })).toBe(true);
+  });
+
+  // Founder 2026-09-25: the documents alone never earn the badge — the site's
+  // utils/transportDocs.ts has required the MVR since then; this twin lagged
+  // behind until 2026-09-30 (Evia and the public projection called caregivers
+  // "Transportation" whom the site would not).
+  it("false with approved documents but no cleared driving record (MVR)", () => {
+    expect(hasValidTransportDocs({ skills: ["Transportation"], documents: approvedDocs })).toBe(false);
+    expect(hasValidTransportDocs({ skills: ["Transportation"], documents: approvedDocs, isApprovedDriver: false })).toBe(false);
   });
 
   it("false when a document is expired", () => {
     expect(hasValidTransportDocs({
-      skills: ["Transportation"],
+      skills: ["Transportation"], isApprovedDriver: true,
       documents: { ...approvedDocs, registration: { status: "approved", expirationDate: "2000-01-01" } },
     })).toBe(false);
   });
@@ -92,7 +101,7 @@ describe("hasValidTransportDocs", () => {
   // that would always resolve false.
   it("trusts a precomputed hasValidTransportDocs flag when present (publicCaregiverProfiles shape)", () => {
     expect(hasValidTransportDocs({ hasValidTransportDocs: true })).toBe(true);
-    expect(hasValidTransportDocs({ hasValidTransportDocs: false, skills: ["Transportation"], documents: approvedDocs })).toBe(false);
+    expect(hasValidTransportDocs({ hasValidTransportDocs: false, skills: ["Transportation"], documents: approvedDocs, isApprovedDriver: true })).toBe(false);
   });
 });
 

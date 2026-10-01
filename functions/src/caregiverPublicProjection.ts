@@ -3,7 +3,9 @@ import * as admin from "firebase-admin";
 import { toPublicProfile } from "./publicCaregiverProfile";
 
 const db = admin.firestore();
-const PROJECTION_VERSION = "2026-07-12-v1";
+// v2 (2026-09-30): hasValidTransportDocs now requires the cleared driving record too
+// (caregiverMatchScoring.ts) — bump so the backfill dry run counts every v1 copy as stale.
+const PROJECTION_VERSION = "2026-09-30-v2";
 
 function projectionData(id: string, source: Record<string, unknown>): Record<string, unknown> {
   return {

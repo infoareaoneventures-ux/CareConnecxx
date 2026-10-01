@@ -65,6 +65,11 @@ export function skillsOverlap(cgSkills: string[], clientNeeds: string[]): number
 }
 
 // Twin of utils/transportDocs.ts (repo root, frontend-only) — keep both in sync.
+// The badge families see = Transportation offered + all three documents approved and
+// unexpired + the driving record (MVR) cleared (`isApprovedDriver`, written only by the
+// Checkr webhook). Founder 2026-09-25: neither half alone earns it. This helper also
+// computes the precomputed flag written to publicCaregiverProfiles (the documents
+// themselves are never copied there), so the family side inherits the same rule.
 const TRANSPORT_DOC_TYPES = ["driversLicense", "insurance", "registration"] as const;
 
 function parseLocalDate(s: string): Date {
@@ -90,7 +95,8 @@ export function hasValidTransportDocs(profile: Record<string, unknown> | null | 
   today.setHours(0, 0, 0, 0);
   const isValid = (doc: { status?: string; expirationDate?: string } | undefined) =>
     doc?.status === "approved" && (!doc.expirationDate || parseLocalDate(doc.expirationDate) >= today);
-  return TRANSPORT_DOC_TYPES.every((t) => isValid(docs[t]));
+  if (!TRANSPORT_DOC_TYPES.every((t) => isValid(docs[t]))) return false;
+  return profile.isApprovedDriver === true;
 }
 
 export interface ScoredCaregiver {

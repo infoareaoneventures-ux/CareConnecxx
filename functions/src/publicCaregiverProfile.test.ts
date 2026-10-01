@@ -36,8 +36,12 @@ describe("toPublicProfile", () => {
   });
 
   it("includes a precomputed hasValidTransportDocs flag instead", () => {
-    const eligible = toPublicProfile("cg1", { name: "Alice", skills: ["Transportation"], documents: approvedTransportDocs });
+    const eligible = toPublicProfile("cg1", { name: "Alice", skills: ["Transportation"], documents: approvedTransportDocs, isApprovedDriver: true });
     expect(eligible.hasValidTransportDocs).toBe(true);
+
+    // The site's rule: documents alone don't earn the badge — the driving record must have cleared.
+    const docsOnly = toPublicProfile("cg3", { name: "Cal", skills: ["Transportation"], documents: approvedTransportDocs });
+    expect(docsOnly.hasValidTransportDocs).toBe(false);
 
     const ineligible = toPublicProfile("cg2", { name: "Bob", skills: ["Companionship"], documents: approvedTransportDocs });
     expect(ineligible.hasValidTransportDocs).toBe(false);

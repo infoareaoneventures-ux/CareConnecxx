@@ -173,23 +173,28 @@ export const stripeConnectWebhook = functions
                         });
                         if (stamped > 0) await batch.commit();
 
+                        const paidBody = `Your ${isInstant ? "instant" : ""} payout of $${amountDollars} has been deposited to your bank account.`.replace("  ", " ");
                         await db.collection("users").doc(caregiverId).collection("notifications").add({
                             userId: caregiverId,
                             type: "payout_paid",
                             title: "Payout Arrived",
-                            body: `Your ${isInstant ? "instant" : ""} payout of $${amountDollars} has been deposited to your bank account.`.replace("  ", " "),
+                            body: paidBody,
                             isRead: false,
                             createdAt: admin.firestore.FieldValue.serverTimestamp(),
                         });
+                        // Same words over text — the Payouts page shows it as a bell; the caregiver hears it as it happens (2026-10-01).
+                        await import("./sms").then((m) => m.sendSMSToUser(caregiverId, `Evia: ${paidBody} It's under Payout history on your Payments page.`)).catch((err) => console.warn("payout.paid text failed", err));
                     } else {
+                        const failedBody = `Your payout of $${amountDollars} could not be deposited. Please check your bank account details.`;
                         await db.collection("users").doc(caregiverId).collection("notifications").add({
                             userId: caregiverId,
                             type: "payout_failed",
                             title: "Payout Failed",
-                            body: `Your payout of $${amountDollars} could not be deposited. Please check your bank account details.`,
+                            body: failedBody,
                             isRead: false,
                             createdAt: admin.firestore.FieldValue.serverTimestamp(),
                         });
+                        await import("./sms").then((m) => m.sendSMSToUser(caregiverId, `Evia: ${failedBody} Reply SETUP for your Stripe link to update them.`)).catch((err) => console.warn("payout.failed text failed", err));
                     }
                 }
             } else {

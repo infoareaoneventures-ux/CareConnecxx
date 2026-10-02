@@ -274,7 +274,7 @@ describe("MCP tool smoke coverage", () => {
   });
 
   it("get_payout_status maps enabled payouts to active", async () => {
-    hoisted.docState.set("caregivers/cg1", { payoutsEnabled: true, stripeOnboardingComplete: true, stripeAccountId: "acct_1" });
+    hoisted.docState.set("caregivers/cg1", { payoutsEnabled: true, chargesEnabled: true, stripeOnboardingComplete: true, stripeAccountId: "acct_1" });
     const r = await handleToolCall("get_payout_status", { caregiverId: "cg1" }) as any;
     expect(r.success).toBe(true);
     expect(r.summary).toBe("active");

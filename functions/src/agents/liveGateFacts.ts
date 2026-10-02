@@ -163,8 +163,8 @@ export async function buildLivePayoutSetupFact(phone: string, session: AgentSess
     const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
     const cg = await getCaregiverPayoutFields(caregiverId, (snap.data() ?? {}) as Record<string, unknown>);
     if (cg.stripeOnboardingComplete === true || cg.payoutsEnabled === true) {
-      return "LIVE STATUS RIGHT NOW: their payouts are LIVE — earnings pay out daily automatically and instant " +
-        "payouts are free. Congratulate them; do NOT nudge them to finish setup.";
+      return "LIVE STATUS RIGHT NOW: their payouts are LIVE — earnings pay out daily automatically (free, ~2 business days); " +
+        "an optional instant cash-out arrives in ~30 minutes and carries Stripe's 1% fee (min $0.50). Congratulate them; do NOT nudge them to finish setup.";
     }
     if (!cg.stripeAccountId) {
       return "LIVE STATUS RIGHT NOW: their payout setup hasn't been started yet — the link Evia sent opens Stripe " +

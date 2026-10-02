@@ -37,8 +37,6 @@ const CaregiverJobBoardPage = lazy(() => import('./components/caregiver/Caregive
 const CaregiverIntroVideo = lazy(() => import('./components/caregiver/CaregiverIntroVideo').then(module => ({ default: module.CaregiverIntroVideo })));
 const CaregiverFamiliesPage = lazy(() => import('./components/caregiver/CaregiverFamiliesPage').then(module => ({ default: module.CaregiverFamiliesPage })));
 const CaregiverAccountSettings = lazy(() => import('./components/caregiver/CaregiverAccountSettings').then(module => ({ default: module.CaregiverAccountSettings })));
-const CaregiverTransactionsPage = lazy(() => import('./components/caregiver/CaregiverTransactionsPage').then(module => ({ default: module.CaregiverTransactionsPage })));
-const CaregiverPayoutPage = lazy(() => import('./components/caregiver/CaregiverPayoutPage').then(module => ({ default: module.CaregiverPayoutPage })));
 const CaregiverPaymentsPage = lazy(() => import('./components/caregiver/CaregiverPaymentsPage').then(module => ({ default: module.CaregiverPaymentsPage })));
 const PublicCaregiverProfile = lazy(() => import('./components/caregiver/PublicCaregiverProfile').then(module => ({ default: module.PublicCaregiverProfile })));
 const PostJobFlow = lazy(() => import('./components/client/postJob/PostJobFlow').then(module => ({ default: module.PostJobFlow })));
@@ -411,9 +409,10 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/families" element={<CaregiverRoute element={<CaregiverFamiliesPage />} />} />
           <Route path="/caregiver/settings" element={<CaregiverRoute element={<CaregiverAccountSettings />} />} />
           <Route path="/caregiver/payments" element={<CaregiverRoute element={<CaregiverPaymentsPage />} />} />
-          {/* Legacy routes — redirect to unified payments page */}
-          <Route path="/caregiver/transactions" element={<CaregiverRoute element={<CaregiverTransactionsPage />} />} />
-          <Route path="/caregiver/payout" element={<CaregiverRoute element={<CaregiverPayoutPage />} />} />
+          {/* Legacy payout pages (2026-10-01): ONE Payouts surface — Payments › Payouts. Stripe's onboarding return
+              (?stripe=success / refresh) lands here too; the query string is carried over. */}
+          <Route path="/caregiver/transactions" element={<Navigate to={`/caregiver/payments?tab=payouts${window.location.search ? '&' + window.location.search.slice(1) : ''}`} replace />} />
+          <Route path="/caregiver/payout" element={<Navigate to={`/caregiver/payments?tab=payouts${window.location.search ? '&' + window.location.search.slice(1) : ''}`} replace />} />
           {/* Public shareable caregiver profile. /p/:id is the canonical share
               path — hosting rewrites it through v1-caregiverProfileMeta so texted
               links get per-caregiver OG previews; /caregiver/:id kept for old links. */}

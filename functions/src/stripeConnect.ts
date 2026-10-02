@@ -29,8 +29,8 @@ const buildAccountLink = async (accountId: string) => {
     const base = appUrl();
     return stripe.accountLinks.create({
         account: accountId,
-        refresh_url: `${base}/caregiver/payout?stripe=refresh`,
-        return_url: `${base}/caregiver/payout?stripe=success`,
+        refresh_url: `${base}/caregiver/payments?tab=payouts&stripe=refresh`,
+        return_url: `${base}/caregiver/payments?tab=payouts&stripe=success`,
         type: "account_onboarding",
     });
 };

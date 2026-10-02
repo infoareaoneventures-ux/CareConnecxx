@@ -232,6 +232,36 @@ export function discretionaryCategory(text: string): "re_engagement" | "visit_ri
   return "re_engagement";
 }
 
+// ── Stale triggers (2026-10-01, live-caught) ─────────────────────────────────
+// Degraded mode held every proactive send from Sep 27 until the next successful
+// agent turn — Oct 1, 8:09 PM — and the very next engine run released the
+// Sep 27 "your interview is in an hour" reminders to BOTH parties, four days
+// late. Two rules now:
+//   • a time-critical reminder (appointment_reminder) that is more than 2 hours
+//     past its scheduledAt is never sent — it is cancelled as stale; any other
+//     trigger more than a day late is cancelled too;
+//   • an interview reminder (refId video_interview_<id>) is checked against the
+//     LIVE interview at fire time — still accepted/confirmed and still starting
+//     30–120 minutes from now — else cancelled (goal 8: act on live data only).
+export const STALE_REMINDER_MS = 2 * 60 * 60 * 1000;
+export const STALE_GENERIC_MS = 24 * 60 * 60 * 1000;
+export function isStaleTrigger(t: Pick<ProactiveTrigger, "type" | "scheduledAt">, nowMs: number): boolean {
+  const due = Date.parse(t.scheduledAt);
+  if (!Number.isFinite(due)) return false;
+  const late = nowMs - due;
+  return late > (t.type === "appointment_reminder" ? STALE_REMINDER_MS : STALE_GENERIC_MS);
+}
+/** For an interview reminder: is the live interview still on, and still about an hour away? */
+export function interviewReminderStillValid(iv: { status?: unknown; scheduledTime?: unknown } | null | undefined, nowMs: number): boolean {
+  if (!iv || !AGREED_INTERVIEW.has(String(iv.status ?? ""))) return false;
+  const start = typeof iv.scheduledTime === "string" ? Date.parse(iv.scheduledTime) : NaN;
+  if (!Number.isFinite(start)) return false;
+  const ahead = start - nowMs;
+  return ahead >= 30 * 60 * 1000 && ahead <= 120 * 60 * 1000;
+}
+const AGREED_INTERVIEW = new Set(["accepted", "confirmed"]);
+const INTERVIEW_REF = /^video_interview_(.+)$/;
+
 // Cancels every pending trigger stamped with this refId (see ProactiveTrigger.refId).
 // Fired/already-cancelled triggers are left untouched; safe to call repeatedly.
 export async function cancelTriggersByRef(refId: string): Promise<number> {
@@ -418,6 +448,23 @@ export const runTriggerEngine = functions.pubsub
       // Skip already fired or cancelled
       if (trigger.firedAt || trigger.cancelledAt) continue;
 
+      // Never send a reminder about something that already happened (see isStaleTrigger).
+      if (isStaleTrigger(trigger, Date.parse(now))) {
+        await doc.ref.update({ cancelledAt: now, suppressionReason: "stale", deliveryState: "suppressed", deliveryCompletedAt: now }).catch(() => {});
+        console.info("triggerEngine.stale", { triggerId: doc.id, type: trigger.type, scheduledAt: trigger.scheduledAt });
+        continue;
+      }
+      // An interview reminder fires only if the LIVE interview is still on and still about an hour away.
+      const ivRef = trigger.refId ? INTERVIEW_REF.exec(trigger.refId) : null;
+      if (ivRef) {
+        const ivSnap = await db.collection("video_interviews").doc(ivRef[1]).get().catch(() => null);
+        if (!interviewReminderStillValid(ivSnap?.exists ? ivSnap.data() : null, Date.parse(now))) {
+          await doc.ref.update({ cancelledAt: now, suppressionReason: "interview_changed", deliveryState: "suppressed", deliveryCompletedAt: now }).catch(() => {});
+          console.info("triggerEngine.interview_changed", { triggerId: doc.id, interviewId: ivRef[1] });
+          continue;
+        }
+      }
+
       // Twin-trigger: check if user sent a message since trigger was created.
       // Time-critical reminders and system directives are exempt — texting
       // Evia about anything must not kill an interview reminder or a
@@ -454,7 +501,11 @@ export const runTriggerEngine = functions.pubsub
 
       const sendOpts = triggerSendOptions(trigger);
       const isDirective = isSystemDirectiveMessage(trigger.message);
-      if (!isDirective && degraded) {
+      // Degraded mode holds sends that need a working LLM. A fixed-text,
+      // time-critical reminder (the 1h interview reminder) needs none and is
+      // worthless late — it goes out on time (and the stale guard above drops
+      // it if it ever can't).
+      if (!isDirective && !isReplyExempt(trigger) && degraded) {
         continue;
       }
 

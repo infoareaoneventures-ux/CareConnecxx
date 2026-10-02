@@ -617,7 +617,7 @@ describe("buildCaregiverCoreContext", () => {
 
   it("reads the LIVE backgroundCheckStatus field, not just legacy backgroundCheckData", () => {
     const out = buildCaregiverCoreContext({
-      name: "Imran", backgroundCheckStatus: "clear", membershipPaid: true, stripeAccountId: "acct_1",
+      name: "Imran", backgroundCheckStatus: "clear", membershipPaid: true, stripeAccountId: "acct_1", payoutsEnabled: true, chargesEnabled: true,
     });
     expect(out).toContain("CAREGIVER NAME: Imran.");
     expect(out).toContain("background check CLEARED");

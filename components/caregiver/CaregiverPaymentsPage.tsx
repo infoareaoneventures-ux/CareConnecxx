@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import {
-  Zap, Landmark, CheckCircle2, AlertCircle, Lock,
+  Zap, CheckCircle2, AlertCircle, Lock,
   ExternalLink, Calendar, DollarSign, FileDown,
   ShieldCheck, RefreshCw, XCircle, ChevronDown, ChevronUp, X, CheckCircle, Car,
 } from 'lucide-react';
@@ -1353,6 +1353,11 @@ export const CaregiverPaymentsPage: React.FC = () => {
   // still be settling, so the two can differ.
   const [instantBalance, setInstantBalance] = useState<number | null>(null);
   const [fetchingBalance, setFetchingBalance] = useState(false);
+  // The hero's number: the LIVE Stripe instantly-available balance — what Cash Out
+  // actually pays (2026-10-01: it used to show approved-but-not-yet-charged
+  // timesheets, which is a different number; see approvedAwaitingCharge below).
+  const [liveBalance, setLiveBalance] = useState<{ instantAvailable: number; pending: number } | null>(null);
+  const [liveBalanceLoading, setLiveBalanceLoading] = useState(false);
 
   // Membership tab state
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
@@ -1458,8 +1463,9 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const correctionRows = pendingRows.filter(r => r.status === 'correction_proposed');
   const actionCount = submittableShifts.length + correctionRows.length;
 
-  // Available balance: credit bookings that are approved/auto_approved but not paid yet
-  const availableBalance = useMemo(() => {
+  // Approved but not yet charged to the family: credit bookings approved/auto_approved, not yet paid.
+  // Shown under the hero as what's coming; NOT what Cash Out pays (that is the Stripe balance).
+  const approvedAwaitingCharge = useMemo(() => {
     return shiftRows
       .filter(r => r.paymentMethod === 'credit' && (r.status === 'approved' || r.status === 'auto_approved'))
       .reduce((sum, r) => {
@@ -1471,7 +1477,20 @@ export const CaregiverPaymentsPage: React.FC = () => {
 
   const hasAccount = !!profile?.stripeAccountId;
   const fullyEnabled = !!(profile?.payoutsEnabled && profile?.chargesEnabled);
-  const canPayout = fullyEnabled && availableBalance >= 1;
+  const instantAvailable = liveBalance?.instantAvailable ?? 0;
+  const canPayout = fullyEnabled && instantAvailable >= 1;
+
+  // Read the live Stripe balance whenever the Payouts tab is open on an enabled account.
+  useEffect(() => {
+    if (tab !== 'payouts' || !fullyEnabled || !uid) return;
+    let active = true;
+    setLiveBalanceLoading(true);
+    getPayoutBalance()
+      .then(b => { if (active) setLiveBalance({ instantAvailable: b.instantAvailable, pending: b.pending }); })
+      .catch(() => { if (active) setLiveBalance(null); })
+      .finally(() => { if (active) setLiveBalanceLoading(false); });
+    return () => { active = false; };
+  }, [tab, fullyEnabled, uid]);
 
   // Report: date-filtered slice of historyRows
   const reportedRows = useMemo(() => {
@@ -1558,6 +1577,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
       const result = await requestInstantPayout();
       if (result.success) {
         addToast(`Instant payout of $${result.amount.toFixed(2)} initiated (after Stripe's $${Number(result.fee ?? 0).toFixed(2)} instant fee) — arrives in ~30 minutes!`, 'success');
+        getPayoutBalance().then(b => setLiveBalance({ instantAvailable: b.instantAvailable, pending: b.pending })).catch(() => {});
       }
     } catch (error: any) {
       addToast(error.message || 'Payout failed. Please try again.', 'error');
@@ -1570,6 +1590,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
     try {
       const balance = await getPayoutBalance();
       setInstantBalance(balance.instantAvailable);
+      setLiveBalance({ instantAvailable: balance.instantAvailable, pending: balance.pending });
       if (balance.instantAvailable < 1) {
         addToast(
           balance.pending > 0
@@ -1931,7 +1952,16 @@ export const CaregiverPaymentsPage: React.FC = () => {
               </div>
               <div className="relative z-10">
                 <p className="text-slate-400 text-sm font-medium mb-1">Available to Cash Out</p>
-                <p className="text-4xl font-bold mb-4">${availableBalance.toFixed(2)}</p>
+                <p className="text-4xl font-bold mb-2">
+                  {fullyEnabled && liveBalanceLoading && liveBalance === null ? '—' : `$${(fullyEnabled ? instantAvailable : 0).toFixed(2)}`}
+                </p>
+                {liveBalance && liveBalance.pending > 0 && (
+                  <p className="text-xs text-slate-400 mb-1">${liveBalance.pending.toFixed(2)} is still settling — it pays out automatically, no action needed.</p>
+                )}
+                {approvedAwaitingCharge > 0 && (
+                  <p className="text-xs text-slate-400 mb-3">${approvedAwaitingCharge.toFixed(2)} approved — added to your balance once the family's card is charged.</p>
+                )}
+                {!(liveBalance && liveBalance.pending > 0) && !(approvedAwaitingCharge > 0) && <div className="mb-2" />}
 
                 {canPayout ? (
                   <button
@@ -1943,15 +1973,10 @@ export const CaregiverPaymentsPage: React.FC = () => {
                     {fetchingBalance ? 'Checking balance…' : 'Cash Out'}
                   </button>
                 ) : !fullyEnabled ? (
-                  <button
-                    onClick={() => {}}
-                    className="flex items-center gap-2 bg-white/10 border border-white/20 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-white/20 transition-colors"
-                  >
-                    <Landmark className="w-4 h-4" />
-                    Connect a bank to unlock payouts
-                  </button>
+                  // The same action as the bank card's Setup Payouts (this used to be a button that did nothing — 2026-10-01).
+                  <ConnectBankButton onShowToast={addToast} />
                 ) : (
-                  <p className="text-sm text-slate-400">No approved earnings to cash out yet.</p>
+                  <p className="text-sm text-slate-400">Nothing to cash out right now — your earnings pay out automatically every day.</p>
                 )}
 
                 <p className="text-xs text-slate-400 mt-3">
@@ -2020,7 +2045,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                 <div className="p-3 bg-primary-50 border border-primary-100 rounded-xl text-center">
                   <p className="font-semibold text-slate-900 text-sm">Instant</p>
                   <p className="text-xs text-slate-500 mt-0.5">~30 minutes</p>
-                  <p className="text-xs font-bold text-primary-600 mt-1">Free</p>
+                  <p className="text-xs font-bold text-primary-600 mt-1">Stripe's 1% fee (min $0.50)</p>
                 </div>
               </div>
             </div>
@@ -2055,7 +2080,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
       {/* Modals */}
       {showPayoutModal && (
         <InstantPayoutModal
-          availableBalance={instantBalance ?? availableBalance}
+          availableBalance={instantBalance ?? instantAvailable}
           onClose={() => setShowPayoutModal(false)}
           onConfirm={handlePayout}
           onShowToast={addToast}

@@ -59,6 +59,11 @@ export interface RaiseProviderFailureAlertParams {
   provider?: string;
   model?: string;
   error: unknown;
+  /** True when a second provider is taking over THIS call (OpenAI → Anthropic fallback):
+   *  the alert + founder page still go out, but system-wide degraded mode is NOT set —
+   *  Evia is answering, so holding every reminder would be wrong (2026-10-01 live-caught:
+   *  four days of held interview reminders released at once). */
+  hasFallback?: boolean;
 }
 
 // Best-effort alerting sink for a provider-call failure: writes a typed
@@ -107,13 +112,16 @@ export async function raiseProviderFailureAlert(params: RaiseProviderFailureAler
 
     if (providerErrorClass === "billing" || providerErrorClass === "auth") {
       await smsAdmin().catch(() => {});
-      // Billing/auth means EVERY turn is failing, not just this one — flip
+      // Billing/auth on the ONLY provider means every turn is failing — flip
       // system-wide degraded mode so users get one honest notice instead of
       // per-turn snag spam, and proactive sends hold until recovery (the next
-      // successful turn clears the flag).
-      await import("./systemStatus")
-        .then((m) => m.setSystemDegraded(`provider ${providerErrorClass}: ${errorText.slice(0, 120)}`))
-        .catch(() => {});
+      // successful turn clears the flag). When a fallback provider is carrying
+      // the call, Evia is not degraded: page the founder, hold nothing.
+      if (!params.hasFallback) {
+        await import("./systemStatus")
+          .then((m) => m.setSystemDegraded(`provider ${providerErrorClass}: ${errorText.slice(0, 120)}`))
+          .catch(() => {});
+      }
     }
   } catch {
     // Alerting must never break the user turn.

@@ -1,180 +1,128 @@
+// The Payouts tab's Cash Out button + Instant Payout modal as a scripted flow
+// (components/caregiver/CaregiverPaymentsPage.tsx handleOpenPayoutModal,
+// components/caregiver/InstantPayoutModal.tsx).
+//
+// Same preconditions as the page, in the page's order: a connected, fully
+// enabled Stripe account (payoutsEnabled && chargesEnabled — else the Setup
+// Payouts link), then the LIVE instantly-available balance (the page's
+// getPayoutBalance; under $1 → the page's two info toasts), then the modal's
+// lines (Available Now / Stripe instant fee / You'll Receive / arrives in ~30
+// minutes / no rush), then "Cash Out Now" → CASH OUT. The payout itself is the
+// ONE implementation every door uses (payoutCommon.executeInstantPayout), and
+// the confirmation texts are the page's own toasts. Plain fixed sentences —
+// no model wording (rewritten 2026-10-01; the old version generated most of
+// its texts, said "open the caregiver app", and blamed the bank for a setup
+// problem).
 import * as admin from "firebase-admin";
-import Stripe from "stripe";
 import { sendMessage } from "../linq/client";
-import { parseWithClaude } from "../utils/parseWithClaude";
-import { generateCaraMessage } from "../utils/caraMessage";
-import { answerHumanMidFlow } from "./humanReply";
-import { executeInstantPayout, InstantPayoutError } from "../payoutCommon";
+import { quickComplete } from "../utils/openaiClient";
+import { isBackOutRequest, isQuestionOrOther, answerMidFlow } from "./stepHandler";
+import { executeInstantPayout, InstantPayoutError, readInstantBalance } from "../payoutCommon";
 import { instantPayoutFeeCentsFor } from "../billing/shiftBillingAmounts";
 
 const db = admin.firestore();
+const money = (cents: number) => `$${(Math.round(cents) / 100).toFixed(2)}`;
+const DIDNT_CATCH = "Sorry, I didn't quite catch that.";
 
-let _stripe: Stripe | null = null;
-function getStripe(): Stripe {
-  if (!_stripe) _stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", { apiVersion: "2023-10-16" as any });
-  return _stripe;
+export const NOT_SET_UP = "Your payout account isn't set up yet. Connect a bank account to receive payouts from credit-card bookings — here's your Stripe setup link.";
+export const SETUP_INCOMPLETE = "Setup incomplete — Stripe needs more information. Finish the onboarding to start receiving payouts — here's your Stripe link.";
+export const BALANCE_UNAVAILABLE = "I couldn't pull your balance right now. Reply CASH OUT again in a few minutes.";
+export const NOTHING_TO_CASH_OUT = "Nothing to cash out right now — your earnings pay out automatically every day.";
+export const settlingText = (pendingCents: number) => `${money(pendingCents)} is still settling — it pays out automatically, no action needed.`;
+export const HOLD_OFF = "No problem — your earnings still pay out automatically on the daily schedule.";
+
+/** The Instant Payout modal, as one text. */
+export function cashOutModalText(availableCents: number): string {
+  const fee = instantPayoutFeeCentsFor(availableCents);
+  const net = Math.max(0, availableCents - fee);
+  return [
+    "Cash Out Now — get your earnings in ~30 minutes",
+    `Available Now ${money(availableCents)}`,
+    `Stripe instant fee (1%, min $0.50) −${money(fee)}`,
+    `You'll Receive ${money(net)}`,
+    "",
+    "Arrives in about 30 minutes — funds will be sent to your connected bank account. No rush? Your earnings pay out automatically every day and land in your bank within ~2 business days.",
+    "",
+    `Reply CASH OUT to send ${money(net)} now, or CANCEL.`,
+  ].join("\n");
 }
+const REASK = (availableCents: number) => `Reply CASH OUT to send ${money(Math.max(0, availableCents - instantPayoutFeeCentsFor(availableCents)))} now, or CANCEL.`;
 
 /**
- * Entry: caregiver texts PAYOUT (or NLU classifies as INSTANT_PAYOUT). We look up
- * their instantly-available balance via Stripe Connect and ask for confirmation.
- * The router calls handleInstantPayoutConfirm for the subsequent YES/NO reply.
- * The payout itself goes through payoutCommon.executeInstantPayout — the same
- * implementation as the app and the MCP tool. Instant payouts carry Stripe's 1% fee (min $0.50), passed to the
- * caregiver; regular earnings arrive automatically on Stripe's daily schedule.
+ * Entry: CASH OUT / PAYOUT, the agent's request_instant_payout, or the
+ * INSTANT_PAYOUT intent. Checks the page's preconditions, texts the modal, and
+ * parks the confirmation (pendingInstantPayoutConfirm / pendingInstantPayoutAmount,
+ * 10-minute TTL in routeCaregiver).
  */
-export async function startInstantPayout(
-  caregiverId: string,
-  phone:       string,
-  chatId:      string,
-): Promise<void> {
+export async function startInstantPayout(caregiverId: string, phone: string, chatId: string): Promise<{ started: boolean; reason?: string }> {
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   const cg = cgSnap.data();
-  if (!cg) {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: "en",
-      context: "A caregiver asked for an instant payout but you couldn't find their caregiver profile. Warmly ask them to send the email they used to sign up so you can try again.",
-      fallback: "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again.",
-      maxTokens: 70,
-    }));
-    return;
-  }
+  if (!cg) { await sendMessage(chatId, "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again."); return { started: false, reason: "not_found" }; }
   const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
-  const payoutFields = await getCaregiverPayoutFields(caregiverId, cg);
-  const stripeAccountId = payoutFields.stripeAccountId as string | undefined;
-  if (!stripeAccountId) {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: "en",
-      context: "The caregiver asked for an instant payout but hasn't set up their payout account yet. Warmly explain they need to open the caregiver app and finish payout setup first, then text PAYOUT again. You MUST include the literal keyword \"PAYOUT\".",
-      fallback: "Your payout account isn't set up yet. Open the caregiver app payout setup first, then text PAYOUT again.",
-      maxTokens: 80,
-    }));
-    return;
+  const pay = await getCaregiverPayoutFields(caregiverId, cg);
+  const stripeAccountId = pay.stripeAccountId as string | undefined;
+  if (!stripeAccountId || !(pay.payoutsEnabled === true && pay.chargesEnabled === true)) {
+    // The page swaps Cash Out for Setup Payouts: say which state, send the Stripe link (same action as the button).
+    await sendMessage(chatId, stripeAccountId ? SETUP_INCOMPLETE : NOT_SET_UP);
+    const { sendPayoutSetupLink } = await import("./caregiverPayouts");
+    await sendPayoutSetupLink(phone, chatId);
+    return { started: false, reason: stripeAccountId ? "setup_incomplete" : "no_account" };
   }
 
-  // Pull the instantly-available balance from Stripe Connect (preview only —
-  // the confirm step re-reads it inside executeInstantPayout).
-  let availableCents = 0;
-  try {
-    const balance = await getStripe().balance.retrieve({ stripeAccount: stripeAccountId });
-    const inst = ((balance as any).instant_available ?? []) as Array<{ amount: number; currency: string }>;
-    availableCents = inst.find((b) => b.currency === "usd")?.amount ?? 0;
-  } catch (err) {
-    console.error("[instantPayout] balance retrieve failed:", err);
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: "en",
-      context: "You couldn't pull the caregiver's payout balance right now (a temporary hiccup). Warmly ask them to text PAYOUT again in a few minutes. You MUST include the literal keyword \"PAYOUT\".",
-      fallback: "I couldn't pull your balance right now. Try PAYOUT again in a few minutes.",
-      maxTokens: 70,
-    }));
-    return;
+  let balance: { instantAvailableCents: number; pendingCents: number };
+  try { balance = await readInstantBalance(stripeAccountId); }
+  catch (err) { console.error("[instantPayout] balance retrieve failed:", err); await sendMessage(chatId, BALANCE_UNAVAILABLE); return { started: false, reason: "balance_unavailable" }; }
+
+  if (balance.instantAvailableCents < 100) {
+    // The page's handleOpenPayoutModal info toasts.
+    await sendMessage(chatId, balance.pendingCents > 0 ? settlingText(balance.pendingCents) : NOTHING_TO_CASH_OUT);
+    return { started: false, reason: "no_balance" };
   }
 
-  if (availableCents < 100) {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: "en",
-      context: "The caregiver has no funds available for an instant payout right now. Warmly let them know, and reassure them their earnings pay out automatically every day — money lands in their bank about 2 business days after each visit is paid.",
-      fallback: "You don't have any funds available for instant payout right now. Your earnings pay out automatically every day — they land in your bank about 2 business days after each visit is paid.",
-      maxTokens: 80,
-    }));
-    return;
-  }
-
-  const amount = (availableCents / 100).toFixed(2);
-  const feeCents = instantPayoutFeeCentsFor(availableCents);
-  const fee = (feeCents / 100).toFixed(2);
-  const net = ((availableCents - feeCents) / 100).toFixed(2);
   await db.collection("agent_sessions").doc(phone).update({
     pendingInstantPayoutConfirm: new Date().toISOString(),
-    pendingInstantPayoutAmount: String(availableCents),
-  } as any);
-  await sendMessage(chatId,
-    `You have $${amount} available for instant payout.\n\n` +
-    `Stripe's instant fee is $${fee} (1%, minimum $0.50), so $${net} would arrive in your bank within about 30 minutes. ` +
-    `Or wait for the free daily payout — about 2 business days. Send $${net} now? Reply YES to send it, or NO to hold off.`,
-  );
+    pendingInstantPayoutAmount: String(balance.instantAvailableCents),
+  } as Record<string, unknown>);
+  await sendMessage(chatId, cashOutModalText(balance.instantAvailableCents));
+  return { started: true };
 }
 
-export async function handleInstantPayoutConfirm(
-  caregiverId: string,
-  phone:       string,
-  text:        string,
-  chatId:      string,
-): Promise<void> {
-  // isQuestionOrOther guard
-  const reAsk = "So — send the instant payout? Reply YES to send it, or NO to hold off.";
-  const isQ = await parseWithClaude(
-    `A caregiver was asked: "${reAsk}". ` +
-      "Reply YES if their message is a question or off-topic, NO if it's a direct yes/no answer. Only reply YES or NO.",
-    text, 5,
-  );
-  if (isQ.toUpperCase().startsWith("Y")) {
-    await sendMessage(chatId, await answerHumanMidFlow({
-      audience: "caregiver",
-      situation: "caregiver is confirming an instant payout",
-      text,
-      reAsk,
-    }));
-    return;
+/** The modal's two buttons: "Cash Out Now" → CASH OUT; Cancel → CANCEL. */
+export async function handleInstantPayoutConfirm(caregiverId: string, phone: string, text: string, chatId: string): Promise<void> {
+  const ref = db.collection("agent_sessions").doc(phone);
+  const sd = ((await ref.get()).data() ?? {}) as Record<string, unknown>;
+  const previewCents = parseInt(String(sd.pendingInstantPayoutAmount ?? "0"), 10) || 0;
+  const q = REASK(previewCents);
+  const norm = text.trim().toUpperCase().replace(/\s+/g, " ");
+
+  let action: "send" | "cancel" | "other";
+  if (norm === "CASH OUT" || norm === "CASHOUT" || norm === "CASH OUT NOW" || norm === "YES" || norm === "SEND" || norm === "CONFIRM") action = "send";
+  else if (norm === "CANCEL" || norm === "NO" || norm === "WAIT" || norm === "NOT YET") action = "cancel";
+  else if (await isBackOutRequest(text, q)) action = "cancel";
+  else if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; } // confirmation stays parked
+  else {
+    const v = await quickComplete("Evia asked the caregiver to reply CASH OUT to send an instant payout, or CANCEL. Classify: SEND (go ahead), CANCEL (hold off), or OTHER.\nReply with ONLY the word.", text, { maxTokens: 5 }).catch(() => "OTHER");
+    action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
   }
+  if (action === "other") { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
 
-  const decision = await parseWithClaude(
-    '"yes", "confirm", "send it", "do it", "now" → YES. "no", "wait", "cancel", "not yet" → NO. Reply exactly YES or NO.',
-    text, 5,
-  );
+  // Decision made — clear the parked confirmation either way.
+  await ref.update({ pendingInstantPayoutConfirm: admin.firestore.FieldValue.delete(), pendingInstantPayoutAmount: admin.firestore.FieldValue.delete() } as Record<string, unknown>);
+  if (action === "cancel" || previewCents <= 0) { await sendMessage(chatId, HOLD_OFF); return; }
 
-  const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-  const sd = sessionSnap.data() ?? {};
-  const previewCents = parseInt((sd.pendingInstantPayoutAmount as string) ?? "0", 10);
-
-  // Clear state regardless of decision
-  await db.collection("agent_sessions").doc(phone).update({
-    pendingInstantPayoutConfirm: admin.firestore.FieldValue.delete(),
-    pendingInstantPayoutAmount:  admin.firestore.FieldValue.delete(),
-  } as any);
-
-  if (decision !== "YES" || previewCents <= 0) {
-    const msg = await generateCaraMessage({
-      audience: "caregiver",
-      context: "A caregiver decided not to take an instant payout right now. Brief, neutral acknowledgment that their earnings still pay out automatically every day.",
-      fallback: "No problem — your earnings still pay out automatically on the daily schedule.",
-      maxTokens: 60,
-    });
-    await sendMessage(chatId, msg);
-    return;
-  }
-
-  // Shared payout path: eligibility, replay guard, Stripe idempotency key,
-  // and the caregivers/{id}/payouts record all live in executeInstantPayout.
-  // We pay the CURRENT instant balance rather than the previewed amount so a
-  // shift that settled between preview and YES is included, never stranded.
+  // The page pays the CURRENT instant balance (the modal has no amount input); so do we.
   try {
-    const result = await executeInstantPayout({
-      caregiverId,
-      source: "cara_sms",
-    });
-    await sendMessage(chatId,
-      `Done — $${(result.amountCents / 100).toFixed(2)} is on the way to your bank ($${(result.grossCents / 100).toFixed(2)} minus Stripe's $${(result.feeCents / 100).toFixed(2)} instant fee). ` +
-      `Instant payouts typically arrive within 30 minutes.`,
-    );
+    const result = await executeInstantPayout({ caregiverId, source: "cara_sms" });
+    // The page's success toast.
+    await sendMessage(chatId, `Instant payout of ${money(result.amountCents)} initiated (after Stripe's ${money(result.feeCents)} instant fee) — arrives in ~30 minutes!`);
   } catch (err) {
-    if (err instanceof InstantPayoutError && (err.code === "NO_BALANCE" || err.code === "DUPLICATE")) {
-      await sendMessage(chatId,
-        err.code === "DUPLICATE"
-          ? "Looks like that payout was already sent a moment ago — it's on its way to your bank."
-          : "Your balance was just paid out automatically, so there's nothing left to send right now. It'll land in your bank within about 2 business days.",
-      );
+    if (err instanceof InstantPayoutError) {
+      if (err.code === "DUPLICATE") { await sendMessage(chatId, "Looks like that payout was already sent a moment ago — it's on its way to your bank."); return; }
+      if (err.code === "NO_BALANCE") { await sendMessage(chatId, "Your balance was just paid out automatically, so there's nothing left to send right now. It'll land in your bank within about 2 business days."); return; }
+      await sendMessage(chatId, err.message); // the server's own reason — the page shows error.message
       return;
     }
     console.error("[instantPayout] executeInstantPayout failed:", err);
-    await sendMessage(chatId,
-      "I wasn't able to process that instant payout — Stripe rejected it. " +
-      "This usually means your bank isn't enabled for instant payouts. " +
-      "Your funds are safe and will arrive automatically on the daily schedule. Contact support if this keeps happening.",
-    );
+    await sendMessage(chatId, "Payout failed. Please try again."); // the page's default error toast
   }
 }

@@ -12,6 +12,8 @@ const imran = {
   membershipPaid: true,
   backgroundCheckStatus: "clear",
   stripeAccountId: "acct_123",
+  payoutsEnabled: true,
+  chargesEnabled: true,
   verified: true,
   hourlyRate: 24,
   city: "Santa Clara",

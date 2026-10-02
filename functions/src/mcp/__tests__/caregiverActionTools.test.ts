@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // U2 — caregiver action-parity tools:
 //   withdraw_job_application, respond_to_booking_request, start_shift,
@@ -161,6 +161,19 @@ const payoutCommonMock = vi.hoisted(() => {
 vi.mock("../../payoutCommon", () => ({
   executeInstantPayout: (...args: unknown[]) => payoutCommonMock.executeInstantPayout(...args),
   InstantPayoutError: payoutCommonMock.InstantPayoutError,
+}));
+
+// request_instant_payout is the Cash Out button as a FLOW since 2026-10-01: it texts the
+// Instant Payout modal (instantPayoutHandler.startInstantPayout) and waits for CASH OUT —
+// the payout itself happens on the confirm, never inside the tool call.
+const instantFlowMock = vi.hoisted(() => ({ startInstantPayout: vi.fn(), session: null as { phone: string; chatId: string } | null }));
+vi.mock("../../agents/instantPayoutHandler", () => ({ startInstantPayout: (...a: unknown[]) => instantFlowMock.startInstantPayout(...a) }));
+vi.mock("../../agents/caregiverAccessGate", async (importActual) => ({
+  ...(await importActual<typeof import("../../agents/caregiverAccessGate")>()),
+  // Only the payouts suite gives the caregiver an Evia conversation (set in its beforeEach); every other
+  // suite keeps the real finder, whose "no session" path is what their refusal assertions rely on.
+  findCaregiverSession: vi.fn(async (caregiverId: string, phone?: unknown) =>
+    instantFlowMock.session && caregiverId === "cg1" ? instantFlowMock.session : (await importActual<typeof import("../../agents/caregiverAccessGate")>()).findCaregiverSession(caregiverId, phone)),
 }));
 
 const notifyAdmins = vi.fn().mockResolvedValue(undefined);
@@ -403,26 +416,28 @@ describe("U2 caregiver action tools", () => {
   // wiring: delegation, error surfacing, and that the removed standard-payout
   // tool stays removed.
   describe("payouts", () => {
-    it("request_instant_payout delegates to the shared executeInstantPayout and reports the fee", async () => {
-      payoutCommonMock.executeInstantPayout.mockResolvedValueOnce({
-        payoutDocId: "p1", stripePayoutId: "po_1", amountCents: 4950, grossCents: 5000, feeCents: 50, status: "pending", arrivalDate: null,
-      });
+    beforeEach(() => { instantFlowMock.session = { phone: "+15550001111", chatId: "chat-cg1" }; });
+    afterEach(() => { instantFlowMock.session = null; });
+    it("request_instant_payout opens the Cash Out modal flow in the caregiver's conversation and pays NOTHING itself", async () => {
+      instantFlowMock.startInstantPayout.mockResolvedValueOnce({ started: true });
       const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
-      expect(payoutCommonMock.executeInstantPayout).toHaveBeenCalledWith(
-        expect.objectContaining({ caregiverId: "cg1", source: "mcp" }),
-      );
+      expect(instantFlowMock.startInstantPayout).toHaveBeenCalledWith("cg1", "+15550001111", "chat-cg1");
+      expect(payoutCommonMock.executeInstantPayout).not.toHaveBeenCalled();
       expect(r.success).toBe(true);
-      expect(r.fee).toBe(0.5);
-      expect(r.amountCents).toBe(4950);
+      expect(r.note).toMatch(/CASH OUT/);
     });
 
-    it("request_instant_payout surfaces payout preconditions as tool errors (no silent success)", async () => {
-      payoutCommonMock.executeInstantPayout.mockRejectedValueOnce(
-        new payoutCommonMock.InstantPayoutError("NO_BALANCE", "No funds are instantly available right now."),
-      );
+    it("request_instant_payout reports a precondition the flow refused on (no account / no balance) as success:false with the reason", async () => {
+      instantFlowMock.startInstantPayout.mockResolvedValueOnce({ started: false, reason: "no_balance" });
       const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe("no_balance");
+      expect(payoutCommonMock.executeInstantPayout).not.toHaveBeenCalled();
+    });
+
+    it("request_instant_payout without an Evia conversation for the caregiver is a NOT_FOUND tool error", async () => {
+      const r = await handleToolCall("request_instant_payout", { caregiverId: "cg-nobody" }) as any;
       expect(r._toolError).toBe(true);
-      expect(r.success).not.toBe(true);
     });
 
     // U11 scenario 6 — a payout that fails unexpectedly must be ledgered and
@@ -430,7 +445,7 @@ describe("U2 caregiver action tools", () => {
     // silent false success). An unexpected throw routes through the MCP
     // dispatcher's catch, which writes admin_alerts via createCaraOpsAlert.
     it("ledgers + admin-alerts an unexpected payout failure (Control Room visibility)", async () => {
-      payoutCommonMock.executeInstantPayout.mockRejectedValueOnce(new Error("stripe exploded"));
+      instantFlowMock.startInstantPayout.mockRejectedValueOnce(new Error("stripe exploded"));
       const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
       expect(r.success).not.toBe(true);
       expect(r._toolError).toBe(true);

@@ -32,12 +32,12 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
 
         setProcessing(true);
         try {
+            // The page's handler toasts success ("Instant payout of $X initiated…") and
+            // failure (the server's message) — one toast each, not two (2026-10-01).
             await onConfirm();
-            onShowToast('Instant payout initiated! Funds will arrive in about 30 minutes.', 'success');
             onClose();
         } catch (error: any) {
             console.error('Payout error:', error);
-            onShowToast(error.message || 'Payout failed. Please try again.', 'error');
         } finally {
             setProcessing(false);
         }

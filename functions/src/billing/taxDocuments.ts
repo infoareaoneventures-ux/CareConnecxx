@@ -59,10 +59,11 @@ export async function getCaregiverTaxSummary(
     else                  quarterly.q4 += earnings;
   }
 
-  // Count completed payouts for the year
-  const payoutSnap = await db.collection("payouts")
-    .where("caregiverId", "==", caregiverId)
-    .where("status", "==", "completed")
+  // Count paid-out payouts for the year — the caregivers/{id}/payouts ledger the
+  // Payouts tab reads (a top-level "payouts" collection was queried before, and
+  // nothing has ever written one, so the count was always 0 — 2026-10-01).
+  const payoutSnap = await db.collection("caregivers").doc(caregiverId).collection("payouts")
+    .where("status", "==", "paid")
     .get();
   const payoutCount = payoutSnap.docs.filter(d => {
     const ts: string = (d.data().createdAt as string | undefined) ?? "";

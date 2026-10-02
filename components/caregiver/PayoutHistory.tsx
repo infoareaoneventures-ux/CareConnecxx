@@ -7,11 +7,14 @@ interface PayoutRecord {
     amount: number;
     grossAmount?: number;
     fee: number;
-    type: 'instant' | 'standard';
+    type: 'instant' | 'automatic' | 'standard';
     status: string;
     createdAt: string;
     arrivalDate?: string | null;
 }
+
+// Shared with Evia's Payouts tab (functions/src/agents/caregiverPayouts.ts PAYOUT_STATUS_LABEL).
+const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_transit: 'In transit', paid: 'Paid', failed: 'Failed', canceled: 'Canceled' };
 
 interface PayoutHistoryProps {
     uid: string;
@@ -49,7 +52,7 @@ export const PayoutHistory: React.FC<PayoutHistoryProps> = ({ uid }) => {
         return (
             <div className="bg-white border border-slate-200 rounded-2xl p-5">
                 <p className="font-bold text-slate-900 mb-1">Payout history</p>
-                <p className="text-sm text-slate-500">No payouts yet. Completed appointments will appear here once you cash out.</p>
+                <p className="text-sm text-slate-500">No payouts yet. Payouts will appear here as they're sent — automatic daily payouts and any instant cash-outs.</p>
             </div>
         );
     }
@@ -71,7 +74,7 @@ export const PayoutHistory: React.FC<PayoutHistoryProps> = ({ uid }) => {
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-semibold text-slate-900 capitalize">
                                     {p.type} payout
-                                    <span className="ml-2 text-xs font-normal text-slate-500">{p.status}</span>
+                                    <span className="ml-2 text-xs font-normal text-slate-500">{STATUS_LABEL[p.status] ?? p.status}</span>
                                 </p>
                                 <p className="text-xs text-slate-500">
                                     {created ? created.toLocaleDateString() : '—'}

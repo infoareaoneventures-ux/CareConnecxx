@@ -104,6 +104,7 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
       provider: "openai",
       model: agentModel.model,
       error: err,
+      hasFallback: true,
     }).catch(() => {});
 
     const anthropicFallback = () => {
@@ -126,6 +127,7 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
           provider: "gemini",
           model: resolveGeminiAgentModel(),
           error: geminiErr,
+          hasFallback: true,
         }).catch(() => {});
         console.warn(
           "qaAgent: Gemini fallback also failed; falling back to Anthropic",

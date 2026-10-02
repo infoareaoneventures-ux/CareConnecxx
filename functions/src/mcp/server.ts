@@ -1179,14 +1179,27 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "request_instant_payout",
     description:
-      "Request an instant payout of the caregiver's instantly-available balance — Stripe's 1% instant fee (min $0.50) is deducted from it (founder decision 2026-09-19); arrives within ~30 minutes. Always tell the caregiver the fee and what arrives. " +
-      "If no amount specified, pays out the full instantly-available balance. Regular earnings need no request: " +
-      "Stripe pays the balance out automatically every day (arrives ~2 business days after each shift payment).",
+      "The Payouts tab's Cash Out button — the ONLY way to cash out over text. Checks the page's preconditions (a connected, fully enabled Stripe account — else it texts the Setup Payouts link; a live instantly-available balance of $1+ — else the page's 'nothing to cash out' / 'still settling' note), " +
+      "then TEXTS the Instant Payout modal itself (Available Now, Stripe's 1% fee min $0.50, You'll Receive, arrives in ~30 minutes) and waits for CASH OUT or CANCEL. Nothing is paid until they confirm; it pays the full balance like the page. Send nothing else this turn. " +
+      "Regular earnings need no request: Stripe pays the balance out automatically every day (free, ~2 business days after each visit is paid).",
     input_schema: {
       type: "object",
       properties: {
         caregiverId:  { type: "string",  description: "Your caregiver document ID" },
-        amountCents:  { type: "integer", description: "Amount in cents (optional — omit for full balance)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "show_payouts",
+    description:
+      "The caregiver Payments page's Payouts tab, TEXTED by the tool itself (agents/caregiverPayouts.ts): Available to Cash Out (the live Stripe instantly-available balance — what Cash Out pays), what's still settling, what's approved but not yet charged to the family, the Bank account (Stripe) card state, the payout schedule, and the Payout history ledger (5 rows + MORE → more:true). " +
+      "Call it for 'my balance', 'my payouts', 'did my payout arrive', 'when do I get paid', 'payout history'. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        more:        { type: "boolean", description: "The next 5 older history rows" },
       },
       required: ["caregiverId"],
     },
@@ -1494,12 +1507,12 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_payout_history",
     description:
-      "Get a caregiver's recent payout records — dates, amounts, and transfer status from Stripe.",
+      "The Payouts tab's Payout history as DATA — the same caregivers/{id}/payouts ledger the page lists, newest first: type (instant / automatic), status (Pending / In transit / Paid / Failed), date, arrival date, fee, amount. Use it to answer one question in a sentence; for the whole tab call show_payouts.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        limit:       { type: "number", description: "Number of payouts to return (default 5, max 20)" },
+        limit:       { type: "number", description: "Rows to return (default 5, max 25 — the page's own limit)" },
       },
       required: ["caregiverId"],
     },
@@ -2424,6 +2437,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "reactivate_account",
   "complete_task",
   "request_instant_payout",
+  "show_payouts",
   "update_caregiver_availability",
   "browse_job_board",
   "get_job_details",
@@ -2505,6 +2519,7 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "start_apply_flow",
   "start_interview_reschedule_flow",
   "request_instant_payout",
+  "show_payouts",
   "update_caregiver_availability",
   "browse_job_board",
   "get_job_details",
@@ -5042,36 +5057,6 @@ async function executeToolCall(
       return { success: true, interviewId, caregiverName: iv.caregiverName ?? null };
     }
 
-    if (name === "request_instant_payout") {
-      const { caregiverId, amountCents } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      // Single payout implementation shared with the app callable and the SMS
-      // PAYOUT flow — eligibility, replay guard, Stripe idempotency key, and
-      // the caregivers/{id}/payouts record all live there.
-      const { executeInstantPayout, InstantPayoutError } = await import("../payoutCommon");
-      try {
-        const result = await executeInstantPayout({
-          caregiverId: caregiverId as string,
-          requestedCents: amountCents != null ? Number(amountCents) : null,
-          source: "mcp",
-        });
-        logAudit({ eventType: "instant_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_instant_payout", amountCents: result.amountCents, stripePayoutId: result.stripePayoutId } }).catch(() => {});
-        return {
-          success: true,
-          amountCents: result.amountCents,
-          amountDollars: `$${(result.amountCents / 100).toFixed(2)}`,
-          fee: result.feeCents / 100,
-          feeDollars: `$${(result.feeCents / 100).toFixed(2)}`,
-          grossCents: result.grossCents,
-          estimatedArrival: "within ~30 minutes",
-        };
-      } catch (err) {
-        if (err instanceof InstantPayoutError) {
-          return toolError(err.code === "NOT_FOUND" ? "NOT_FOUND" : "INVALID_INPUT", err.message);
-        }
-        throw err;
-      }
-    }
 
     if (name === "review_shift_hours") {
       return runActionNativeMcpWrite(name, input, async () => {
@@ -5282,6 +5267,24 @@ async function executeToolCall(
       }
       const r = await pb.startLogHoursFlow(sess.phone, sess.chatId, sessionData as never, { caregiverId: caregiverId as string, shiftId: ref.shiftId });
       return { success: r.started, reason: r.reason, note: "The flow (or its refusal) was texted — send nothing else this turn." };
+    }
+
+    // ── Payments › Payouts (2026-10-01): the tab texted whole; Cash Out = the modal as a flow ──
+    if (name === "show_payouts" || name === "request_instant_payout") {
+      const { caregiverId, more, phone: poPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, poPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (name === "show_payouts") {
+        const { sendCaregiverPayouts } = await import("../agents/caregiverPayouts");
+        const r = await sendCaregiverPayouts(sess.phone, sess.chatId, caregiverId as string, { more: more === true });
+        return { success: true, ...r, note: "The Payouts tab was texted — send nothing else this turn." };
+      }
+      const { startInstantPayout } = await import("../agents/instantPayoutHandler");
+      const r = await startInstantPayout(caregiverId as string, sess.phone, sess.chatId);
+      logAudit({ eventType: "instant_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_instant_payout", flowStarted: r.started, reason: r.reason ?? null } }).catch(() => {});
+      return { success: r.started, reason: r.reason, note: r.started ? "The Cash Out modal was texted; they confirm with CASH OUT — send nothing else this turn." : "The refusal (or the Setup Payouts link) was texted — send nothing else this turn." };
     }
 
     // ── Payments › Timesheets (2026-10-01): the tab, the Submit hours modal and the Review correction modal, texted ──
@@ -5769,33 +5772,6 @@ async function executeToolCall(
     }
 
     // ── get_payout_history ──────────────────────────────────────────────────
-    if (name === "get_payout_history") {
-      const { caregiverId } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const limit11 = Math.min((input.limit as number) ?? 5, 20);
-      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const { getCaregiverPayoutFields: getPayoutHist } = await import("../caregiverPrivate");
-      const payoutFieldsHist = await getPayoutHist(caregiverId as string, cgSnap.data() ?? null);
-      if (!payoutFieldsHist.stripeAccountId) return { success: true, payouts: [], message: "No payout account set up yet. Complete Stripe Connect onboarding to start receiving payouts." };
-      try {
-        const { getStripeClient } = await import("../stripe");
-        const sc = getStripeClient();
-        const payoutList = await sc.payouts.list({ limit: limit11 }, { stripeAccount: payoutFieldsHist.stripeAccountId as string });
-        const payouts = payoutList.data.map((p) => ({
-          id:        p.id,
-          amount:    `$${(p.amount / 100).toFixed(2)}`,
-          status:    p.status,
-          method:    p.method,
-          arrivalDate: new Date(p.arrival_date * 1000).toISOString().slice(0, 10),
-          createdAt: new Date(p.created * 1000).toISOString().slice(0, 10),
-        }));
-        return { success: true, payouts, hasMore: payoutList.has_more };
-      } catch (stripeErr) {
-        console.error("get_payout_history stripe error:", stripeErr);
-        return toolError("UNAVAILABLE", "Could not fetch payout history from Stripe right now");
-      }
-    }
 
     // ── get_recent_messages — the website's Inbox page ───────────────────
     if (name === "get_recent_messages") {
@@ -5982,6 +5958,22 @@ async function executeToolCall(
     // Firestore-only, like get_background_check_status: reads the flags the
     // stripeConnectWebhook stamps. Errs toward "not active" if a flag is missing,
     // so it never reports payouts live when they aren't.
+    if (name === "get_payout_history") {
+      const { caregiverId } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const limitPh = Math.min(Math.max(1, Number(input.limit) || 5), 25);
+      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      // The page's PayoutHistory query: caregivers/{id}/payouts, newest first (limit 25).
+      const { loadPayoutsTab, PAYOUT_STATUS_LABEL } = await import("../agents/caregiverPayouts");
+      const tab = await loadPayoutsTab(caregiverId as string);
+      const payouts = tab.history.slice(0, limitPh).map((p) => ({
+        id: p.id, type: p.type, status: p.status, statusLabel: PAYOUT_STATUS_LABEL[p.status] ?? p.status,
+        amount: `$${p.amount.toFixed(2)}`, fee: p.fee > 0 ? `$${p.fee.toFixed(2)}` : null,
+        createdAt: p.createdAt ? p.createdAt.slice(0, 10) : null, arrivalDate: p.arrivalDate ? p.arrivalDate.slice(0, 10) : null,
+      }));
+      return { success: true, payouts, count: payouts.length, total: tab.history.length, hasPayoutAccount: tab.hasAccount, ...(tab.hasAccount ? {} : { message: "No payout account set up yet — send the Stripe link (send_onboarding_link caregiver_payouts), the page's Setup Payouts button." }) };
+    }
     if (name === "get_payout_status") {
       const { caregiverId } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
@@ -5990,12 +5982,16 @@ async function executeToolCall(
       const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
       const pay = await getCaregiverPayoutFields(caregiverId as string, (cgPaySnap.data() ?? {}) as Record<string, unknown>);
       const payoutsEnabled     = pay.payoutsEnabled === true;
+      const chargesEnabled     = pay.chargesEnabled === true;
       const onboardingComplete = pay.stripeOnboardingComplete === true;
       const detailsSubmitted   = pay.detailsSubmitted === true;
       const hasStripeAccount   = !!pay.stripeAccountId;
 
+      // The page's rule (CaregiverPaymentsPage fullyEnabled): "Bank account connected" only when
+      // payouts AND charges are enabled; an account id alone is "Setup incomplete" (2026-10-01 —
+      // this used to say "active" on payoutsEnabled OR onboardingComplete and never read chargesEnabled).
       let summary: string;
-      if (payoutsEnabled || onboardingComplete) summary = "active";        // paid out automatically; nothing to do
+      if (payoutsEnabled && chargesEnabled)     summary = "active";        // Bank account connected
       else if (!hasStripeAccount)               summary = "not_started";   // link never opened
       else if (detailsSubmitted)                summary = "under_review";  // Stripe has details, still finishing
       else                                      summary = "incomplete";    // started but Stripe's form unfinished
@@ -6004,9 +6000,11 @@ async function executeToolCall(
         success:                  true,
         summary,
         payoutsEnabled,
+        chargesEnabled,
         stripeOnboardingComplete: onboardingComplete,
         detailsSubmitted,
         hasStripeAccount,
+        pageLabel: summary === "active" ? "Bank account connected" : hasStripeAccount ? "Setup incomplete" : "Not connected",
       };
     }
 

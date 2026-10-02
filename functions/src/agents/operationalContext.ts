@@ -239,7 +239,8 @@ export async function loadCaraOperationalContext(params: {
     pendingShiftHours: pendingCaregiverShift
       ? `${pendingCaregiverShift.id}: ${String(pendingCaregiverShift.status ?? "unknown")}${pendingCaregiverShift.amountCents ? ` $${Number(pendingCaregiverShift.amountCents) / 100}` : ""}`
       : undefined,
-    lastPayoutStatus: lastPayout ? `${asString(lastPayout.status) ?? "unknown"}${lastPayout.amount ? ` $${Number(lastPayout.amount) / 100}` : ""}` : undefined,
+    // caregivers/{id}/payouts.amount is stored in DOLLARS (payoutCommon / the Connect webhook) — never divide by 100.
+    lastPayoutStatus: lastPayout ? `${asString(lastPayout.status) ?? "unknown"}${lastPayout.amount ? ` $${Number(lastPayout.amount).toFixed(2)}` : ""}` : undefined,
   } : undefined;
 
   const clientState: ClientStateContext | undefined = userId ? {

@@ -18,7 +18,7 @@ const HTTPS_CODE_BY_PAYOUT_ERROR: Record<InstantPayoutErrorCode, functions.https
 
 /**
  * Request an instant payout of the caregiver's instantly-available Stripe
- * balance. Free to the caregiver (the platform absorbs Stripe's instant fee).
+ * balance, minus Stripe's instant fee (1%, $0.50 min — passed to the caregiver, 2026-09-19).
  * Regular earnings need no request at all — Stripe pays out the Connect
  * balance automatically on the daily schedule.
  *
@@ -36,21 +36,15 @@ export const getPayoutBalance = functions.https.onCall(async (_data, context) =>
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'User must be logged in');
     }
-    const { getStripeClient } = await import("./stripe");
     const { getCaregiverPayoutFields } = await import("./caregiverPrivate");
     const payoutFields = await getCaregiverPayoutFields(context.auth.uid);
     const stripeAccountId = payoutFields.stripeAccountId as string | undefined;
     if (!stripeAccountId) {
         return { connected: false, instantAvailable: 0, pending: 0 };
     }
-    const balance = await getStripeClient().balance.retrieve({ stripeAccount: stripeAccountId });
-    const usd = (rows?: Array<{ amount: number; currency: string }>) =>
-        (rows ?? []).find((b) => b.currency === 'usd')?.amount ?? 0;
-    return {
-        connected: true,
-        instantAvailable: usd((balance as any).instant_available) / 100,
-        pending: usd(balance.pending as any) / 100,
-    };
+    const { readInstantBalance } = await import("./payoutCommon");
+    const b = await readInstantBalance(stripeAccountId);
+    return { connected: true, instantAvailable: b.instantAvailableCents / 100, pending: b.pendingCents / 100 };
 });
 
 export const requestInstantPayout = functions.https.onCall(async (_data, context) => {

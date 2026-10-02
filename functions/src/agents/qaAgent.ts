@@ -684,7 +684,8 @@ export function buildCaregiverCoreContext(caregiver: any): string {
     );
   }
   if (caregiver.membershipPaid === true) accountBits.push("caregiver membership PAID and active");
-  if (caregiver.stripeAccountId) accountBits.push("payout account connected");
+  if (caregiver.payoutsEnabled === true && caregiver.chargesEnabled === true) accountBits.push("payout account connected");
+  else if (caregiver.stripeAccountId) accountBits.push("payout setup started, not finished");
   if (caregiver.onboardingStatus) accountBits.push(`onboarding ${caregiver.onboardingStatus}`);
   if (accountBits.length) {
     parts.push(
@@ -782,6 +783,7 @@ export function buildClientSystemPrompt(
     ``,
     `KNOWLEDGE BOUNDARY (non-negotiable):`,
     `Identifiers in tool results — clientId, caregiverId, userId, shiftId, bookingRequestId, room ids — and any phone number or email a tool returns are INTERNAL: pass them between tools, never read them out, never ask the user for one. Refer to people by name. Who a message goes to is decided by the record's own id (the visit's clientId), never by a name or number the user types.`,
+    `Never tell the family to check, open or go to "the app" or the website for something a tool here can show or do — every page is a tool; call it and give the answer in this conversation. There is no app. Say "the website" only when naming where a thing lives, never as a place to go instead of you.`,
     `The only facts you may state about ${seniorName}'s care situation are what appears in:`,
     `the cached context above, the learned facts above, the Zep context above, or tool results from this conversation.`,
     `The cached context above is a snapshot (up to 60s old). For time-sensitive questions about appointments or visit status, call the relevant tool to get fresh data.`,
@@ -967,12 +969,6 @@ export function buildCaregiverSystemPrompt(
 
   // Context-flag overlay — surfaces recent notifications the caregiver may be replying to.
   const ctxLines: string[] = [];
-  if (contextFlags?.pendingPayoutNotificationAck) {
-    ctxLines.push(
-      `RECENT CONTEXT: This caregiver was just notified about a payout (${contextFlags.pendingPayoutNotificationAck}). ` +
-      `If their message is a question about the payment (timing, amount, fees, status), use get_payout_history / get_membership_page (role: "caregiver") to answer accurately.`,
-    );
-  }
   if (contextFlags?.pendingBgCheckAck) {
     const status = contextFlags.pendingBgCheckAck;
     const statusLine = status === "clear"
@@ -1042,8 +1038,9 @@ export function buildCaregiverSystemPrompt(
     `- show_timesheets: your Payments page's Timesheets tab — it TEXTS the chip itself (chip: unsubmitted = completed visits waiting for you to submit hours; pending = Pending client review / Correction Received / Counter sent / Awaiting Payment; history = Approved / Auto-approved / Paid, grouped by month, MORE → more:true; number → that row's full card with the correction history). Call it for "my timesheets", "did my hours go through", "what's pending", "what did I get paid", "details on 2". Send nothing else that turn.`,
     `- start_submit_hours_flow: the Submit hours button on an Unsubmitted visit — the ONLY way to submit hours. Call it the moment they want to submit ("submit my hours", "submit 2"); pass the number they said, or nothing when one visit is waiting. It texts the modal (clock in/out, duration, base pay, additional charges or NONE, the payment note, then SUBMIT / CANCEL) itself. Send nothing else that turn. Never write hours any other way.`,
     `- start_review_correction_flow: the Review & Respond button on a timesheet the family corrected — the ONLY way to answer a correction. Pass the number they said ("review 1"), or nothing when one correction is waiting. It texts what the family proposed, then ACCEPT or COUNTER (start, end, charges, note, SEND) itself. Send nothing else that turn.`,
-    `- request_instant_payout: cash out your instantly-available balance — Stripe's 1% instant fee (min $0.50) comes off it, arrives in ~30 min; always say the fee and the amount that arrives (regular earnings pay out automatically every day, free)`,
-    `- get_payout_history: see your recent payout records from Stripe`,
+    `- show_payouts: your Payments page's Payouts tab — it TEXTS the page itself (Available to Cash Out from your live Stripe balance, what's still settling, what's approved but not yet charged, your bank account status, the payout schedule, and your Payout history; MORE → more:true). Call it for "my balance", "my payouts", "did my payout arrive", "when do I get paid". Send nothing else that turn.`,
+    `- request_instant_payout: the Cash Out button — the ONLY way to cash out. It TEXTS the modal itself (Available Now, Stripe's 1% fee min $0.50, You'll Receive, arrives in ~30 minutes) and waits for CASH OUT / CANCEL; nothing is paid until they confirm. Full balance only, like the page. Send nothing else that turn. Regular earnings pay out automatically every day (free) — no request needed.`,
+    `- get_payout_history: your Payout history as DATA — the same ledger the page lists (type, status, date, arrival, fee, amount) — to answer one question in a sentence; for the whole tab use show_payouts.`,
     `- get_notifications (userId = your caregiverId, role: "caregiver"): your notification bell as data — newest first, the unread count, and for each one the page it opens (My Bookings, Jobs › Interviews, Payments, Account Settings). Use for "what's new", "what was that notification", "clear my notifications" (action mark_all_read), or to remove one (delete).`,
     `- show_families: your My Families page — it TEXTS the cards itself (Active: families with a booking that still has visits; Past: finished or cancelled; name, $rate/hr, days, who you care for; FAMILY n = the View Details modal). Call it for "who do I work with", "my families", "details on the Nguyen family". Message = send_client_message with that family's clientId from the list. Send nothing else that turn.`,
     `- show_calendar: your My Calendar page — it TEXTS the view itself (day / week / month / list; shifts, interviews and your Available blocks; numbered so VISIT n / INTERVIEW n open a detail panel). Call it for "what's my week", "what do I have tomorrow", "anything Friday?", "my calendar". Send nothing else that turn.`,
@@ -1051,7 +1048,7 @@ export function buildCaregiverSystemPrompt(
     `- update_caregiver_availability: the Update Availability modal's Save — pass the taps (set / add / remove day → blocks); it writes the same field the page does and returns the grid to read back.`,
     `- get_caregiver_info: look up your own profile details (rate, bio, city, availability), AND your ratings/recent reviews from families, in one call`,
     `- get_background_check_status: check the status of your background check`,
-    `- get_payout_status: check whether your Stripe payout (getting paid) setup is finished. Use when they ask "is my payout set up", "can I get paid yet", or "did my bank connect". NEVER say payouts are live, ready, or set up unless summary is "active" — when it's anything else, send the setup link with send_onboarding_link (caregiver_payouts) and tell them tapping it finishes their Stripe setup.`,
+    `- get_payout_status: the Bank account (Stripe) card as data — "active" ONLY when payouts AND charges are enabled (the page's "Bank account connected"); "incomplete" / "under_review" = the page's "Setup incomplete"; "not_started" = no account. Use for "is my payout set up", "can I get paid yet", "did my bank connect". NEVER say payouts are live or set up unless summary is "active" — otherwise send the Stripe link with send_onboarding_link (caregiver_payouts), the page's Setup Payouts button.`,
     `- get_signup_completeness: FINAL SIGNUP CHECK — audit their whole account for anything signup missed (profile fields, photo, membership, background check, payouts, visibility to families). Use right after signup finishes or when they ask "did I miss anything" / "am I all set". Answer ONLY from its result: report each item in \`missing\` with its fix (offer to send links via send_onboarding_link), mention \`optionalGaps\` as optional, and if \`complete\` is true tell them plainly they're all set.`,
     `- request_checkr_verification / verify_checkr_otp / get_checkr_report: pull your FULL background-check report details live from Checkr (which screenings ran, results, exceptions). Checkr requires identity verification first: confirm the caregiver's email, call request_checkr_verification (Checkr emails them a one-time code), then verify_checkr_otp with the code, then get_checkr_report. For a quick status answer just use get_background_check_status.`,
     `- get_tax_summary: see your 1099 / earnings tax summary`,
@@ -1067,6 +1064,7 @@ export function buildCaregiverSystemPrompt(
     ``,
     `KNOWLEDGE BOUNDARY (non-negotiable):`,
     `Identifiers in tool results — clientId, caregiverId, userId, shiftId, bookingRequestId, room ids — and any phone number or email a tool returns are INTERNAL: pass them between tools, never read them out, never ask the caregiver for one. Refer to families by name. Who a message goes to is decided by the visit's own clientId, never by a name or number the caregiver types; when a tool returns several families, ask which by name.`,
+    `Never tell the caregiver to check, open or go to "the app" or the website for something a tool here can show or do — every page is a tool (list_interviews IS the Interviews tab, show_timesheets IS the Timesheets tab); call it and give the answer in this conversation. There is no app. Read tool rows back as they are — an accepted interview whose time has passed is still on the tab as Accepted; say so rather than "I don't see any".`,
     `The only facts you may state about ${name}'s clients, schedule, pay, or account are what appears in:`,
     `the appointment details above, the cached context above, the Zep context above, or tool results from this conversation.`,
     `If asked something outside those sources, say "I don't have that information yet" — or call the tool that would know.`,
@@ -1097,7 +1095,7 @@ export function buildCaregiverSystemPrompt(
     `MESSAGE LENGTH: Match the caregiver's message length. Short question, short answer. Never pad.`,
     ``,
     `Safety: For any medical emergency at a client's home — "Call 911 immediately." Then notify the family.`,
-    `Never promise specific payment deposit timing. Say "1–2 business days" only.`,
+    `Payment timing, exactly as the Payouts page says it: earnings pay out automatically every day and arrive ~2 business days after each visit is paid (free); an optional instant cash-out arrives in about 30 minutes and carries Stripe's 1% fee (min $0.50). Never promise anything more specific, and never call an instant payout free.`,
     ``,
     SONNET_46_PROMPT_SUFFIX,
   ].join("\n");
@@ -1782,7 +1780,6 @@ export async function runQaAgent(params: {
         : cgReconciliationMask.instruction;
     }
     const contextFlags = session ? {
-      pendingPayoutNotificationAck: (session as any).pendingPayoutNotificationAck as string | undefined,
       pendingBgCheckAck:            (session as any).pendingBgCheckAck            as string | undefined,
     } : undefined;
     // Caregiver core context - mirrors the client's pre-injected core context
@@ -1796,10 +1793,8 @@ export async function runQaAgent(params: {
 
     // Clear the context flags after a reply consumes them — they're one-shot context.
     // 48h expiry is also enforced by the router so this only fires for genuine acks.
-    if (contextFlags?.pendingPayoutNotificationAck || contextFlags?.pendingBgCheckAck) {
+    if (contextFlags?.pendingBgCheckAck) {
       await db.collection("agent_sessions").doc(phone).update({
-        pendingPayoutNotificationAck:      admin.firestore.FieldValue.delete(),
-        pendingPayoutNotificationAckSetAt: admin.firestore.FieldValue.delete(),
         pendingBgCheckAck:                 admin.firestore.FieldValue.delete(),
         pendingBgCheckAckSetAt:            admin.firestore.FieldValue.delete(),
       }).catch(() => {});
@@ -2825,6 +2820,8 @@ export async function runQaAgent(params: {
       "show_calendar", "show_families",
       // Payments › Timesheets (2026-10-01): the tab, the Submit hours flow and the Review correction flow text themselves.
       "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
+      // Payments › Payouts (2026-10-01): the tab texts itself; Cash Out texts the modal and waits for CASH OUT.
+      "show_payouts", "request_instant_payout",
     ]);
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early

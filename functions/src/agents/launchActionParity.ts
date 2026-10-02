@@ -467,7 +467,18 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     tool: "request_instant_payout",
     promptActor: "caregiver",
     status: "shipped",
-    notes: "Payout state is Stripe Connect; no registered Firestore contract collection.",
+    notes: "2026-10-01: the Cash Out button as a flow — the page's preconditions (fully enabled account, live $1+ balance), the Instant Payout modal's lines, CASH OUT / CANCEL, then payoutCommon.executeInstantPayout (the one implementation the app callable also uses; Stripe's 1% fee min $0.50 is deducted — founder 2026-09-19). Record: caregivers/{id}/payouts.",
+  },
+  {
+    id: "caregiver-view-payouts",
+    actor: "caregiver",
+    action: "View the Payouts tab (balance, bank status, schedule, payout history)",
+    webSurface: "components/caregiver/CaregiverPaymentsPage.tsx",
+    collection: "payouts",
+    tool: "show_payouts",
+    promptActor: "caregiver",
+    status: "shipped",
+    notes: "2026-10-01: same reads as the page — Stripe Connect flags, the live Stripe instant/pending balance (payoutCommon.readInstantBalance, the page's getPayoutBalance), approved-not-yet-charged timesheets, the payouts ledger — texted whole (agents/caregiverPayouts.ts). get_payout_history reads the same ledger as data.",
   },
   // caregiver-request-standard-payout removed 2026-07-06: standard payouts are
   // automatic (Stripe daily schedule) — there is no user action to mirror.

@@ -77,11 +77,11 @@ export const STATE_MACHINE_FLAGS = [
   "profileUpdateStep",
   "profileUpdateField",
   "profileUpdateValue",
-  // PAYOUT instant-payout confirmation
+  // CASH OUT / PAYOUT instant-payout confirmation (instantPayoutHandler.ts) + the quoted balance
   "pendingInstantPayoutConfirm",
+  "pendingInstantPayoutAmount",
   // Context flags that route follow-up replies to qaAgent with rich context
-  "pendingPayoutNotificationAck",
-  "pendingPayoutNotificationAckSetAt",
+  // (pendingPayoutNotificationAck* removed 2026-10-01 — nothing ever set them)
   "pendingBgCheckAck",
   "pendingBgCheckAckSetAt",
   // Onboarding resume checkpoint (NOT cleared — intentionally kept for resume)
@@ -375,8 +375,7 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "cancelReason",
   "profileUpdateField",
   "profileUpdateValue",
-  "pendingPayoutNotificationAck",
-  "pendingPayoutNotificationAckSetAt",
+  "pendingInstantPayoutAmount",
   "pendingBgCheckAck",
   "pendingBgCheckAckSetAt",
 ]);

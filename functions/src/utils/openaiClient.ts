@@ -145,7 +145,7 @@ async function anthropicFallback(
       if (Date.now() - _lastFallbackAlertAt > 10 * 60_000) {
         _lastFallbackAlertAt = Date.now();
         const { raiseProviderFailureAlert } = await import("../observability/providerFailureAlert");
-        await raiseProviderFailureAlert({ provider: "openai", model: "fast-path", error: openaiErr });
+        await raiseProviderFailureAlert({ provider: "openai", model: "fast-path", error: openaiErr, hasFallback: true });
       }
       const adminMod = await import("firebase-admin");
       await adminMod.firestore()

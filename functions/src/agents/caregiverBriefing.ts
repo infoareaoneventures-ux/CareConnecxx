@@ -22,6 +22,8 @@ export function renderCaregiverAccountStatus(cg: {
   membershipPaid?: boolean;
   backgroundCheckStatus?: string;
   stripeAccountId?: string;
+  payoutsEnabled?: boolean;
+  chargesEnabled?: boolean;
   verified?: boolean;
   verificationStatus?: string;
   hourlyRate?: number;
@@ -41,7 +43,8 @@ export function renderCaregiverAccountStatus(cg: {
     lines.push("- Background check: not started");
   }
 
-  lines.push(`- Payout account: ${cg.stripeAccountId ? "connected and ready" : "not set up yet"}`);
+  // The page's rule: connected only when payouts AND charges are enabled; an account id alone is "setup incomplete".
+  lines.push(`- Payout account: ${cg.payoutsEnabled === true && cg.chargesEnabled === true ? "connected and ready" : cg.stripeAccountId ? "setup started, not finished (Stripe needs more information)" : "not set up yet"}`);
   if (cg.verified === true || cg.verificationStatus === "approved") {
     lines.push("- Profile: approved and visible to families");
   }

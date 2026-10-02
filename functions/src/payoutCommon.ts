@@ -14,8 +14,8 @@ import { instantPayoutFeeCentsFor } from "./billing/shiftBillingAmounts";
  * automatic schedules, and the sweep already does the job for free.
  *
  * On top of that, a caregiver may cash out early with an INSTANT payout
- * (arrives in ~30 minutes). Instant payouts carry Stripe's 1% fee (min $0.50), passed to the caregiver since 2026-09-19 — the
- * platform absorbs Stripe's instant-payout fee (founder decision 2026-07-06).
+ * (arrives in ~30 minutes). Instant payouts carry Stripe's 1% fee (min $0.50), passed to
+ * the caregiver (founder decision 2026-09-19, reversing the 2026-07-06 "platform absorbs it").
  *
  * `executeInstantPayout` below is the ONLY code path that may create a payout.
  * The app callable (instantPayout.ts), the Evia MCP tool (mcp/server.ts), and
@@ -108,9 +108,19 @@ async function getPlatformAccountId(stripe: ReturnType<typeof getStripeClient>):
 }
 
 /**
+ * What could be paid out instantly right now, straight from Stripe — the page's
+ * getPayoutBalance, Evia's Payouts tab and the Cash Out flow all read this one.
+ */
+export async function readInstantBalance(stripeAccountId: string): Promise<{ instantAvailableCents: number; pendingCents: number }> {
+    const balance = await getStripeClient().balance.retrieve({ stripeAccount: stripeAccountId });
+    const usd = (rows?: Array<{ amount: number; currency: string }>) => (rows ?? []).find((b) => b.currency === "usd")?.amount ?? 0;
+    return { instantAvailableCents: usd((balance as any).instant_available), pendingCents: usd(balance.pending as any) };
+}
+
+/**
  * The single instant-payout implementation. Balance-based: pays out the
  * caregiver's instantly-available Stripe balance (or a requested portion),
- * free of platform fees. Writes the unified payout record to
+ * minus Stripe's instant fee (1%, $0.50 min). Writes the unified payout record to
  * caregivers/{id}/payouts and notifies the caregiver.
  */
 export async function executeInstantPayout(opts: {
@@ -174,7 +184,7 @@ export async function executeInstantPayout(opts: {
     // Runs in a TRANSACTION so two concurrent requests (e.g. a duplicate SMS
     // "YES" and an app tap landing on different instances) can't both read
     // "no recent payout" and each create a live Stripe payout — which would
-    // bill the platform the instant-payout fee twice and double-disburse the
+    // charge the caregiver Stripe's instant-payout fee twice and double-disburse the
     // requested amount. The read (recent payout) and the write (placeholder
     // doc) are now atomic; the Stripe call stays outside, keyed by the doc id.
     const payoutsCol = caregiverRef.collection("payouts");

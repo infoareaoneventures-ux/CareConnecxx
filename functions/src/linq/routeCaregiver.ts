@@ -289,6 +289,13 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (past === "handled") return "handled";
     }
 
+    // ── PAYOUTS · PAYOUT HISTORY · CASH OUT · SETUP · MORE — the Payments page's Payouts tab (agents/caregiverPayouts.ts) ──
+    if (session.caregiverId) {
+      const { handlePayoutsKeyword } = await import("../agents/caregiverPayouts");
+      const po = await handlePayoutsKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (po === "handled") return "handled";
+    }
+
     // ── TIMESHEETS · PENDING · HISTORY · REPORT · SUBMIT n · REVIEW n · DETAILS n · VIEW n — the Payments page's Timesheets tab (agents/caregiverTimesheets.ts) ──
     if (session.caregiverId) {
       const { handleTimesheetsKeyword } = await import("../agents/caregiverTimesheets");

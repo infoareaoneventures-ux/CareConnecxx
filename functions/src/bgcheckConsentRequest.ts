@@ -62,6 +62,15 @@ export async function requestBackgroundCheckConsent(uid: string, reason: Consent
   };
   await ref.set(patch, { merge: true });
   await db.collection("users").doc(uid).set({ verificationStatus: "submitted" }, { merge: true }).catch(() => {});
+  // Evia's text session caches the last Checkr invitation link (bgcheckInviteUrl) so
+  // "send me the link again" re-sends it. A fresh consent ask makes that link stale —
+  // clear it so the resend mints the /bgcheck consent page instead (2026-10-03).
+  const phone = typeof cg.phone === "string" ? cg.phone : undefined;
+  if (phone) {
+    await db.collection("agent_sessions").doc(phone)
+      .update({ bgcheckInviteUrl: null, bgcheckInviteSentAt: null })
+      .catch(() => { /* no text session for this caregiver */ });
+  }
 
   // The caregiver is told ONCE through notifications/caregiverAccountEvents.ts:
   // a first payment by the record change (membership_paid: "Next: authorize

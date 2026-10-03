@@ -36,6 +36,7 @@ export interface CaregiverAccountEventContext {
   finalAttempt?: boolean;
   nextRetry?: string;       // "Oct 5"
   url?: string;             // the Checkr link on consent
+  consentUrl?: string;      // the texted /bgcheck consent page (membership paid / renewed texts)
   renewal?: boolean;
   docLabel?: string;        // "Driver's License"
   docNotes?: string;        // admin's rejection note
@@ -54,31 +55,74 @@ const BILLING_KINDS = new Set<CaregiverAccountEventKind>([
   "membership_reactivated", "membership_cancelled", "membership_revoked",
 ]);
 
-/** The bell title + body (and the text, which is the same body) for each event. */
-export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: CaregiverAccountEventContext = {}): { title: string; body: string } {
+/**
+ * The bell title + body for each event, plus `text` when the texted wording differs:
+ * the bell lives on the site, so it links to the page; the text is Evia's channel,
+ * so it finishes by text — the consent page link itself, or the keyword that does
+ * the page's button (MANAGE MEMBERSHIP = the Stripe portal, ACTIVATE = the checkout).
+ */
+export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: CaregiverAccountEventContext = {}): { title: string; body: string; text?: string } {
   const dash = appLink("/caregiver/dashboard");
-  const membership = appLink("/caregiver/membership");
+  const membership = appLink("/caregiver/payments?tab=membership");
   switch (kind) {
     case "membership_paid":
-      return { title: "Membership active", body: `Your membership is active. Next: authorize your background check — it takes about 2 minutes. ${dash}` };
-    case "membership_renewed":
-      return { title: "Membership renewed", body: `Your annual membership renewed${ctx.amount ? ` — $${ctx.amount} was charged` : ""}. Authorize this year's background check refresh to stay bookable. ${dash}` };
-    case "membership_payment_failed":
+      return {
+        title: "Membership active",
+        body: `Your membership is active. Next: authorize your background check — it takes about 2 minutes. ${dash}`,
+        text: `Your membership is active. Next: authorize your background check — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
+      };
+    case "membership_renewed": {
+      const charged = ctx.amount ? ` — $${ctx.amount} was charged` : "";
+      return {
+        title: "Membership renewed",
+        body: `Your annual membership renewed${charged}. Authorize this year's background check refresh to stay bookable. ${dash}`,
+        text: `Your annual membership renewed${charged}. Authorize this year's background check refresh to stay bookable — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
+      };
+    }
+    case "membership_payment_failed": {
+      const manage = "reply MANAGE MEMBERSHIP for your Stripe billing link";
       if (ctx.finalAttempt) {
-        return { title: "Membership payment failed", body: `We weren't able to process your Evia membership payment after several tries, so your membership is now at risk of being canceled. To keep your access, please update your payment method at ${membership} today.` };
+        return {
+          title: "Membership payment failed",
+          body: `We weren't able to process your Evia membership payment after several tries, so your membership is now at risk of being canceled. To keep your access, please update your payment method at ${membership} today.`,
+          text: `We weren't able to process your Evia membership payment after several tries, so your membership is now at risk of being canceled. To keep your access, update your payment method today — ${manage}.`,
+        };
       }
+      const retry = ctx.nextRetry ? ` We'll retry on ${ctx.nextRetry}.` : "";
       if ((ctx.attempt ?? 1) <= 1) {
-        return { title: "Membership payment failed", body: `Heads up — we couldn't process your Evia membership payment. No action needed if your card just needs a moment, but you can update billing anytime at ${membership}.${ctx.nextRetry ? ` We'll retry on ${ctx.nextRetry}.` : ""}` };
+        return {
+          title: "Membership payment failed",
+          body: `Heads up — we couldn't process your Evia membership payment. No action needed if your card just needs a moment, but you can update billing anytime at ${membership}.${retry}`,
+          text: `Heads up — we couldn't process your Evia membership payment. No action needed if your card just needs a moment; to update your card, ${manage}.${retry}`,
+        };
       }
-      return { title: "Membership payment failed", body: `We still haven't been able to process your Evia membership payment. Please update your payment method at ${membership} to avoid an interruption.${ctx.nextRetry ? ` Next retry: ${ctx.nextRetry}.` : ""}` };
+      const next = ctx.nextRetry ? ` Next retry: ${ctx.nextRetry}.` : "";
+      return {
+        title: "Membership payment failed",
+        body: `We still haven't been able to process your Evia membership payment. Please update your payment method at ${membership} to avoid an interruption.${next}`,
+        text: `We still haven't been able to process your Evia membership payment. To avoid an interruption, update your payment method — ${manage}.${next}`,
+      };
+    }
     case "membership_cancel_scheduled":
-      return { title: "Membership ending", body: `Your Evia membership is set to end on ${ctx.date ?? "your renewal date"}. You keep everything until then, and you can reactivate anytime from the Membership page: ${membership}` };
+      return {
+        title: "Membership ending",
+        body: `Your Evia membership is set to end on ${ctx.date ?? "your renewal date"}. You keep everything until then, and you can reactivate anytime from the Membership page: ${membership}`,
+        text: `Your Evia membership is set to end on ${ctx.date ?? "your renewal date"}. You keep everything until then, and you can reactivate anytime — reply MANAGE MEMBERSHIP for your Stripe billing link.`,
+      };
     case "membership_reactivated":
       return { title: "Membership reactivated", body: `Your Evia membership is active again.${ctx.date ? ` Next billing date: ${ctx.date}.` : ""}` };
     case "membership_cancelled":
-      return { title: "Membership cancelled", body: `Your Evia membership has been cancelled. You can reactivate anytime from the Membership page: ${membership}` };
+      return {
+        title: "Membership cancelled",
+        body: `Your Evia membership has been cancelled. You can reactivate anytime from the Membership page: ${membership}`,
+        text: "Your Evia membership has been cancelled. You can reactivate anytime — reply ACTIVATE for your membership link.",
+      };
     case "membership_revoked":
-      return { title: "Membership inactive", body: `Your membership is no longer active. Activate your membership to apply to jobs and get booked: ${membership}` };
+      return {
+        title: "Membership inactive",
+        body: `Your membership is no longer active. Activate your membership to apply to jobs and get booked: ${membership}`,
+        text: "Your membership is no longer active. Activate your membership to apply to jobs and get booked — reply ACTIVATE for your membership link.",
+      };
 
     case "bgcheck_consent_received":
       return {
@@ -156,7 +200,21 @@ export async function notifyCaregiverAccountEvent(
   kind: CaregiverAccountEventKind,
   opts: NotifyOptions,
 ): Promise<{ bell: boolean; text: boolean }> {
-  const { title, body } = caregiverAccountEventCopy(kind, opts.ctx);
+  // The paid / renewed texts carry the consent page itself (the page's Authorize
+  // button, by text). Token TTL 14 days — the caregiver may act on it days later.
+  const ctx: CaregiverAccountEventContext = { ...(opts.ctx ?? {}) };
+  let phoneForLink: string | undefined;
+  if ((kind === "membership_paid" || kind === "membership_renewed") && !ctx.consentUrl) {
+    phoneForLink = await resolveCaregiverPhone(uid).catch(() => undefined);
+    if (phoneForLink) {
+      try {
+        const { generateToken } = await import("../agents/tokenService");
+        ctx.consentUrl = appLink(`/bgcheck?t=${generateToken({ phone: phoneForLink, task: "bgcheck_consent" }, 14 * 24 * 3600)}`);
+      } catch (err) { console.warn(`[caregiverAccountEvents] consent link failed (${kind}) for ${uid}:`, err); }
+    }
+  }
+  const { title, body, text } = caregiverAccountEventCopy(kind, ctx);
+  const smsBody = text ?? body;
   const created = await writeUserNotification({
     sourcePath: opts.sourcePath ?? `caregivers/${uid}`,
     eventId: opts.eventId,
@@ -169,14 +227,14 @@ export async function notifyCaregiverAccountEvent(
   }).catch((err) => { console.error(`[caregiverAccountEvents] bell failed (${kind}) for ${uid}:`, err); return false; });
   if (!created) return { bell: false, text: false };
 
-  const phone = await resolveCaregiverPhone(uid).catch(() => undefined);
+  const phone = phoneForLink ?? await resolveCaregiverPhone(uid).catch(() => undefined);
   if (!phone) return { bell: true, text: false };
   try {
     const sessSnap = await db.collection("agent_sessions").doc(phone).get();
     if (sessSnap.exists && sessSnap.data()?.optedOut !== true) {
       const { sendViaInteractionAgent } = await import("../agents/caraAgent");
       await sendViaInteractionAgent(phone, {
-        content: body,
+        content: smsBody,
         urgency: "immediate",
         sourceAgent: "caregiver_account_event",
         canDrop: false,
@@ -186,7 +244,7 @@ export async function notifyCaregiverAccountEvent(
     }
     if (sessSnap.exists) return { bell: true, text: false }; // opted out: bell only
     const { sendToPhone } = await import("../linq/client");
-    await sendToPhone(phone, body);
+    await sendToPhone(phone, smsBody);
     return { bell: true, text: true };
   } catch (err) {
     console.error(`[caregiverAccountEvents] text failed (${kind}) for ${uid}:`, err);

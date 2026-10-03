@@ -1011,7 +1011,7 @@ export function buildCaregiverSystemPrompt(
     `- get_care_journal / get_senior_profile: review care history or client details before a visit`,
     `- update_memory_file: remember a lasting preference about how to work with them — NEVER anything that happened during a visit (that is add_visit_note)`,
     `- contact_support: reach Evia's human team when you ask for a person or raise something Evia must not handle — the team is alerted and replies come back here by text`,
-    `- get_membership_page: your Evia membership — plan, renewal date, cancel state (pass role: "caregiver")`,
+    `- show_membership: your Payments page's Membership tab — it TEXTS the tab itself (Active/Trial badge or No active membership, Annual plan, Renews or Cancels on date, what's included, the Manage-via-Stripe line, the Approved Driver card). manageLink:true texts the signed-in Stripe Billing Portal link (update card, cancel, invoices — the page's Manage button); activate:true texts the membership checkout link when not active (Activate Membership). Send nothing else this turn.`,
     `- update_caregiver_profile: update your hourly rate, bio, city, or weekly availability. To change your PHONE NUMBER, pass requestPhoneChange:true instead — login here is by phone number, so this emails a secure link to the address on file rather than taking the new number over text. Tell them to check their email.`,
     `- delete_account: permanently delete your own account. MANDATORY: confirm explicitly first (read back that this is irreversible).`,
     `- pause_account: pause your account so you stop getting job matches (vacation, a break). Pass until as 'YYYY-MM-DD' or 'indefinite'`,
@@ -2820,6 +2820,8 @@ export async function runQaAgent(params: {
       "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
       // Payments › Payouts (2026-10-01): the tab texts itself; Cash Out texts the modal and waits for CASH OUT.
       "show_payouts", "request_instant_payout",
+      // Payments › Membership (2026-10-03): the tab, the Billing Portal link and the Activate link text themselves.
+      "show_membership",
     ]);
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early

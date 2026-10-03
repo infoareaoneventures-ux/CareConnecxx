@@ -285,8 +285,10 @@ describe("resendStuckStep — stripeAccountId mirrored onto caregiver doc (Fix 1
 
     // THE Fix 1 write: without it the account.updated webhook can never match
     // this caregiver and activation depends 100% on the browser hitting /done.
+    // Since 2026-10-03 the write is the site's (connectAccount.persistNewConnectAccount):
+    // a brand-new account carries the not-yet-onboarded flags too.
     expect(hoisted.setMock).toHaveBeenCalledWith(
-      { stripeAccountId: "acct_1", phone: "+15551112222" },
+      expect.objectContaining({ stripeAccountId: "acct_1", phone: "+15551112222", payoutsEnabled: false, chargesEnabled: false }),
       { merge: true },
     );
     // And the Connect link still goes out.

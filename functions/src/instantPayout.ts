@@ -47,11 +47,33 @@ export const getPayoutBalance = functions.https.onCall(async (data, context) => 
     // "Manage in Stripe" (2026-10-02): a one-time, signed-in link to the caregiver's own Express
     // dashboard — payout history, bank account and tax forms live there, not on our page.
     let loginUrl: string | undefined;
+    let onboardingUrl: string | undefined;
     if ((data as { loginLink?: unknown } | null)?.loginLink === true) {
         const { getStripeClient } = await import("./stripe");
-        loginUrl = (await getStripeClient().accounts.createLoginLink(stripeAccountId)).url;
+        const stripe = getStripeClient();
+        try {
+            loginUrl = (await stripe.accounts.createLoginLink(stripeAccountId)).url;
+        } catch (err) {
+            // Stripe refuses a dashboard link for an Express account that never finished
+            // onboarding — which the record can still call "connected" (the admin Approved
+            // button writes the flags without Stripe). Make the record honest from Stripe's
+            // own answer and hand the page the Setup link instead (2026-10-03).
+            const { isConnectOnboardingIncompleteError, syncConnectAccountStatus, createConnectOnboardingLink } = await import("./connectAccount");
+            if (!isConnectOnboardingIncompleteError(err)) throw err;
+            await syncConnectAccountStatus(stripe, stripeAccountId, context.auth.uid)
+                .catch((e) => console.error("getPayoutBalance: status sync failed:", e));
+            const { appLink } = await import("./config/appUrl");
+            onboardingUrl = await createConnectOnboardingLink(stripe, stripeAccountId, {
+                returnUrl: appLink("/caregiver/payments?tab=payouts&stripe=success"),
+                refreshUrl: appLink("/caregiver/payments?tab=payouts&stripe=refresh"),
+            });
+        }
     }
-    return { connected: true, instantAvailable: b.instantAvailableCents / 100, pending: b.pendingCents / 100, ...(loginUrl ? { loginUrl } : {}) };
+    return {
+        connected: true, instantAvailable: b.instantAvailableCents / 100, pending: b.pendingCents / 100,
+        ...(loginUrl ? { loginUrl } : {}),
+        ...(onboardingUrl ? { onboardingIncomplete: true, onboardingUrl } : {}),
+    };
 });
 
 export const requestInstantPayout = functions.https.onCall(async (_data, context) => {

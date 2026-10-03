@@ -37,8 +37,11 @@ export async function loadPayoutsTab(caregiverId: string): Promise<PayoutsTab> {
   const hasAccount = !!pay.stripeAccountId;
   const fullyEnabled = pay.payoutsEnabled === true && pay.chargesEnabled === true;
 
+  // The page fetches the live balance only once setup is fully complete
+  // (tab === 'payouts' && fullyEnabled) — same here, so a setup-incomplete
+  // account never gets a "still settling" line the page would not show.
   const [balance, hoursSnap] = await Promise.all([
-    hasAccount
+    fullyEnabled
       ? import("../payoutCommon").then((m) => m.readInstantBalance(String(pay.stripeAccountId))).catch(() => null)
       : Promise.resolve(null),
     db.collection("shiftHours").where("caregiverId", "==", caregiverId).get(),
@@ -94,16 +97,29 @@ export async function sendPayoutSetupLink(phone: string, chatId: string): Promis
 }
 
 /** The "Manage in Stripe" button: a one-time, signed-in link to the caregiver's own Stripe Express dashboard. */
-export async function sendStripeDashboardLink(chatId: string, caregiverId: string): Promise<boolean> {
+export async function sendStripeDashboardLink(phone: string, chatId: string, caregiverId: string): Promise<boolean> {
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
   const pay = await getCaregiverPayoutFields(caregiverId, (cgSnap.data() ?? {}) as Record<string, unknown>);
   if (!pay.stripeAccountId) { await sendMessage(chatId, "Your payout account isn't set up yet — reply SETUP for your Stripe link."); return false; }
   try {
     const { getStripeClient } = await import("../stripe");
-    const link = await getStripeClient().accounts.createLoginLink(String(pay.stripeAccountId));
-    await sendMessage(chatId, `Your Stripe dashboard (payout history, bank account, tax forms) — this link signs you in and works once: ${link.url}`);
-    return true;
+    const stripe = getStripeClient();
+    try {
+      const link = await stripe.accounts.createLoginLink(String(pay.stripeAccountId));
+      await sendMessage(chatId, `Your Stripe dashboard (payout history, bank account, tax forms) — this link signs you in and works once: ${link.url}`);
+      return true;
+    } catch (err) {
+      // Same fallback as the page's Manage in Stripe (instantPayout.getPayoutBalance):
+      // Stripe says the account never finished onboarding → make the record honest and
+      // hand over the Setup link instead of a failure.
+      const { isConnectOnboardingIncompleteError, syncConnectAccountStatus } = await import("../connectAccount");
+      if (!isConnectOnboardingIncompleteError(err)) throw err;
+      await syncConnectAccountStatus(stripe, String(pay.stripeAccountId), caregiverId)
+        .catch((e) => console.error("[caregiverPayouts] status sync failed:", e));
+      await sendMessage(chatId, "Stripe still needs a few details before your dashboard opens — finish your payout setup first:");
+      return sendPayoutSetupLink(phone, chatId);
+    }
   } catch (err) {
     console.error("[caregiverPayouts] login link failed:", err);
     await sendMessage(chatId, "I couldn't open your Stripe dashboard right now — try MANAGE again in a moment.");
@@ -115,7 +131,7 @@ export async function sendStripeDashboardLink(chatId: string, caregiverId: strin
 export async function handlePayoutsKeyword(phone: string, chatId: string, caregiverId: string, text: string, _session: Record<string, unknown>): Promise<"handled" | "passthrough"> {
   const upper = text.trim().toUpperCase();
   if (upper === "PAYOUTS" || upper === "MY PAYOUTS" || upper === "BALANCE" || upper === "MY BALANCE") { await sendCaregiverPayouts(phone, chatId, caregiverId); return "handled"; }
-  if (upper === "PAYOUT HISTORY" || upper === "MANAGE" || upper === "MANAGE PAYOUTS" || upper === "STRIPE") { await sendStripeDashboardLink(chatId, caregiverId); return "handled"; }
+  if (upper === "PAYOUT HISTORY" || upper === "MANAGE" || upper === "MANAGE PAYOUTS" || upper === "STRIPE") { await sendStripeDashboardLink(phone, chatId, caregiverId); return "handled"; }
   if (upper === "CASH OUT" || upper === "CASHOUT" || upper === "CASH OUT NOW") {
     const { startInstantPayout } = await import("./instantPayoutHandler");
     await startInstantPayout(caregiverId, phone, chatId); return "handled";

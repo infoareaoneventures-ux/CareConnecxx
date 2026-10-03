@@ -16,6 +16,7 @@ import { checkOnboardingStatus, requestInstantPayout, getPayoutBalance, getSubsc
 import { db } from '../../lib/firebase';
 import type { Caregiver } from '../../types';
 import { paymentMethodLabel } from '../../types';
+import { hasValidTransportDocs } from '../../utils/transportDocs';
 
 // ── types ───────────────────────────────────────────────────────────────────
 
@@ -1592,6 +1593,15 @@ export const CaregiverPaymentsPage: React.FC = () => {
     const popup = window.open('', '_blank'); // open synchronously so the browser doesn't block it
     try {
       const b = await getPayoutBalance({ loginLink: true });
+      if (b.onboardingIncomplete && b.onboardingUrl) {
+        // Stripe says this account never finished onboarding (the record said
+        // "connected"); the server re-synced the flags — finish setup instead.
+        if (popup) popup.location.href = b.onboardingUrl; else window.location.href = b.onboardingUrl;
+        addToast('Stripe still needs a few details before your dashboard opens — finish your payout setup in the window that opened.', 'info');
+        const [pr, payout] = await Promise.all([dbService.getUser(uid), dbService.getOwnCaregiverPayoutFields(uid)]);
+        if (pr) setProfile({ ...(pr as any), ...payout });
+        return;
+      }
       if (!b.loginUrl) throw new Error('No dashboard link returned');
       if (popup) popup.location.href = b.loginUrl; else window.location.href = b.loginUrl;
     } catch (e: any) {
@@ -2084,6 +2094,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
             />
             <ApprovedDriverCard
               isApprovedDriver={(profile as any)?.isApprovedDriver === true}
+              badgeLive={hasValidTransportDocs(profile as any)}
               mvrPending={(profile as any)?.mvrStatus === 'pending' || ((profile as any)?.mvrPaid === true && (profile as any)?.isApprovedDriver !== true)}
               offersTransportation={((profile as any)?.services || (profile as any)?.skills || []).includes('Transportation')}
             />
@@ -2112,13 +2123,29 @@ export const CaregiverPaymentsPage: React.FC = () => {
 
 interface ApprovedDriverCardProps {
   isApprovedDriver: boolean;
+  /** The badge families actually see needs the documents approved too (utils/transportDocs). */
+  badgeLive: boolean;
   mvrPending: boolean;
   offersTransportation: boolean;
 }
-
 const ApprovedDriverCard: React.FC<ApprovedDriverCardProps> = ({
-  isApprovedDriver, mvrPending, offersTransportation,
+  isApprovedDriver, badgeLive, mvrPending, offersTransportation,
 }) => {
+  if (isApprovedDriver && !badgeLive) {
+    // The driving record cleared but a document is still missing / unapproved — the
+    // badge is not visible yet, so don't say it is (2026-10-03).
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
+        <div className="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+          <Car className="w-5 h-5 text-blue-600" />
+        </div>
+        <div className="flex-1">
+          <p className="font-semibold text-slate-900 text-sm">Driving record cleared</p>
+          <p className="text-xs text-slate-500">Your transportation badge turns on once your driver's license, insurance and registration are approved.</p>
+        </div>
+      </div>
+    );
+  }
   if (isApprovedDriver) {
     return (
       <div className="bg-white rounded-2xl border border-blue-200 p-5 flex items-center gap-3">
@@ -2278,7 +2305,7 @@ const MembershipCard: React.FC<MembershipCardProps> = ({
             'Keep 100% of your rate on every booking — families pay the service fee',
             'Access all job postings and apply instantly',
             'Background check badge on your profile',
-            'Direct messaging with families',
+            'Messaging',
           ].map(item => (
             <li key={item} className="flex items-start gap-2.5 text-sm text-slate-700">
               <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />

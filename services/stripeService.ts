@@ -123,8 +123,12 @@ export const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
       return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
     }
 
-    const doc = await fdb.collection('customers').doc(user.uid).collection('subscriptions').limit(1).get();
-    
+    // The live (active/trialing) record first — a re-subscribed member also has an
+    // old canceled record, and limit(1) alone could show its date (2026-10-03). Same
+    // rule as listenToSubscriptionStatus, v1-getSubscriptionDetails and Evia's tab.
+    const coll = fdb.collection('customers').doc(user.uid).collection('subscriptions');
+    let doc = await coll.where('status', 'in', ['active', 'trialing']).limit(1).get();
+    if (doc.empty) doc = await coll.limit(1).get();
     if (doc.empty) {
       return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
     }
@@ -245,6 +249,8 @@ export interface PayoutBalance {
   connected: boolean;
   instantAvailable: number;  // dollars, instantly payable right now
   pending: number;           // dollars, still settling — auto-pays out daily
+  onboardingIncomplete?: boolean; // with { loginLink: true }: Stripe refused the dashboard — the account never finished onboarding (record re-synced)
+  onboardingUrl?: string;         // …and here is the Setup link to finish it
   loginUrl?: string;         // with { loginLink: true }: a one-time, signed-in link to the caregiver's Stripe dashboard
 }
 

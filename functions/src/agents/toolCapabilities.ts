@@ -90,6 +90,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   retry_shift_payment:      ["billing"],            // parity 2026-07-06: agent mirror of v1-retryShiftPayment
   request_instant_payout:   ["billing"],
   show_payouts:             ["billing"],            // Payments › Payouts tab, texted whole (2026-10-01)
+  show_membership:          ["billing"],            // Payments › Membership tab, texted whole (2026-10-03)
   get_payout_status:        ["billing"],
   review_shift_hours:       ["billing", "care_plan"],
   get_pending_timesheets:   ["billing"],

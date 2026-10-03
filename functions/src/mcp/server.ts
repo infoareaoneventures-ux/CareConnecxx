@@ -1205,6 +1205,22 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "show_membership",
+    description:
+      "The caregiver Payments page's Membership tab, TEXTED by the tool itself (agents/caregiverMembership.ts): the status badge (Active / Trial — or No active membership with the page's sentence), Evia Membership — Annual plan, Renews <date> or ⚠ Cancels on <date>, What's included, the Manage-via-Stripe line, and the Approved Driver card. " +
+      "manageLink:true texts the page's Manage button — a signed-in Stripe Billing Portal link (update payment method, cancel, invoices). activate:true texts the page's Activate Membership checkout link (refused with a pointer to Manage when already active). " +
+      "Call it for 'my membership', 'when does my membership renew', 'cancel my membership', 'update my card', 'my invoices', 'am I an approved driver'. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        manageLink:  { type: "boolean", description: "Text the signed-in Stripe Billing Portal link instead of the tab (the Manage button)" },
+        activate:    { type: "boolean", description: "Text the membership checkout link instead of the tab (the Activate Membership button)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "review_shift_hours",
     description:
       "Approve, correct, or resolve a dispute on a caregiver's submitted shift hours — mirrors the website's Timesheets review modal exactly, action for action. " +
@@ -2401,7 +2417,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "update_memory_file",
   "edit_memory_file",
   "search_memory",
-  "get_membership_page",
+  "show_membership",
   "contact_support",
   "get_notifications",
   "get_account_settings",
@@ -3402,11 +3418,11 @@ async function executeToolCall(
         if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:get_membership_page" } }).catch(() => {});
         const { readMembershipPage } = await import("../agents/membershipPage");
-        const role = (input.role === "caregiver" ? "caregiver" : "client") as "client" | "caregiver";
-        const page = await readMembershipPage(input.userId as string, role);
+        // Families only — the caregiver Payments › Membership tab is show_membership.
+        const page = await readMembershipPage(input.userId as string);
         return {
-          success: true, ...page, page: "Membership", url: `${getAppUrl()}${role === "caregiver" ? "/caregiver/payments" : "/client/membership"}`,
-          ...(role === "client" ? { serviceFeeNote: "Plus a 9% service fee on each visit (minimum $1), covering payment processing and coordinating the visit. Caregivers keep 100% of their rate." } : {}),
+          success: true, ...page, page: "Membership", url: `${getAppUrl()}/client/membership`,
+          serviceFeeNote: "Plus a 9% service fee on each visit (minimum $1), covering payment processing and coordinating the visit. Caregivers keep 100% of their rate.",
         };
       }
       case "get_caregiver_booking_rate": {
@@ -5238,6 +5254,26 @@ async function executeToolCall(
       return { success: r.started, reason: r.reason, note: "The flow (or its refusal) was texted — send nothing else this turn." };
     }
 
+    // ── Payments › Membership (2026-10-03): the tab texted whole; Manage = the Billing Portal; Activate = the checkout link ──
+    if (name === "show_membership") {
+      const { caregiverId, manageLink, activate, phone: mbPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, mbPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const mb = await import("../agents/caregiverMembership");
+      if (manageLink === true) {
+        const ok = await mb.sendMembershipPortalLink(sess.chatId, caregiverId as string);
+        return { success: ok, note: ok ? "The signed-in Stripe Billing Portal link was texted — send nothing else this turn." : "The refusal was texted — send nothing else this turn." };
+      }
+      if (activate === true) {
+        const ok = await mb.sendMembershipActivateLink(sess.phone, sess.chatId, caregiverId as string);
+        return { success: ok, note: ok ? "The membership checkout link was texted — send nothing else this turn." : "The refusal (or throttle notice) was texted — send nothing else this turn." };
+      }
+      const r = await mb.sendCaregiverMembership(sess.chatId, caregiverId as string);
+      return { success: true, ...r, note: "The Membership tab was texted — send nothing else this turn." };
+    }
+
     // ── Payments › Payouts (2026-10-01): the tab texted whole; Cash Out = the modal as a flow ──
     if (name === "show_payouts" || name === "request_instant_payout") {
       const { caregiverId, dashboardLink, phone: poPhone } = input as Record<string, unknown>;
@@ -5248,7 +5284,7 @@ async function executeToolCall(
       if (name === "show_payouts") {
         const po = await import("../agents/caregiverPayouts");
         if (dashboardLink === true) {
-          const ok = await po.sendStripeDashboardLink(sess.chatId, caregiverId as string);
+          const ok = await po.sendStripeDashboardLink(sess.phone, sess.chatId, caregiverId as string);
           return { success: ok, note: ok ? "The signed-in Stripe dashboard link was texted — send nothing else this turn." : "The refusal was texted — send nothing else this turn." };
         }
         const r = await po.sendCaregiverPayouts(sess.phone, sess.chatId, caregiverId as string);

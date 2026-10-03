@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from './utils/webhookLedger';
 import { appLink } from './config/appUrl';
+import { createCaregiverMembershipCheckout, markCaregiverMembershipPaid, createCaregiverBillingPortalUrl, NoBillingAccountError, resolveCaregiverAnnualPriceId } from './caregiverMembershipBilling';
 import { businessTodayStr, DEFAULT_TZ, formatDateWithWeekday } from './utils/scheduledTime';
 
 // Initialize Stripe with secret key
@@ -26,7 +27,7 @@ const MEMBERSHIP_PRICE_ID = process.env.STRIPE_MEMBERSHIP_PRICE_ID || 'price_1TO
 // asks for this by `plan: 'caregiver_annual'` — the server picks the price, so
 // a stale VITE price id in the bundle can never charge a caregiver a family plan
 // (the fallback to MEMBERSHIP_PRICE_ID did exactly that before this change).
-const CAREGIVER_ANNUAL_PRICE_ID = process.env.STRIPE_CAREGIVER_ANNUAL || 'price_1UJRHKL7Ss5iuUb7jUeIva1L';
+const CAREGIVER_ANNUAL_PRICE_ID = resolveCaregiverAnnualPriceId();
 
 // Allowed price IDs for the family plans + caregiver membership.
 const ALLOWED_PRICE_IDS = [
@@ -52,6 +53,20 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
 
   const { successUrl, cancelUrl, priceId, plan } = data;
   const userId = context.auth.uid;
+
+  // Caregiver membership: the ONE checkout path shared with every link Evia
+  // texts (caregiverMembershipBilling.ts) — customer reused from customers/{uid},
+  // the server-picked flat annual price, metadata the webhook reads from either origin.
+  if (plan === 'caregiver_annual') {
+    try {
+      const session = await createCaregiverMembershipCheckout(stripe, { uid: userId, successUrl, cancelUrl });
+      return { sessionId: session.id, url: session.url };
+    } catch (error: any) {
+      const stripeMsg = error?.raw?.message || error?.message || String(error);
+      console.error('Error creating caregiver membership checkout:', stripeMsg, error);
+      throw new functions.https.HttpsError('internal', `Failed to create checkout session: ${stripeMsg}`);
+    }
+  }
 
   // Resolve which price to charge. A caregiver membership is always the flat
   // annual price (server-chosen); family plans validate the requested price
@@ -295,6 +310,26 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
       // the caregiver billing portal (createCaregiverBillingPortalSession)
       // resolves the Stripe customer from that doc.
       if (customerId) update.stripeCustomerId = customerId;
+      // The record gets the paid writes HERE, by uid, independent of the onboarding
+      // step machine below — advanceOnboardingStep dedupes 'membership' per session,
+      // so a rejoin after a lapse would otherwise never reach the record (and never
+      // re-run the background check — founder rule 2026-10-03). Same function as the
+      // site-origin branch; the stamp tells advanceOnboardingStep not to write twice.
+      if (subscriptionId) {
+        try {
+          const sessSnap = await admin.firestore().collection('agent_sessions').doc(phone).get();
+          const sess = (sessSnap.data() ?? {}) as Record<string, unknown>;
+          let uid = (session.metadata?.firebaseUID as string | undefined)
+            || (sess.caregiverId as string | undefined) || (sess.userId as string | undefined);
+          if (!uid) uid = await admin.auth().getUserByPhoneNumber(phone).then((u) => u.uid).catch(() => undefined);
+          if (uid) {
+            await markCaregiverMembershipPaid(uid, { subscriptionId, customerId: customerId || null, phone });
+            update.membershipRecordedAt = new Date().toISOString();
+          }
+        } catch (err) {
+          console.error(`caregiver_membership: record mark failed for phone=${phone} (non-fatal):`, err);
+        }
+      }
       if (Object.keys(update).length) {
         await admin.firestore().collection('agent_sessions').doc(phone).update(update).catch(() => {});
       }
@@ -356,32 +391,15 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
-  const caregiverData = caregiverSnap.data() || {};
-
-  // Flat membership (2026-09-25): the MVR is covered whenever the profile
-  // offers Transportation — no separate purchase, no checkout toggle.
-  // `mvrPaid` keeps its name (firestore.rules locks it as the webhook-only
-  // badge gate) but now means "covered".
-  const profileServices: string[] = Array.isArray(caregiverData.services) && caregiverData.services.length
-    ? caregiverData.services
-    : (Array.isArray(caregiverData.skills) ? caregiverData.skills : []);
-  const includeMVRFlag = profileServices.includes('Transportation');
-
-  await admin.firestore().collection('caregivers').doc(userId).set({
-    membershipPaid: true,
-    ...(includeMVRFlag && { mvrPaid: true }),
-    verificationStatus: 'submitted',
-  }, { merge: true });
-  await admin.firestore().collection('users').doc(userId).set({ verificationStatus: 'submitted' }, { merge: true });
-
-  // Consent-first (founder, 2026-09-25): the webhook no longer creates the
-  // Checkr candidate/invitation. It parks the account on "authorize your
-  // background check" (bell + text); the FCRA consent form
-  // (initiateCheckrCandidate) is the ONLY place the invitation is minted —
-  // the same order Evia's SMS path already follows.
-  const { requestBackgroundCheckConsent } = await import('./bgcheckConsentRequest');
-  await requestBackgroundCheckConsent(userId, 'initial')
-    .catch((err) => console.error(`requestBackgroundCheckConsent(initial) failed for ${userId}:`, err));
+  // The record a paid membership gets — the SAME writes Evia's payment step makes
+  // (caregiverMembershipBilling.markCaregiverMembershipPaid): paid + verification
+  // 'submitted', mvrPaid when the profile offers Transportation (the flat fee covers
+  // the MVR), the subscription id, the customer, then parked on "authorize your
+  // background check" (consent BEFORE any Checkr call — bgcheckConsentRequest.ts).
+  await markCaregiverMembershipPaid(userId, {
+    subscriptionId,
+    customerId: typeof session.customer === 'string' ? session.customer : (session.customer as any)?.id ?? null,
+  });
   console.log(`Membership paid for caregiver ${userId} — awaiting background-check consent`);
 }
 
@@ -1369,18 +1387,15 @@ export const createCaregiverBillingPortalSession = functions.https.onCall(async 
   const returnUrl = (data as any)?.returnUrl || appLink('/caregiver/payments');
 
   try {
-    const customerDoc = await admin.firestore().collection('customers').doc(userId).get();
-    const customerId = customerDoc.data()?.stripeCustomerId as string | undefined;
-
-    if (!customerId) {
-      throw new functions.https.HttpsError('not-found', 'No billing account found. Please purchase a membership first.');
+    // Shared with Evia's MANAGE MEMBERSHIP (caregiverMembershipBilling.ts).
+    let url: string;
+    try {
+      url = await createCaregiverBillingPortalUrl(stripe, userId, returnUrl);
+    } catch (err) {
+      if (err instanceof NoBillingAccountError) throw new functions.https.HttpsError('not-found', err.message);
+      throw err;
     }
-
-    const session = await stripe.billingPortal.sessions.create({
-      customer: customerId,
-      return_url: returnUrl,
-    });
-
+    const session = { url };
     return { url: session.url };
   } catch (error: any) {
     if (error instanceof functions.https.HttpsError) throw error;

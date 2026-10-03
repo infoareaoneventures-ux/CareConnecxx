@@ -38,6 +38,10 @@ vi.mock("../../payoutCommon", () => ({ readInstantBalance: vi.fn(async () => { i
 vi.mock("../../stripe", () => ({ getStripeClient: () => ({ accounts: { createLoginLink: (...a: any[]) => (hoisted.loginLink as any)(...a) } }) }));
 vi.mock("../actions/sendOnboardingLinkAction", () => ({ runSendOnboardingLinkAction: vi.fn(async () => hoisted.linkResult) }));
 vi.mock("../instantPayoutHandler", () => ({ startInstantPayout: (...a: any[]) => (hoisted.startInstant as any)(...a) }));
+vi.mock("../../connectAccount", () => ({
+  isConnectOnboardingIncompleteError: (e: any) => /not completed onboarding/.test(e?.message ?? ""),
+  syncConnectAccountStatus: vi.fn(async () => { hoisted.payFields = { ...hoisted.payFields, payoutsEnabled: false, chargesEnabled: false }; return { chargesEnabled: false, payoutsEnabled: false, detailsSubmitted: false, stripeOnboardingComplete: false }; }),
+}));
 
 import { loadPayoutsTab, payoutsTabText, sendCaregiverPayouts, handlePayoutsKeyword, FOOTNOTE, HOW_YOU_GET_PAID, STRIPE_DASHBOARD_LINE } from "../caregiverPayouts";
 
@@ -51,7 +55,7 @@ beforeEach(() => {
 });
 
 describe("the reads", () => {
-  it("fullyEnabled = payouts AND charges enabled; the live balance is read only with an account; approved-not-yet-charged sums credit approved rows", async () => {
+  it("fullyEnabled = payouts AND charges enabled; the live balance is read only when fully enabled (the page's rule); approved-not-yet-charged sums credit approved rows", async () => {
     enabled();
     hoisted.docs.set("shiftHours/a", { caregiverId: "cg1", paymentMethod: "credit", status: "approved", grossPay: 77.02 });
     hoisted.docs.set("shiftHours/b", { caregiverId: "cg1", paymentMethod: "credit", status: "auto_approved", finalTotalHours: 2, payRate: 25 });
@@ -62,7 +66,9 @@ describe("the reads", () => {
     expect(tab.balance).toEqual({ instantAvailableCents: 4950, pendingCents: 0 });
     expect(tab.approvedAwaitingChargeCents).toBe(12702);
     hoisted.payFields = { stripeAccountId: "acct_1", payoutsEnabled: true }; // charges not enabled → the page's "Setup incomplete"
-    expect((await loadPayoutsTab("cg1")).fullyEnabled).toBe(false);
+    const incomplete = await loadPayoutsTab("cg1");
+    expect(incomplete.fullyEnabled).toBe(false);
+    expect(incomplete.balance, "the page does not read Stripe before setup is complete").toBeNull();
     hoisted.payFields = {};
     expect((await loadPayoutsTab("cg1")).balance).toBeNull();
   });
@@ -126,6 +132,15 @@ describe("keywords", () => {
     hoisted.payFields = {};
     await handlePayoutsKeyword("+1", "chat", "cg1", "MANAGE", {});
     expect(hoisted.sent.at(-1)).toBe("Your payout account isn't set up yet — reply SETUP for your Stripe link.");
+    // The record says connected but Stripe says onboarding never finished (admin Approved button):
+    // the flags are re-synced from Stripe and the Setup link goes out instead of a failure.
+    enabled(); hoisted.linkResult = { success: true, linkType: "caregiver_payouts", sent: true };
+    hoisted.loginLink.mockRejectedValueOnce(Object.assign(new Error("Cannot create a login link for an account that has not completed onboarding."), { type: "StripeInvalidRequestError" }));
+    await handlePayoutsKeyword("+1", "chat", "cg1", "MANAGE", {});
+    const { syncConnectAccountStatus } = await import("../../connectAccount");
+    expect(syncConnectAccountStatus).toHaveBeenCalledWith(expect.anything(), "acct_1", "cg1");
+    expect(hoisted.sent.at(-1)).toBe("Stripe still needs a few details before your dashboard opens — finish your payout setup first:");
+    expect(hoisted.payFields.payoutsEnabled).toBe(false);
     expect(await handlePayoutsKeyword("+1", "chat", "cg1", "hello", {})).toBe("passthrough");
   });
 });

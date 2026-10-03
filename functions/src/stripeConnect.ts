@@ -1,10 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import {
-    getCaregiverPayoutFields,
-    writeCaregiverPayoutPrivate,
-    resolveCaregiverByStripeAccount,
-} from "./caregiverPrivate";
+import { getCaregiverPayoutFields } from "./caregiverPrivate";
+import { ensureConnectAccount, syncConnectAccountStatus, createConnectOnboardingLink } from "./connectAccount";
 const Stripe = require("stripe");
 
 if (!admin.apps.length) {
@@ -27,12 +24,12 @@ const appUrl = (): string => {
 
 const buildAccountLink = async (accountId: string) => {
     const base = appUrl();
-    return stripe.accountLinks.create({
-        account: accountId,
-        refresh_url: `${base}/caregiver/payments?tab=payouts&stripe=refresh`,
-        return_url: `${base}/caregiver/payments?tab=payouts&stripe=success`,
-        type: "account_onboarding",
+    // Shared with Evia's Setup links and the Manage-in-Stripe fallback (connectAccount.ts).
+    const url = await createConnectOnboardingLink(stripe, accountId, {
+        returnUrl: `${base}/caregiver/payments?tab=payouts&stripe=success`,
+        refreshUrl: `${base}/caregiver/payments?tab=payouts&stripe=refresh`,
     });
+    return { url };
 };
 
 // Verify the caller is allowed to act on `accountId`: either it is the Stripe
@@ -82,33 +79,9 @@ const resolveAccountForCaller = async (
     return own;
 };
 
-const syncAccountStatus = async (accountId: string) => {
-    const account = await stripe.accounts.retrieve(accountId);
-    const chargesEnabled = !!account.charges_enabled;
-    const payoutsEnabled = !!account.payouts_enabled;
-    const detailsSubmitted = !!account.details_submitted;
-    const complete = chargesEnabled && payoutsEnabled;
-
-    const caregiverId = await resolveCaregiverByStripeAccount(accountId);
-
-    if (caregiverId) {
-        const update: Record<string, unknown> = {
-            chargesEnabled,
-            payoutsEnabled,
-            detailsSubmitted,
-            stripeOnboardingComplete: complete,
-        };
-        if (complete) {
-            update.stripeOnboardingCompletedAt = admin.firestore.FieldValue.serverTimestamp();
-        }
-        // Dual-write: parent stays the fallback until the backfill's
-        // deleteParent phase; private/payout is the canonical copy.
-        await db.collection("caregivers").doc(caregiverId).update(update);
-        await writeCaregiverPayoutPrivate(caregiverId, update);
-    }
-
-    return { chargesEnabled, payoutsEnabled, detailsSubmitted, stripeOnboardingComplete: complete };
-};
+// Shared with the Manage-in-Stripe fallback and Evia (connectAccount.ts): Stripe's
+// own answer, written onto the record (parent + private/payout).
+const syncAccountStatus = async (accountId: string) => syncConnectAccountStatus(stripe, accountId);
 
 export const createStripeConnectAccount = functions
     .https.onCall(async (data, context) => {
@@ -119,43 +92,13 @@ export const createStripeConnectAccount = functions
         const uid = context.auth.uid;
         const email: string | undefined = data?.email || context.auth.token.email;
 
-        const caregiverRef = db.collection("caregivers").doc(uid);
-        const caregiverSnap = await caregiverRef.get();
-        const payout = await getCaregiverPayoutFields(uid, caregiverSnap.data() ?? null);
-        const existing = payout.stripeAccountId as string | undefined;
+        // ONE find-or-create path, shared with every link Evia texts
+        // (connectAccount.ts): the record is the only source of the account id.
+        const caregiverSnap = await db.collection("caregivers").doc(uid).get();
+        const { accountId } = await ensureConnectAccount(stripe, uid, { email, parentData: caregiverSnap.data() ?? null });
 
-        if (existing) {
-            const link = await buildAccountLink(existing);
-            return { accountId: existing, onboardingUrl: link.url, onboardingComplete: false };
-        }
-
-        const account = await stripe.accounts.create({
-            type: "express",
-            country: "US",
-            email,
-            capabilities: {
-                card_payments: { requested: true },
-                transfers: { requested: true },
-            },
-            business_type: "individual",
-            metadata: { caregiverId: uid, platform: "evia" },
-        });
-
-        const connectFields = {
-            stripeAccountId: account.id,
-            stripeOnboardingComplete: false,
-            payoutsEnabled: false,
-            chargesEnabled: false,
-            detailsSubmitted: false,
-            stripeAccountCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-        // Dual-write parent + private/payout (+ stripe_accounts reverse map,
-        // maintained inside writeCaregiverPayoutPrivate).
-        await caregiverRef.set(connectFields, { merge: true });
-        await writeCaregiverPayoutPrivate(uid, connectFields);
-
-        const link = await buildAccountLink(account.id);
-        return { accountId: account.id, onboardingUrl: link.url, onboardingComplete: false };
+        const link = await buildAccountLink(accountId);
+        return { accountId, onboardingUrl: link.url, onboardingComplete: false };
     });
 
 export const getStripeOnboardingLink = functions

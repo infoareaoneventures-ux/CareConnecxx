@@ -9,7 +9,7 @@
 // never shows.
 import * as admin from "firebase-admin";
 import { businessTodayStr, DEFAULT_TZ, formatDateWithWeekday } from "../utils/scheduledTime";
-import { clientMonthlyDisplay, caregiverAnnualDisplay } from "../config/pricing";
+import { clientMonthlyDisplay } from "../config/pricing";
 
 const db = admin.firestore();
 
@@ -34,7 +34,6 @@ export interface MembershipPage {
 }
 
 const CLIENT_PLAN = { name: "Standard Plan", price: clientMonthlyDisplay(), billing: "Billed monthly. Cancel anytime." };
-const CAREGIVER_PLAN = { name: "Caregiver membership", price: caregiverAnnualDisplay(), billing: "Billed yearly. Covers the annual background check." };
 
 const toMs = (v: unknown): number => {
   if (!v) return NaN;
@@ -46,8 +45,9 @@ const toMs = (v: unknown): number => {
   return Date.parse(String(v));
 };
 
-export function shapeMembershipPage(sub: Record<string, unknown> | null, role: "client" | "caregiver" = "client"): MembershipPage {
-  const plan = role === "caregiver" ? CAREGIVER_PLAN : CLIENT_PLAN;
+// Families only: the caregiver Payments › Membership tab has its own twin (caregiverMembership.ts, 2026-10-03).
+export function shapeMembershipPage(sub: Record<string, unknown> | null): MembershipPage {
+  const plan = CLIENT_PLAN;
   const status = sub ? String(sub.status ?? "") || null : null;
   const isActive = status === "active" || status === "trialing";
   const cancelScheduled = isActive && sub?.cancel_at_period_end === true;
@@ -75,7 +75,7 @@ export function shapeMembershipPage(sub: Record<string, unknown> | null, role: "
 }
 
 /** Same lookup as the page: the live (active/trialing) record first, else whatever record exists. */
-export async function readMembershipPage(userId: string, role: "client" | "caregiver" = "client"): Promise<MembershipPage> {
+export async function readMembershipPage(userId: string): Promise<MembershipPage> {
   const coll = db.collection("customers").doc(userId).collection("subscriptions");
   const live = await coll.where("status", "in", ["active", "trialing"]).limit(1).get();
   let sub: Record<string, unknown> | null = live.empty ? null : (live.docs[0].data() as Record<string, unknown>);
@@ -83,5 +83,5 @@ export async function readMembershipPage(userId: string, role: "client" | "careg
     const any = await coll.limit(1).get();
     sub = any.empty ? null : (any.docs[0].data() as Record<string, unknown>);
   }
-  return shapeMembershipPage(sub, role);
+  return shapeMembershipPage(sub);
 }

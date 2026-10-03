@@ -113,6 +113,9 @@ const DRY_RUN_STRIPE = {
   prices: {
     retrieve: async () => ({ id: "price_dryrun", unit_amount: 0, recurring: null }),
   },
+  customers: {
+    create: async () => { recordSideEffect("stripe.customers.create"); return { id: "cus_dryrun" }; },
+  },
   checkout: {
     sessions: {
       create: async () => { recordSideEffect("stripe.checkout.sessions.create"); return { id: "cs_dryrun", url: "https://dryrun.local/checkout" }; },
@@ -3256,29 +3259,21 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
 
   await signalThinking(chatId, session.service);
   try {
-    const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.STRIPE_CAREGIVER_ANNUAL ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
-
-    if (membershipPriceId) {
-      const lineItems: { price: string; quantity: number }[] = [
-        { price: membershipPriceId, quantity: 1 },
-      ];
-
-      // Recurring annual membership (mode "subscription" → renews yearly).
-      // NOTE: STRIPE_CAREGIVER_ANNUAL must be a *recurring* annual price in Stripe.
-      // One flat price — the MVR is covered by it, never a second line item.
-      // We intentionally omit payment_method_types so Checkout uses the account's
-      // automatic payment methods — this surfaces Apple Pay / Google Pay / Link
-      // (caregivers are mobile-first over SMS), which an explicit ["card"] list suppresses.
-      const stripeSession = await getStripe().checkout.sessions.create({
-        mode:                 "subscription",
-        line_items:           lineItems,
-        success_url:          `${APP_URL}/done?task=caregiver_membership&t=${token}`,
-        cancel_url:           `${APP_URL}/start`,
-        metadata:             { phone, task: "caregiver_membership", includeMVR: mvrCharged ? "true" : "false" },
-        subscription_data:    { metadata: { phone, kind: "caregiver_membership" } },
-      });
-      checkoutUrl = stripeSession.url ?? checkoutUrl;
-    }
+    // The site's Activate Membership checkout, shared (caregiverMembershipBilling.
+    // createCaregiverMembershipCheckout): the customer reused from customers/{uid}
+    // once the record exists, the server-picked flat annual price, metadata for
+    // both the text session (phone) and the record (firebaseUID). Checkout keeps
+    // automatic payment methods (Apple Pay / Google Pay / Link for mobile-first
+    // caregivers); the texted link returns to the text channel's /done page.
+    const { createCaregiverMembershipCheckout } = await import("../caregiverMembershipBilling");
+    const stripeSession = await createCaregiverMembershipCheckout(getStripe() as any, {
+      uid: (session.caregiverId ?? session.userId) as string | undefined,
+      phone,
+      successUrl: `${APP_URL}/done?task=caregiver_membership&t=${token}`,
+      cancelUrl: `${APP_URL}/start`,
+      includeMVR: mvrCharged,
+    });
+    checkoutUrl = stripeSession.url ?? checkoutUrl;
   } catch (err) {
     // Same class as handleClientSendPayment: the fallback URL still goes out
     // (inline text via the transport's card-safety rule), but ops must know a
@@ -3908,6 +3903,39 @@ export async function confirmBgcheckConsent(
 }
 
 
+/** Find-or-create the caregiver's Express account EXACTLY the way the site's Setup
+ *  Payouts button does (connectAccount.ensureConnectAccount): the RECORD
+ *  (caregivers/{id}/private/payout, parent fallback) is the only source of the
+ *  account id, so a bank connected on the site is reused, never replaced; a new
+ *  account is created with the site's parameters and dual-written onto the record.
+ *  The SMS draft's id is only a last resort for sessions older than the record
+ *  mirror. Returns null when the session has no caregiver record yet. */
+async function ensureCaregiverConnectAccount(phone: string, session: AgentSession): Promise<string | null> {
+  // Re-read caregiverId fresh: `session` may be a stale snapshot (these handlers
+  // are re-entered by resendStuckStep with a session read before the merge).
+  const freshSnap = await db.collection("agent_sessions").doc(phone).get();
+  const fresh = freshSnap.exists ? (freshSnap.data() as AgentSession | undefined) : undefined;
+  const caregiverId = (fresh?.caregiverId ?? session.caregiverId) as string | undefined;
+  if (!caregiverId) return null;
+  const d = (fresh?.onboardingData ?? session.onboardingData ?? {}) as Record<string, unknown>;
+  const { ensureConnectAccount, persistNewConnectAccount } = await import("../connectAccount");
+  const { accountId } = await ensureConnectAccount(getStripe(), caregiverId, {
+    email: typeof d.email === "string" && d.email ? d.email : undefined,
+    knownAccountId: typeof d.stripeAccountId === "string" ? d.stripeAccountId : null,
+    // `phone` rides along on the parent doc so the Connect webhook can match this
+    // caregiver even before the gate handoff wrote it.
+    persist: (id, created) => guardSideEffect(
+      "firestore.set:caregivers.stripeAccountId",
+      () => persistNewConnectAccount(caregiverId, id, created, { phone }),
+      undefined,
+      { phone },
+    ),
+  });
+  // Keep the SMS draft in step with the record (profile mirror / legacy readers).
+  if (d.stripeAccountId !== accountId) await mergeOnboardingData(phone, { stripeAccountId: accountId });
+  return accountId;
+}
+
 async function handleCaregiverSendStripeConnect(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const token = generateToken({ phone, task: "stripe_connect" });
   let connectUrl: string | null = null;
@@ -3915,49 +3943,12 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
 
   await signalThinking(chatId, session.service);
   try {
-    const d = session.onboardingData ?? {};
-    // Reuse a previously created Express account — this handler is re-entered by
-    // resendStuckStep and repeat bg-check webhooks, and each accounts.create call
-    // would otherwise orphan the prior account (same reuse rule as
-    // sendOnboardingLink's caregiver_payouts branch).
-    let accountId = d.stripeAccountId as string | undefined;
-    if (!accountId) {
-      const account = await getStripe().accounts.create({
-        type:    "express",
-        country: "US",
-        email:   (d.email ?? "") as string,
-        metadata: { phone, caregiverName: (d.name ?? "") as string },
-      });
-      accountId = account.id;
-      await mergeOnboardingData(phone, { stripeAccountId: accountId });
-    }
-
-    // Mirror the Express account id onto the caregiver doc so the Connect
-    // webhook (account.updated → charges+payouts enabled) can MATCH this
-    // caregiver and finalize onboarding server-side — the browser returning to
-    // /done is no longer the only activation trigger. Idempotent set+merge on a
-    // doc that already exists (pre-created by handleCaregiverSendBgcheck).
-    // Re-read caregiverId fresh: `session` may be a stale snapshot (this handler
-    // is re-entered by resendStuckStep with a session read before the merge).
-    try {
-      const freshSnap = await db.collection("agent_sessions").doc(phone).get();
-      const caregiverId = (freshSnap.data() as AgentSession | undefined)?.caregiverId ?? session.caregiverId;
-      if (caregiverId) {
-        await guardSideEffect(
-          "firestore.set:caregivers.stripeAccountId",
-          async () => {
-            await db.collection("caregivers").doc(caregiverId)
-              .set({ stripeAccountId: accountId, phone }, { merge: true });
-            const { writeCaregiverPayoutPrivate } = await import("../caregiverPrivate");
-            await writeCaregiverPayoutPrivate(caregiverId, { stripeAccountId: accountId });
-          },
-          undefined,
-          { phone },
-        );
-      }
-    } catch (mergeErr) {
-      console.error("stripeAccountId merge onto caregiver doc failed (non-fatal):", mergeErr);
-    }
+    // The site's find-or-create path; the record (not the SMS draft) is the source
+    // of the account id, and the id lands on the caregiver doc so the Connect
+    // webhook (account.updated → charges+payouts enabled) can MATCH this caregiver
+    // and finalize onboarding server-side.
+    const accountId = await ensureCaregiverConnectAccount(phone, session);
+    if (!accountId) throw new Error("no caregiver record on this session yet — cannot set up payouts");
 
     const link = await getStripe().accountLinks.create({
       account:     accountId,
@@ -4008,35 +3999,9 @@ export async function mintStripeConnectAccountLink(phone: string): Promise<strin
     const snap = await db.collection("agent_sessions").doc(phone).get();
     if (!snap.exists) return null;
     const session = snap.data() as AgentSession;
-    const d = session.onboardingData ?? {};
-    let accountId = d.stripeAccountId as string | undefined;
-    if (!accountId) {
-      const account = await getStripe().accounts.create({
-        type:     "express",
-        country:  "US",
-        email:    (d.email ?? "") as string,
-        metadata: { phone, caregiverName: (d.name ?? "") as string },
-      });
-      accountId = account.id;
-      await mergeOnboardingData(phone, { stripeAccountId: accountId });
-      // Mirror onto the caregiver doc so the Connect webhook can match this
-      // caregiver (same rule as handleCaregiverSendStripeConnect).
-      if (session.caregiverId) {
-        const linkCaregiverId = session.caregiverId as string;
-        await guardSideEffect(
-          "firestore.set:caregivers.stripeAccountId",
-          async () => {
-            await db.collection("caregivers").doc(linkCaregiverId)
-              .set({ stripeAccountId: accountId, phone }, { merge: true })
-              .catch((mergeErr) => console.error("stripeAccountId merge onto caregiver doc failed (non-fatal):", mergeErr));
-            const { writeCaregiverPayoutPrivate } = await import("../caregiverPrivate");
-            await writeCaregiverPayoutPrivate(linkCaregiverId, { stripeAccountId: accountId });
-          },
-          undefined,
-          { phone },
-        );
-      }
-    }
+    // The site's find-or-create path (record first — see ensureCaregiverConnectAccount).
+    const accountId = await ensureCaregiverConnectAccount(phone, session);
+    if (!accountId) return null;
     const token = generateToken({ phone, task: "stripe_connect" });
     const link = await getStripe().accountLinks.create({
       account:     accountId,
@@ -4063,7 +4028,15 @@ export type StripeConnectVerification =
 export async function verifyStripeConnectComplete(phone: string): Promise<StripeConnectVerification> {
   const snap = await db.collection("agent_sessions").doc(phone).get();
   const session = snap.exists ? (snap.data() as AgentSession) : undefined;
-  const accountId = (session?.onboardingData as Record<string, unknown> | undefined)?.stripeAccountId as string | undefined;
+  // The record is the source of the account id (the site may have connected the
+  // bank); the SMS draft only covers sessions older than the record mirror.
+  let accountId: string | undefined;
+  if (session?.caregiverId) {
+    const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
+    const onRecord = (await getCaregiverPayoutFields(session.caregiverId as string)).stripeAccountId;
+    if (typeof onRecord === "string" && onRecord) accountId = onRecord;
+  }
+  if (!accountId) accountId = (session?.onboardingData as Record<string, unknown> | undefined)?.stripeAccountId as string | undefined;
   if (!accountId) {
     // No Express account was ever created for them — nothing can be complete.
     return { status: "incomplete", finishUrl: await mintStripeConnectAccountLink(phone) };
@@ -4162,20 +4135,18 @@ export async function sendOnboardingLink(
       if (stored) { url = stored; break; }
       const token = generateToken({ phone, task: "caregiver_membership" });
       url = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
-      const membershipPriceId = process.env.STRIPE_CAREGIVER_ANNUAL_PRICE_ID ?? process.env.STRIPE_CAREGIVER_ANNUAL ?? process.env.VITE_STRIPE_CAREGIVER_ANNUAL ?? "";
-      if (membershipPriceId) {
+      {
         const wantsMvr   = offersTransportation(d as Record<string, unknown>);
         // Flat fee: includeMVR only selects the bundled Checkr package — see handleCaregiverSendMembership.
         const mvrCharged = wantsMvr && isMvrCheckConfigured("bundled");
-        const lineItems: { price: string; quantity: number }[] = [{ price: membershipPriceId, quantity: 1 }];
-        const stripeSession = await getStripe().checkout.sessions.create({
-          mode:                 "subscription",
-          payment_method_types: ["card"],
-          line_items:           lineItems,
-          success_url:          `${APP_URL}/done?task=caregiver_membership&t=${token}`,
-          cancel_url:           `${APP_URL}/start`,
-          metadata:             { phone, task: "caregiver_membership", includeMVR: mvrCharged ? "true" : "false" },
-          subscription_data:    { metadata: { phone, kind: "caregiver_membership" } },
+        // The site's checkout path (caregiverMembershipBilling.ts) — same as the onboarding step.
+        const { createCaregiverMembershipCheckout } = await import("../caregiverMembershipBilling");
+        const stripeSession = await createCaregiverMembershipCheckout(getStripe() as any, {
+          uid: (session.caregiverId ?? session.userId) as string | undefined,
+          phone,
+          successUrl: `${APP_URL}/done?task=caregiver_membership&t=${token}`,
+          cancelUrl: `${APP_URL}/start`,
+          includeMVR: mvrCharged,
         });
         url = stripeSession.url ?? url;
       }
@@ -4210,38 +4181,12 @@ export async function sendOnboardingLink(
 
     case "caregiver_payouts": {
       const token = generateToken({ phone, task: "stripe_connect" });
-      let accountId = d.stripeAccountId as string | undefined;
-      if (!accountId) {
-        const account = await getStripe().accounts.create({
-          type:     "express",
-          country:  "US",
-          email:    (d.email ?? "") as string,
-          metadata: { phone, caregiverName: (d.name ?? "") as string },
-        });
-        accountId = account.id;
-        await mergeOnboardingData(phone, { stripeAccountId: accountId });
-      }
-      // Mirror onto the caregiver doc so the Connect webhook can match this
-      // caregiver even when the link is (re)sent via the agent tool — same
-      // activation-independence fix as handleCaregiverSendStripeConnect.
-      // (Safe even mid-flow: advanceOnboardingStep's stripe_connect step guard
-      // refuses to finalize unless the session is at the Connect step, so an
-      // early payout link can't prematurely activate the caregiver.)
-      if (session.caregiverId) {
-        const linkCaregiverId = session.caregiverId as string;
-        await guardSideEffect(
-          "firestore.set:caregivers.stripeAccountId",
-          async () => {
-            await db.collection("caregivers").doc(linkCaregiverId)
-              .set({ stripeAccountId: accountId, phone }, { merge: true })
-              .catch((mergeErr) => console.error("stripeAccountId merge onto caregiver doc failed (non-fatal):", mergeErr));
-            const { writeCaregiverPayoutPrivate } = await import("../caregiverPrivate");
-            await writeCaregiverPayoutPrivate(linkCaregiverId, { stripeAccountId: accountId });
-          },
-          undefined,
-          { phone },
-        );
-      }
+      // The site's Setup Payouts path (find-or-create on the RECORD) — the same
+      // account whether the caregiver taps the button or texts SETUP. Safe even
+      // mid-flow: advanceOnboardingStep's stripe_connect step guard refuses to
+      // finalize unless the session is at the Connect step.
+      const accountId = await ensureCaregiverConnectAccount(phone, session);
+      if (!accountId) throw new Error("sendOnboardingLink caregiver_payouts: no caregiver record on this session yet");
       const link = await getStripe().accountLinks.create({
         account:     accountId,
         type:        "account_onboarding",
@@ -4536,12 +4481,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
       });
 
-      // Webapp parity: the caregiver dashboard progress card and useCaregiverGate
-      // read caregivers/{uid}.membershipPaid / membershipStatus, and MCP tools +
-      // paywall winback read users/{uid}.membershipStatus. The web checkout path
-      // writes these in stripe.ts (firebaseUID metadata); the SMS checkout only
-      // carries phone metadata, so mirror them here — otherwise a paid caregiver
-      // stays parked at "Activate your membership" on the webapp forever.
+      // The record gets the SAME writes the site's payment webhook makes
+      // (caregiverMembershipBilling.markCaregiverMembershipPaid): membershipPaid,
+      // verificationStatus 'submitted' (admin queue), mvrPaid when Transportation
+      // is offered, users/{uid} membership fields, customers/{uid} (the Manage
+      // button's customer), then parked on "authorize your background check".
       // Non-fatal: the conversation must advance even if the mirror write fails.
       try {
         let uid = (session.userId ?? session.caregiverId) as string | undefined;
@@ -4549,31 +4493,15 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           uid = await admin.auth().getUserByPhoneNumber(phone)
             .then((u) => u.uid).catch(() => undefined);
         }
-        if (uid) {
-          const subId  = (session as any).caregiverSubscriptionId as string | undefined;
-          const custId = (session as any).stripeCustomerId as string | undefined;
-          await db.collection("caregivers").doc(uid).set({
-            uid,
+        if (uid && (session as any).membershipRecordedAt) {
+          // The Stripe webhook already wrote the record for this payment (stripe.ts).
+        } else if (uid) {
+          const { markCaregiverMembershipPaid } = await import("../caregiverMembershipBilling");
+          await markCaregiverMembershipPaid(uid, {
+            subscriptionId: (session as any).caregiverSubscriptionId as string | undefined,
+            customerId:     (session as any).stripeCustomerId as string | undefined,
             phone,
-            membershipPaid: true,
-            ...(subId ? { membershipSubscriptionId: subId } : {}),
-          }, { merge: true });
-          await db.collection("users").doc(uid).set({
-            membershipStatus:   "active",
-            subscriptionActive: true,
-            ...(subId  ? { subscriptionId: subId } : {}),
-            ...(custId ? { stripeCustomerId: custId } : {}),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-          // customers/{uid} is where the caregiver billing portal resolves the
-          // Stripe customer (createCaregiverBillingPortalSession) — the web
-          // checkout writes it at creation; mirror it for the SMS path.
-          if (custId) {
-            await db.collection("customers").doc(uid).set({
-              stripeCustomerId: custId,
-            }, { merge: true }).catch((err) =>
-              console.error("advanceOnboardingStep(membership): customers/{uid} mirror failed:", err));
-          }
+          });
         } else {
           // No auth uid yet (cold-SMS path before doc creation) — the Stripe
           // Connect finalization mirrors membershipPaid from

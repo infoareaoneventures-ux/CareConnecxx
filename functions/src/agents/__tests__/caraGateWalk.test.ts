@@ -29,6 +29,7 @@ const stripeSpies = vi.hoisted(() => ({
   accountsCreate:     vi.fn(async () => ({ id: "acct_live" })),
   accountLinksCreate: vi.fn(async () => ({ url: "https://stripe.local/connect-onboarding" })),
   checkoutCreate:     vi.fn(async () => ({ id: "cs_live", url: "https://stripe.local/checkout" })),
+  customersCreate:    vi.fn(async () => ({ id: "cus_live" })),
   identityCreate:     vi.fn(async () => ({ id: "vs_live", url: "https://stripe.local/identity" })),
   priceRetrieve:      vi.fn(async () => ({ id: "price_live", unit_amount: 0, recurring: null })),
 }));
@@ -138,6 +139,7 @@ vi.mock("stripe", () => ({
     accounts     = { create: stripeSpies.accountsCreate };
     accountLinks = { create: stripeSpies.accountLinksCreate };
     checkout     = { sessions: { create: stripeSpies.checkoutCreate } };
+    customers    = { create: stripeSpies.customersCreate };
     identity     = { verificationSessions: { create: stripeSpies.identityCreate } };
     prices       = { retrieve: stripeSpies.priceRetrieve };
   },
@@ -963,12 +965,34 @@ describe("gate-step link resend — the link actually goes out, as a link part",
     expect(linkParts().length).toBeGreaterThan(0);
   });
 
-  it("stripe connect: a payout-link ask re-mints the account link", async () => {
-    const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA });
+  it("stripe connect: a payout-link ask re-mints the account link through the site's find-or-create path (record first)", async () => {
+    // A caregiver at the Connect step always has a record (created at the bg-check
+    // step); the account id lives on it, never only in the SMS draft (2026-10-03).
+    const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA }, { caregiverId: "cg-uid" });
+    hoisted.docState.set("caregivers/cg-uid/private/payout", { stripeAccountId: "acct_site" });
     awaitingKind = "other";
     wantsLink = "YES";
     await handleOnboardingStep(PHONE, CHAT, "can you send me the payout link again", session);
+    // Reuses the account the site connected — no second Express account.
+    expect(stripeSpies.accountsCreate).not.toHaveBeenCalled();
     expect(stripeSpies.accountLinksCreate).toHaveBeenCalledTimes(1);
+    expect((stripeSpies.accountLinksCreate.mock.calls[0] as any)[0].account).toBe("acct_site");
+    expect(linkParts()).toContain("https://stripe.local/connect-onboarding");
+  });
+
+  it("stripe connect: with no account anywhere, the resend creates one the site's way and writes it onto the record", async () => {
+    const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA }, { caregiverId: "cg-uid" });
+    awaitingKind = "other";
+    wantsLink = "YES";
+    await handleOnboardingStep(PHONE, CHAT, "can you send me the payout link again", session);
+    expect(stripeSpies.accountsCreate).toHaveBeenCalledTimes(1);
+    const params = (stripeSpies.accountsCreate.mock.calls[0] as any)[0];
+    expect(params.capabilities).toEqual({ card_payments: { requested: true }, transfers: { requested: true } });
+    expect(params.metadata).toEqual({ caregiverId: "cg-uid", platform: "evia" });
+    const acct = (await stripeSpies.accountsCreate.mock.results[0].value).id;
+    expect(hoisted.docState.get("caregivers/cg-uid")).toMatchObject({ stripeAccountId: acct, phone: PHONE, payoutsEnabled: false, chargesEnabled: false });
+    expect(hoisted.docState.get("caregivers/cg-uid/private/payout")).toMatchObject({ stripeAccountId: acct });
+    expect(hoisted.docState.get(`stripe_accounts/${acct}`)).toMatchObject({ caregiverId: "cg-uid" });
     expect(linkParts()).toContain("https://stripe.local/connect-onboarding");
   });
 

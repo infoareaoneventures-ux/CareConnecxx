@@ -131,7 +131,7 @@ export async function readAccountSettingsPage(uid: string): Promise<AccountSetti
   const [authUser, docSnap, membership] = await Promise.all([
     admin.auth().getUser(uid).catch(() => null),
     db.collection("users").doc(uid).get().catch(() => null),
-    readMembershipPage(uid, "client"),
+    readMembershipPage(uid),
   ]);
   if (!authUser && !docSnap?.exists) return null;
   const google = authUser?.providerData?.find((p) => p.providerId === "google.com");

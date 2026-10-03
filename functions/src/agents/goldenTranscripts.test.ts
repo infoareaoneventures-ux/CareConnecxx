@@ -473,19 +473,19 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-pathway-uses-caregiver-toolset",
-    description: "Caregiver asks about pay — handled via the caregiver tool handler, not the client one.",
+    description: "Caregiver asks about getting paid — handled via the caregiver tool handler, not the client one.",
     userType: "caregiver",
     toolMocks: {
-      get_payout_history: { payouts: [{ amount: 1450, status: "paid" }] },
+      get_payout_status: { success: true, summary: "active", payoutsEnabled: true, chargesEnabled: true, hasStripeAccount: true, pageLabel: "Bank account connected" },
     },
     claudeScript: [
-      { tools: [{ name: "get_payout_history", input: {} }] },
-      { text: "You've earned $1,450 in the last 30 days." },
+      { tools: [{ name: "get_payout_status", input: {} }] },
+      { text: "Your bank account is connected — earnings pay out automatically every day." },
     ],
-    input: { text: "how much have I made this month?" },
+    input: { text: "is my payout set up?" },
     expect: {
-      replyContains: ["1,450", "30 days"],
-      toolsCalled:   ["get_payout_history"],
+      replyContains: ["connected", "automatically"],
+      toolsCalled:   ["get_payout_status"],
       noListShape:   true,
     },
   },
@@ -668,19 +668,18 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
     name:        "messy-caregiver-pay-question-uses-payout-tool",
     description: "Caregiver asks casually about pay after clock-out. Evia uses caregiver payout data.",
     userType: "caregiver",
+    // 2026-10-02: the Payouts tab texts itself (show_payouts is self-sending — the
+    // model's own words that turn are discarded), so the expectation is the tool call.
     toolMocks: {
-      get_payout_history: { payouts: [{ amountCents: 9600, status: "pending", expectedArrival: "Friday" }] },
+      show_payouts: { success: true, fullyEnabled: true, instantAvailableCents: 9600, pendingCents: 0, approvedAwaitingChargeCents: 0, note: "The Payouts tab was texted — send nothing else this turn." },
     },
     claudeScript: [
-      { tools: [{ name: "get_payout_history", input: { caregiverId: "u-1" } }] },
-      { text: "That payout is pending and expected Friday." },
+      { tools: [{ name: "show_payouts", input: { caregiverId: "u-1" } }] },
+      { text: "" },
     ],
     input: { text: "when do i get paid for mrs lopez?? i clocked out yesterday" },
     expect: {
-      replyContains:       ["pending", "Friday"],
-      replyNotContains:    ["support", "team will"],
-      toolsCalled:         ["get_payout_history"],
-      noListShape:         true,
+      toolsCalled:         ["show_payouts"],
       noSupportDeflection: true,
       noGenericHelpAsk:    true,
     },

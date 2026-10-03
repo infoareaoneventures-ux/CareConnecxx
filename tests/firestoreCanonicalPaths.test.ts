@@ -61,8 +61,9 @@ describe('Canonical Firestore paths — retired legacy collections have no runti
 
     it('normal-language "timesheets"/"Timesheets" copy is allowed (not a runtime access)', () => {
         // The caregiver payments page keeps the familiar "Timesheets" tab label.
-        const payments = SOURCE.find((s) => s.file.endsWith('CaregiverPayments.tsx'));
-        expect(payments, 'CaregiverPayments.tsx should exist').toBeTruthy();
+        // (CaregiverPayments.tsx — the legacy copy — was removed 2026-10-02; the live Payments page keeps the label.)
+        const payments = SOURCE.find((s) => s.file.endsWith('CaregiverPaymentsPage.tsx'));
+        expect(payments, 'CaregiverPaymentsPage.tsx should exist').toBeTruthy();
         expect(payments!.text).toMatch(/Timesheets/); // prose retained
         expect(runtimeAccessRegex('timesheets').test(payments!.text)).toBe(false); // no collection call
     });

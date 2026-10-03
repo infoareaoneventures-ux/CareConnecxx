@@ -189,7 +189,7 @@ export const STARTER_CARA_TRAINING_EXAMPLES: CaraTrainingExample[] = [
       intent: "caregiver_payout_status",
       risk: "medium",
       missingInfo: [],
-      expectedTools: ["get_payout_history"],
+      expectedTools: ["show_payouts"],
       expectedCollections: ["caregivers/{uid}/payouts", "agent_action_ledger"],
       expectedPageVisibility: ["caregiver_earnings"],
       forbidden: ["guarantee", "contact support"],

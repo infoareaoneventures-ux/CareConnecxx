@@ -245,17 +245,18 @@ export interface PayoutBalance {
   connected: boolean;
   instantAvailable: number;  // dollars, instantly payable right now
   pending: number;           // dollars, still settling — auto-pays out daily
+  loginUrl?: string;         // with { loginLink: true }: a one-time, signed-in link to the caregiver's Stripe dashboard
 }
 
 // Standard payouts are automatic (Stripe daily schedule) — there is no
 // requestStandardPayout anymore. Instant payout is the only on-demand path.
-export const getPayoutBalance = async (): Promise<PayoutBalance> => {
+export const getPayoutBalance = async (opts: { loginLink?: boolean } = {}): Promise<PayoutBalance> => {
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
   const fn = httpsCallable(fns, 'v1-getPayoutBalance');
-  const res = await fn({});
+  const res = await fn(opts.loginLink ? { loginLink: true } : {});
   return res.data as PayoutBalance;
 };
 

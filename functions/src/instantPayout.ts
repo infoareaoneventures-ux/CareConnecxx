@@ -32,7 +32,7 @@ const HTTPS_CODE_BY_PAYOUT_ERROR: Record<InstantPayoutErrorCode, functions.https
  * the number paid — the page's shift-derived "earned" figure can differ while
  * charges/transfers are still settling.
  */
-export const getPayoutBalance = functions.https.onCall(async (_data, context) => {
+export const getPayoutBalance = functions.https.onCall(async (data, context) => {
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'User must be logged in');
     }
@@ -44,7 +44,14 @@ export const getPayoutBalance = functions.https.onCall(async (_data, context) =>
     }
     const { readInstantBalance } = await import("./payoutCommon");
     const b = await readInstantBalance(stripeAccountId);
-    return { connected: true, instantAvailable: b.instantAvailableCents / 100, pending: b.pendingCents / 100 };
+    // "Manage in Stripe" (2026-10-02): a one-time, signed-in link to the caregiver's own Express
+    // dashboard — payout history, bank account and tax forms live there, not on our page.
+    let loginUrl: string | undefined;
+    if ((data as { loginLink?: unknown } | null)?.loginLink === true) {
+        const { getStripeClient } = await import("./stripe");
+        loginUrl = (await getStripeClient().accounts.createLoginLink(stripeAccountId)).url;
+    }
+    return { connected: true, instantAvailable: b.instantAvailableCents / 100, pending: b.pendingCents / 100, ...(loginUrl ? { loginUrl } : {}) };
 });
 
 export const requestInstantPayout = functions.https.onCall(async (_data, context) => {

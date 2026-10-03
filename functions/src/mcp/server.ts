@@ -1193,13 +1193,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_payouts",
     description:
-      "The caregiver Payments page's Payouts tab, TEXTED by the tool itself (agents/caregiverPayouts.ts): Available to Cash Out (the live Stripe instantly-available balance — what Cash Out pays), what's still settling, what's approved but not yet charged to the family, the Bank account (Stripe) card state, the payout schedule, and the Payout history ledger (5 rows + MORE → more:true). " +
-      "Call it for 'my balance', 'my payouts', 'did my payout arrive', 'when do I get paid', 'payout history'. Send nothing else this turn.",
+      "The caregiver Payments page's Payouts tab, TEXTED by the tool itself (agents/caregiverPayouts.ts): Available to Cash Out (the live Stripe instantly-available balance — what Cash Out pays), what's still settling, what's approved but not yet charged to the family, the Bank account (Stripe) card state, and how you get paid. " +
+      "Payout history, bank details and tax forms live in the caregiver's own Stripe dashboard: pass dashboardLink:true to text them a one-time SIGNED-IN link to it instead ('my payout history', 'did my payout arrive', 'change my bank', 'my 1099'). Call it for 'my balance', 'my payouts', 'when do I get paid'. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        more:        { type: "boolean", description: "The next 5 older history rows" },
+        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
+        dashboardLink: { type: "boolean", description: "Text a signed-in link to their Stripe dashboard (payout history, bank account, tax forms) instead of the tab" },
       },
       required: ["caregiverId"],
     },
@@ -1505,19 +1505,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "get_payout_history",
-    description:
-      "The Payouts tab's Payout history as DATA — the same caregivers/{id}/payouts ledger the page lists, newest first: type (instant / automatic), status (Pending / In transit / Paid / Failed), date, arrival date, fee, amount. Use it to answer one question in a sentence; for the whole tab call show_payouts.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        limit:       { type: "number", description: "Rows to return (default 5, max 25 — the page's own limit)" },
-      },
-      required: ["caregiverId"],
-    },
-  },
-  {
     name: "get_recent_messages",
     description:
       "The website's Inbox page, exactly. Without counterpartId: the thread list — every conversation (newest first) minus " +
@@ -1675,20 +1662,6 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
         jobId:       { type: "string", description: "The job_posts document ID to unhide; omit to list hidden jobs" },
-      },
-      required: ["caregiverId"],
-    },
-  },
-  {
-    name: "get_tax_summary",
-    description:
-      "Get a caregiver's annual earnings summary for tax purposes (1099-NEC). " +
-      "Shows total earnings, hours, visit count, quarterly breakdown, and whether they meet the $600 threshold for a 1099.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        year:        { type: "number", description: "Tax year (e.g. 2024). Defaults to current year." },
       },
       required: ["caregiverId"],
     },
@@ -2446,14 +2419,12 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_my_applications",
   "respond_to_interview_request",
   "send_client_message",
-  "get_payout_history",
   "get_recent_messages",
   "delete_conversation",
   "mark_messages_read",
   // The Inbox's ⋮ menu for caregivers too (2026-09-30): Block / Report + the Account Settings Blocked list.
   "set_block_status",
   "list_blocked_users",
-  "get_tax_summary",
   "send_onboarding_link",
   "get_background_check_status",
   "get_payout_status",
@@ -2528,8 +2499,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "get_my_applications",
   "respond_to_interview_request",
   "send_client_message",
-  "get_payout_history",
-  "get_tax_summary",
   "get_background_check_status",
   "get_payout_status",
   "withdraw_job_application",
@@ -2941,7 +2910,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   // that got the old tool off this list.
   "get_active_bookings",
   "get_membership_page", "contact_support",
-  "get_payout_history", "get_pending_timesheets", "get_tax_summary",
+  "get_pending_timesheets",
   "get_care_journal_client", "get_care_plan",
   "get_recent_messages",
   "read_memory_file", "search_memory",
@@ -5271,14 +5240,18 @@ async function executeToolCall(
 
     // ── Payments › Payouts (2026-10-01): the tab texted whole; Cash Out = the modal as a flow ──
     if (name === "show_payouts" || name === "request_instant_payout") {
-      const { caregiverId, more, phone: poPhone } = input as Record<string, unknown>;
+      const { caregiverId, dashboardLink, phone: poPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, poPhone);
       if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
       if (name === "show_payouts") {
-        const { sendCaregiverPayouts } = await import("../agents/caregiverPayouts");
-        const r = await sendCaregiverPayouts(sess.phone, sess.chatId, caregiverId as string, { more: more === true });
+        const po = await import("../agents/caregiverPayouts");
+        if (dashboardLink === true) {
+          const ok = await po.sendStripeDashboardLink(sess.chatId, caregiverId as string);
+          return { success: ok, note: ok ? "The signed-in Stripe dashboard link was texted — send nothing else this turn." : "The refusal was texted — send nothing else this turn." };
+        }
+        const r = await po.sendCaregiverPayouts(sess.phone, sess.chatId, caregiverId as string);
         return { success: true, ...r, note: "The Payouts tab was texted — send nothing else this turn." };
       }
       const { startInstantPayout } = await import("../agents/instantPayoutHandler");
@@ -5771,7 +5744,6 @@ async function executeToolCall(
       return { success: true, sent: true, sentTo: resolvedClientId, notification: { sent: true, via: "inbox" } };
     }
 
-    // ── get_payout_history ──────────────────────────────────────────────────
 
     // ── get_recent_messages — the website's Inbox page ───────────────────
     if (name === "get_recent_messages") {
@@ -5958,22 +5930,6 @@ async function executeToolCall(
     // Firestore-only, like get_background_check_status: reads the flags the
     // stripeConnectWebhook stamps. Errs toward "not active" if a flag is missing,
     // so it never reports payouts live when they aren't.
-    if (name === "get_payout_history") {
-      const { caregiverId } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const limitPh = Math.min(Math.max(1, Number(input.limit) || 5), 25);
-      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      // The page's PayoutHistory query: caregivers/{id}/payouts, newest first (limit 25).
-      const { loadPayoutsTab, PAYOUT_STATUS_LABEL } = await import("../agents/caregiverPayouts");
-      const tab = await loadPayoutsTab(caregiverId as string);
-      const payouts = tab.history.slice(0, limitPh).map((p) => ({
-        id: p.id, type: p.type, status: p.status, statusLabel: PAYOUT_STATUS_LABEL[p.status] ?? p.status,
-        amount: `$${p.amount.toFixed(2)}`, fee: p.fee > 0 ? `$${p.fee.toFixed(2)}` : null,
-        createdAt: p.createdAt ? p.createdAt.slice(0, 10) : null, arrivalDate: p.arrivalDate ? p.arrivalDate.slice(0, 10) : null,
-      }));
-      return { success: true, payouts, count: payouts.length, total: tab.history.length, hasPayoutAccount: tab.hasAccount, ...(tab.hasAccount ? {} : { message: "No payout account set up yet — send the Stripe link (send_onboarding_link caregiver_payouts), the page's Setup Payouts button." }) };
-    }
     if (name === "get_payout_status") {
       const { caregiverId } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
@@ -7025,15 +6981,6 @@ async function executeToolCall(
       return { ok: true, complete: true, nextStep, status: "collection_complete" };
     }
 
-    // ── get_tax_summary ─────────────────────────────────────────────────────
-    if (name === "get_tax_summary") {
-      const { getCaregiverTaxSummary } = await import("../billing/taxDocuments");
-      const caregiverId = input.caregiverId as string;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const year = (input.year as number) ?? new Date().getFullYear();
-      const summary = await getCaregiverTaxSummary(caregiverId, year);
-      return summary;
-    }
 
     // ── update_user_profile ─────────────────────────────────────────────────
     if (name === "update_user_profile") {

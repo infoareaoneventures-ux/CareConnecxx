@@ -181,9 +181,6 @@ vi.mock("../../agents/executionAgent", () => ({
   resumeExecutionAgent: vi.fn().mockResolvedValue({ status: "resumed" }),
 }));
 
-vi.mock("../../billing/taxDocuments", () => ({
-  getCaregiverTaxSummary: vi.fn().mockResolvedValue({ year: 2025, totalEarnings: 30000 }),
-}));
 
 vi.mock("../checkrMcpClient", () => ({
   isCheckrMcpConfigured:   vi.fn().mockReturnValue(true),

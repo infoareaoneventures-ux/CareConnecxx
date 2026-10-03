@@ -472,26 +472,16 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
   {
     id: "caregiver-view-payouts",
     actor: "caregiver",
-    action: "View the Payouts tab (balance, bank status, schedule, payout history)",
+    action: "View the Payouts tab (balance, bank status, how you get paid)",
     webSurface: "components/caregiver/CaregiverPaymentsPage.tsx",
     collection: "payouts",
     tool: "show_payouts",
     promptActor: "caregiver",
     status: "shipped",
-    notes: "2026-10-01: same reads as the page — Stripe Connect flags, the live Stripe instant/pending balance (payoutCommon.readInstantBalance, the page's getPayoutBalance), approved-not-yet-charged timesheets, the payouts ledger — texted whole (agents/caregiverPayouts.ts). get_payout_history reads the same ledger as data.",
+    notes: "2026-10-02 (founder option C): three cards — the live Stripe instant/pending balance (payoutCommon.readInstantBalance = the page's getPayoutBalance) with Cash Out, the Bank account card with a SIGNED-IN Manage in Stripe link (accounts.createLoginLink; MANAGE over text), how you get paid. No payout history card and no tax summary — Stripe's dashboard owns payouts, bank details and 1099s (get_payout_history + get_tax_summary retired).",
   },
   // caregiver-request-standard-payout removed 2026-07-06: standard payouts are
   // automatic (Stripe daily schedule) — there is no user action to mirror.
-  {
-    id: "caregiver-tax-summary",
-    actor: "caregiver",
-    action: "View tax summary",
-    webSurface: "components/caregiver/CaregiverPaymentsPage.tsx",
-    collection: "n/a",
-    tool: "get_tax_summary",
-    promptActor: "caregiver",
-    status: "shipped",
-  },
   {
     id: "caregiver-message-client",
     actor: "caregiver",

@@ -265,7 +265,6 @@ export { sendBookingFollowupNudges } from './scheduled/bookingFollowupNudge';
 export { sendPendingDecisionNudges } from './scheduled/pendingDecisionNudge';
 
 // 1099 TAX NOTIFICATIONS (Jan 31 — notifies eligible caregivers of earnings summary)
-export { send1099Notifications } from './scheduled/taxReminder';
 
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 export * from './migrations/migrateSeniorsToHousehold';

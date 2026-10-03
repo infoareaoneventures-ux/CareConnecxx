@@ -7,7 +7,6 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CaregiverTopNav } from './CaregiverTopNav';
-import { PayoutHistory } from './PayoutHistory';
 import { ConnectBankButton } from '../ui/ConnectBankButton';
 import { InstantPayoutModal } from './InstantPayoutModal';
 import { CompletedShift, SubmitShiftHoursModal } from '../payroll/SubmitShiftHoursModal';
@@ -1357,6 +1356,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
   // actually pays (2026-10-01: it used to show approved-but-not-yet-charged
   // timesheets, which is a different number; see approvedAwaitingCharge below).
   const [liveBalance, setLiveBalance] = useState<{ instantAvailable: number; pending: number } | null>(null);
+  const [openingDashboard, setOpeningDashboard] = useState(false);
   const [liveBalanceLoading, setLiveBalanceLoading] = useState(false);
 
   // Membership tab state
@@ -1582,6 +1582,23 @@ export const CaregiverPaymentsPage: React.FC = () => {
     } catch (error: any) {
       addToast(error.message || 'Payout failed. Please try again.', 'error');
       throw error;
+    }
+  };
+
+  // "Manage in Stripe": a one-time, signed-in link to the caregiver's own Express dashboard —
+  // payout history, bank account and tax forms live there (founder option C, 2026-10-02).
+  const handleManageInStripe = async () => {
+    setOpeningDashboard(true);
+    const popup = window.open('', '_blank'); // open synchronously so the browser doesn't block it
+    try {
+      const b = await getPayoutBalance({ loginLink: true });
+      if (!b.loginUrl) throw new Error('No dashboard link returned');
+      if (popup) popup.location.href = b.loginUrl; else window.location.href = b.loginUrl;
+    } catch (e: any) {
+      popup?.close();
+      addToast(e?.message || "Couldn't open your Stripe dashboard right now. Please try again.", 'error');
+    } finally {
+      setOpeningDashboard(false);
     }
   };
 
@@ -1995,17 +2012,16 @@ export const CaregiverPaymentsPage: React.FC = () => {
                     <p className="text-sm font-semibold text-green-700">Bank account connected</p>
                   </div>
                   <p className="text-sm text-slate-500 mb-3">
-                    Earnings pay out automatically every day and arrive ~2 business days after each visit is paid (free).
-                    Instant payouts arrive in about 30 minutes and carry Stripe's 1% fee (minimum $0.50).
+                    Payout history, your bank account and tax forms are in your Stripe dashboard.
                   </p>
-                  <a
-                    href="https://dashboard.stripe.com/express"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-700 hover:underline"
+                  <button
+                    type="button"
+                    onClick={handleManageInStripe}
+                    disabled={openingDashboard}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-700 hover:underline disabled:opacity-60"
                   >
-                    Manage in Stripe <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                    {openingDashboard ? 'Opening…' : 'Manage in Stripe'} <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
                 </>
               ) : hasAccount ? (
                 <>
@@ -2034,12 +2050,12 @@ export const CaregiverPaymentsPage: React.FC = () => {
             {/* Payout schedule info */}
             <div className="bg-white rounded-2xl border border-slate-200 p-5">
               <p className="font-bold text-slate-900 mb-3 flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-primary-600" /> Payout schedule
+                <Calendar className="w-4 h-4 text-primary-600" /> How you get paid
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3 bg-slate-50 rounded-xl text-center">
                   <p className="font-semibold text-slate-900 text-sm">Automatic</p>
-                  <p className="text-xs text-slate-500 mt-0.5">Daily · ~2 business days</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Every day · lands in ~2 business days</p>
                   <p className="text-xs font-bold text-green-600 mt-1">Free</p>
                 </div>
                 <div className="p-3 bg-primary-50 border border-primary-100 rounded-xl text-center">
@@ -2050,8 +2066,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Payout history */}
-            {uid && <PayoutHistory uid={uid} />}
 
           </div>
         )}

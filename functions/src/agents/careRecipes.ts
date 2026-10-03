@@ -109,7 +109,7 @@ export const CARE_RECIPES: readonly CareRecipe[] = [
     roleScope: ["caregiver"],
     triggerPhrases: ["when do I get paid", "payout status", "earnings"],
     requiredContext: ["caregiver identity", "shiftHours or Stripe Connect"],
-    toolPlan: ["get_payout_history", "request_instant_payout"],
+    toolPlan: ["show_payouts", "request_instant_payout"],
     authorityRule: "Caregivers may read and request payouts only for their own account.",
     deliveryRule: "caregiver_private",
     failureVisibility: "Payout failures remain admin-visible and cannot be reported as paid.",

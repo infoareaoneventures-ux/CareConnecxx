@@ -41,7 +41,7 @@ describe("Evia training dataset", () => {
       "get_care_journal_client",
       "review_shift_hours",
       "complete_shift",
-      "get_payout_history",
+      "show_payouts",
       "create_caregiver_referral",
       "update_memory_file",
     ]) {

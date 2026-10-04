@@ -102,13 +102,13 @@ export interface JobCard {
   careTypes: string[];
   daysOfWeek: string[];
   // JobBoard.tsx: the button that stands in for Apply Now while gated.
-  action: "Apply Now" | "Activate Membership" | "Complete Verification" | "Transportation Badge Required";
+  action: "Apply Now" | "Activate Membership" | "Complete Verification" | "Transportation badge needed";
 }
 
 export const GATE_BUTTON_LABEL: Record<CaregiverGateReason, JobCard["action"]> = {
   membership: "Activate Membership",
   background: "Complete Verification",
-  transport:  "Transportation Badge Required",
+  transport:  "Transportation badge needed",
 };
 
 export function caregiverCoords(cg: Doc): { lat: number; lng: number } | null {

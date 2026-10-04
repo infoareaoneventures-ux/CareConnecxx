@@ -19,10 +19,15 @@ const REASON_CONFIG = {
     cta: 'Go to dashboard',
     path: '/caregiver/dashboard',
   },
+  // 2026-10-04: the badge is documents approved AND the driving record cleared
+  // (flat membership, 2026-09-25) — the old "documents must be approved" line
+  // told a caregiver with approved documents and a revoked driving record the
+  // wrong thing. Same line on the Jobs buttons and in Evia's text
+  // (functions/src/agents/caregiverAccessGate.ts caregiverGateText).
   transport: {
-    title: 'Transport documents required',
-    desc: 'Your transportation documents must be approved before you can apply to transport jobs.',
-    cta: 'Upload documents',
+    title: 'Transportation badge needed',
+    desc: "This job includes driving. The badge takes Transportation on your profile, your driver's license, insurance and registration approved, and a clear driving record. See where you stand under Settings › Membership & verification.",
+    cta: 'See my status',
     path: '/caregiver/settings',
   },
 };

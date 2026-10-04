@@ -213,7 +213,15 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
             latitude: cgLat,
             longitude: cgLng,
             imageUrl: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
-            documents: data.documents || {},
+            // publicCaregiverProfiles never carries the documents themselves — the
+            // transportation badge is the precomputed flag the projection writes
+            // (publicCaregiverProfile.ts hasValidTransportDocs). Read it HERE, off the
+            // public doc, exactly as Find Caregivers does: the hard filter below and
+            // the card's Transportation chip both read these (live 2026-10-04: with
+            // no flag on the item, a plan that needed Transportation matched nobody).
+            hasReliableTransportation: hasValidTransportDocs(data),
+            hasValidTransportDocs: hasValidTransportDocs(data),
+            isApprovedDriver: data.isApprovedDriver === true,
             skills: cgSkills,
             experience: data.experience || data.yearsExperience || 0,
             bio: data.bio || data.about || '',

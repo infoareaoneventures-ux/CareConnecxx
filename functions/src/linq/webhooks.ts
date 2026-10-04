@@ -458,7 +458,7 @@ async function handlePendingConsentReply(
           : "Perfect — you're all set. I'll keep you posted after every visit, and you can text me anytime to book care or ask anything.")
       : firstName
         ? (lang === "es"
-            ? `¡Perfecto, ${firstName}! Soy Evia, tu coordinadora de cuidados. ¿Para quién buscas cuidado? (Su nombre y tu relación con esa persona.)`
+            ? `¡Perfecto, ${firstName}! Soy Evia, tu coordinadora de cuidados. ¿Con qué frecuencia necesitas cuidado — ocasional, medio tiempo o tiempo completo?`
             : `Perfect — thanks, ${firstName}! I'm Evia, your care coordinator. Who are you looking for care for? (Their name and your relationship)`)
         : (lang === "es"
             ? "¡Perfecto! Soy Evia, tu coordinadora de cuidados. ¿Cuál es tu nombre y apellido?"
@@ -718,6 +718,12 @@ const handleInboundInner = traceable(
   }
 
   const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
+  // A phone that texted once, never replied YES, then signed up on /start: the
+  // site's consent checkbox IS the consent, so the waiting web session restarts
+  // this phone through the web bridge below instead of re-asking consent
+  // (2026-10-04 — the old session stayed parked on cold_awaiting_consent and the
+  // "Hey Evia" text was read as a consent reply).
+  let restartViaWebBridge = false;
 
   // Track last-inbound time so the silence detector (scheduled function) can
   // find users who haven't messaged in 3+ days and send a gentle check-in.
@@ -750,7 +756,10 @@ const handleInboundInner = traceable(
     // phone that already has a session: flip the web tab and open the gate.
     const existingWebRef  = db.collection("web_onboarding_sessions").doc(phone);
     const existingWebSnap = await existingWebRef.get().catch(() => null);
-    if (existingWebSnap?.exists && existingWebSnap.data()?.status === "awaiting_inbound") {
+    const webAwaiting = existingWebSnap?.exists === true && existingWebSnap.data()?.status === "awaiting_inbound";
+    if (webAwaiting && stored.optedIn === false && stored.onboardingStep === "cold_awaiting_consent") {
+      restartViaWebBridge = true; // the web bridge below flips the tab, seeds the name/email, greets, asks the first question
+    } else if (webAwaiting) {
       const bridgeUid = (existingWebSnap.data()?.uid as string | undefined) ?? stored.userId ?? null;
       await existingWebRef.update({ status: "connected", connectedAt: admin.firestore.Timestamp.now(), chatId }).catch(() => {/* non-critical */});
       if (bridgeUid) {
@@ -771,7 +780,8 @@ const handleInboundInner = traceable(
   }
 
   // ── New user — texted first (MO consent) ────────────────────────────────────
-  if (!sessionSnap.exists) {
+  // (or a cold-parked phone whose /start signup is waiting — restartViaWebBridge)
+  if (!sessionSnap.exists || restartViaWebBridge) {
     const capability = await checkCapability(phone);
     const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
 
@@ -940,17 +950,17 @@ const handleInboundInner = traceable(
           context: welcomeAudience === "caregiver"
             ? `You're meeting ${webName} for the very first time over text. They just signed up to find caregiving work. ` +
               `Introduce yourself warmly as Evia, mention that setting up their profile takes about 5 minutes and happens right here by text, ` +
-              `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "who they're looking for care for (that person's name and how they're related)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`
+              `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "how often they need care — occasional, part-time, or full-time (the wizard's first question; the person needing care comes later)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`
             : `You're meeting ${webName} for the very first time over text. They're looking for care for a loved one. ` +
               `Introduce yourself warmly as Evia, their care coordinator, ` +
-              `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "who they're looking for care for (that person's name and how they're related)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`,
+              `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "how often they need care — occasional, part-time, or full-time (the wizard's first question; the person needing care comes later)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`,
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
                 ? `¡Hola ${webGreetName}! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu dirección (calle, ciudad y código postal)? Las familias solo ven la ciudad.`
                 : `Hi ${webGreetName}! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and it all happens right here.\n\nWhat's your street address, city, and zip code? (Families only ever see the city.)`)
             : (preferredLanguage === "es"
                 ? `¡Hola ${webGreetName}! Soy Evia, tu coordinadora de cuidados. ¿Para quién buscas cuidado? (Su nombre y tu relación con esa persona.)`
-                : `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. Who are you looking for care for? (Their name and your relationship)`),
+                : `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. How often do you need care — occasional, part-time, or full-time?`),
           maxTokens: 120,
         });
       } else {

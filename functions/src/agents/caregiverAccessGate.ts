@@ -101,7 +101,8 @@ export function caregiverGateText(reason: CaregiverGateReason): string {
     case "background":
       return "Background check required — your background check must be cleared before you can take this action.";
     case "transport":
-      return "Transport documents required — your transportation documents must be approved before you can apply to transport jobs.";
+      // 2026-10-04: the badge = documents approved AND driving record cleared; one line with the site's modal + Jobs button.
+      return "Transportation badge needed — this job includes driving. The badge takes Transportation on your profile, your driver's license, insurance and registration approved, and a clear driving record. See where you stand under Settings › Membership & verification:";
   }
 }
 

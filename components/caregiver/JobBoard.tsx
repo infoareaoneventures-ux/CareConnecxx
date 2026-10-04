@@ -124,7 +124,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         [caregiverProfile],
     );
     const hiddenKey = Array.from(hiddenJobIds).sort().join('|');
-    const { blockReason, transportBlockReason } = useCaregiverGate();
+    const { blockReason, transportBlockReason, gate, gateTransport, GateModal } = useCaregiverGate();
     const navigate = useNavigate();
     const [jobs, setJobs] = useState<JobPost[]>([]);
     const [jobsLoading, setJobsLoading] = useState(false);
@@ -265,6 +265,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         e.preventDefault();
         if (!applyingJob) return;
         if (!profile) return;
+        // The Jobs page gate, re-run at submit (2026-10-04): the form may have been
+        // opened before a membership lapse or a badge revoke reached this tab. The
+        // same gate is enforced where this write lands (firestore.rules
+        // job_applications create) — a refusal there comes back as the modal too.
+        const needsDriver = !!(applyingJob.careTypes?.includes('Transportation') || applyingJob.requirements?.includes('Driving'));
+        if (!(needsDriver ? gateTransport() : gate())) { setApplyingJob(null); return; }
         setAcceptingGigId(applyingJob.id);
         try {
             await jobApplicationService.applyToJob(
@@ -277,6 +283,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             setCoverLetter('');
             setJobs(prev => prev.filter(j => j.id !== applyingJob.id));
         } catch (e: unknown) {
+            if ((e as { code?: string })?.code === 'permission-denied') {
+                setApplyingJob(null);
+                if (!(needsDriver ? gateTransport() : gate())) return;
+            }
             const errorMessage = e instanceof Error ? e.message : "Failed to apply for job.";
             onShowToast(errorMessage, 'error');
         } finally {
@@ -646,7 +656,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                 onChange={() => toggleChip(filterCareTypes, setFilterCareTypes, ct)}
                                 className="accent-teal-600 rounded"
                             />
-                            {ct}
+                            {serviceLabel(ct)}
                         </label>
                     ))}
                 </div>
@@ -850,7 +860,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                     );
                                                     if (reason === 'transport') return (
                                                         <button onClick={() => navigate('/caregiver/settings')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold transition-colors">
-                                                            <Car className="w-3 h-3" /> Transportation Badge Required
+                                                            <Car className="w-3 h-3" /> Transportation badge needed
                                                         </button>
                                                     );
                                                     return <Button variant="brand" fullWidth size="sm" onClick={() => setApplyingJob(job)}>Apply Now</Button>;
@@ -1466,7 +1476,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                     );
                                     if (reason === 'transport') return (
                                         <button onClick={() => navigate('/caregiver/settings')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold transition-colors">
-                                            <Car className="w-3.5 h-3.5" /> Transportation Badge Required
+                                            <Car className="w-3.5 h-3.5" /> Transportation badge needed
                                         </button>
                                     );
                                     return (
@@ -1478,6 +1488,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     </div>
                 </div>
             , document.body)}
+
+            {GateModal}
 
             {/* ── Apply Modal — sticky footer ── */}
             {applyingJob && createPortal(

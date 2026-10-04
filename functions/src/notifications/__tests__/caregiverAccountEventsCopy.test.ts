@@ -12,7 +12,7 @@ vi.mock("../userNotification", () => ({ writeUserNotification: vi.fn(async () =>
 vi.mock("../../config/appUrl", () => ({ appLink: (p: string) => `https://eviacares.com${p}` }));
 vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(async () => undefined) }));
 
-import { caregiverAccountEventCopy } from "../caregiverAccountEvents";
+import { caregiverAccountEventCopy , lifecycleTextOwnedByGate } from "../caregiverAccountEvents";
 
 const TAB = "https://eviacares.com/caregiver/settings";
 
@@ -70,5 +70,25 @@ describe("caregiverAccountEventCopy — membership notices", () => {
       expect(caregiverAccountEventCopy(k, { consentUrl: url }).body).toContain("eviacares.com");
       expect(caregiverAccountEventCopy(k, { consentUrl: url }).text).not.toContain("dashboard");
     }
+  });
+});
+
+describe("lifecycleTextOwnedByGate — one text per gate (2026-10-04)", () => {
+  const now = Date.parse("2026-10-04T12:00:00Z");
+  it("membership_paid stands down only after an Evia-checkout payment (fresh membershipRecordedAt)", () => {
+    expect(lifecycleTextOwnedByGate("membership_paid", { membershipRecordedAt: "2026-10-04T11:58:00Z" }, now)).toBe(true);
+    expect(lifecycleTextOwnedByGate("membership_paid", { membershipRecordedAt: "2026-10-04T10:00:00Z" }, now)).toBe(false); // an old stamp = a later site payment
+    expect(lifecycleTextOwnedByGate("membership_paid", { onboardingStep: "caregiver_awaiting_membership" }, now)).toBe(false); // paid on the site: the text is the notice
+    expect(lifecycleTextOwnedByGate("membership_paid", undefined, now)).toBe(false);
+  });
+  it("bgcheck_clear stands down while the session waits at a check or payout step", () => {
+    for (const step of ["caregiver_awaiting_bgcheck", "caregiver_send_stripe_connect", "caregiver_awaiting_stripe"]) {
+      expect(lifecycleTextOwnedByGate("bgcheck_clear", { onboardingStep: step }, now)).toBe(true);
+    }
+    expect(lifecycleTextOwnedByGate("bgcheck_clear", { onboardingStep: "complete" }, now)).toBe(false);
+  });
+  it("every other kind still texts", () => {
+    expect(lifecycleTextOwnedByGate("membership_renewed", { membershipRecordedAt: "2026-10-04T11:59:00Z", onboardingStep: "caregiver_awaiting_bgcheck" }, now)).toBe(false);
+    expect(lifecycleTextOwnedByGate("payouts_ready" as never, { onboardingStep: "caregiver_awaiting_stripe" }, now)).toBe(false);
   });
 });

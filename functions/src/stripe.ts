@@ -323,8 +323,12 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
             || (sess.caregiverId as string | undefined) || (sess.userId as string | undefined);
           if (!uid) uid = await admin.auth().getUserByPhoneNumber(phone).then((u) => u.uid).catch(() => undefined);
           if (uid) {
+            // Stamped BEFORE the record flips: onCaregiverAccountChange reads it to let
+            // the step handler (not the lifecycle text) deliver the consent page —
+            // one text per gate (notifications/caregiverAccountEvents.ts lifecycleTextOwnedByGate).
+            await admin.firestore().collection('agent_sessions').doc(phone)
+              .update({ membershipRecordedAt: new Date().toISOString() }).catch(() => {});
             await markCaregiverMembershipPaid(uid, { subscriptionId, customerId: customerId || null, phone });
-            update.membershipRecordedAt = new Date().toISOString();
           }
         } catch (err) {
           console.error(`caregiver_membership: record mark failed for phone=${phone} (non-fatal):`, err);

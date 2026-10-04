@@ -61,6 +61,7 @@ describe("caregiverGateText — the modal's own copy", () => {
   it("says what the site's modal says", () => {
     expect(caregiverGateText("membership")).toContain("you need an active membership to take this action");
     expect(caregiverGateText("background")).toContain("background check must be cleared");
-    expect(caregiverGateText("transport")).toContain("transportation documents must be approved");
+    expect(caregiverGateText("transport")).toContain("Transportation badge needed");
+    expect(caregiverGateText("transport")).toContain("clear driving record");
   });
 });

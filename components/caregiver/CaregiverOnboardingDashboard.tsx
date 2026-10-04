@@ -300,7 +300,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   jobs: prefetchedJobs,
   jobsLoaded: prefetchedJobsLoaded,
 }) => {
-  const { blockReason, transportBlockReason } = useCaregiverGate();
+  const { blockReason, transportBlockReason, gate, gateTransport, GateModal } = useCaregiverGate();
   const { setMembershipModalOpen } = useCareConnex();
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<JobPost[]>(prefetchedJobs ?? []);
@@ -318,6 +318,10 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   const handleApplyToJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!applyingJob || !profile) return;
+    // The Jobs page gate, re-run at submit (2026-10-04) — see JobBoard.tsx; the
+    // rules enforce the same gate on the write itself.
+    const needsDriver = !!(applyingJob.careTypes?.includes('Transportation') || applyingJob.requirements?.includes('Driving'));
+    if (!(needsDriver ? gateTransport() : gate())) { setApplyingJob(null); return; }
     setSubmitting(true);
     try {
       await jobApplicationService.applyToJob(
@@ -330,6 +334,10 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
       setApplyingJob(null);
       setCoverLetter('');
     } catch (err: unknown) {
+      if ((err as { code?: string })?.code === 'permission-denied') {
+        setApplyingJob(null);
+        if (!(needsDriver ? gateTransport() : gate())) return;
+      }
       onShowToast?.(err instanceof Error ? err.message : 'Failed to submit application.', 'error');
     } finally {
       setSubmitting(false);
@@ -480,7 +488,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                           );
                           if (reason === 'transport') return (
                             <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
-                              <Car className="w-3 h-3" /> Transportation Badge Required
+                              <Car className="w-3 h-3" /> Transportation badge needed
                             </button>
                           );
                           return <button onClick={() => setApplyingJob(job)} className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold rounded-xl transition-colors">Apply Now</button>;
@@ -601,7 +609,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                 );
                 if (reason === 'transport') return (
                   <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2.5 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
-                    <Car className="w-3.5 h-3.5" /> Transportation Badge Required
+                    <Car className="w-3.5 h-3.5" /> Transportation badge needed
                   </button>
                 );
                 return <button onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }} className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-bold rounded-xl transition-colors">Apply Now</button>;
@@ -612,6 +620,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
         document.body
       )}
       {/* ── Apply Modal ── */}
+      {GateModal}
       {applyingJob && createPortal(
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setApplyingJob(null)} />

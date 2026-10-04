@@ -35,7 +35,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
     ];
 
     const clientFeatures = [
-        "AI-powered caregiver matching",
+        "Caregiver matching",
         "Comprehensive background checks",
         "Shift clock-in/out and hours review",
         "Automated tax forms (1099)",

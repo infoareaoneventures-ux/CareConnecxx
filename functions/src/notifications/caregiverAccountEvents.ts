@@ -222,6 +222,34 @@ export interface NotifyOptions {
 /**
  * Bell + text, once. Returns what actually went out.
  */
+/**
+ * Texts the Evia step machine is about to send ITSELF — the bell still fires, the
+ * lifecycle text stands down so the caregiver gets one message per gate (2026-10-04):
+ *  - membership_paid after an Evia-checkout payment (stripe.ts stamps
+ *    membershipRecordedAt on the session right before the record flips; the
+ *    step then sends the consent page with its explanation). A SITE payment
+ *    never stamps it, so that caregiver still gets this text.
+ *  - bgcheck_clear while the session waits at a background-check or payout step
+ *    (advanceOnboardingStep moves it to payouts and sends that link with
+ *    "your check cleared").
+ */
+export function lifecycleTextOwnedByGate(
+  kind: CaregiverAccountEventKind,
+  session: { onboardingStep?: unknown; membershipRecordedAt?: unknown } | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!session) return false;
+  if (kind === "membership_paid") {
+    const at = Date.parse(String(session.membershipRecordedAt ?? ""));
+    return Number.isFinite(at) && now - at < 10 * 60 * 1000;
+  }
+  if (kind === "bgcheck_clear") {
+    return ["caregiver_awaiting_bgcheck", "caregiver_send_bgcheck", "caregiver_awaiting_bgcheck_consent", "caregiver_send_stripe_connect", "caregiver_awaiting_stripe"]
+      .includes(String(session.onboardingStep ?? ""));
+  }
+  return false;
+}
+
 export async function notifyCaregiverAccountEvent(
   uid: string,
   kind: CaregiverAccountEventKind,
@@ -258,6 +286,9 @@ export async function notifyCaregiverAccountEvent(
   if (!phone) return { bell: true, text: false };
   try {
     const sessSnap = await db.collection("agent_sessions").doc(phone).get();
+    if (sessSnap.exists && lifecycleTextOwnedByGate(kind, sessSnap.data() as { onboardingStep?: unknown; membershipRecordedAt?: unknown })) {
+      return { bell: true, text: false }; // the gate step is about to say it, with its link
+    }
     if (sessSnap.exists && sessSnap.data()?.optedOut !== true) {
       const { sendViaInteractionAgent } = await import("../agents/caraAgent");
       await sendViaInteractionAgent(phone, {

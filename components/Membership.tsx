@@ -22,7 +22,7 @@ interface PlanFeature {
 
 const PLAN_FEATURES: PlanFeature[] = [
   { text: 'Caregiver messaging', included: true },
-  { text: 'AI-powered caregiver matching', included: true },
+  { text: 'Caregiver matching', included: true },
   { text: 'Schedule coordination tools', included: true },
   { text: 'Background-checked caregivers', included: true },
   { text: 'Interview scheduling', included: true },

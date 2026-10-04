@@ -1217,7 +1217,7 @@ export async function handleOnboardingStep(
       // Re-ask the current question
       const stepMessages: Record<string, string> = {
         client_ask_name:       "What's your first and last name?",
-        client_ask_senior:     "Who are you looking for care for? (Their name and your relationship)",
+        client_ask_senior:     "How often do you need care — occasional, part-time, or full-time?", // the wizard's first question (the cursor name is historical)
         client_ask_needs:      "What kind of help do they need, and how old are they?",
         client_ask_location:   "What city and zip code are you in?",
         client_ask_schedule:   "How many days a week and what hours do you need care?",
@@ -1700,10 +1700,10 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
         audience: "family",
         context: `${knownName} just said they're looking for care for a loved one, and you already know their name is ${knownName}. ` +
           `You ALREADY introduced yourself — never say "I'm Evia" or re-introduce yourself. ` +
-          `Warmly acknowledge them BY NAME — do NOT ask their name again — then ask who they're looking for care for ` +
-          `(the person's name and their relationship, e.g. "my mom Dorothy"). Mention — once, casually — that they ` +
+          `Warmly acknowledge them BY NAME — do NOT ask their name again — then ask the wizard's first question: how often ` +
+          `they need care — occasional, part-time, or full-time. Mention — once, casually — that they ` +
           `can also just send a voice memo instead of typing, and you'll listen.`,
-        fallback: `Thanks, ${knownName}. Who are we caring for — their name and your relationship? (And if typing it all out is a pain, just send me a voice memo — I'll listen.)`,
+        fallback: `Thanks, ${knownName}. How often do you need care — occasional, part-time, or full-time? (And if typing it all out is a pain, just send me a voice memo — I'll listen.)`,
         maxTokens: 80,
         emotionalDirective,
       });
@@ -1735,8 +1735,8 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
         context: `${knownName} just said they're a caregiver looking for work, and you already know their name is ${knownName}. ` +
           `You ALREADY introduced yourself — never say "I'm Evia" or re-introduce yourself. ` +
           `Warmly acknowledge them BY NAME — do NOT ask their name again — let them know setup takes about 5 minutes right here, ` +
-          `then ask what city and zip code they're based in.`,
-        fallback: `Great, ${knownName}! Setup takes about 5 minutes, all right here. What city and zip code are you based in?`,
+          `then ask the first question — their street address, city, and zip code (families only ever see the city).`,
+        fallback: `Great, ${knownName}! Setup takes about 5 minutes, all right here. What's your street address, city, and zip code? (Families only ever see the city.)`,
         maxTokens: 90,
         emotionalDirective,
       });
@@ -1748,8 +1748,8 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       audience: "caregiver",
       context: "A new caregiver just said they're looking for work. You ALREADY introduced yourself in the previous " +
         "message — do NOT say your name or re-introduce yourself. Let them know profile setup takes about 5 minutes " +
-        "and everything happens right here over text. Then ask for their name.",
-      fallback: "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your name?",
+        "and everything happens right here over text. Then ask their first and last name (once).",
+      fallback: "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your first and last name?",
       maxTokens: 80,
       emotionalDirective,
     });
@@ -4796,33 +4796,45 @@ function deriveJobDataFromIntake(d: Record<string, unknown>): Record<string, unk
 }
 
 async function presentPrefilledJobPost(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  // Site parity (2026-10-04): the dashboard's What's Next card posts the job the
+  // first time it loads with identity + membership both done — silently, after
+  // checking that no post exists for this family yet (components/client/
+  // WhatsNext.tsx). Same here: no question, one post per family, one line.
+  // (The old "post it as-is? YES" review step was Evia-only; handleJobConfirmPrefill
+  // stays only for sessions already parked on it.)
   const d       = session.onboardingData ?? {};
   const jobData = deriveJobDataFromIntake(d);
   await mergeOnboardingData(phone, jobData);
-  // Site parity (2026-09-23): the wizard already collected the hourly rate and
-  // the site posts with it — no second rate question here. The recap + YES is
-  // the family's review before the post goes live.
-  const refreshed = await db.collection("agent_sessions").doc(phone).get();
-  await presentPrefilledJobPostSummary(phone, chatId, refreshed.data() as AgentSession);
-}
-
-async function presentPrefilledJobPostSummary(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  const d = session.onboardingData ?? {};
-  await updateSession(phone, { onboardingStep: "job_confirm_prefill" });
-
-  const seniorName = (d.seniorName as string) ?? "your loved one";
-  const freqMap: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
-  const rateLabel  = d.jobHourlyRate === "flexible" ? "flexible rate" : `$${d.jobHourlyRate}/hr`;
-  const needs      = ((d.jobCareNeeds as string[]) ?? []).join(", ") || "general care";
-  const timeOfDay  = Array.isArray(d.jobTimeOfDay) ? (d.jobTimeOfDay as string[]).join(", ") : "";
-
-  await sendMessage(chatId,
-    `Perfect — here's ${seniorName}'s care request:\n\n` +
-    `📅 Start ${d.jobStartDate} · ${freqMap[d.jobFrequency as string] ?? "Flexible"}${timeOfDay ? ` · ${timeOfDay}` : ""}\n` +
-    `💛 ${needs}\n` +
-    `💰 ${rateLabel}\n\n` +
-    `Want me to post it as-is? Reply YES, or tell me what to change.`
-  );
+  const uid = session.userId as string | undefined;
+  if (!uid) {
+    // No account yet (legacy) — the step-by-step post collects what it needs.
+    await updateSession(phone, { onboardingStep: "job_ask_start" });
+    await handleJobAskStart(phone, chatId, "", session);
+    return;
+  }
+  // The site's own check: is there already a post for this family (paid on the
+  // site → the dashboard posted it)? Then nothing to post, just say so.
+  const existing = await db.collection("job_posts").where("clientId", "==", uid).limit(1).get().catch(() => null);
+  if (existing && !existing.empty) {
+    await updateSession(phone, { onboardingStep: "complete", optedIn: true });
+    await sendMessage(chatId, "Your care request is already live — caregivers nearby can apply, and I'll reach out as applications come in.");
+    return;
+  }
+  try {
+    const refreshed  = await db.collection("agent_sessions").doc(phone).get();
+    const onboarding = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
+    const { jobId } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
+    await updateSession(phone, { onboardingStep: "complete", optedIn: true });
+    await sendMessage(chatId, jobLiveMessage);
+    await sendMessage(chatId, buildHelpSmsReply("client", undefined, languageFromSession(session as unknown as Record<string, unknown>)));
+    const { presentCaregiverSearch } = await import("./caregiverSearch");
+    presentCaregiverSearch({ phone, chatId, source: "post_job_prefill" }).catch((err) =>
+      console.error("presentCaregiverSearch error:", err));
+    console.log(`[presentPrefilledJobPost] Job posted: ${jobId} for uid=${uid}`);
+  } catch (err) {
+    console.error("[presentPrefilledJobPost] buildAndSaveJobPost error:", err);
+    await sendMessage(chatId, "There was a problem posting your request — our team has been notified. You can also post it at " + APP_URL + "/client/post-job");
+  }
 }
 
 async function handleJobConfirmPrefill(
@@ -4846,6 +4858,12 @@ async function handleJobConfirmPrefill(
   if (!uid) {
     await updateSession(phone, { onboardingStep: "job_ask_start" });
     await handleJobAskStart(phone, chatId, "", session);
+    return;
+  }
+  const already = await db.collection("job_posts").where("clientId", "==", uid).limit(1).get().catch(() => null);
+  if (already && !already.empty) {
+    await updateSession(phone, { onboardingStep: "complete", optedIn: true });
+    await sendMessage(chatId, "Your care request is already live — caregivers nearby can apply, and I'll reach out as applications come in.");
     return;
   }
   try {

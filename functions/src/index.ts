@@ -205,6 +205,8 @@ export * from './triggers/carePlanHistory';
 export { geocodeJobPost } from './triggers/jobPostGeocode';
 export { onJobPostCreatedNotifyCaregivers } from './triggers/newJobNotice';
 export { onCaregiverAccountChange } from './triggers/caregiverAccountEvents';
+// Family twin (2026-10-04): identity verified / reset, membership revoked / active again → bell + text once.
+export { onClientAccountChange } from './triggers/clientAccountEvents';
 
 // CLIENT INTAKE GEOCODING — writes lat/lng to users/{uid} when clientIntakes is saved
 export { geocodeClientIntake } from './triggers/clientIntakeGeocode';
@@ -395,7 +397,9 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   const db = admin.firestore();
 
   const now            = new Date();
-  const ttlExpireAt    = new Date(now.getTime() + 30 * 60 * 1000); // 30 min — Firestore TTL purges
+  // 7 days (was 30 min — 2026-10-04): a caregiver who texts "Hey Evia" the next day
+  // must still land in her /start signup (name, email, role), not a cold consent ask.
+  const ttlExpireAt    = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // Firestore TTL purges
   const linqPhoneNumber = process.env.LINQ_PHONE_NUMBER ?? "";
 
   await db.collection("web_onboarding_sessions").doc(phone).set({

@@ -5,6 +5,7 @@ import { billedHourlyRate } from '../../utils/pricing';
 import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle, Briefcase, RefreshCw } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
+import { hasValidTransportDocs } from '../../utils/transportDocs';
 
 interface CaregiverMatchCardProps {
   caregiver: Caregiver;
@@ -124,10 +125,11 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
           )}
         </div>
 
-        {/* Skills pills */}
+        {/* Skills pills — Transportation only once the badge is earned (documents approved +
+            driving record clear), the same gate as Find Caregivers and the profile page. */}
         {!hideSkills && caregiver.skills && caregiver.skills.length > 0 ? (
           <div className="flex flex-wrap gap-2 mb-6 mt-1">
-            {caregiver.skills.slice(0, 3).map((skill: string) => (
+            {(caregiver.skills ?? []).filter((s: string) => s !== 'Transportation' || hasValidTransportDocs(caregiver as any)).slice(0, 3).map((skill: string) => (
               <span key={skill} className="px-3.5 py-1.5 bg-slate-100 border border-slate-200 text-slate-800 text-[13px] font-medium rounded-[1rem]">
                 {serviceLabel(skill)}
               </span>

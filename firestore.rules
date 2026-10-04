@@ -403,7 +403,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
       
       // Create new review
-      allow create: if isAuthenticated() && 
+      allow create: if isAuthenticated() &&
         request.resource.data.clientId == request.auth.uid;
     }
     
@@ -438,13 +438,69 @@ service cloud.firestore {
       );
       
       // Create new job post
-      allow create: if isAuthenticated() && 
+      allow create: if isAuthenticated() &&
         request.resource.data.clientId == request.auth.uid;
     }
     
     // ==========================================
     // JOB APPLICATIONS COLLECTION
     // ==========================================
+    // The Jobs page gate, enforced where the site's Apply lands (2026-10-04).
+    // hooks/useCaregiverGate.tsx + utils/transportDocs.ts are the rule, field for
+    // field; Evia's Apply runs the same gate server-side before its own write
+    // (functions/src/agents/caregiverAccessGate.ts — Admin SDK, bypasses rules).
+    // Before this, a stale tab (badge revoked, form already open) or a hand-rolled
+    // write could apply without membership, a clear background check, or — for a
+    // job that includes driving — the transportation badge (Transportation offered,
+    // three documents approved and unexpired, driving record clear).
+    function applicant() {
+      return get(/databases/$(database)/documents/caregivers/$(request.auth.uid)).data;
+    }
+    function caregiverMembershipActive(cg) {
+      return cg.get('membershipStatus', null) in ['active', 'trialing']
+        || (cg.get('membershipStatus', null) == null && cg.get('membershipPaid', false) == true);
+    }
+    function caregiverBackgroundApproved(cg) {
+      return cg.get('verified', false) == true
+        || cg.get('backgroundCheckStatus', null) == 'clear'
+        || cg.get('backgroundCheckComplete', false) == true;
+    }
+    function jobRequiresTransport(job) {
+      return (job.get('careTypes', []) is list && job.get('careTypes', []).hasAny(['Transportation']))
+        || (job.get('requirements', []) is list && job.get('requirements', []).hasAny(['Driving']));
+    }
+    function caregiverOffersTransportation(cg) {
+      return (cg.get('skills', []) is list && cg.get('skills', []).hasAny(['Transportation']))
+        || (cg.get('services', []) is list && cg.get('services', []).hasAny(['Transportation']));
+    }
+    // 'YYYY-MM-DD' (the documents' expirationDate shape) for today, so the
+    // unexpired check is a plain string comparison.
+    function todayYmd() {
+      return string(request.time.year()) + '-'
+        + (request.time.month() < 10 ? '0' : '') + string(request.time.month()) + '-'
+        + (request.time.day() < 10 ? '0' : '') + string(request.time.day());
+    }
+    function transportDocValid(docs, type) {
+      return docs.get(type, null) is map
+        && docs[type].get('status', null) == 'approved'
+        && (docs[type].get('expirationDate', '') == ''
+            || !(docs[type].expirationDate is string)
+            || docs[type].expirationDate >= todayYmd());
+    }
+    function caregiverTransportBadge(cg) {
+      return caregiverOffersTransportation(cg)
+        && cg.get('documents', null) is map
+        && transportDocValid(cg.documents, 'driversLicense')
+        && transportDocValid(cg.documents, 'insurance')
+        && transportDocValid(cg.documents, 'registration')
+        && cg.get('isApprovedDriver', false) == true;
+    }
+    function applyGatePasses(jobId) {
+      return caregiverMembershipActive(applicant())
+        && caregiverBackgroundApproved(applicant())
+        && (!jobRequiresTransport(get(/databases/$(database)/documents/job_posts/$(jobId)).data)
+            || caregiverTransportBadge(applicant()));
+    }
     match /job_applications/{applicationId} {
       // Caregiver can read their own applications
       // Client can read applications for their jobs
@@ -454,9 +510,11 @@ service cloud.firestore {
         isAdmin()
       );
       
-      // Only caregiver can create application
-      allow create: if isAuthenticated() && 
-        request.resource.data.caregiverId == request.auth.uid;
+      // Only the caregiver herself, and only past the Jobs page gate (above).
+      allow create: if isAuthenticated()
+        && request.resource.data.caregiverId == request.auth.uid
+        && request.resource.data.jobId is string
+        && applyGatePasses(request.resource.data.jobId);
       
       // Client can update status (accept/reject); caregiver can withdraw their own application
       allow update: if isAuthenticated() && (
@@ -500,7 +558,7 @@ service cloud.firestore {
       );
       
       // Any authenticated user can create
-      allow create: if isAuthenticated() && 
+      allow create: if isAuthenticated() &&
         request.resource.data.seniorId == request.auth.uid;
       
       allow update: if isAdmin();
@@ -519,7 +577,7 @@ service cloud.firestore {
       );
       
       // Only client can create
-      allow create: if isAuthenticated() && 
+      allow create: if isAuthenticated() &&
         request.resource.data.clientId == request.auth.uid;
       
       // Client or caregiver can update (mark tasks completed)
@@ -627,7 +685,7 @@ service cloud.firestore {
       );
       
       // Caregiver can create
-      allow create: if isAuthenticated() && 
+      allow create: if isAuthenticated() &&
         request.resource.data.caregiverId == request.auth.uid;
       
       // Caregiver can update
@@ -682,7 +740,7 @@ service cloud.firestore {
       );
       
       // Client can create their own payroll setup
-      allow create: if isAuthenticated() && 
+      allow create: if isAuthenticated() &&
         request.resource.data.clientId == request.auth.uid;
       
       // Admin can update status

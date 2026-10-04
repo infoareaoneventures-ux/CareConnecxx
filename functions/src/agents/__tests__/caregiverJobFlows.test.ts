@@ -140,7 +140,7 @@ describe("Apply flow — the Apply for Position modal", () => {
     hoisted.docState.set("job_posts/job1", { status: "open", title: "Rides", clientId: "fam1", careTypes: ["Transportation"] });
     hoisted.docState.set("caregivers/cg1", { name: "Maria", membershipStatus: "active", backgroundCheckStatus: "clear", services: ["Transportation"] });
     expect((await startApplyFlow(PHONE, CHAT, session(), { caregiverId: "cg1", jobId: "job1" })).reason).toBe("gated");
-    expect(hoisted.sent.some((m) => m.includes("Transportation badge needed"))).toBe(true);
+    expect(hoisted.sent.some((m) => m.includes("Set Up Transportation"))).toBe(true);
     expect(hoisted.adds).toHaveLength(0);
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).applyFlowStep).toBeUndefined();
   });

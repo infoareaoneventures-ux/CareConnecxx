@@ -101,7 +101,7 @@ describe("settingsPageText — the sections word for word", () => {
     const t = settingsPageText(await loadSettingsPage("cg1"));
     expect(t).toContain("First name: Mahad\nLast name: Ali");
     expect(t).toContain("Recovery email: a@b.com — Confirmed");
-    expect(t).toContain("Transportation Documents — Required to activate your transportation badge. Keep these up to date.\nDriver's License: Approved · Expires 3/3/2027\nVehicle Insurance: Under Review\nVehicle Registration: Not uploaded\nAll three documents are required to activate the transportation badge.\nReply DOCUMENTS for your upload link.");
+    expect(t).toContain("Transportation Documents — Required to offer Transportation. Keep these up to date.\nDriver's License: Approved · Expires 3/3/2027\nVehicle Insurance: Under Review\nVehicle Registration: Not uploaded\nAll three documents are required to activate the transportation badge.\nReply DOCUMENTS for your upload link.");
     expect(t).toContain("Blocked Users: You haven't blocked anyone.");
     expect(t).toContain("Your account is paused — You'll automatically become active again on 2026-11-01. Reactivate sooner anytime. Reply REACTIVATE.");
     hoisted.docs.set("caregivers/cg1", { pausedUntil: "2099-12-31" });

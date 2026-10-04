@@ -24,7 +24,8 @@ const PLAN_FEATURES: PlanFeature[] = [
   { text: 'Caregiver messaging', included: true },
   { text: 'Caregiver matching', included: true },
   { text: 'Schedule coordination tools', included: true },
-  { text: 'Background-checked caregivers', included: true },
+  // Founder, 2026-10-04: what happened (a check was completed), not what we concluded from it — no cleared / verified / safe. Add "by Checkr" once the publicity clause in the Checkr agreement is confirmed.
+  { text: 'Caregivers who have completed a background check', included: true },
   { text: 'Interview scheduling', included: true },
   // 2026-09-18: 'GPS shift verification' removed until shift location capture ships;
   // 'emergency support' reworded to what exists (Evia by text around the clock,

@@ -826,8 +826,21 @@ export const AdminCaregiverManager: React.FC = () => {
                                 try { const refreshBadge = functions?.httpsCallable('v1-refreshTransportBadge'); if (refreshBadge) await refreshBadge({ uid: selected.uid }); } catch { /* badge recalculates on the daily job */ }
                                 showToast('Driving record revoked', 'success');
                               }}
-                              className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).isApprovedDriver === false && (selected as any).mvrStatus ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
+                              className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).isApprovedDriver === false && (selected as any).mvrStatus && (selected as any).mvrStatus !== 'not_approved' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-orange-50'}`}
                             >Revoked</button>
+                            {/* The final decision after a review (founder, 2026-10-04): the caregiver's
+                                cards read "Driving record not approved" instead of "under review" forever;
+                                Approved remains the way to reverse it. */}
+                            <button
+                              onClick={async () => {
+                                const patch: any = { isApprovedDriver: false, mvrStatus: 'not_approved', mvrDecidedAt: new Date().toISOString() };
+                                await adminService.updateCaregiver(selected.uid, patch);
+                                setSelected(p => p ? { ...p, ...patch } as any : p);
+                                try { const refreshBadge = functions?.httpsCallable('v1-refreshTransportBadge'); if (refreshBadge) await refreshBadge({ uid: selected.uid }); } catch { /* badge recalculates on the daily job */ }
+                                showToast('Driving record marked not approved', 'success');
+                              }}
+                              className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).mvrStatus === 'not_approved' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
+                            >Not approved</button>
                           </div>
                         </div>
                       )}
@@ -900,7 +913,7 @@ export const AdminCaregiverManager: React.FC = () => {
                     : (s.mvrStatus as string | undefined) ?? (s.mvrCheckInitiated || s.backgroundCheckData?.mvrIncluded ? 'pending' : 'not started');
                   const tone = mvrStatus === 'clear' ? 'bg-green-100 text-green-700'
                     : mvrStatus === 'consider' ? 'bg-orange-100 text-orange-700'
-                    : mvrStatus === 'suspended' ? 'bg-red-100 text-red-700'
+                    : mvrStatus === 'suspended' || mvrStatus === 'not_approved' ? 'bg-red-100 text-red-700'
                     : mvrStatus === 'pending' ? 'bg-amber-100 text-amber-700'
                     : 'bg-slate-100 text-slate-500';
                   const docsApproved = ['driversLicense', 'insurance', 'registration'].every((k) => s.documents?.[k]?.status === 'approved');
@@ -910,7 +923,7 @@ export const AdminCaregiverManager: React.FC = () => {
                         <Car className="w-4 h-4 text-blue-600" /> Driving Record (MVR)
                       </h3>
                       <div className="flex items-center gap-3 flex-wrap">
-                        <span className={`text-sm font-bold px-3 py-1.5 rounded-full uppercase tracking-wide ${tone}`}>{mvrStatus}</span>
+                        <span className={`text-sm font-bold px-3 py-1.5 rounded-full uppercase tracking-wide ${tone}`}>{mvrStatus.replace('_', ' ')}</span>
                         {s.backgroundCheckData?.mvrIncluded && <span className="text-xs text-slate-500">Bundled with the criminal check</span>}
                         {s.mvrClearedAt && <span className="text-xs text-slate-500">Cleared {new Date(s.mvrClearedAt).toLocaleDateString()}</span>}
                         {s.mvrInitiatedAt && !s.mvrClearedAt && <span className="text-xs text-slate-500">Started {new Date(s.mvrInitiatedAt).toLocaleDateString()}</span>}

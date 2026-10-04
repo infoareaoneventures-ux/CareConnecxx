@@ -87,6 +87,7 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
     // The bundled criminal+MVR clear is announced by bgcheck_clear; the standalone MVR by its own line.
     if (a.mvrStatus === "clear" && !clearedNow) out.push({ kind: "mvr_clear" });
     if (a.mvrStatus === "consider" || a.mvrStatus === "suspended") out.push({ kind: "mvr_review" });
+    if (a.mvrStatus === "not_approved") out.push({ kind: "mvr_not_approved" });
   }
   if (!badgeB && badgeA) out.push({ kind: "transport_badge_earned" });
   if (badgeB && !badgeA) {

@@ -25,11 +25,13 @@ export type CaregiverAccountEventKind =
   | "bgcheck_canceled" | "bgcheck_action_required" | "bgcheck_not_approved" | "bgcheck_document_required"
   | "bgcheck_link_expired" | "bgcheck_revoked"
   | "transport_doc_approved" | "transport_doc_rejected" | "transport_docs_all_approved" | "transport_doc_expiring"
-  | "mvr_clear" | "mvr_review" | "transport_badge_earned" | "transport_badge_lost"
+  | "mvr_clear" | "mvr_review" | "mvr_not_approved" | "transport_badge_earned" | "transport_badge_lost"
   | "payouts_enabled" | "payouts_disabled"
   | "now_bookable";
 
 export interface CaregiverAccountEventContext {
+  /** bgcheck_revoked: no consent link — the membership is not active, and the check is part of it (2026-10-04). */
+  membershipInactive?: boolean;
   amount?: string;          // "69.99"
   date?: string;            // a formatted day ("Monday, October 5")
   attempt?: number;         // payment-failed attempt number
@@ -54,6 +56,43 @@ const BILLING_KINDS = new Set<CaregiverAccountEventKind>([
   "membership_paid", "membership_renewed", "membership_payment_failed", "membership_cancel_scheduled",
   "membership_reactivated", "membership_cancelled", "membership_revoked",
 ]);
+
+// A driving record that came back for review has nothing behind it unless the team
+// hears about it (founder, 2026-10-04): one admin alert per event, texted to the
+// team by adminAlertNotifier (type listed in its SMS_NOTIFY_TYPES).
+async function alertTeamDrivingRecordReview(uid: string, eventId: string): Promise<void> {
+  try {
+    const snap = await db.collection("caregivers").doc(uid).get();
+    const cg = (snap.data() ?? {}) as Record<string, unknown>;
+    const name = String(cg.name ?? "A caregiver").trim() || "A caregiver";
+    const status = String(cg.mvrStatus ?? "consider");
+    await db.collection("admin_alerts").add({
+      type: "mvr_review",
+      severity: "high",
+      resolved: false,
+      caregiverId: uid,
+      caregiverName: name,
+      mvrStatus: status,
+      message: `${name}'s driving record check came back "${status}". Transportation is off their profile until you decide — Admin › Caregivers › ${name} › Verification.`,
+      dedupeKey: `mvr_review:${uid}:${eventId}`,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(`[caregiverAccountEvents] admin alert (mvr_review) failed for ${uid}:`, err);
+  }
+}
+
+// Notices where uploading a document is the fix — the upload page follows the text.
+const UPLOAD_LINK_KINDS = new Set<CaregiverAccountEventKind>(["transport_doc_rejected", "transport_doc_expiring", "transport_badge_lost"]);
+
+async function followWithUploadLink(phone: string, kind: CaregiverAccountEventKind): Promise<void> {
+  try {
+    const { sendOnboardingLink } = await import("../agents/onboardingConversation");
+    await sendOnboardingLink(phone, "caregiver_transport_docs");
+  } catch (err) {
+    console.warn(`[caregiverAccountEvents] upload link failed (${kind}):`, err);
+  }
+}
 
 /**
  * The bell title + body for each event, plus `text` when the texted wording differs:
@@ -157,7 +196,9 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       return {
         title: "Background check pending",
         body: `Your background check approval was removed. Complete verification on your dashboard to get booked again: ${dash}`,
-        text: `Your background check approval was removed. Authorize a new check to get booked again — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
+        text: ctx.membershipInactive
+          ? "Your background check approval was removed. Once your membership is active, I'll text you the link to authorize a new check — it takes about 2 minutes."
+          : `Your background check approval was removed. Authorize a new check to get booked again — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
       };
 
     case "transport_doc_approved":
@@ -166,31 +207,46 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       return {
         title: "Document rejected",
         body: `Your ${ctx.docLabel ?? "transport document"} was rejected${ctx.docNotes ? `: ${ctx.docNotes}` : ""}. Please re-upload to continue: ${appLink("/caregiver/settings")}`,
-        text: `Your ${ctx.docLabel ?? "transport document"} was rejected${ctx.docNotes ? `: ${ctx.docNotes}` : ""}. Please re-upload to continue — reply DOCUMENTS for your upload link.`,
+        // The upload link itself follows this text (notifyCaregiverAccountEvent) — no keyword to type (founder, 2026-10-04).
+        text: `Your ${ctx.docLabel ?? "transport document"} was rejected${ctx.docNotes ? `: ${ctx.docNotes}` : ""}. Please re-upload to continue — your upload link is right below.`,
       };
     case "transport_docs_all_approved":
-      return { title: "Documents approved", body: "Your transportation documents are approved. Your transportation badge turns on as soon as your driving record (MVR) check clears." };
+      return { title: "Documents approved", body: "Your transportation documents are approved. Transportation shows on your profile as soon as your driving record check clears." };
     case "transport_doc_expiring":
       return {
         title: "Document expiring soon",
-        body: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep your transportation badge active: ${appLink("/caregiver/settings")}`,
-        text: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep your transportation badge active — reply DOCUMENTS for your upload link.`,
+        body: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep Transportation on your profile: ${appLink("/caregiver/settings")}`,
+        text: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep Transportation on your profile — your upload link is right below.`,
       };
     case "mvr_clear":
       return { title: "Driving record cleared", body: "Your driving record check came back clear." };
     case "mvr_review":
-      return { title: "Driving record needs review", body: "Your driving record check needs a closer look. This only affects your transportation badge — your caregiver approval is unchanged." };
+      // ONE text for the review: what happened and what it affects — no follow-up
+      // promise (founder, 2026-10-04); the TEAM is alerted instead (admin_alerts
+      // mvr_review, texted to ADMIN_PHONE). transport_badge_lost (reason mvr) stays
+      // bell-only so she is not told twice.
+      return {
+        title: "Driving record under review",
+        body: "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
+        text: "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
+      };
+    case "mvr_not_approved":
+      // The admin's final decision (2026-10-04): said once, plainly; transport_badge_lost stays bell-only.
+      return { title: "Driving record not approved", body: "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.", text: "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected." };
     case "transport_badge_earned":
-      return { title: "Transportation badge active", body: "Your transportation badge is active — families can now see you for Transportation jobs." };
+      return { title: "Transportation is live", body: "Families can now see you for Transportation jobs." };
     case "transport_badge_lost":
       return {
-        title: "Transportation badge removed",
+        title: "Transportation removed from your profile",
         body: ctx.reason === "expired"
-          ? `One or more of your transportation documents has expired. Upload updated documents to restore your badge: ${appLink("/caregiver/settings")}`
-          : `Your transportation badge was removed. Check your transport documents and driving record on your dashboard to restore it: ${dash}`,
+          ? `One or more of your transportation documents has expired. Upload updated documents to restore Transportation on your profile: ${appLink("/caregiver/settings")}`
+          : `Transportation was removed from your profile. Check your transport documents and driving record on your dashboard to restore it: ${dash}`,
+        // "" = bell only (the mvr_review text already said it; a services change was her own doing).
         text: ctx.reason === "expired"
-          ? "One or more of your transportation documents has expired. Upload updated documents to restore your badge — reply DOCUMENTS for your upload link."
-          : "Your transportation badge was removed. Reply SETTINGS to see your transport documents and driving record, or DOCUMENTS for the upload link.",
+          ? `${(ctx.docs ?? []).join(", ") || "One or more of your transportation documents"} expired, so Transportation is off your profile. Upload the renewal to restore it — your upload link is right below.`
+          : ctx.reason === "documents"
+            ? "A transportation document is no longer approved, so Transportation is off your profile. Re-upload it to restore it — your upload link is right below."
+            : "",
       };
 
     case "payouts_enabled":
@@ -260,7 +316,16 @@ export async function notifyCaregiverAccountEvent(
   const ctx: CaregiverAccountEventContext = { ...(opts.ctx ?? {}) };
   let phoneForLink: string | undefined;
   if ((kind === "membership_paid" || kind === "membership_renewed" || kind === "bgcheck_link_expired" || kind === "bgcheck_revoked") && !ctx.consentUrl) {
-    phoneForLink = await resolveCaregiverPhone(uid).catch(() => undefined);
+    // The check is part of the membership: no consent link while it is inactive
+    // (the consent function refuses it anyway — backgroundCheckConsent.ts, 2026-10-04).
+    let membershipActive = true;
+    try {
+      const cgSnap = await db.collection("caregivers").doc(uid).get();
+      const { isCaregiverMembershipActive } = await import("../agents/caregiverAccessGate");
+      membershipActive = !cgSnap.exists || isCaregiverMembershipActive((cgSnap.data() ?? {}) as Record<string, unknown>);
+    } catch { /* decide on the link as before */ }
+    if (!membershipActive) ctx.membershipInactive = true;
+    phoneForLink = membershipActive ? await resolveCaregiverPhone(uid).catch(() => undefined) : undefined;
     if (phoneForLink) {
       try {
         const { generateToken } = await import("../agents/tokenService");
@@ -270,6 +335,10 @@ export async function notifyCaregiverAccountEvent(
   }
   const { title, body, text } = caregiverAccountEventCopy(kind, ctx);
   const smsBody = text ?? body;
+  const textWanted = smsBody.trim().length > 0; // "" = bell only
+  // Uploading is the fix → the tokened upload page follows the text (the same link
+  // the DOCUMENTS keyword and the site's Upload buttons use), instead of a keyword to type.
+  const sendUploadLink = UPLOAD_LINK_KINDS.has(kind) && (kind !== "transport_badge_lost" || ctx.reason === "expired" || ctx.reason === "documents");
   const created = await writeUserNotification({
     sourcePath: opts.sourcePath ?? `caregivers/${uid}`,
     eventId: opts.eventId,
@@ -281,7 +350,9 @@ export async function notifyCaregiverAccountEvent(
     data: { kind },
   }).catch((err) => { console.error(`[caregiverAccountEvents] bell failed (${kind}) for ${uid}:`, err); return false; });
   if (!created) return { bell: false, text: false };
+  if (kind === "mvr_review") await alertTeamDrivingRecordReview(uid, opts.eventId);
 
+  if (!textWanted) return { bell: true, text: false };
   const phone = phoneForLink ?? await resolveCaregiverPhone(uid).catch(() => undefined);
   if (!phone) return { bell: true, text: false };
   try {
@@ -298,11 +369,13 @@ export async function notifyCaregiverAccountEvent(
         canDrop: false,
         ...(BILLING_KINDS.has(kind) ? { preferredService: "SMS" as const } : {}),
       });
+      if (sendUploadLink) await followWithUploadLink(phone, kind);
       return { bell: true, text: true };
     }
     if (sessSnap.exists) return { bell: true, text: false }; // opted out: bell only
     const { sendToPhone } = await import("../linq/client");
     await sendToPhone(phone, smsBody);
+    if (sendUploadLink) await followWithUploadLink(phone, kind);
     return { bell: true, text: true };
   } catch (err) {
     console.error(`[caregiverAccountEvents] text failed (${kind}) for ${uid}:`, err);

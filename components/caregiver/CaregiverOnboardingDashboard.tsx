@@ -182,13 +182,19 @@ export const CaregiverProgressCard: React.FC<{
     const anyDocRejected = transportDocStatuses.includes('rejected');
     const anyDocMissing = transportDocStatuses.includes('missing');
     const docsApproved = transportDocsApproved(profile);
-    if (docsApproved && p.isApprovedDriver !== true) {
+    if (p.mvrStatus === 'not_approved') {
+      // The admin's final decision after a review (2026-10-04) — same words as
+      // Settings (AccountStandingSection DRIVER_CARD_TEXT.not_approved) and Evia.
+      cardTitle = 'Driving record not approved';
+      cardDesc = "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.";
+      cardVariant = 'warning';
+    } else if (docsApproved && p.isApprovedDriver !== true) {
       // Documents are in; the badge now waits only on the driving record
       // (MVR) check the flat membership covers (2026-09-25).
       cardTitle = 'Driving record check in progress';
       cardDesc = p.mvrStatus === 'consider' || p.mvrStatus === 'suspended'
-        ? 'Your driving record check needs a review — our team will follow up.'
-        : 'Your documents are approved. Your transportation badge turns on as soon as your driving record (MVR) check clears.';
+        ? "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected."
+        : 'Your documents are approved. Transportation shows on your profile as soon as your driving record check clears.';
       cardVariant = 'info';
     } else if (anyDocRejected) {
       cardTitle = 'Documents rejected';
@@ -197,7 +203,7 @@ export const CaregiverProgressCard: React.FC<{
       cardCta = { label: 'Re-upload documents', onClick: () => onNavigate('caregiver-settings') };
     } else if (anyDocMissing) {
       cardTitle = 'Upload transport documents';
-      cardDesc = "Upload your driver's license, vehicle insurance, and registration to earn your transportation badge.";
+      cardDesc = "Upload your driver's license, vehicle insurance, and registration so families can see Transportation on your profile.";
       cardCta = { label: 'Upload documents', onClick: () => onNavigate('caregiver-settings') };
     } else {
       cardTitle = 'Documents under review';
@@ -300,7 +306,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   jobs: prefetchedJobs,
   jobsLoaded: prefetchedJobsLoaded,
 }) => {
-  const { blockReason, transportBlockReason, gate, gateTransport, GateModal } = useCaregiverGate();
+  const { blockReason, transportBlockReason, gateFresh, GateModal } = useCaregiverGate();
   const { setMembershipModalOpen } = useCareConnex();
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<JobPost[]>(prefetchedJobs ?? []);
@@ -321,7 +327,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
     // The Jobs page gate, re-run at submit (2026-10-04) — see JobBoard.tsx; the
     // rules enforce the same gate on the write itself.
     const needsDriver = !!(applyingJob.careTypes?.includes('Transportation') || applyingJob.requirements?.includes('Driving'));
-    if (!(needsDriver ? gateTransport() : gate())) { setApplyingJob(null); return; }
+    if (!(await gateFresh({ transport: needsDriver }))) { setApplyingJob(null); return; }
     setSubmitting(true);
     try {
       await jobApplicationService.applyToJob(
@@ -336,7 +342,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
     } catch (err: unknown) {
       if ((err as { code?: string })?.code === 'permission-denied') {
         setApplyingJob(null);
-        if (!(needsDriver ? gateTransport() : gate())) return;
+        if (!(await gateFresh({ transport: needsDriver }))) return;
       }
       onShowToast?.(err instanceof Error ? err.message : 'Failed to submit application.', 'error');
     } finally {
@@ -488,10 +494,10 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                           );
                           if (reason === 'transport') return (
                             <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
-                              <Car className="w-3 h-3" /> Transportation badge needed
+                              <Car className="w-3 h-3" /> Set Up Transportation
                             </button>
                           );
-                          return <button onClick={() => setApplyingJob(job)} className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold rounded-xl transition-colors">Apply Now</button>;
+                          return <button onClick={() => { void gateFresh({ transport: !!jobRequiresTransport }, () => setApplyingJob(job)); }} className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold rounded-xl transition-colors">Apply Now</button>;
                         })()}
                         <button onClick={() => setViewingJob(job)} className="px-4 py-2 border border-slate-200 hover:border-slate-300 text-slate-700 text-xs font-semibold rounded-xl transition-colors">Details</button>
                       </div>
@@ -609,10 +615,10 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                 );
                 if (reason === 'transport') return (
                   <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2.5 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
-                    <Car className="w-3.5 h-3.5" /> Transportation badge needed
+                    <Car className="w-3.5 h-3.5" /> Set Up Transportation
                   </button>
                 );
-                return <button onClick={() => { setApplyingJob(viewingJob); setViewingJob(null); }} className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-bold rounded-xl transition-colors">Apply Now</button>;
+                return <button onClick={() => { void gateFresh({ transport: !!jobRequiresTransport }, () => { setApplyingJob(viewingJob); setViewingJob(null); }); }} className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-bold rounded-xl transition-colors">Apply Now</button>;
               })()}
             </div>
           </div>

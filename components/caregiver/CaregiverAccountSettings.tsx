@@ -29,7 +29,7 @@ function formatDob(raw: string): string {
 }
 
 export const CaregiverAccountSettings: React.FC = () => {
-  const { currentUser, addToast, blockedIds, blockedUserProfiles, unblockUser, setMembershipModalOpen } = useCareConnex();
+  const { currentUser, addToast, blockedIds, blockedUserProfiles, unblockUser, setMembershipModalOpen, caregiverProfile } = useCareConnex();
   const blockedProfiles = [
     ...Object.entries(blockedUserProfiles).map(([id, p]) => ({ id, ...p })),
     ...Array.from(blockedIds).filter(id => !blockedUserProfiles[id]).map(id => ({ id, name: 'Blocked User', photo: '' })),
@@ -110,6 +110,17 @@ export const CaregiverAccountSettings: React.FC = () => {
     insurance: useRef<HTMLInputElement>(null),
     registration: useRef<HTMLInputElement>(null),
   };
+
+  // The live record (2026-10-04): this page loaded the record once and never
+  // listened, so a change made while it was open — the admin approving the
+  // membership and Evia requesting the background-check authorization — left the
+  // Membership & verification cards stale until a reload (founder live test).
+  // The context's caregivers/{uid} listener is live; merge each change in (the
+  // caregiver doc wins over the users doc, same as getUser).
+  useEffect(() => {
+    if (!caregiverProfile) return;
+    setProfile(prev => prev ? ({ ...prev, ...(caregiverProfile as any) } as any) : prev);
+  }, [caregiverProfile]);
 
   useEffect(() => {
     let active = true;
@@ -569,7 +580,7 @@ export const CaregiverAccountSettings: React.FC = () => {
               : undefined}
           >
             <div className="p-5 space-y-4">
-              <p className="text-sm text-slate-500">Required to activate your transportation badge. Keep these up to date.</p>
+              <p className="text-sm text-slate-500">Required to offer Transportation. Keep these up to date.</p>
 
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                 <p className="text-xs text-amber-800">

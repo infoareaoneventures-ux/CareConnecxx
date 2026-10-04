@@ -3,6 +3,7 @@ import { CheckCircle2, AlertCircle, ShieldCheck, XCircle, RefreshCw, ExternalLin
 import { BackgroundCheckModal } from '../BackgroundCheckModal';
 import { getSubscriptionStatus, getCaregiverBillingPortalUrl } from '../../services/stripeService';
 import { hasValidTransportDocs } from '../../utils/transportDocs';
+import { caregiverMembershipActive } from '../../hooks/useCaregiverGate';
 import type { Caregiver } from '../../types';
 
 // ── Membership & verification (Account Settings) ─────────────────────────────
@@ -25,7 +26,7 @@ type ToastFn = (message: string, type: 'success' | 'error' | 'info') => void;
 export const WHATS_INCLUDED = [
   'Keep 100% of your rate on every booking — families pay the service fee',
   'Access all job postings and apply instantly',
-  'Background check badge on your profile',
+  'Background check shown on your profile',
   'Messaging',
 ];
 
@@ -52,7 +53,7 @@ export type BackgroundCheckState =
   | { kind: 'not_approved' }
   | { kind: 'not_started' };
 
-export function backgroundCheckState(p: any): BackgroundCheckState {
+export function backgroundCheckState(p: any, membershipActive = false): BackgroundCheckState {
   const bg = p?.backgroundCheckData || {};
   const needsConsent = bg.consentRequired === true || bg.invitationStatus === 'awaiting_consent';
   if (needsConsent) return { kind: 'consent', renewal: bg.consentReason === 'renewal' };
@@ -62,8 +63,41 @@ export function backgroundCheckState(p: any): BackgroundCheckState {
   if (bg.checkrCandidateId) {
     return { kind: 'in_progress', detail: bg.status === 'consider' ? 'under_review' : bg.status === 'suspended' ? 'on_hold' : 'running' };
   }
+  // Membership active and nothing started → the Start button, as the dashboard's
+  // step rule already does (2026-10-04); the server refuses a check without an
+  // active membership either way (backgroundCheckConsent.ts).
+  if (membershipActive) return { kind: 'consent', renewal: false };
   return { kind: 'not_started' };
 }
+
+// ── Driving record: ONE state rule for this card, the dashboard and Evia's twin
+// (functions/src/agents/caregiverMembership.ts driverCardFor) ──
+// Wording states what happened (Checkr's result term "cleared", "under review"),
+// never an approval — "Approved Driver" / "verified-driver badge" are gone
+// (founder, 2026-10-04). Families see "Transportation" on the profile, not a badge.
+export type DriverCard = 'approved' | 'cleared_docs_pending' | 'not_approved' | 'review' | 'pending' | 'included' | 'offer';
+
+export function driverCardFor(p: any, badgeLive: boolean): DriverCard {
+  const isApprovedDriver = p?.isApprovedDriver === true;
+  if (isApprovedDriver) return badgeLive ? 'approved' : 'cleared_docs_pending';
+  if (p?.mvrStatus === 'not_approved') return 'not_approved'; // the admin's final decision after a review (2026-10-04)
+  if (p?.mvrStatus === 'consider' || p?.mvrStatus === 'suspended') return 'review';
+  const mvrPending = p?.mvrStatus === 'pending' || (p?.mvrPaid === true && !isApprovedDriver);
+  if (mvrPending) return 'pending';
+  const services = ((p?.services || p?.skills || []) as string[]);
+  if (services.includes('Transportation')) return 'included';
+  return 'offer';
+}
+
+export const DRIVER_CARD_TEXT: Record<DriverCard, { title: string; body: string }> = {
+  approved: { title: 'Driving record check cleared', body: 'Families who need a driver can see Transportation on your profile.' },
+  cleared_docs_pending: { title: 'Driving record check cleared', body: "Transportation shows on your profile once your driver's license, insurance and registration are approved." },
+  not_approved: { title: 'Driving record not approved', body: "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected." },
+  review: { title: 'Driving record under review', body: "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected." },
+  pending: { title: 'Driving record check in progress', body: 'Your Motor Vehicle Report is in progress. Transportation shows on your profile once it clears and your documents are approved.' },
+  included: { title: 'Driving record check included', body: 'Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears — no extra charge.' },
+  offer: { title: 'Offer transportation?', body: "Add Transportation to your services and upload your driver's license, insurance, and registration. Your membership already covers the driving record check." },
+};
 
 export const AccountStandingSection: React.FC<{
   profile: Caregiver | null;
@@ -113,12 +147,16 @@ export const AccountStandingSection: React.FC<{
   const isActive = status === 'active' || status === 'trialing';
   const badge = status ? STATUS_BADGE[status] : null;
   const renewalDate = subscription?.currentPeriodEnd ? longDate(subscription.currentPeriodEnd) : null;
-  const bg = backgroundCheckState(p);
-  const offersTransportation = ((p?.services || p?.skills || []) as string[]).includes('Transportation');
-  const isApprovedDriver = p?.isApprovedDriver === true;
-  const badgeLive = hasValidTransportDocs(p);
-  const mvrPending = p?.mvrStatus === 'pending' || (p?.mvrPaid === true && !isApprovedDriver);
+  const bg = backgroundCheckState(p, caregiverMembershipActive(p));
+  const driver = driverCardFor(p, hasValidTransportDocs(p));
+  const driverText = DRIVER_CARD_TEXT[driver];
   const mvrClearedOn = shortDate(p?.mvrClearedAt);
+  const driverDate = mvrClearedOn && (driver === 'approved' || driver === 'cleared_docs_pending') ? `Cleared ${mvrClearedOn} · ` : '';
+  const driverTone = driver === 'approved' ? { card: 'border-blue-200', icon: 'bg-blue-500', glyph: 'text-white' }
+    : driver === 'cleared_docs_pending' || driver === 'included' ? { card: 'border-slate-200', icon: 'bg-blue-50', glyph: 'text-blue-600' }
+    : driver === 'review' ? { card: 'border-amber-200 bg-amber-50/40', icon: 'bg-amber-100', glyph: 'text-amber-600' }
+    : driver === 'not_approved' ? { card: 'border-red-200 bg-red-50/40', icon: 'bg-red-100', glyph: 'text-red-600' }
+    : { card: 'border-slate-200', icon: 'bg-slate-100', glyph: 'text-slate-400' };
 
   return (
     <>
@@ -277,48 +315,17 @@ export const AccountStandingSection: React.FC<{
             )}
           </div>
 
-          {/* ── Driving record (Approved Driver) ── */}
-          {isApprovedDriver && !badgeLive ? (
-            <div className="rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-              <div className="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0"><Car className="w-5 h-5 text-blue-600" /></div>
-              <div className="flex-1">
-                <p className="font-semibold text-slate-900 text-sm">Driving record cleared</p>
-                <p className="text-xs text-slate-500">{mvrClearedOn ? `Cleared ${mvrClearedOn}. ` : ''}Your transportation badge turns on once your driver's license, insurance and registration are approved.</p>
-              </div>
+          {/* ── Driving record — one state rule with the dashboard and Evia's twin ── */}
+          <div className={`rounded-2xl border p-5 flex items-center gap-3 ${driverTone.card}`}>
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${driverTone.icon}`}><Car className={`w-5 h-5 ${driverTone.glyph}`} /></div>
+            <div className="flex-1">
+              <p className="font-semibold text-slate-900 text-sm flex items-center gap-1.5">
+                {driverText.title}
+                {driver === 'approved' && <CheckCircle className="w-4 h-4 text-blue-600" />}
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{driverDate}{driverText.body}</p>
             </div>
-          ) : isApprovedDriver ? (
-            <div className="rounded-2xl border border-blue-200 p-5 flex items-center gap-3">
-              <div className="w-11 h-11 bg-blue-500 rounded-xl flex items-center justify-center flex-shrink-0"><Car className="w-5 h-5 text-white" /></div>
-              <div className="flex-1">
-                <p className="font-semibold text-slate-900 text-sm flex items-center gap-1.5">Approved Driver <CheckCircle className="w-4 h-4 text-blue-600" /></p>
-                <p className="text-xs text-slate-500">{mvrClearedOn ? `Cleared ${mvrClearedOn} · ` : ''}Families who need a driver can see your verified-driver badge.</p>
-              </div>
-            </div>
-          ) : mvrPending ? (
-            <div className="rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-              <div className="w-11 h-11 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0"><Car className="w-5 h-5 text-slate-400" /></div>
-              <div className="flex-1">
-                <p className="font-semibold text-slate-900 text-sm">Driver check in progress</p>
-                <p className="text-xs text-slate-500">Your Motor Vehicle Report is being reviewed. We'll activate your Approved Driver badge once it clears.</p>
-              </div>
-            </div>
-          ) : offersTransportation ? (
-            <div className="rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-              <div className="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0"><Car className="w-5 h-5 text-blue-600" /></div>
-              <div className="flex-1">
-                <p className="font-semibold text-slate-900 text-sm">Driving record check included</p>
-                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears — no extra charge.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-              <div className="w-11 h-11 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0"><Car className="w-5 h-5 text-slate-400" /></div>
-              <div className="flex-1">
-                <p className="font-semibold text-slate-900 text-sm">Offer transportation?</p>
-                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">Add Transportation to your services and upload your driver's license, insurance, and registration. Your membership already covers the driving record check.</p>
-              </div>
-            </div>
-          )}
+          </div>
       </div>
     </>
   );

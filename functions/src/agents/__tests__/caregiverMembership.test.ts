@@ -88,7 +88,7 @@ describe("membershipTabText — the three cards word for word", () => {
     hoisted.badgeLive = true;
     const t = membershipTabText(await loadMembershipTab("cg1"));
     expect(t).toContain("Trial · Evia Membership — Annual plan");
-    expect(t).toContain("Approved Driver ✓ — Cleared 9/28/2026 · Families who need a driver can see your verified-driver badge.");
+    expect(t).toContain("Driving record check cleared — Cleared 9/28/2026 · Families who need a driver can see Transportation on your profile.");
   });
   it("not active: No active membership + the page's sentence (canceled vs activate) + ACTIVATE; background not started", async () => {
     hoisted.docs.set("caregivers/cg1", { membershipStatus: "canceled" });

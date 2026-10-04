@@ -95,6 +95,7 @@ describe("caregiverAccountTransitions — one event per progress-bar change", ()
     // Bundled criminal+MVR clear: the background-check line covers it, no separate driving-record line
     expect(kinds({ backgroundCheckStatus: "pending" }, { backgroundCheckStatus: "clear", mvrStatus: "clear", isApprovedDriver: true })).toEqual(["bgcheck_clear"]);
     expect(kinds({ mvrStatus: "pending" }, { mvrStatus: "consider", isApprovedDriver: false })).toEqual(["mvr_review"]);
+    expect(kinds({ mvrStatus: "consider", isApprovedDriver: false }, { mvrStatus: "not_approved", isApprovedDriver: false })).toContain("mvr_not_approved");
     // Badge lost: admin revoked the driving record
     expect(caregiverAccountTransitions({ ...TRANSPORT, documents: APPROVED_DOCS, isApprovedDriver: true }, { ...TRANSPORT, documents: APPROVED_DOCS, isApprovedDriver: false }))
       .toEqual([{ kind: "transport_badge_lost", ctx: { reason: "mvr" } }]);

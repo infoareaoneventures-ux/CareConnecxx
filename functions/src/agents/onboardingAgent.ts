@@ -137,6 +137,7 @@ export const confirmBgcheckOnboarding = functions
       return { status: result.status };
     } catch (err) {
       if (err instanceof functions.https.HttpsError) throw err;
+      if ((err as { code?: string })?.code === "membership_required") throw new functions.https.HttpsError("failed-precondition", (err as Error).message);
       console.error("confirmBgcheckOnboarding error:", err);
       throw new functions.https.HttpsError("internal", "Background check initiation failed.");
     }

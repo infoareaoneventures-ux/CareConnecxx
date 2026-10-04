@@ -46,7 +46,7 @@ export function hasValidTransportDocs(profile: TransportProfile | null | undefin
   // computes this same rule from the private record and writes only the resulting
   // true/false (functions/src/publicCaregiverProfile.ts). Trust it when present;
   // without it (2026-09-30) the documents lookup below answered "no" for everyone
-  // and the Reliable transportation filter always returned 0.
+  // and the Transportation filter always returned 0.
   if (typeof profile.hasValidTransportDocs === 'boolean') return profile.hasValidTransportDocs;
   if (!transportDocsApproved(profile)) return false;
   return (profile as any).isApprovedDriver === true;

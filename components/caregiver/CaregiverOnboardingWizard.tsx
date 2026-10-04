@@ -1003,7 +1003,7 @@ const TransportDocStep: React.FC<{
     <div className="flex flex-col gap-4">
       <div className="text-center">
         <h2 className="text-xl font-bold text-slate-800">Transportation documents</h2>
-        <p className="text-sm text-slate-500 mt-1">Required to activate your transportation badge</p>
+        <p className="text-sm text-slate-500 mt-1">Required to offer Transportation</p>
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">

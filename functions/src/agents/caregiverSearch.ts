@@ -12,8 +12,8 @@
 //   filters  blocked users, Favorites tab, distance (default 25 mi, and the
 //            caregiver's own serviceRadius), name/city/state/zip search, max
 //            rate (default $75, 100 = no cap), rating (Any/3+/4+/4.5+),
-//            experience (Any/1+/3+/5+/10+), Background checked only, Reliable
-//            transportation, specialties (any), languages (any)
+//            experience (Any/1+/3+/5+/10+), Background checked only,
+//            Transportation (2026-10-04: was "Reliable transportation" — the word judged the person), specialties (any), languages (any)
 //   sort     Highest rated (default) · Price: Low to High · Price: High to Low
 //   card     photo, name, stars + review count, verification badge, experience,
 //            city/state/zip, $rate/hr, 2 skills + "+N", Message, and
@@ -280,7 +280,7 @@ export function describeActiveFilters(f: CaregiverSearchFilters): string[] {
   if (f.minRating) out.push(`${f.minRating}+ stars`);
   if (f.minExperienceYears) out.push(`${f.minExperienceYears}+ years`);
   if (f.verifiedOnly) out.push("background checked");
-  if (f.transportationOnly) out.push("reliable transportation");
+  if (f.transportationOnly) out.push("transportation");
   if (f.specialties?.length) out.push(f.specialties.join(", "));
   if (f.languages?.length) out.push(f.languages.join(", "));
   if (f.favoritesOnly) out.push("favorites");

@@ -75,6 +75,7 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
     return { success: true, candidateId: result.candidateId, invitationUrl: result.invitationUrl ?? undefined, already: result.status === "already" };
   } catch (error: any) {
     if (error instanceof functions.https.HttpsError) throw error;
+    if (error?.code === "membership_required") throw new functions.https.HttpsError("failed-precondition", error.message);
     console.error("Checkr initiate error:", error?.message, error?.code, JSON.stringify(error));
     throw new functions.https.HttpsError("internal", "Background check initiation failed.");
   }

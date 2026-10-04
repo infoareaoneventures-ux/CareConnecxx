@@ -14,6 +14,8 @@ const hoisted = vi.hoisted(() => {
     chatId: "chat-1",
     onboardingStep: "caregiver_awaiting_bgcheck",
     caregiverId: "cg-1",
+    // The membership webhook writes this before any consent link exists; the consent function refuses without it (2026-10-04).
+    membershipStatus: "active",
     bgcheckInviteUrl: "https://apply.checkr.com/invite/abc",
     bgcheckInviteSentAt: new Date().toISOString(),
     backgroundCheckData: { checkrCandidateId: "cand_old", invitationStatus: "sent", submittedAt: new Date().toISOString() },
@@ -95,6 +97,7 @@ beforeEach(() => {
   hoisted.sessionData.chatId = "chat-1";
   hoisted.sessionData.onboardingStep = "caregiver_awaiting_bgcheck";
   hoisted.sessionData.caregiverId = "cg-1";
+  hoisted.sessionData.membershipStatus = "active";
   hoisted.sessionData.bgcheckInviteUrl = "https://apply.checkr.com/invite/abc";
   hoisted.sessionData.bgcheckInviteSentAt = new Date().toISOString();
   hoisted.sessionData.backgroundCheckData = { checkrCandidateId: "cand_old", invitationStatus: "sent", submittedAt: new Date().toISOString() };

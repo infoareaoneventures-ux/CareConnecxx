@@ -26,7 +26,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         },
         {
             question: "What's included in the $29.95/month fee?",
-            answer: "Caregiver matching, background-checked caregivers, interview scheduling, shift clock-in/out with hours review, messaging, care plan tools, and Evia text support 24/7."
+            answer: "Caregiver matching, caregivers who have completed a background check, interview scheduling, shift clock-in/out with hours review, messaging, care plan tools, and Evia text support 24/7."
         },
         {
             question: "Do I pay caregivers separately?",

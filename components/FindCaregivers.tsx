@@ -685,7 +685,7 @@ export default function FindCaregivers() {
               className="accent-teal-600 rounded"
             />
             <Car className="w-4 h-4 text-primary-600" />
-            Reliable transportation
+            Transportation
           </label>
         </div>
       </div>

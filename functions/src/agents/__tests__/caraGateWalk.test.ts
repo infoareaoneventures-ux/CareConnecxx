@@ -286,6 +286,9 @@ describe("caregiver gate webhooks — end-to-end to an active caregiver doc", ()
     // the LEGAL name from the form + consent recorded on the caregiver doc.
     // Candidate-first contract: the helper gets the session's email — an
     // invitation without a candidate (the pre-2026-07-07 shape) is impossible.
+    // stripe.ts markCaregiverMembershipPaid writes these on the real webhook before the
+    // consent link is ever tapped — the consent function refuses without them (2026-10-04).
+    hoisted.docState.set("users/cg-uid", { uid: "cg-uid", membershipStatus: "active", subscriptionActive: true });
     await confirmBgcheckConsent(PHONE, {
       legalFirstName: "Maria", legalLastName: "Lopez", zipCode: "95110", state: "CA",
     });

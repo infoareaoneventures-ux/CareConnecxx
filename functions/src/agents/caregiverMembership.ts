@@ -17,14 +17,17 @@
 // text already reads live.
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
+import { isCaregiverMembershipActive } from "./caregiverAccessGate";
 import { caregiverAnnualDisplay } from "../config/pricing";
 import { DEFAULT_TZ } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
 export type DriverCard =
-  | "approved"             // isApprovedDriver AND the badge is live (documents approved too)
+  | "approved"             // isApprovedDriver AND Transportation is live on the profile (documents approved too)
   | "cleared_docs_pending" // isApprovedDriver but a document is still missing / unapproved
+  | "not_approved"         // the admin's final decision after a review (2026-10-04)
+  | "review"               // MVR came back consider / suspended — the team is alerted (2026-10-04)
   | "pending"              // MVR running
   | "included"             // offers Transportation, MVR not started
   | "offer";               // does not offer Transportation
@@ -55,15 +58,18 @@ export const STATUS_LABEL: Record<string, string> = {
 export const WHATS_INCLUDED = [
   "Keep 100% of your rate on every booking — families pay the service fee",
   "Access all job postings and apply instantly",
-  "Background check badge on your profile",
+  "Background check shown on your profile",
   "Messaging",
 ];
 
 /** The driver card's states, title + body as the page prints them. */
 export const DRIVER_CARD_TEXT: Record<DriverCard, string> = {
-  approved: "Approved Driver ✓ — Families who need a driver can see your verified-driver badge.",
-  cleared_docs_pending: "Driving record cleared — your transportation badge turns on once your driver's license, insurance and registration are approved.",
-  pending: "Driver check in progress — Your Motor Vehicle Report is being reviewed. We'll activate your Approved Driver badge once it clears.",
+  // AccountStandingSection.DRIVER_CARD_TEXT, "title — body". States what happened, never an approval (founder, 2026-10-04).
+  approved: "Driving record check cleared — Families who need a driver can see Transportation on your profile.",
+  cleared_docs_pending: "Driving record check cleared — Transportation shows on your profile once your driver's license, insurance and registration are approved.",
+  not_approved: "Driving record not approved — Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.",
+  review: "Driving record under review — Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
+  pending: "Driving record check in progress — Your Motor Vehicle Report is in progress. Transportation shows on your profile once it clears and your documents are approved.",
   included: "Driving record check included — Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears — no extra charge.",
   offer: "Offer transportation? Add Transportation to your services and upload your driver's license, insurance, and registration. Your membership already covers the driving record check.",
 };
@@ -92,6 +98,8 @@ export const shortDate = (v: unknown): string | null => {
 export function driverCardFor(cg: Record<string, unknown>, badgeLive: boolean): DriverCard {
   const isApprovedDriver = cg.isApprovedDriver === true;
   if (isApprovedDriver) return badgeLive ? "approved" : "cleared_docs_pending";
+  if (cg.mvrStatus === "not_approved") return "not_approved";
+  if (cg.mvrStatus === "consider" || cg.mvrStatus === "suspended") return "review";
   const mvrPending = cg.mvrStatus === "pending" || (cg.mvrPaid === true && !isApprovedDriver);
   if (mvrPending) return "pending";
   const services = (Array.isArray(cg.services) ? cg.services : Array.isArray(cg.skills) ? cg.skills : []) as string[];
@@ -110,6 +118,9 @@ export function bgCardFor(cg: Record<string, unknown>): BgCard {
   if (bg.checkrCandidateId) {
     return { kind: "in_progress", detail: bg.status === "consider" ? "under_review" : bg.status === "suspended" ? "on_hold" : "running" };
   }
+  // Membership active and nothing started → the Start button (AUTHORIZE), as the
+  // page and the dashboard's step rule (2026-10-04).
+  if (isCaregiverMembershipActive(cg)) return { kind: "consent", renewal: false };
   return { kind: "not_started" };
 }
 

@@ -73,7 +73,7 @@ export default function BgcheckConsentPage() {
       }
       console.error('confirmBgcheckOnboarding failed:', err);
       setErrorMsg(
-        code === 'invalid-argument' && e?.message
+        (code === 'invalid-argument' || code === 'failed-precondition') && e?.message
           ? e.message
           : 'Submission failed. Please try again — or text Evia and we’ll sort it out.'
       );

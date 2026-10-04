@@ -35,6 +35,9 @@ const SMS_NOTIFY_TYPES = new Set([
   "shift_hours_admin_review",
   "shift_hours_billing_review",
   "shift_hours_payment_failed_escalated",
+  // A caregiver's driving record came back for review (2026-10-04): Transportation
+  // is off her profile until the team decides, and nobody else is told.
+  "mvr_review",
 ]);
 
 function adminSmsText(type: string, alert: Record<string, any>): string {
@@ -49,6 +52,8 @@ function adminSmsText(type: string, alert: Record<string, any>): string {
     case "shift_hours_billing_review":
     case "shift_hours_payment_failed_escalated":
       return `Evia: a timesheet needs the team — ${String(alert.message ?? alert.title ?? type).slice(0, 200)} Open Admin › Finance.`;
+    case "mvr_review":
+      return `Evia: ${String(alert.caregiverName ?? "a caregiver")}'s driving record check came back "${String(alert.mvrStatus ?? "consider")}" — Transportation is off their profile until you decide. Open Admin › Caregivers › Verification.`;
     default:
       return `Evia Alert: ${type} - check admin dashboard.`;
   }

@@ -27,6 +27,18 @@ export interface BackgroundCheckConsentForm {
   state?:         string;
 }
 
+/**
+ * The background check is part of the membership (flat fee, 2026-09-25). Both
+ * consent surfaces land here, so this is the one place that refuses a check for
+ * a caregiver whose membership is not active — the site's card only appears
+ * after payment, but Evia's texted consent link could be tapped after a lapse
+ * (founder live test, 2026-10-04). Callers map it to failed-precondition.
+ */
+export class MembershipRequiredError extends Error {
+  code = "membership_required" as const;
+  constructor() { super("Activate your membership first — the background check is included in it."); this.name = "MembershipRequiredError"; }
+}
+
 export interface AuthorizeBackgroundCheckResult {
   status:        "ok" | "already";
   candidateId:   string;
@@ -57,6 +69,17 @@ export async function authorizeBackgroundCheck(args: {
   const ref = db.collection("caregivers").doc(uid);
   const snap = await ref.get();
   const cg = (snap.data() ?? {}) as Record<string, any>;
+  {
+    // caregivers/{uid} first, then the users record the same webhook writes
+    // (caregiverMembershipBilling.markCaregiverMembershipPaid sets both).
+    const { isCaregiverMembershipActive } = await import("./agents/caregiverAccessGate");
+    if (!isCaregiverMembershipActive(cg)) {
+      const userSnap = await db.collection("users").doc(uid).get().catch(() => null);
+      const u = (userSnap?.data() ?? {}) as Record<string, any>;
+      const userActive = u.subscriptionActive === true || u.membershipStatus === "active" || u.membershipStatus === "trialing";
+      if (!userActive) throw new MembershipRequiredError();
+    }
+  }
   const bg = (cg.backgroundCheckData ?? {}) as Record<string, any>;
   const existingCandidateId: string | undefined = bg.checkrCandidateId;
   const invitationStatus: string | undefined = bg.invitationStatus;

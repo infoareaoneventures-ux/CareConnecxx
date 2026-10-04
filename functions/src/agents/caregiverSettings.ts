@@ -139,7 +139,7 @@ export function settingsPageText(page: SettingsPage): string {
   // Membership & verification — moved here from Payments › Membership (2026-10-04).
   lines.push("", "Membership & verification", ...membershipSectionLines(page.standing));
   if (page.hasTransportation) {
-    lines.push("", "Transportation Documents — Required to activate your transportation badge. Keep these up to date.");
+    lines.push("", "Transportation Documents — Required to offer Transportation. Keep these up to date.");
     for (const d of page.documents) {
       lines.push(`${d.label}: ${DOC_STATUS_TEXT[d.status]}${d.expires && (d.status === "approved" || d.status === "expired") ? ` · Expires ${ymdToLocal(d.expires)}` : ""}`);
     }

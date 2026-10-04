@@ -142,6 +142,36 @@ export function getZepUserId(phone: string): string {
   return phone.replace(/\D/g, "");
 }
 
+// ── Number aliases (phone change, 2026-10-03) ──────────────────────────────
+// The Zep user id is the phone's digits, so a caregiver who changes her number
+// would otherwise start as a stranger. phoneRekey.ts writes
+// zep_aliases/{newDigits} = { zepUserId: <oldDigits> } and every Zep call that
+// takes a user id resolves through here, so the new number reaches the memory
+// the old one built. Cached per instance; fails open to the raw id.
+const zepAliasCache = new Map<string, string>();
+export async function canonicalZepUserId(userId: string): Promise<string> {
+  if (!userId) return userId;
+  const cached = zepAliasCache.get(userId);
+  if (cached) return cached;
+  let resolved = userId;
+  try {
+    const snap = await db.collection("zep_aliases").doc(userId).get();
+    const alias = snap?.exists ? String(snap.data()?.zepUserId ?? "").trim() : "";
+    if (alias && alias !== userId) resolved = alias;
+  } catch { /* fail open: the raw id */ }
+  zepAliasCache.set(userId, resolved);
+  return resolved;
+}
+/** Point a new number's memory id at the old one (chains collapse to the oldest id). */
+export async function setZepUserAlias(newUserId: string, oldUserId: string): Promise<void> {
+  if (!newUserId || !oldUserId || newUserId === oldUserId) return;
+  const root = await canonicalZepUserId(oldUserId);
+  await db.collection("zep_aliases").doc(newUserId).set({ zepUserId: root, from: oldUserId, createdAt: new Date().toISOString() }, { merge: true });
+  zepAliasCache.set(newUserId, root);
+}
+/** Tests only. */
+export function __resetZepAliasCache(): void { zepAliasCache.clear(); }
+
 // ── Context template definition ───────────────────────────────────────────────
 
 const CARA_TEMPLATE_ID = "cara-eldercare";
@@ -202,7 +232,7 @@ export async function ensureCaraContextTemplate(): Promise<void> {
 // Uses phone digits as userId so memory starts immediately.
 
 export async function initializeZepOnFirstContact(phone: string): Promise<void> {
-  const userId = getZepUserId(phone);
+  const userId = await canonicalZepUserId(getZepUserId(phone));
 
   try {
     await getZep().user.add({
@@ -365,14 +395,15 @@ export async function addBusinessDataToZep(params: {
   userId: string;
   data: Record<string, unknown>;
 }): Promise<void> {
+  const userId = await canonicalZepUserId(params.userId);
   await withZepRetry(
     () => getZep().graph.add({
-      userId: params.userId,
+      userId,
       type: "json",
       data: JSON.stringify(params.data),
     }),
     "addBusinessDataToZep",
-    params.userId
+    userId
   );
   // Callers that want fire-and-forget must wrap with .catch() themselves
 }
@@ -478,7 +509,7 @@ export async function searchZepMemoryResult(
     }
   }
   try {
-    const results = await getZep().graph.search({ userId, query, limit: 5 });
+    const results = await getZep().graph.search({ userId: await canonicalZepUserId(userId), query, limit: 5 });
     if (!results?.edges?.length) return { status: "empty", facts: "" };
     const facts = results.edges
       .map((e: any) => `- ${e.fact ?? e.name}`)
@@ -564,7 +595,8 @@ export const ZEP_EDGE_PAGE_SIZE = 50;
 /** @deprecated Use ZEP_EDGE_PAGE_SIZE; retained for existing operational scripts. */
 export const ZEP_EDGE_SEARCH_LIMIT = ZEP_EDGE_PAGE_SIZE;
 
-async function listZepUserEdges(zepUserId: string): Promise<Array<{ uuid: string; fact?: string; episodes?: string[] }>> {
+async function listZepUserEdges(rawZepUserId: string): Promise<Array<{ uuid: string; fact?: string; episodes?: string[] }>> {
+  const zepUserId = await canonicalZepUserId(rawZepUserId);
   const edges: Array<{ uuid: string; fact?: string; episodes?: string[] }> = [];
   const seenCursors = new Set<string>();
   let uuidCursor: string | undefined;
@@ -745,7 +777,7 @@ export async function pushOnboardingDataToZep(params: {
   daysPerWeek?: number;
   timeOfDay?: string;
 }): Promise<void> {
-  const userId = getZepUserId(params.phone);
+  const userId = await canonicalZepUserId(getZepUserId(params.phone));
 
   // Update Zep user record with name now that we know it
   try {

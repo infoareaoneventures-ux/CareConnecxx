@@ -202,18 +202,23 @@ export async function confirmPhoneChange(token: string, code: string): Promise<v
   }
 
   const { uid, role, newPhone, email } = reqData as { uid: string; role: Role; newPhone: string; email: string };
-  const collection = role === "caregiver" ? "caregivers" : "users";
-  const profileRef = db().collection(collection).doc(uid);
-  const profileSnap = await profileRef.get();
-  const oldPhone = profileSnap.data()?.phone as string | undefined;
-
+  // The old number: the user record first (what resolveCaregiverPhone / the
+  // lifecycle texts read), then the caregiver record, then the Auth record.
+  const [userSnap, cgSnap] = await Promise.all([
+    db().collection("users").doc(uid).get(),
+    role === "caregiver" ? db().collection("caregivers").doc(uid).get() : Promise.resolve(null),
+  ]);
+  const authPhone = await admin.auth().getUser(uid).then((u) => u.phoneNumber ?? undefined).catch(() => undefined);
+  const oldPhone = (userSnap.data()?.phone as string | undefined)
+    || (cgSnap?.data()?.phone as string | undefined)
+    || authPhone;
   await admin.auth().updateUser(uid, { phoneNumber: newPhone });
-  await profileRef.set({ phone: newPhone }, { merge: true });
-
-  if (oldPhone && oldPhone !== newPhone) {
-    await db().collection("agent_sessions").doc(oldPhone).delete().catch(() => {});
-  }
-
+  // The NEW number is her completely (founder, 2026-10-03): both profile
+  // records, the text session (moved, not deleted), conversation history and
+  // memory files, long-term memory alias, parked confirmations and pending
+  // reminders, the old signup bridge doc — phoneRekey.ts does all of it.
+  const { rekeyPhoneEverywhere } = await import("./phoneRekey");
+  await rekeyPhoneEverywhere({ uid, role, oldPhone, newPhone });
   await ref.update({ status: "consumed" });
 
   const last4 = newPhone.slice(-4);

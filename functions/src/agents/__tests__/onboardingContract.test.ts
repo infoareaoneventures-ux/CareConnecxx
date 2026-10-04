@@ -315,7 +315,6 @@ describe("onboardingContract", () => {
       expect(shouldRouteOnboardingToLoop({ ...base, step: "client_send_payment" })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, step: "verify_phone" })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, step: "client_confirm_intake" })).toBe(false);
-      expect(shouldRouteOnboardingToLoop({ ...base, step: "client_confirm_name" })).toBe(false);
     });
 
     it("does NOT route media turns (fall to handleInboundMedia) or empty text", () => {
@@ -341,9 +340,8 @@ describe("onboardingContract", () => {
       ]);
     });
 
-    it("exclude every deterministic gate/awaiting step and the confirm-name step", () => {
+    it("exclude every deterministic gate/awaiting step", () => {
       for (const gate of [
-        "caregiver_confirm_name",
         "caregiver_send_photo", "caregiver_awaiting_photo",
         "caregiver_send_documents", "caregiver_awaiting_documents",
         "caregiver_ask_mvr", "caregiver_send_mvr", "caregiver_awaiting_mvr",
@@ -383,7 +381,7 @@ describe("onboardingContract", () => {
 
     it("never routes a caregiver gate/awaiting/confirm step", () => {
       for (const step of [
-        "caregiver_confirm_name", "caregiver_send_photo", "caregiver_awaiting_photo",
+        "caregiver_send_photo", "caregiver_awaiting_photo",
         "caregiver_awaiting_documents", "caregiver_ask_mvr", "caregiver_awaiting_membership",
         "caregiver_awaiting_bgcheck_consent", "caregiver_awaiting_bgcheck",
         "caregiver_awaiting_stripe", "verify_phone", "ask_role",

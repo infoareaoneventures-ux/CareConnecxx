@@ -67,7 +67,7 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         (session.onboardingData?.relationship as string) === "self"
           ? "client_ask_needs"
           : "client_ask_senior",
-      reask: () => "What's your name?",
+      reask: () => "What's your first and last name?",
       retry: () => "I didn't catch your name — could you share it?",
       async nextQuestion(session) {
         const safeName = (session.onboardingData?.firstName as string) ?? "there";

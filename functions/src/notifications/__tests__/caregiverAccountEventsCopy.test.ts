@@ -55,4 +55,20 @@ describe("caregiverAccountEventCopy — membership notices", () => {
     expect(r.body).toBe("Your Evia membership is active again. Next billing date: Monday, March 3.");
     expect(r.text).toBeUndefined();
   });
+
+  it("background / documents / payouts notices: the bell links to the page, the text finishes by text", () => {
+    const url = "https://eviacares.com/bgcheck?t=tok";
+    expect(caregiverAccountEventCopy("bgcheck_link_expired", { consentUrl: url }).text).toBe(`Your background check link expired. Authorize again and a fresh one comes right back — it takes about 2 minutes: ${url}`);
+    expect(caregiverAccountEventCopy("bgcheck_revoked", { consentUrl: url }).text).toBe(`Your background check approval was removed. Authorize a new check to get booked again — it takes about 2 minutes: ${url}`);
+    expect(caregiverAccountEventCopy("transport_doc_rejected", { docLabel: "Vehicle Insurance", docNotes: "blurry" }).text).toBe("Your Vehicle Insurance was rejected: blurry. Please re-upload to continue — reply DOCUMENTS for your upload link.");
+    expect(caregiverAccountEventCopy("transport_doc_expiring", { docs: ["Driver's License"] }).text).toBe("Driver's License will expire within 30 days. Upload a renewal to keep your transportation badge active — reply DOCUMENTS for your upload link.");
+    expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "expired" }).text).toContain("reply DOCUMENTS");
+    expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "mvr" }).text).toBe("Your transportation badge was removed. Reply SETTINGS to see your transport documents and driving record, or DOCUMENTS for the upload link.");
+    expect(caregiverAccountEventCopy("payouts_enabled").text).toBe("Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.");
+    expect(caregiverAccountEventCopy("payouts_disabled").text).toBe("Your payout account needs attention — reply SETUP for your Stripe link to finish.");
+    for (const k of ["bgcheck_link_expired", "bgcheck_revoked", "transport_doc_rejected", "transport_doc_expiring", "payouts_enabled", "payouts_disabled"] as const) {
+      expect(caregiverAccountEventCopy(k, { consentUrl: url }).body).toContain("eviacares.com");
+      expect(caregiverAccountEventCopy(k, { consentUrl: url }).text).not.toContain("dashboard");
+    }
+  });
 });

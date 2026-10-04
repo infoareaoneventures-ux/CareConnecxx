@@ -444,7 +444,7 @@ describe("pending TCPA consent (optedIn:false, web-signup auth trigger)", () => 
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
       optedIn:        true,
       userType:       "client",
-      onboardingStep: "client_confirm_name",
+      onboardingStep: "client_ask_senior",
       onboardingData: { firstName: "Basra" },
     });
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -866,7 +866,7 @@ describe("QA tail (quick-reply bypass vs full agent)", () => {
 // When the user typed their name on /start, the createWebOnboardingSession
 // callable stored it on the web_onboarding_sessions bridge doc. The FIRST inbound
 // "Hey Evia" must seed that name into the new agent_sessions doc, route to the
-// *_confirm_name step (not *_ask_name), and greet by name. No name → legacy path.
+// FIRST real question (not *_ask_name, and no "do you go by" step since 2026-10-03), and greet by name. No name → ask-name path.
 describe("web-onboarding name bridge", () => {
   // Seed a bridge doc + leave agent_sessions empty so the first-contact branch fires.
   function seedWebSession(data: Record<string, unknown>) {
@@ -879,20 +879,23 @@ describe("web-onboarding name bridge", () => {
   const session = () => hoisted.docState.get(`agent_sessions/${PHONE}`);
   const greeting = () => (sendMessage.mock.calls.find((c) => typeof c[1] === "string")?.[1] ?? "") as string;
 
-  it("client with a name → confirm step, seeded firstName, greeted by name", async () => {
+  it("client with a name → first real question, seeded firstName, greeted by name, account linked", async () => {
     seedWebSession({ role: "client", name: "Sarah" });
     await handleInbound(makeEvent("Hey Evia"));
-    expect(session()?.onboardingStep).toBe("client_confirm_name");
+    expect(session()?.onboardingStep).toBe("client_ask_senior");
+    expect(session()?.userId).toBe("web-uid");
     expect(session()?.onboardingData?.firstName).toBe("Sarah");
     expect(greeting()).toContain("Sarah");
   });
 
-  it("caregiver with a name → confirm step, seeded name, greeted by name", async () => {
-    seedWebSession({ role: "caregiver", name: "Maria" });
+  it("caregiver with a name → first real question (address), seeded FULL name, greeted by FIRST name, account linked", async () => {
+    seedWebSession({ role: "caregiver", name: "Maria Lopez", firstName: "Maria", lastName: "Lopez" });
     await handleInbound(makeEvent("Hey Evia"));
-    expect(session()?.onboardingStep).toBe("caregiver_confirm_name");
-    expect(session()?.onboardingData?.name).toBe("Maria");
+    expect(session()?.onboardingStep).toBe("caregiver_ask_location");
+    expect(session()?.onboardingData?.name).toBe("Maria Lopez");
+    expect(session()?.userId).toBe("web-uid");
     expect(greeting()).toContain("Maria");
+    expect(greeting()).not.toContain("go by");
   });
 
   it("no name on the bridge doc → legacy ask-name step, no seeded onboardingData", async () => {
@@ -909,7 +912,7 @@ describe("web-onboarding name bridge", () => {
     it("client with a name AND email → both seeded onto onboardingData", async () => {
       seedWebSession({ role: "client", name: "Sarah", email: "sarah@example.com" });
       await handleInbound(makeEvent("Hey Evia"));
-      expect(session()?.onboardingStep).toBe("client_confirm_name");
+      expect(session()?.onboardingStep).toBe("client_ask_senior");
       expect(session()?.onboardingData?.firstName).toBe("Sarah");
       expect(session()?.onboardingData?.email).toBe("sarah@example.com");
     });
@@ -917,7 +920,7 @@ describe("web-onboarding name bridge", () => {
     it("caregiver with a name AND email → both seeded onto onboardingData", async () => {
       seedWebSession({ role: "caregiver", name: "Maria", email: "maria@example.com" });
       await handleInbound(makeEvent("Hey Evia"));
-      expect(session()?.onboardingStep).toBe("caregiver_confirm_name");
+      expect(session()?.onboardingStep).toBe("caregiver_ask_location");
       expect(session()?.onboardingData?.name).toBe("Maria");
       expect(session()?.onboardingData?.email).toBe("maria@example.com");
     });

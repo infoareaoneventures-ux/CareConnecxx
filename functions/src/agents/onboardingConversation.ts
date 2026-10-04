@@ -1,6 +1,5 @@
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
-import { unwrapJson } from "../utils/jsonUtils";
 import { isMvrCheckConfigured } from "../mvrConfig";
 import { cancelCheckrInvitationsForCandidate } from "../checkrApi";
 import { authorizeBackgroundCheck } from "../backgroundCheckConsent";
@@ -983,7 +982,6 @@ async function isGreetingOnly(text: string): Promise<boolean> {
 // prompt instead of resetting. Reuses each step's own reask() text where possible.
 function currentStepQuestion(step: string, session: AgentSession): string {
   if (step === "ask_role") return "are you looking for care for a loved one, or are you a caregiver looking for work?";
-  if (step === "client_confirm_name" || step === "caregiver_confirm_name") return "confirming the name I should call you";
   // Post-collection client steps (start/preferences/budget/confirm_intake) still
   // run on CLIENT_STEPS. Conversational collection steps are owned by the agent
   // loop and never reach this scripted helper.
@@ -1166,11 +1164,6 @@ export async function handleOnboardingStep(
       && !step.endsWith("_awaiting_bgcheck") && !step.endsWith("_awaiting_membership")
       && !step.endsWith("_awaiting_documents") && !step.endsWith("_awaiting_photo")
       && !step.endsWith("_awaiting_identity") && !step.endsWith("_awaiting_mvr")
-      // Confirm-name steps own their own yes/correction parsing. A bare "yes" here
-      // must NOT be misread as a role switch — that would wipe onboardingData (the
-      // name we just greeted them with) and dump them back to ask_role.
-      && step !== "client_confirm_name"
-      && step !== "caregiver_confirm_name"
       // Post-collection browsing (matches shown, deciding on membership) — a
       // family asking "any more caregivers?" here was live-caught getting
       // misread as "I'm a caregiver looking for work," wiping their whole
@@ -1202,10 +1195,6 @@ export async function handleOnboardingStep(
       && !step.endsWith("_send_stripe_connect") && !step.endsWith("_awaiting_stripe")
       && !step.endsWith("_send_membership") && !step.endsWith("_awaiting_membership")
       && step !== "client_confirm_intake"
-      // Name-confirmation steps own their own yes/correction parsing — don't let the
-      // generic mid-flow correction detector pre-empt the confirm handler.
-      && step !== "client_confirm_name"
-      && step !== "caregiver_confirm_name"
       && !step.startsWith("job_")) {
     const correction = await detectCorrection(text);
     if (correction) {
@@ -1227,12 +1216,12 @@ export async function handleOnboardingStep(
       await mergeOnboardingData(phone, { [correctionField]: correctionValue });
       // Re-ask the current question
       const stepMessages: Record<string, string> = {
-        client_ask_name:       "What's your name?",
+        client_ask_name:       "What's your first and last name?",
         client_ask_senior:     "Who are you looking for care for? (Their name and your relationship)",
         client_ask_needs:      "What kind of help do they need, and how old are they?",
         client_ask_location:   "What city and zip code are you in?",
         client_ask_schedule:   "How many days a week and what hours do you need care?",
-        caregiver_ask_name:    "What's your name?",
+        caregiver_ask_name:    "What's your first and last name?",
         caregiver_ask_location:"What's your street address, city, and zip code? (Families only ever see the city.)",
         caregiver_ask_experience: "How many years of caregiving experience do you have?",
         caregiver_ask_specialties: "What types of care do you specialize in?",
@@ -1254,7 +1243,6 @@ export async function handleOnboardingStep(
   switch (step) {
     case "verify_phone":          return handleVerifyPhone(phone, chatId, text, session);
     case "ask_role":              return handleAskRole(phone, chatId, text, session);
-    case "client_confirm_name":   return handleClientConfirmName(phone, chatId, text, session);
     // client_ask_name/senior/needs/location/schedule: deleted (loop-only) — the
     // agent loop owns client collection. A collection-step cursor never reaches
     // this switch (webhook routes it to the loop); the defensive default below
@@ -1404,7 +1392,6 @@ export async function handleOnboardingStep(
     case "job_ask_rate":         return handleJobAskRate(phone, chatId, text, session);
     case "job_ask_pay_method":   return handleJobAskPayMethod(phone, chatId, text, session);
     case "job_confirm_post":     return handleJobConfirmPost(phone, chatId, text, session);
-    case "caregiver_confirm_name":    return handleCaregiverConfirmName(phone, chatId, text, session, service);
     // caregiver_ask_name … caregiver_ask_bio: deleted (loop-only) — the agent loop
     // owns caregiver collection. These cursors never reach this switch (webhook
     // routes them to the loop); the defensive default below covers strays. The
@@ -1694,7 +1681,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       context: "Someone just said they're looking for care for THEMSELVES. You ALREADY introduced yourself in the " +
         "previous message — do NOT say your name or re-introduce yourself. Speak to them directly and warmly ask " +
         "their name. Mention — once, casually — that a voice memo works instead of typing if that's easier.",
-      fallback: "I'd be glad to help you directly. What's your name? And anytime typing feels like a pain, just send me a voice memo — I'll listen.",
+      fallback: "I'd be glad to help you directly. What's your first and last name? And anytime typing feels like a pain, just send me a voice memo — I'll listen.",
       maxTokens: 100,
       emotionalDirective,
     });
@@ -1730,7 +1717,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
         "yourself in the previous message — do NOT say your name or re-introduce yourself. Warmly ask for " +
         "their name, and mention — once, casually — that if typing it all out ever feels like a pain, they can " +
         "just send you a voice memo and you'll listen.",
-      fallback: "I'd love to help. What's your name? And anytime typing feels like a pain, just send me a voice memo — I'll listen.",
+      fallback: "I'd love to help. What's your first and last name? And anytime typing feels like a pain, just send me a voice memo — I'll listen.",
       maxTokens: 100,
       emotionalDirective,
     });
@@ -2055,129 +2042,6 @@ export async function drivePostCollectionHandoff(
 // confirm it. This handler resolves that confirmation: a "yes" advances to the senior
 // question; a different name is captured as a correction; a bare "no" routes back to
 // the normal ask-name step. Only reached when a name rode in on the web bridge.
-async function handleClientConfirmName(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  const seeded     = (session.onboardingData?.firstName as string | undefined) ?? "";
-  const seededLast = (session.onboardingData?.lastName  as string | undefined) ?? undefined;
-
-  // Website parity: the site creates the webapp account the moment the phone
-  // is verified (before intake even starts) — a cold-SMS account already
-  // exists bare (Auth only, no name) by the time this handler runs (see the
-  // consent-gate in linq/webhooks.ts). Attach the now-confirmed name to it
-  // right here rather than waiting for intake to finish, so a mid-conversation
-  // drop-off still leaves behind a real, loggable-into account.
-  const attachAccount = async (first: string, last?: string): Promise<void> => {
-    if (session.userId) return;
-    const uid = await ensureWebAccount(phone, "client", first, last);
-    if (uid) (session as any).userId = uid;
-  };
-
-  // Parse the confirmation FIRST. The old order ran the question-detector
-  // before parsing, so direct answers like "yes" or "Anahi is fine" were
-  // misread as small talk and the name question re-asked forever.
-  const kind = await parseNameConfirmation(seeded, text);
-
-  if (kind.kind === "corrected") {
-    // Website parity: split "First Last" the same way client_ask_name does,
-    // instead of writing the whole correction into firstName.
-    const [correctedFirst, ...correctedRest] = (kind.correctedName ?? "").trim().split(/\s+/);
-    const correctedLast = correctedRest.join(" ") || undefined;
-    await mergeOnboardingData(phone, { firstName: correctedFirst, ...(correctedLast ? { lastName: correctedLast } : {}) });
-    await attachAccount(correctedFirst, correctedLast);
-    await updateSession(phone, { onboardingStep: "client_ask_senior" });
-    const msg = await generateCaraMessage({
-      audience: "family",
-      context: `Evia just corrected the client's name to ${correctedFirst}. Briefly acknowledge the fix, then ask how often they need care — occasional (a few times a month), part-time (1-4 days/week), or full-time (5+ days/week). This is the FIRST question of the wizard's question order — do not ask about the senior's name or relationship yet, that comes later.`,
-      fallback: `Got it — thanks, ${correctedFirst}. How often do you need care — occasional, part-time, or full-time?`,
-      maxTokens: 80,
-    });
-    await sendMessage(chatId, msg);
-    return;
-  }
-
-  if (kind.kind === "denied" || !seeded) {
-    // Denied without offering a name (or nothing seeded to confirm) — fall
-    // back to the standard ask-name step.
-    await updateSession(phone, { onboardingStep: "client_ask_name" });
-    await sendMessage(chatId, "No problem — what name should I use?");
-    return;
-  }
-
-  if (kind.kind === "confirmed") {
-    // Confirmed — keep the seeded name and move to the senior question.
-    await attachAccount(seeded, seededLast);
-    await updateSession(phone, { onboardingStep: "client_ask_senior" });
-    const msg = await generateCaraMessage({
-      audience: "family",
-      context: `The client just confirmed ${seeded} is the name they go by. You already greeted them one message ago — this is mid-conversation, so do NOT greet again and do NOT open with "Hi"/"Hey"/"Hello". Acknowledge the name in a couple of warm words, then ask how often they need care — occasional (a few times a month), part-time (1-4 days/week), or full-time (5+ days/week). This is the FIRST question of the wizard's question order — do not ask about the senior's name or relationship yet, that comes later.`,
-      fallback: `Lovely to meet you, ${seeded}. How often do you need care — occasional, part-time, or full-time?`,
-      maxTokens: 80,
-    });
-    await sendMessage(chatId, msg);
-    return;
-  }
-
-  // "other" — their message wasn't about the name at all. NEVER loop on the
-  // name: a question gets answered with at most ONE confirm re-ask; anything
-  // else accepts the seeded name and moves the flow forward.
-  const confirmQuestion = `Evia asked: "Is ${seeded} the name you go by, or do you prefer something else?"`;
-  const attempts = (session.onboardingData?.confirmNameAttempts as number | undefined) ?? 0;
-  if (await isQuestionOrOther(text, confirmQuestion)) {
-    const answer = await answerQuestionMidFlow(text, session, phone);
-    await sendMessage(chatId, answer);
-    if (attempts < 1) {
-      await mergeOnboardingData(phone, { confirmNameAttempts: attempts + 1 });
-      await sendMessage(chatId, `So I get it right — do you go by ${seeded}?`);
-      return;
-    }
-    // Already re-asked once — accept the seeded name and continue.
-    await attachAccount(seeded, seededLast);
-    await updateSession(phone, { onboardingStep: "client_ask_senior" });
-    const msg = await generateCaraMessage({
-      audience: "family",
-      context: `Evia is moving on with the name ${seeded}. Ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy"). One short sentence.`,
-      fallback: `Now — who are we caring for?`,
-      maxTokens: 80,
-    });
-    await sendMessage(chatId, msg);
-    return;
-  }
-  // Substantive non-name message (e.g. they jumped ahead and described who
-  // needs care). Accept the seeded name and hand this turn to the agent loop —
-  // it owns collection now — so nothing they typed is lost or re-asked (2e).
-  await attachAccount(seeded, seededLast);
-  await updateSession(phone, { onboardingStep: "client_ask_senior" });
-  return dispatchOnboardingToLoop(phone, chatId, text,
-    { ...session, onboardingStep: "client_ask_senior" } as AgentSession, "client");
-}
-
-// Shared confirm-name classifier for both roles. Parses the user's reply to
-// "is <seeded> what you go by?" into one of four shapes. Parse failures fall to
-// "other", whose handling is loop-proof (the old code re-asked on failure).
-async function parseNameConfirmation(
-  seeded: string,
-  text: string,
-): Promise<{ kind: "confirmed" | "corrected" | "denied" | "other"; correctedName: string | null }> {
-  const raw = await parseWithClaude(
-    `Evia greeted the user by the name "${seeded}" and asked if that's the name they go by. Classify their reply. ` +
-      'Reply ONLY JSON: {"kind": "confirmed" | "corrected" | "denied" | "other", "correctedName": "<first name>" or null}. ' +
-      `"confirmed" — any affirmation of that name (yes, yep, correct, that's right, that's me, "${seeded || "that"} is fine", "you can call me ${seeded || "that"}"). ` +
-      '"corrected" — they give a DIFFERENT name to go by (with or without a "no"); put it in correctedName. ' +
-      '"denied" — no/nope/wrong WITHOUT offering another name. ' +
-      '"other" — anything else: a question, or a message about something other than their name (e.g. describing care needs, work, or location).',
-    text
-  );
-  try {
-    const parsed = JSON.parse(unwrapJson(raw, "object"));
-    const kind = ["confirmed", "corrected", "denied", "other"].includes(parsed.kind) ? parsed.kind : "other";
-    const correctedName = typeof parsed.correctedName === "string" && parsed.correctedName.trim()
-      ? parsed.correctedName.trim() : null;
-    if (kind === "corrected" && !correctedName) return { kind: "denied", correctedName: null };
-    return { kind, correctedName: kind === "corrected" ? correctedName : null };
-  } catch {
-    return { kind: "other", correctedName: null };
-  }
-}
-
 // The client step table (onboardingSteps.client.ts) is kept ONLY for its
 // reask() text, used by currentStepQuestion above when a family greets mid-flow.
 // Nothing runs on the table-driven runner anymore: the loop owns collection and
@@ -3126,99 +2990,6 @@ export async function handleClientSendPayment(phone: string, chatId: string, ses
 
 // ── CAREGIVER FLOW ────────────────────────────────────────────────────────────
 
-// Caregiver counterpart to handleClientConfirmName. The caregiver typed their name on
-// /start (seeded in onboardingData.name); Evia greeted + asked to confirm. A "yes"
-// advances to the location question; a different name is a correction; a bare "no"
-// routes back to the standard ask-name step. Only reached when a name rode in on the bridge.
-async function handleCaregiverConfirmName(phone: string, chatId: string, text: string, session?: AgentSession, service?: string): Promise<void> {
-  const sess = session ?? ({ onboardingData: {} } as AgentSession);
-  const seeded = (sess.onboardingData?.name as string | undefined) ?? "";
-
-  // Website parity: a cold-SMS account already exists bare (Auth only) by the
-  // time this handler runs (see the consent-gate in linq/webhooks.ts) — attach
-  // the now-confirmed name right here instead of waiting for the photo/bg-check
-  // gate, mirroring ensureCaregiverDocForOnboarding's existing "create the
-  // moment collection completes" logic, just moved to the start of collection.
-  const attachAccount = async (name: string): Promise<void> => {
-    await ensureCaregiverDocForOnboarding(phone).catch((err) =>
-      console.error("[handleCaregiverConfirmName] account pre-create failed (non-fatal):", err));
-    if (!sess.userId) {
-      const uid = await ensureWebAccount(phone, "caregiver", name);
-      if (uid) (sess as any).userId = uid;
-    }
-  };
-
-  // Parse the confirmation FIRST — same ordering fix as handleClientConfirmName.
-  const kind = await parseNameConfirmation(seeded, text);
-
-  if (kind.kind === "corrected") {
-    const correctedName = kind.correctedName;
-    await mergeOnboardingData(phone, { name: correctedName });
-    await attachAccount(correctedName ?? "");
-    await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-    const msg = await generateCaraMessage({
-      audience: "caregiver",
-      context: `Evia just corrected the caregiver's name to ${correctedName}. Briefly acknowledge the fix, then ask for their street address, city, and zip code (mention families only ever see the city).`,
-      fallback: `Got it — thanks, ${correctedName}. What's your street address, city, and zip code? (Families only ever see the city.)`,
-      maxTokens: 80,
-    });
-    await sendMessage(chatId, locationPrompt(msg, service));
-    return;
-  }
-
-  if (kind.kind === "denied" || !seeded) {
-    await updateSession(phone, { onboardingStep: "caregiver_ask_name" });
-    await sendMessage(chatId, "No problem — what name should I use?");
-    return;
-  }
-
-  if (kind.kind === "confirmed") {
-    await attachAccount(seeded);
-    await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-    const msg = await generateCaraMessage({
-      audience: "caregiver",
-      context: `The caregiver just confirmed ${seeded} is the name they go by. You already greeted them one message ago — this is mid-conversation, so do NOT greet again and do NOT open with "Hi"/"Hey"/"Hello". Acknowledge briefly, then ask for their street address, city, and zip code (mention families only ever see the city).`,
-      fallback: `Great to meet you, ${seeded}. What's your street address, city, and zip code? (Families only ever see the city.)`,
-      maxTokens: 80,
-    });
-    await sendMessage(chatId, locationPrompt(msg, service));
-    return;
-  }
-
-  // "other" — not about the name. NEVER loop on the name: a question gets
-  // answered with at most ONE confirm re-ask; anything else accepts the
-  // seeded name and moves the flow forward.
-  const confirmQuestion = `Evia asked: "Is ${seeded} the name you go by, or do you prefer something else?"`;
-  const attempts = (sess.onboardingData?.confirmNameAttempts as number | undefined) ?? 0;
-  if (await isQuestionOrOther(text, confirmQuestion)) {
-    const answer = await answerQuestionMidFlow(text, sess, phone);
-    await sendMessage(chatId, answer);
-    if (attempts < 1) {
-      await mergeOnboardingData(phone, { confirmNameAttempts: attempts + 1 });
-      await sendMessage(chatId, `So I get it right — do you go by ${seeded}?`);
-      return;
-    }
-    // Already re-asked once — accept the seeded name and continue.
-    await attachAccount(seeded);
-    await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-    const msg = await generateCaraMessage({
-      audience: "caregiver",
-      context: `Evia is moving on with the name ${seeded}. Ask for their street address, city, and zip code. One short sentence.`,
-      fallback: `Now — what's your street address, city, and zip code?`,
-      maxTokens: 80,
-    });
-    await sendMessage(chatId, locationPrompt(msg, service));
-    return;
-  }
-  // Substantive non-name message (e.g. they jumped ahead with the work they
-  // want or the areas they cover). Accept the seeded name and hand this turn to
-  // the agent loop — it owns collection now — so nothing is lost or re-asked (2e).
-  await attachAccount(seeded);
-  await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-  return dispatchOnboardingToLoop(phone, chatId, text,
-    { ...sess, onboardingStep: "caregiver_ask_location" } as AgentSession, "caregiver");
-}
-
 /**
  * Live local-demand snapshot for a caregiver's city. Returns the count of open
  * jobs and up to 3 formatted lines (care type · rate). Used both at the location
@@ -3294,6 +3065,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
   await updateSession(phone, {
     onboardingStep:        "caregiver_awaiting_membership",
     membershipCheckoutUrl: checkoutUrl,
+    membershipCheckoutCreatedAt: new Date().toISOString(),
   });
   await sendMessage(chatId, await generateCaraMessage({
     audience: "caregiver",
@@ -3898,7 +3670,14 @@ export async function confirmBgcheckConsent(
   if (result.status === "already") return { status: "already" };
 
   if (!session.caregiverId) await updateSession(phone, { caregiverId: uid });
-  await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
+  // Park the text session on "awaiting the check" ONLY while she is still
+  // onboarding. A completed caregiver authorizing the YEARLY refresh (membership
+  // renewal / rejoin) keeps her finished session — otherwise the clear report
+  // would re-run the onboarding gates (payout link, "you're approved" welcome)
+  // on someone who finished a year ago (2026-10-03).
+  if (session.onboardingStep !== "complete") {
+    await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
+  }
   return { status: "ok" };
 }
 
@@ -4131,8 +3910,14 @@ export async function sendOnboardingLink(
     }
 
     case "caregiver_membership": {
+      // Reuse the cached Checkout link only while Stripe still honors it —
+      // Checkout sessions expire after 24 h. A lapsed member replying ACTIVATE
+      // months later used to get the dead link ("You're all done here…");
+      // sessions from before the stamp count as stale (2026-10-03).
       const stored = session.membershipCheckoutUrl as string | undefined;
-      if (stored) { url = stored; break; }
+      const storedAtMs = Date.parse(String((session as any).membershipCheckoutCreatedAt ?? ""));
+      const storedFresh = !!stored && Number.isFinite(storedAtMs) && Date.now() - storedAtMs < 23 * 60 * 60 * 1000;
+      if (storedFresh) { url = stored as string; break; }
       const token = generateToken({ phone, task: "caregiver_membership" });
       url = `${APP_URL}/done?task=caregiver_membership&t=${token}`;
       {
@@ -4150,7 +3935,7 @@ export async function sendOnboardingLink(
         });
         url = stripeSession.url ?? url;
       }
-      await updateSession(phone, { membershipCheckoutUrl: url });
+      await updateSession(phone, { membershipCheckoutUrl: url, membershipCheckoutCreatedAt: new Date().toISOString() });
       break;
     }
 

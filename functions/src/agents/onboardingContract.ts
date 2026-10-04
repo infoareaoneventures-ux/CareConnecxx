@@ -40,8 +40,8 @@ export const CLIENT_COLLECTION_STEPS: readonly string[] = [
 // scripted flow's order (mirror of the caregiver_ask_* sequence in
 // onboardingConversation.ts / onboardingSteps.caregiver.ts). Deliberately
 // EXCLUDED, mirroring the client list:
-//   - caregiver_confirm_name — owns its own yes/correction parsing (like
-//     client_confirm_name).
+//   - (the confirm-name steps were removed 2026-10-03: the name typed on /start is
+//     kept as entered; a known name starts at the first real question.)
 //   - every gate/awaiting step (photo, documents, MVR, membership, bgcheck,
 //     Stripe Connect) — deterministic side effects stay on the legacy handlers.
 export const CAREGIVER_COLLECTION_STEPS: readonly string[] = [

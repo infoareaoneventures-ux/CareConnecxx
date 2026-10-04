@@ -467,9 +467,13 @@ export function buildPendingActionStub(action: PendingAction): {
     toolName:        action.toolName,
     preview:         action.preview,
     expires_in_minutes: minutes,
-    guidance:
-      "This action is irreversible. Tell the family in plain English exactly what you are about to do, " +
-      "then ask for an explicit YES before proceeding. Do NOT call this tool again until they confirm. " +
-      "If they decline, acknowledge and stop. If they ask a question instead, answer it and re-ask for confirmation.",
+    guidance: action.toolName === "delete_account"
+      ? "This permanently deletes their account — profile, bookings, messages and login — and cancels the membership. " +
+        "Tell them exactly that in plain English. Then tell them that to go ahead they must reply exactly DELETE MY ACCOUNT " +
+        "(a plain yes will NOT do it), and that if they meant something else — a photo, a message, a job post — they can just say so. " +
+        "Do NOT call this tool again; the confirmation gate runs it only when that exact phrase arrives."
+      : "This action is irreversible. Tell the family in plain English exactly what you are about to do, " +
+        "then ask for an explicit YES before proceeding. Do NOT call this tool again until they confirm. " +
+        "If they decline, acknowledge and stop. If they ask a question instead, answer it and re-ask for confirmation.",
   };
 }

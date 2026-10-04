@@ -182,6 +182,21 @@ describe("resendStuckStep — Checkr invite reuse (Fix 2)", () => {
     );
   }, 20_000);
 
+  it("a COMPLETED caregiver authorizing the yearly refresh keeps her finished session (never parked back into onboarding)", async () => {
+    // Membership renewal / rejoin (2026-10-03): the record is parked on consent
+    // (consentRequired) while the text session is already 'complete'.
+    delete (hoisted.sessionData as any).bgcheckInviteUrl;
+    hoisted.sessionData.onboardingStep = "complete";
+    const { confirmBgcheckConsent } = await import("./onboardingConversation");
+    const r = await confirmBgcheckConsent("+15551112222", {
+      legalFirstName: "Jane", legalLastName: "Doe", zipCode: "95110", state: "CA",
+    });
+    expect(r.status).toBe("ok");
+    expect(hoisted.checkrInvite).toHaveBeenCalledTimes(1); // the check still runs (candidate reused by authorizeBackgroundCheck)
+    const stepWrites = hoisted.updateMock.mock.calls.map((c: any[]) => c[0]).filter((u: any) => u && "onboardingStep" in u);
+    expect(stepWrites, "no onboarding step write for a completed caregiver").toEqual([]);
+  }, 20_000);
+
   it("caches a fresh bgcheckInviteSentAt stamp on consent confirm (so the reuse guard can age it)", async () => {
     delete (hoisted.sessionData as any).bgcheckInviteUrl;
     const { confirmBgcheckConsent } = await import("./onboardingConversation");

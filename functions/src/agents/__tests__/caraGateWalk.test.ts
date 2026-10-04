@@ -468,7 +468,7 @@ describe("gate questions are grounded in what the user already shared", () => {
   beforeEach(() => { vi.mocked(quickComplete).mockClear(); runQaAgent.mockClear(); });
 
   it("membership gate: the agent turn carries the saved city/zip/rate (site parity: real agent, no link re-blast)", async () => {
-    const session = seed("caregiver_awaiting_membership", { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership" });
+    const session = seed("caregiver_awaiting_membership", { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership", membershipCheckoutCreatedAt: new Date().toISOString() });
     awaitingKind = "question";
 
     await handleOnboardingStep(PHONE, CHAT, "What zip code did I share with you?", session);
@@ -493,7 +493,7 @@ describe("gate questions are grounded in what the user already shared", () => {
   });
 
   it("an `other` reply at the membership gate ALSO runs the agent — the site blocks actions, not conversation", async () => {
-    const session = seed("caregiver_awaiting_membership", { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership" });
+    const session = seed("caregiver_awaiting_membership", { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership", membershipCheckoutCreatedAt: new Date().toISOString() });
     awaitingKind = "other";
 
     await handleOnboardingStep(PHONE, CHAT, "are there jobs close to my area", session);

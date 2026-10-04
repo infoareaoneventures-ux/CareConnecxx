@@ -82,6 +82,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   contact_support:          ["messaging"],  // the website's "Message our team" button — see utils/supportRoom.ts  // Membership page as data — see agents/membershipPage.ts
   get_notifications:        ["messaging"],  // the website's bell as data — see agents/notificationsPage.ts
   get_account_settings:     ["care_plan"],   // the website's Account Settings page as data — see agents/accountSettingsPage.ts
+  show_account_settings:    ["care_plan"],   // the caregiver Account Settings page, texted whole (2026-10-03)
   set_subscription_status:  ["billing"],
   show_timesheets:          ["billing"],            // Payments › Timesheets tab, texted whole (2026-10-01)
   start_submit_hours_flow:  ["billing"],            // Timesheets › Submit hours modal as a flow (2026-10-01)

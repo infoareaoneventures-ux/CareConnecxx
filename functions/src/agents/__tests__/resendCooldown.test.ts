@@ -387,7 +387,7 @@ describe("U9 — membership / MVR checkout resends", () => {
   // action tools) instead of re-blasting the checkout link; only the LINK
   // keyword, a broken-link report and the stale-session nudge resend it.
   it("`other` at the membership gate runs the agent — the checkout link is NOT re-blasted, no window stamped", async () => {
-    const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership" });
+    const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership", membershipCheckoutCreatedAt: new Date().toISOString() });
     awaitingKind = "other";
     runQaAgent.mockClear();
 
@@ -399,7 +399,7 @@ describe("U9 — membership / MVR checkout resends", () => {
   });
 
   it("a broken-link report at the membership gate resends the checkout link and stamps the window", async () => {
-    const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership" });
+    const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, { membershipCheckoutUrl: "https://pay/membership", membershipCheckoutCreatedAt: new Date().toISOString() });
     awaitingKind = "other";
     wantsLink = "YES";
     runQaAgent.mockClear();

@@ -26,7 +26,7 @@ vi.mock("./pendingActions", () => ({
 vi.mock("../observability/actionLedger", () => ({ logAgentAction: hoisted.logAgentActionMock }));
 vi.mock("../observability/caraOpsAlerts", () => ({ createCaraOpsAlert: hoisted.createCaraOpsAlertMock }));
 
-import { classifyApproval, handlePendingApproval, handlePendingApprovals } from "./approvalHandler";
+import { classifyApproval, handlePendingApproval, handlePendingApprovals, isDeleteAccountPhrase, DELETE_ACCOUNT_PROMPT, DELETE_ACCOUNT_DECLINED, DELETE_ACCOUNT_DONE } from "./approvalHandler";
 
 const makePending = (overrides: Record<string, unknown> = {}) => ({
   id:         "pa_42",
@@ -338,5 +338,61 @@ describe("handlePendingApprovals — batch confirmation", () => {
     });
     expect(result).toEqual({ outcome: "fallthrough", reason: "expired" });
     expect(hoisted.handleToolCallMock).not.toHaveBeenCalled();
+  });
+});
+
+// ── Account deletion (founder, 2026-10-03): only the exact phrase executes ──────
+describe("delete_account — the exact phrase, never a casual yes", () => {
+  const deletion = () => makePending({ id: "pa_del", toolName: "delete_account", toolInput: { userId: "u1" }, preview: "Permanently delete this Evia account" });
+  const sent = () => hoisted.sendMessageMock.mock.calls.map((c: any[]) => c[1]);
+
+  it("isDeleteAccountPhrase accepts the phrase in any casing / punctuation and nothing else", () => {
+    expect(isDeleteAccountPhrase("DELETE MY ACCOUNT")).toBe(true);
+    expect(isDeleteAccountPhrase("  delete my account! ")).toBe(true);
+    expect(isDeleteAccountPhrase("Delete  my account.")).toBe(true);
+    expect(isDeleteAccountPhrase("yes")).toBe(false);
+    expect(isDeleteAccountPhrase("delete my photo")).toBe(false);
+    expect(isDeleteAccountPhrase("please delete my account")).toBe(false);
+  });
+
+  it("a casual yes does NOT delete: the account stays parked and the phrase + way out are texted", async () => {
+    for (const word of ["yes", "ok", "sure", "go ahead"]) {
+      const r = await handlePendingApproval({ phone: "+15550001111", chatId: "chat", text: word, userId: "u1", pending: deletion() });
+      expect(r).toEqual({ outcome: "handled" });
+    }
+    expect(hoisted.handleToolCallMock).not.toHaveBeenCalled();
+    expect(hoisted.handleToolCallForCaregiverMock).not.toHaveBeenCalled();
+    expect(hoisted.resolvePendingMock).not.toHaveBeenCalled();
+    expect(sent().every((m: string) => m === DELETE_ACCOUNT_PROMPT)).toBe(true);
+    expect(DELETE_ACCOUNT_PROMPT).toContain("If you meant something else (a photo, a message, a job post), just tell me.");
+  });
+
+  it("a NO rejects it with the 'nothing was deleted' line; a question falls through to the agent", async () => {
+    expect(await handlePendingApproval({ phone: "+15550001111", chatId: "chat", text: "no", userId: "u1", pending: deletion() })).toEqual({ outcome: "handled" });
+    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_del", "rejected");
+    expect(sent().at(-1)).toBe(DELETE_ACCOUNT_DECLINED);
+    hoisted.quickCompleteMock.mockResolvedValueOnce("QUESTION");
+    expect(await handlePendingApproval({ phone: "+15550001111", chatId: "chat", text: "what happens to my bookings?", userId: "u1", pending: deletion() })).toEqual({ outcome: "fallthrough", reason: "question" });
+    expect(hoisted.handleToolCallMock).not.toHaveBeenCalled();
+  });
+
+  it("the exact phrase executes the deletion and acks with the deletion line", async () => {
+    const r = await handlePendingApproval({ phone: "+15550001111", chatId: "chat", text: "DELETE MY ACCOUNT", userId: "u1", pending: deletion() });
+    expect(r).toEqual({ outcome: "handled" });
+    expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.handleToolCallMock.mock.calls[0][0]).toBe("delete_account");
+    expect(sent().at(-1)).toBe(DELETE_ACCOUNT_DONE);
+  });
+
+  it("with other actions pending, a batch yes runs the others and leaves the deletion parked; the phrase runs only the deletion", async () => {
+    const other = makePending({ id: "pa_other", toolName: "cancel_appointment", preview: "Cancel appointment appt_123" });
+    const r = await handlePendingApprovals({ phone: "+15550001111", chatId: "chat", text: "yes", userId: "u1", pendings: [other, deletion()] });
+    expect(r).toEqual({ outcome: "handled" });
+    expect(hoisted.handleToolCallMock.mock.calls.map((c: any[]) => c[0])).toEqual(["cancel_appointment"]);
+    expect(sent().at(-1)).toBe(DELETE_ACCOUNT_PROMPT);
+    hoisted.handleToolCallMock.mockClear(); hoisted.sendMessageMock.mockClear();
+    await handlePendingApprovals({ phone: "+15550001111", chatId: "chat", text: "delete my account", userId: "u1", pendings: [other, deletion()] });
+    expect(hoisted.handleToolCallMock.mock.calls.map((c: any[]) => c[0])).toEqual(["delete_account"]);
+    expect(sent().at(-1)).toBe(DELETE_ACCOUNT_DONE);
   });
 });

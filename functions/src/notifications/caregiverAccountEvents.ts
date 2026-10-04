@@ -148,18 +148,34 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
     case "bgcheck_document_required":
       return { title: "Document upload required", body: "Your background check is on hold. Check your email from Checkr — they need you to upload a document to continue." };
     case "bgcheck_link_expired":
-      return { title: "Verification link expired", body: `Your background check link expired. Get a new one from your dashboard — or reply here and Evia will text you a fresh one. ${dash}` };
+      return {
+        title: "Verification link expired",
+        body: `Your background check link expired. Get a new one from your dashboard — or reply here and Evia will text you a fresh one. ${dash}`,
+        text: `Your background check link expired. Authorize again and a fresh one comes right back — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
+      };
     case "bgcheck_revoked":
-      return { title: "Background check pending", body: `Your background check approval was removed. Complete verification on your dashboard to get booked again: ${dash}` };
+      return {
+        title: "Background check pending",
+        body: `Your background check approval was removed. Complete verification on your dashboard to get booked again: ${dash}`,
+        text: `Your background check approval was removed. Authorize a new check to get booked again — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
+      };
 
     case "transport_doc_approved":
       return { title: "Document approved", body: `Your ${ctx.docLabel ?? "transport document"} was approved.` };
     case "transport_doc_rejected":
-      return { title: "Document rejected", body: `Your ${ctx.docLabel ?? "transport document"} was rejected${ctx.docNotes ? `: ${ctx.docNotes}` : ""}. Please re-upload to continue: ${appLink("/caregiver/settings")}` };
+      return {
+        title: "Document rejected",
+        body: `Your ${ctx.docLabel ?? "transport document"} was rejected${ctx.docNotes ? `: ${ctx.docNotes}` : ""}. Please re-upload to continue: ${appLink("/caregiver/settings")}`,
+        text: `Your ${ctx.docLabel ?? "transport document"} was rejected${ctx.docNotes ? `: ${ctx.docNotes}` : ""}. Please re-upload to continue — reply DOCUMENTS for your upload link.`,
+      };
     case "transport_docs_all_approved":
       return { title: "Documents approved", body: "Your transportation documents are approved. Your transportation badge turns on as soon as your driving record (MVR) check clears." };
     case "transport_doc_expiring":
-      return { title: "Document expiring soon", body: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep your transportation badge active: ${appLink("/caregiver/settings")}` };
+      return {
+        title: "Document expiring soon",
+        body: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep your transportation badge active: ${appLink("/caregiver/settings")}`,
+        text: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep your transportation badge active — reply DOCUMENTS for your upload link.`,
+      };
     case "mvr_clear":
       return { title: "Driving record cleared", body: "Your driving record check came back clear." };
     case "mvr_review":
@@ -172,12 +188,23 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
         body: ctx.reason === "expired"
           ? `One or more of your transportation documents has expired. Upload updated documents to restore your badge: ${appLink("/caregiver/settings")}`
           : `Your transportation badge was removed. Check your transport documents and driving record on your dashboard to restore it: ${dash}`,
+        text: ctx.reason === "expired"
+          ? "One or more of your transportation documents has expired. Upload updated documents to restore your badge — reply DOCUMENTS for your upload link."
+          : "Your transportation badge was removed. Reply SETTINGS to see your transport documents and driving record, or DOCUMENTS for the upload link.",
       };
 
     case "payouts_enabled":
-      return { title: "Payouts set up", body: `Your payout account is set up — earnings land in your bank automatically after each paid visit. ${appLink("/caregiver/payments")}` };
+      return {
+        title: "Payouts set up",
+        body: `Your payout account is set up — earnings land in your bank automatically after each paid visit. ${appLink("/caregiver/payments")}`,
+        text: "Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.",
+      };
     case "payouts_disabled":
-      return { title: "Payouts need attention", body: `Your payout account needs attention — open Payout Setup on your dashboard to finish: ${dash}` };
+      return {
+        title: "Payouts need attention",
+        body: `Your payout account needs attention — open Payout Setup on your dashboard to finish: ${dash}`,
+        text: "Your payout account needs attention — reply SETUP for your Stripe link to finish.",
+      };
 
     case "now_bookable":
       return { title: "You're approved", body: "You're approved — families can now find and book you." };
@@ -204,7 +231,7 @@ export async function notifyCaregiverAccountEvent(
   // button, by text). Token TTL 14 days — the caregiver may act on it days later.
   const ctx: CaregiverAccountEventContext = { ...(opts.ctx ?? {}) };
   let phoneForLink: string | undefined;
-  if ((kind === "membership_paid" || kind === "membership_renewed") && !ctx.consentUrl) {
+  if ((kind === "membership_paid" || kind === "membership_renewed" || kind === "bgcheck_link_expired" || kind === "bgcheck_revoked") && !ctx.consentUrl) {
     phoneForLink = await resolveCaregiverPhone(uid).catch(() => undefined);
     if (phoneForLink) {
       try {

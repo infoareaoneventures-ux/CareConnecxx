@@ -958,7 +958,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_caregiver_profile",
     description:
-      "Update your own caregiver profile — hourly rate, bio, city, or weekly availability. " +
+      "Update your own caregiver profile — hourly rate, bio, gender, address (street / zipCode / city / state — a 5-digit zipCode fills city and state like the page's ZIP lookup), or weekly availability. " +
       "Only you can update your own profile. Changes take effect immediately. To change your " +
       "PHONE NUMBER, pass requestPhoneChange:true instead of a new number — login here is by " +
       "phone number, so it emails a secure link to the address on file and the new number is " +
@@ -972,6 +972,10 @@ export const MCP_TOOLS: McpTool[] = [
         phone:              { type: "string",  description: "Your current session phone; used to verify account ownership and never changed by this tool" },
         requestPhoneChange: { type: "boolean", description: "Set true to start a phone number change (see description) — a request flag, not the new number itself" },
         city:               { type: "string",  description: "Your city" },
+        gender:             { type: "string",  description: "Account Settings › Gender: Male, Female, Non-binary, or Prefer not to say" },
+        street:             { type: "string",  description: "Account Settings › Address: street line" },
+        zipCode:            { type: "string",  description: "Account Settings › Address: 5-digit ZIP (fills city and state when they are not given)" },
+        state:              { type: "string",  description: "Account Settings › Address: two-letter state" },
       },
       required: ["caregiverId", "phone"],
     },
@@ -1216,6 +1220,22 @@ export const MCP_TOOLS: McpTool[] = [
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
         manageLink:  { type: "boolean", description: "Text the signed-in Stripe Billing Portal link instead of the tab (the Manage button)" },
         activate:    { type: "boolean", description: "Text the membership checkout link instead of the tab (the Activate Membership button)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "show_account_settings",
+    description:
+      "The caregiver Account Settings page, TEXTED by the tool itself (agents/caregiverSettings.ts): Account Basics (member since, name, date of birth, gender, recovery email + confirmed or not, phone, address), Transportation Documents (only when Transportation is offered — each document's status and expiry), Blocked Users, the Pause card, the delete line. " +
+      "resendEmailLink:true texts the page's 'Resend confirmation link' result (same server function). documentsLink:true texts the upload page link (the page's Upload buttons). " +
+      "Edits go through the other tools: gender / address / phone → update_caregiver_profile; email → request_email_change; pause → pause_account / reactivate_account; unblock → set_block_status; delete → delete_account. Send nothing else this turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:     { type: "string",  description: "The caregiver's Firestore document ID" },
+        resendEmailLink: { type: "boolean", description: "Re-send the recovery-email confirmation link instead of texting the page" },
+        documentsLink:   { type: "boolean", description: "Text the transport-documents upload link instead of the page" },
       },
       required: ["caregiverId"],
     },
@@ -2418,6 +2438,8 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "edit_memory_file",
   "search_memory",
   "show_membership",
+  "show_account_settings",
+  "request_email_change",
   "contact_support",
   "get_notifications",
   "get_account_settings",
@@ -4587,7 +4609,7 @@ async function executeToolCall(
     // ── New write tools ────────────────────────────────────────────────────────
 
     if (name === "update_caregiver_profile") {
-      const { caregiverId, hourlyRate, bio, phone: actingPhone, requestPhoneChange, city } = input as Record<string, unknown>;
+      const { caregiverId, hourlyRate, bio, phone: actingPhone, requestPhoneChange, city, gender, street, zipCode, state } = input as Record<string, unknown>;
       if (!caregiverId || !actingPhone) return toolError("INVALID_INPUT", "caregiverId and phone are required");
       const caregiverRef = db.collection("caregivers").doc(caregiverId as string);
       const caregiverSnap = await caregiverRef.get();
@@ -4639,7 +4661,35 @@ async function executeToolCall(
       const patch: Record<string, unknown> = { updatedAt: nowIso };
       if (hourlyRate         != null) patch.hourlyRate         = Number(hourlyRate);
       if (bio                != null) patch.bio                = bio;
-      if (city               != null) patch.city               = city;
+      // Account Settings › Gender (the page's four options) and Address (the page's
+      // saveAddress: street / zipCode / city / state + the "City, ST" location label;
+      // lat/lng follow from the geocodeCaregiverDoc trigger on any address change).
+      if (gender != null) {
+        const { GENDER_OPTIONS } = await import("../agents/caregiverSettings");
+        if (!GENDER_OPTIONS.includes(String(gender))) return toolError("INVALID_INPUT", `gender must be one of: ${GENDER_OPTIONS.join(", ")}`);
+        patch.gender = String(gender);
+      }
+      const addr: Record<string, string> = {};
+      if (street  != null) addr.street  = String(street).trim();
+      if (zipCode != null) {
+        if (!/^\d{5}$/.test(String(zipCode).trim())) return toolError("INVALID_INPUT", "zipCode must be 5 digits");
+        addr.zipCode = String(zipCode).trim();
+      }
+      if (city    != null) addr.city    = String(city).trim();
+      if (state   != null) addr.state   = String(state).trim().toUpperCase();
+      if (Object.keys(addr).length) {
+        if (addr.zipCode && (!addr.city || !addr.state)) {
+          const { lookupZipPlace } = await import("../utils/geocode");
+          const place = await lookupZipPlace(addr.zipCode).catch(() => null);
+          if (place?.city && !addr.city) addr.city = place.city;
+          if (place?.state && !addr.state) addr.state = place.state;
+        }
+        const existing = (caregiverSnap.data() ?? {}) as Record<string, unknown>;
+        const cityNow = addr.city ?? (existing.city as string | undefined);
+        const stateNow = addr.state ?? (existing.state as string | undefined);
+        addr.location = cityNow && stateNow ? `${cityNow}, ${stateNow}` : (cityNow ?? "");
+        Object.assign(patch, addr);
+      }
       if (Object.keys(patch).length === 1) return toolError("INVALID_INPUT", "At least one field to update is required");
       await caregiverRef.set(patch, { merge: true });
       logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_profile", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
@@ -5252,6 +5302,26 @@ async function executeToolCall(
       }
       const r = await pb.startLogHoursFlow(sess.phone, sess.chatId, sessionData as never, { caregiverId: caregiverId as string, shiftId: ref.shiftId });
       return { success: r.started, reason: r.reason, note: "The flow (or its refusal) was texted — send nothing else this turn." };
+    }
+
+    // ── Account Settings (2026-10-03): the page texted whole; Resend = the page's queue action; Upload = the tokened page ──
+    if (name === "show_account_settings") {
+      const { caregiverId, resendEmailLink, documentsLink, phone: asPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, asPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const st = await import("../agents/caregiverSettings");
+      if (resendEmailLink === true) {
+        const ok = await st.sendResendEmailLink(sess.chatId, caregiverId as string);
+        return { success: ok, note: "The resend result was texted — send nothing else this turn." };
+      }
+      if (documentsLink === true) {
+        const ok = await st.sendDocumentsUploadLink(sess.phone, sess.chatId, caregiverId as string);
+        return { success: ok, note: ok ? "The upload link was texted — send nothing else this turn." : "The refusal (or throttle notice) was texted — send nothing else this turn." };
+      }
+      const r = await st.sendCaregiverSettings(sess.chatId, caregiverId as string);
+      return { success: true, ...r, note: "The Account Settings page was texted — send nothing else this turn." };
     }
 
     // ── Payments › Membership (2026-10-03): the tab texted whole; Manage = the Billing Portal; Activate = the checkout link ──

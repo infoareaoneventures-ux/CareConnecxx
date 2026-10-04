@@ -63,6 +63,21 @@ export async function classifyApproval(text: string, actionPreview: string): Pro
   }
 }
 
+// Account deletion (founder, 2026-10-03): never on a casual yes. The site's Delete
+// account button needs a confirmation modal AND a texted 6-digit code; by text —
+// already on the verified phone — the equivalent proof is the exact phrase below.
+// "ok" / "sure" / "yes" leave the account alone, and a misread "delete my photo"
+// gets a way out before anything happens.
+export const DELETE_ACCOUNT_PHRASE = "DELETE MY ACCOUNT";
+export const DELETE_ACCOUNT_PROMPT =
+  "Nothing was deleted. To permanently delete your account — your profile, bookings, messages and login, and cancel your membership — " +
+  `reply exactly: ${DELETE_ACCOUNT_PHRASE}. If you meant something else (a photo, a message, a job post), just tell me.`;
+export const DELETE_ACCOUNT_DECLINED = "Got it — nothing was deleted. Your account stays as it is.";
+export const DELETE_ACCOUNT_DONE = "Done — your account has been deleted. I'm sorry to see you go; you're welcome back anytime.";
+export function isDeleteAccountPhrase(text: string): boolean {
+  return text.trim().toUpperCase().replace(/[.!?"'’]+/g, "").replace(/\s+/g, " ") === DELETE_ACCOUNT_PHRASE;
+}
+
 export type ApprovalResult =
   | { outcome: "handled" }
   | { outcome: "fallthrough"; reason: "question" | "expired" };
@@ -206,7 +221,24 @@ export async function handlePendingApproval(params: {
 }): Promise<ApprovalResult> {
   const { phone, chatId, text, userId, userType = "client", pending } = params;
 
-  const decision = await classifyApproval(text, pending.preview);
+  // Account deletion: only the exact phrase executes. A refusal rejects; a
+  // question falls through to the agent (the action stays parked); anything
+  // else — including every yes-word — leaves the account alone and re-states
+  // the phrase and the way out (founder, 2026-10-03).
+  const isDeletion = pending.toolName === "delete_account";
+  if (isDeletion && !isDeleteAccountPhrase(text)) {
+    const d = await classifyApproval(text, pending.preview);
+    if (d === "QUESTION") return { outcome: "fallthrough", reason: "question" };
+    if (d === "NO") {
+      await resolvePendingAction(pending.id, "rejected");
+      await sendMessage(chatId, DELETE_ACCOUNT_DECLINED).catch((err) => console.error("handlePendingApproval: sendMessage (delete NO) failed", err));
+      return { outcome: "handled" };
+    }
+    await sendMessage(chatId, DELETE_ACCOUNT_PROMPT).catch((err) => console.error("handlePendingApproval: sendMessage (delete prompt) failed", err));
+    return { outcome: "handled" };
+  }
+
+  const decision: ApprovalDecision = isDeletion ? "YES" : await classifyApproval(text, pending.preview);
 
   if (decision === "QUESTION") {
     // Don't resolve the pending action — let the QA agent answer the question
@@ -233,7 +265,7 @@ export async function handlePendingApproval(params: {
   // failure — never tell the user it "didn't go through". Only claim it was
   // "flagged for review" when the ops alert actually persisted.
   const ackMessage = succeeded
-    ? "Done."
+    ? (isDeletion ? DELETE_ACCOUNT_DONE : "Done.")
     : skipped
       ? "That's already been taken care of — nothing more needed."
       : alertFlagged
@@ -274,6 +306,24 @@ export async function handlePendingApprovals(params: {
 
   // getAllPending returns newest-first; show and execute in proposal order
   // so "1." matches what Evia asked about first.
+  // A parked account deletion never executes on a batch yes: only its exact
+  // phrase does. With the phrase, it alone runs; otherwise the others are
+  // decided as usual and the deletion stays parked (a NO rejects it too).
+  const deletion = pendings.find((p) => p.toolName === "delete_account");
+  if (deletion) {
+    if (isDeleteAccountPhrase(text)) return handlePendingApproval({ phone, chatId, text, userId, userType, pending: deletion });
+    const others = pendings.filter((p) => p !== deletion);
+    const d = await classifyApproval(text, others.map((p, i) => `${i + 1}. ${p.preview}`).join("  "));
+    if (d === "QUESTION") return { outcome: "fallthrough", reason: "question" };
+    if (d === "NO") {
+      for (const p of pendings) await resolvePendingAction(p.id, "rejected");
+      await sendMessage(chatId, "Got it — leaving everything as it is. Nothing was deleted.").catch((err) => console.error("handlePendingApprovals: sendMessage (NO) failed", err));
+      return { outcome: "handled" };
+    }
+    const result = await handlePendingApprovals({ phone, chatId, text, userId, userType, pendings: others });
+    await sendMessage(chatId, DELETE_ACCOUNT_PROMPT).catch((err) => console.error("handlePendingApprovals: sendMessage (delete prompt) failed", err));
+    return result;
+  }
   const ordered = [...pendings].reverse();
   const combinedPreview = ordered.map((p, i) => `${i + 1}. ${p.preview}`).join("  ");
   const decision = await classifyApproval(text, combinedPreview);

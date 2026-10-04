@@ -109,14 +109,16 @@ describe("caregiverAccountTransitions — one event per progress-bar change", ()
   });
 });
 
-describe("notifyCaregiverAccountEvent — bell + text once, same words", () => {
+describe("notifyCaregiverAccountEvent — bell + text once", () => {
   it("sends one bell and one text, and nothing on a repeat of the same event", async () => {
     hoisted.docState.set("users/cg1", { phone: "+15551112222" });
     hoisted.docState.set("agent_sessions/+15551112222", { userId: "cg1" });
     const first = await notifyCaregiverAccountEvent("cg1", "payouts_enabled", { eventId: "evt1" });
     expect(first).toEqual({ bell: true, text: true });
     expect(hoisted.bells[0]).toMatchObject({ recipientId: "cg1", transitionType: "payouts_enabled", title: "Payouts set up" });
-    expect(hoisted.sent[0].content).toBe(hoisted.bells[0].body);
+    // The bell links to the Payments page; the text finishes by text (2026-10-03) — same event, channel-appropriate words.
+    expect(hoisted.bells[0].body).toContain("/caregiver/payments");
+    expect(hoisted.sent[0].content).toBe("Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.");
     const again = await notifyCaregiverAccountEvent("cg1", "payouts_enabled", { eventId: "evt1" });
     expect(again).toEqual({ bell: false, text: false });
     expect(hoisted.sent).toHaveLength(1);

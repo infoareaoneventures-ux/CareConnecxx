@@ -413,7 +413,7 @@ async function handlePendingConsentReply(
     userType:  (userData.userType as string | undefined) ?? "client",
     onboardingStep: isReturning
       ? "complete"
-      : (firstName ? "client_confirm_name" : "client_ask_name"),
+      : (firstName ? "client_ask_senior" : "client_ask_name"),
     ...(isReturning
       ? { seniorId }
       : { seniorId: admin.firestore.FieldValue.delete() }),
@@ -450,19 +450,19 @@ async function handlePendingConsentReply(
     context: isReturning
       ? `${firstName || "The client"} just replied YES to receiving care updates by text. Thank them warmly in one sentence and let them know you'll keep them posted after visits — and that they can text you anytime to book care or ask anything.`
       : firstName
-        ? `${firstName} just replied YES to receiving care updates, and you're meeting them over text for the first time. Thank them briefly, then naturally check that "${firstName}" is the name they go by — woven into a sentence, NOT as a parenthetical instruction. Sound like a real person, not a form.`
-        : "A new client just replied YES to receiving care updates, and you're meeting them over text for the first time. Thank them briefly, introduce yourself as Evia, their care coordinator, and ask their name. Sound like a real person, not a form.",
+        ? `${firstName} just replied YES to receiving care updates, and you're meeting them over text for the first time. Thank them briefly, call them ${firstName}, then ask who they're looking for care for (that person's name and how they're related) — woven in naturally. Sound like a real person, not a form.`
+        : "A new client just replied YES to receiving care updates, and you're meeting them over text for the first time. Thank them briefly, introduce yourself as Evia, their care coordinator, and ask their first and last name. Sound like a real person, not a form.",
     fallback: isReturning
       ? (lang === "es"
           ? "¡Perfecto! Te mantendré al tanto después de cada visita. Y escríbeme cuando necesites algo — aquí estoy."
           : "Perfect — you're all set. I'll keep you posted after every visit, and you can text me anytime to book care or ask anything.")
       : firstName
         ? (lang === "es"
-            ? `¡Perfecto! Soy Evia, tu coordinadora de cuidados. ¿Te llamo ${firstName}, verdad?`
-            : `Perfect — thanks! I'm Evia, your care coordinator. Do you go by ${firstName}?`)
+            ? `¡Perfecto, ${firstName}! Soy Evia, tu coordinadora de cuidados. ¿Para quién buscas cuidado? (Su nombre y tu relación con esa persona.)`
+            : `Perfect — thanks, ${firstName}! I'm Evia, your care coordinator. Who are you looking for care for? (Their name and your relationship)`)
         : (lang === "es"
-            ? "¡Perfecto! Soy Evia, tu coordinadora de cuidados. ¿Cómo te llamas?"
-            : "Perfect — thanks! I'm Evia, your care coordinator. What's your name?"),
+            ? "¡Perfecto! Soy Evia, tu coordinadora de cuidados. ¿Cuál es tu nombre y apellido?"
+            : "Perfect — thanks! I'm Evia, your care coordinator. What's your first and last name?"),
     maxTokens: 120,
   });
   await sendMessage(chatId, welcome);
@@ -796,7 +796,7 @@ const handleInboundInner = traceable(
       const referralId = webRole === "caregiver" ? (webSessionData.referralId as string | undefined) : undefined;
       // Name typed on the /start web form (if any). When present, we pre-seed it into
       // onboardingData and route to the confirm step so Evia greets by name and asks
-      // them to confirm — instead of asking "What's your name?" from scratch.
+      // them to confirm — instead of asking "What's your first and last name?" from scratch.
       const webName      = (webSessionData.name      as string | undefined)?.trim() || "";
       const webFirstName = (webSessionData.firstName as string | undefined)?.trim() || "";
       const webLastName  = (webSessionData.lastName  as string | undefined)?.trim() || "";
@@ -806,9 +806,13 @@ const handleInboundInner = traceable(
       // FIELDS). Seeding it here means the loop sees it as already collected
       // and never asks again over text.
       const webEmail     = (webSessionData.email    as string | undefined)?.trim() || "";
+      // 2026-10-03 (founder): the name typed on /start IS the name — no "do you go
+      // by …?" step (the site never asks it, and that step could rewrite the name).
+      // A known name starts at the first real question; no name → ask it once.
       const firstStep = webName
-        ? (webRole === "caregiver" ? "caregiver_confirm_name" : "client_confirm_name")
+        ? (webRole === "caregiver" ? "caregiver_ask_location" : "client_ask_senior")
         : (webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name");
+      const webGreetName = webFirstName || webName.split(/\s+/)[0] || "";
       // Caregiver flow keys the name as `name`; client flow keys firstName (and
       // lastName when present) — matches the fields the ask-name handlers write.
       const seededOnboardingData = (webName || webEmail)
@@ -864,6 +868,9 @@ const handleInboundInner = traceable(
           preferredLanguage,
           createdAt:      new Date().toISOString(),
           webOnboardingUid: webSessionData.uid ?? null,
+          // The /start account (users/{uid} already carries the typed name): link it
+          // now — the removed confirm step used to do this on the first reply.
+          ...(webName && webSessionData.uid ? { userId: webSessionData.uid } : {}),
           ...(seededOnboardingData ? { onboardingData: seededOnboardingData } : {}),
           ...(referralId ? { referralId } : {}),
         });
@@ -933,17 +940,17 @@ const handleInboundInner = traceable(
           context: welcomeAudience === "caregiver"
             ? `You're meeting ${webName} for the very first time over text. They just signed up to find caregiving work. ` +
               `Introduce yourself warmly as Evia, mention that setting up their profile takes about 5 minutes and happens right here by text, ` +
-              `and naturally check that "${webName}" is the name they go by — woven into a sentence, NOT as a parenthetical instruction. Sound like a real person, not a form.`
+              `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "who they're looking for care for (that person's name and how they're related)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`
             : `You're meeting ${webName} for the very first time over text. They're looking for care for a loved one. ` +
               `Introduce yourself warmly as Evia, their care coordinator, ` +
-              `and naturally check that "${webName}" is the name they go by — woven into a sentence, NOT as a parenthetical instruction. Sound like a real person, not a form.`,
+              `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "who they're looking for care for (that person's name and how they're related)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`,
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
-                ? `¡Hola ${webName}! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Te llamo ${webName}, verdad?`
-                : `Hi ${webName}! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and it all happens right here. Do you go by ${webName}?`)
+                ? `¡Hola ${webGreetName}! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu dirección (calle, ciudad y código postal)? Las familias solo ven la ciudad.`
+                : `Hi ${webGreetName}! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and it all happens right here.\n\nWhat's your street address, city, and zip code? (Families only ever see the city.)`)
             : (preferredLanguage === "es"
-                ? `¡Hola ${webName}! Soy Evia, tu coordinadora de cuidados. ¿Te llamo ${webName}, verdad?`
-                : `Hi ${webName}, I'm Evia — I'll be your care coordinator. Do you go by ${webName}?`),
+                ? `¡Hola ${webGreetName}! Soy Evia, tu coordinadora de cuidados. ¿Para quién buscas cuidado? (Su nombre y tu relación con esa persona.)`
+                : `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. Who are you looking for care for? (Their name and your relationship)`),
           maxTokens: 120,
         });
       } else {
@@ -954,16 +961,16 @@ const handleInboundInner = traceable(
           language: welcomeLanguage,
           context: welcomeAudience === "caregiver"
             ? "You're meeting someone for the very first time over text who just signed up to find caregiving work. " +
-              "Introduce yourself warmly as Evia, mention that setting up their profile takes about 5 minutes and happens right here, and ask their name. Sound like a real person, not a form."
+              "Introduce yourself warmly as Evia, mention that setting up their profile takes about 5 minutes and happens right here, and ask their first and last name. Sound like a real person, not a form."
             : "You're meeting someone for the very first time over text who's looking for care for a loved one. " +
-              "Introduce yourself warmly as Evia, their care coordinator, and ask their name. Sound like a real person, not a form.",
+              "Introduce yourself warmly as Evia, their care coordinator, and ask their first and last name. Sound like a real person, not a form.",
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
-                ? "¡Hola! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cómo te llamas?"
-                : "Hi! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your name?")
+                ? "¡Hola! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu nombre y apellido?"
+                : "Hi! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your first and last name?")
             : (preferredLanguage === "es"
-                ? "¡Hola! Soy Evia, tu coordinadora de cuidados. ¿Cómo te llamas?"
-                : "Hi! I'm Evia — I'll be your care coordinator. What's your name?"),
+                ? "¡Hola! Soy Evia, tu coordinadora de cuidados. ¿Cuál es tu nombre y apellido?"
+                : "Hi! I'm Evia — I'll be your care coordinator. What's your first and last name?"),
           maxTokens: 90,
         });
       }
@@ -1409,7 +1416,7 @@ const handleInboundInner = traceable(
         const firstStep = midFlow
           ? session.onboardingStep
           : seededName
-            ? (role === "caregiver" ? "caregiver_confirm_name" : "client_confirm_name")
+            ? (role === "caregiver" ? "caregiver_ask_location" : "client_ask_senior")
             : (role === "caregiver" ? "caregiver_ask_name" : "client_ask_name");
         const nameKey  = role === "caregiver" ? "name" : "firstName";
         const mergedOnboardingData = seededName && !midFlow

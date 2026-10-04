@@ -111,12 +111,24 @@ describe("sendOnboardingLink", () => {
     expect(lastLinkPart()).toEqual({ type: "link", value: expect.stringContaining("https://pay.stripe/xyz") });
   });
 
-  it("reuses a stored membership checkout URL instead of regenerating (no duplicate Stripe resource)", async () => {
+  it("reuses a stored membership checkout URL while it is fresh (no duplicate Stripe resource)", async () => {
     (hoisted.sessionData as any).membershipCheckoutUrl = "https://pay.stripe/stored";
+    (hoisted.sessionData as any).membershipCheckoutCreatedAt = new Date().toISOString();
     const { sendOnboardingLink } = await import("./onboardingConversation");
     await sendOnboardingLink("+15551112222", "caregiver_membership");
 
     expect(lastLinkPart()).toEqual({ type: "link", value: "https://pay.stripe/stored" });
+  });
+
+  it("a stale cached checkout link (older than Stripe's 24 h, or from before the stamp) is NOT re-sent — a fresh Checkout is minted", async () => {
+    (hoisted.sessionData as any).membershipCheckoutUrl = "https://pay.stripe/stored";
+    (hoisted.sessionData as any).membershipCheckoutCreatedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    const { sendOnboardingLink } = await import("./onboardingConversation");
+    await sendOnboardingLink("+15551112222", "caregiver_membership");
+    expect(lastLinkPart()).toEqual({ type: "link", value: expect.not.stringContaining("pay.stripe/stored") });
+    delete (hoisted.sessionData as any).membershipCheckoutCreatedAt; // legacy session, no stamp
+    await sendOnboardingLink("+15551112222", "caregiver_membership");
+    expect(lastLinkPart()).toEqual({ type: "link", value: expect.not.stringContaining("pay.stripe/stored") });
   });
 
   it("throws (rather than silently failing) when the session has no chatId", async () => {

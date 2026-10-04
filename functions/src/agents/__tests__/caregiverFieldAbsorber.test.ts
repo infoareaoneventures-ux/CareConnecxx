@@ -44,9 +44,11 @@ describe("absorbCaregiverFields", () => {
     expect(out).toEqual({});
   });
 
-  it("drops an hourly rate below the wizard's $15 floor", async () => {
+  it("keeps any rate above $0 (no floor — 2026-10-04) and drops zero", async () => {
     parseWithClaude.mockResolvedValueOnce(JSON.stringify({ hourlyRate: 3 }));
-    expect(await absorbCaregiverFields("3", {})).toEqual({});
+    expect(await absorbCaregiverFields("3", {})).toEqual({ hourlyRate: 3 });
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ hourlyRate: 0 }));
+    expect(await absorbCaregiverFields("0", {})).toEqual({});
   });
 
   it("captures a front-loaded multi-field message", async () => {
@@ -61,7 +63,7 @@ describe("absorbCaregiverFields", () => {
     // state upper-cased; certifications are NOT a wizard field and are never absorbed.
     expect(out).toMatchObject({
       name: "Maria", street: "12 Oak St", city: "San Jose", state: "CA", zipCode: "95134", yearsExperience: "5-10 years",
-      specialties: ["dementia"],
+      specialties: ["Dementia / Memory Care"], skills: ["Dementia / Memory Care"], services: ["Dementia / Memory Care"],
       hourlyRate: 25, serviceRadius: 10, email: "maria.g@example.com", jobType: "part_time",
       availability: { days: ["Monday"], hours: "8am-4pm" },
     });
@@ -77,7 +79,7 @@ describe("absorbCaregiverFields", () => {
   it("drops malformed values instead of persisting garbage", async () => {
     parseWithClaude.mockResolvedValueOnce(JSON.stringify({
       yearsExperience: "six",           // not a number
-      hourlyRate: 900,                  // out of the 5..200 clamp
+      hourlyRate: 0,                    // zero is never a rate (any amount above $0 is — no ceiling since 2026-10-04)
       email: "not-an-email",
       jobType: "weekends",              // not in the enum
       zipCode: "9513",                  // not 5 digits
@@ -121,22 +123,28 @@ describe("absorbCaregiverFields", () => {
     expect(out).toEqual({});
   });
 
-  it("canonicalizes freshly-absorbed specialties into skills/services (keeps raw specialties)", async () => {
-    parseWithClaude
-      .mockResolvedValueOnce(JSON.stringify({ specialties: ["memory care", "meal prep"] })) // extraction
-      .mockResolvedValueOnce(JSON.stringify(["Dementia / Memory Care", "Meal Preparation"])); // canonicalization
+  it("services are the website's eight only — her words mapped, written to specialties/skills/services alike (one list, three fields)", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ specialties: ["memory care", "meal prep"] })); // extraction; both are offline direct hits
     const out = await absorbCaregiverFields("msg", {});
-    expect(out.specialties).toEqual(["memory care", "meal prep"]);
+    expect(out.specialties).toEqual(["Dementia / Memory Care", "Meal Preparation"]);
     expect(out.skills).toEqual(["Dementia / Memory Care", "Meal Preparation"]);
     expect(out.services).toEqual(["Dementia / Memory Care", "Meal Preparation"]);
   });
 
-  it("does not touch skills when the model already saved them", async () => {
+  it("a word outside the eight is never kept (the save tool, not the absorber, tells her)", async () => {
+    parseWithClaude
+      .mockResolvedValueOnce(JSON.stringify({ specialties: ["hospice"] }))          // extraction
+      .mockResolvedValueOnce(JSON.stringify({ services: [], medical: [], unmapped: ["hospice"] })); // mapper
+    const out = await absorbCaregiverFields("msg", {});
+    expect(out).toEqual({});
+  });
+
+  it("adds onto the services the model already saved — select all that apply, never removes", async () => {
     parseWithClaude.mockResolvedValueOnce(JSON.stringify({ specialties: ["dementia"] }));
-    const out = await absorbCaregiverFields("msg", { skills: ["Companionship"] });
-    expect(out.specialties).toEqual(["dementia"]);
-    expect(out.skills).toBeUndefined();
-    expect(out.services).toBeUndefined();
+    const out = await absorbCaregiverFields("msg", { skills: ["Companionship"], services: ["Companionship"], specialties: ["Companionship"] });
+    expect(out.specialties).toEqual(["Dementia / Memory Care", "Companionship"]);
+    expect(out.skills).toEqual(["Dementia / Memory Care", "Companionship"]);
+    expect(out.services).toEqual(["Dementia / Memory Care", "Companionship"]);
   });
 });
 
@@ -158,8 +166,8 @@ describe("absorbCaregiverProfileUpdate (gate-step additions)", () => {
       .mockResolvedValueOnce(JSON.stringify({ specialties: ["transportation"] }))  // collection pass (dropped: filled)
       .mockResolvedValueOnce(JSON.stringify({ specialties: ["transportation"] })); // update pass (additive)
     const out = await absorbCaregiverProfileUpdate("I can do transportation as well", HAMSE);
-    expect(out.specialties).toEqual(["Companionship", "dementia", "transportation"]);
-    // synonym map: "transportation" → canonical "Transportation", unioned in
+    // one list on three fields — the site's exact strings, legacy raw "dementia" not carried forward
+    expect(out.specialties).toEqual(["Dementia / Memory Care", "Companionship", "Transportation"]);
     expect(out.services).toEqual(["Dementia / Memory Care", "Companionship", "Transportation"]);
     expect(out.skills).toEqual(["Dementia / Memory Care", "Companionship", "Transportation"]);
   });

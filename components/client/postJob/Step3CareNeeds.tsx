@@ -1,20 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Check } from 'lucide-react';
 import { StepProps, CARE_TYPES } from './types';
+import { serviceLabel } from '../../caregiver/signup/constants';
 import { useCareConnex } from '../../../context/CareConnexContext';
 import { db } from '../../../lib/firebase';
 
-const CARE_NEED_SUBS: Record<string, string[]> = {
-  'Mobility Assistance': ['Ambulation', 'Transfer Assist'],
-  'Dementia / Memory Care': ['Supervision / Safety monitoring', 'Memory support', 'Redirection / cueing'],
-  'Medication Reminders': ['Morning', 'Afternoon', 'Evening', 'Bedtime'],
-  'Personal Care': ['Bathing', 'Dressing Assistance', 'Toileting', 'Feeding', 'Comb Hair', 'Oral Hygiene', 'Skin Care', 'Physical Activity'],
-  'Companionship': [],
-  'Transportation': ['Doctor appointments', 'Grocery shopping', 'Pharmacy visits', 'Hairdresser / barber'],
-  'Meal Preparation': ['Breakfast', 'Lunch', 'Snack', 'Dinner'],
-  'Light Housekeeping': ['Light housekeeping (dusting, vacuuming, mopping)', 'Change bed linens', 'Change bath towels', 'Take out trash'],
-};
-
+// The eight types of care, nothing underneath — the same list the family's setup
+// wizard and the caregiver's services step show (founder 2026-10-04). The
+// careNeedDetails field stays in the data shape, always {}.
 export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
   const { currentUser } = useCareConnex();
   const [didPrepopulate, setDidPrepopulate] = useState(false);
@@ -30,25 +23,17 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
       const cp = snap.data() as any;
       const rp = cp?.recipientPlans?.[key];
       if (rp?.careNeeds?.length) {
-        onChange({ careTypes: rp.careNeeds, careNeedDetails: rp.careNeedDetails || {} });
+        onChange({ careTypes: rp.careNeeds, careNeedDetails: {} });
       }
     }).catch(() => {}).finally(() => setDidPrepopulate(true));
   }, [currentUser?.uid]);
 
   const toggleCareType = (ct: string) => {
     if (data.careTypes.includes(ct)) {
-      const nextDetails = { ...data.careNeedDetails };
-      delete nextDetails[ct];
-      onChange({ careTypes: data.careTypes.filter(c => c !== ct), careNeedDetails: nextDetails });
+      onChange({ careTypes: data.careTypes.filter(c => c !== ct), careNeedDetails: {} });
     } else {
-      onChange({ careTypes: [...data.careTypes, ct] });
+      onChange({ careTypes: [...data.careTypes, ct], careNeedDetails: {} });
     }
-  };
-
-  const toggleSub = (careType: string, sub: string) => {
-    const current = data.careNeedDetails[careType] || [];
-    const next = current.includes(sub) ? current.filter(s => s !== sub) : [...current, sub];
-    onChange({ careNeedDetails: { ...data.careNeedDetails, [careType]: next } });
   };
 
   const handleContinue = () => {
@@ -62,13 +47,11 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
   return (
     <div>
       <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center mb-1">What type of care is needed?</h2>
-      <p className="text-center text-slate-500 mb-8">Select all that apply — then choose specific tasks.</p>
+      <p className="text-center text-slate-500 mb-8">Select all that apply.</p>
 
       <div className="space-y-2">
         {CARE_TYPES.map(ct => {
           const selected = data.careTypes.includes(ct);
-          const subs = CARE_NEED_SUBS[ct] || [];
-          const selectedSubs = data.careNeedDetails[ct] || [];
           return (
             <div
               key={ct}
@@ -81,30 +64,9 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
                 onClick={() => toggleCareType(ct)}
                 className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-left"
               >
-                <span className={selected ? 'text-primary-700 font-semibold' : 'text-slate-600'}>{ct}</span>
+                <span className={selected ? 'text-primary-700 font-semibold' : 'text-slate-600'}>{serviceLabel(ct)}</span>
                 {selected && <Check className="w-4 h-4 flex-shrink-0 text-primary-600" />}
               </button>
-              {selected && subs.length > 0 && (
-                <div className="px-4 pb-3 pt-1 flex flex-wrap gap-2 border-t border-primary-100">
-                  {subs.map(sub => {
-                    const subSelected = selectedSubs.includes(sub);
-                    return (
-                      <button
-                        key={sub}
-                        type="button"
-                        onClick={() => toggleSub(ct, sub)}
-                        className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-all ${
-                          subSelected
-                            ? 'bg-primary-600 border-primary-600 text-white'
-                            : 'bg-white border-slate-200 text-slate-600 hover:border-primary-300'
-                        }`}
-                      >
-                        {sub}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           );
         })}

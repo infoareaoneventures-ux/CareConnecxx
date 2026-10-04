@@ -1,6 +1,6 @@
 // The caregiver Account Settings page, texted
 // (components/caregiver/CaregiverAccountSettings.tsx — Account Basics,
-// Transportation Documents, Blocked Users, Pause, Delete).
+// Membership & verification, Transportation Documents, Blocked Users, Pause, Delete).
 //
 // Same reads as the page: the merged profile (users + caregivers, the caregiver
 // doc wins — dbService.getUser), the `documents.{type}` map with the page's own
@@ -16,6 +16,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { DEFAULT_TZ } from "../utils/scheduledTime";
+import { membershipSectionLines } from "./caregiverMembership";
 
 const db = admin.firestore();
 
@@ -39,6 +40,8 @@ export interface SettingsPage {
   documents: Array<{ type: string; label: string; status: DocStatus; expires: string | null }>;
   blocked: string[];
   pausedUntil: string | null; isPaused: boolean;
+  /** Membership & verification (AccountStandingSection) — the same loader the MEMBERSHIP keyword uses. */
+  standing: import("./caregiverMembership").MembershipTab;
 }
 
 /** The page's toLocaleDateString() (en-US numeric). */
@@ -90,6 +93,8 @@ export async function loadSettingsPage(caregiverId: string): Promise<SettingsPag
   const blockedIds: string[] = Array.isArray(user.blockedUsers) ? (user.blockedUsers as string[]) : [];
   const blockedProfiles = (user.blockedUserProfiles ?? {}) as Record<string, { name?: string }>;
   const pausedUntil = str(p.pausedUntil) || null;
+  const { loadMembershipTab } = await import("./caregiverMembership");
+  const standing = await loadMembershipTab(caregiverId);
   const street = str(p.street) || str(p.streetAddress) || str(p.address);
   const zip = str(p.zipCode) || str(p.zip);
   const city = str(p.city); const state = str(p.state);
@@ -110,6 +115,7 @@ export async function loadSettingsPage(caregiverId: string): Promise<SettingsPag
     blocked: blockedIds.map((id) => blockedProfiles[id]?.name || "Blocked User"),
     pausedUntil,
     isPaused: !!pausedUntil && pausedUntil > new Date().toISOString(),
+    standing,
   };
 }
 
@@ -130,6 +136,8 @@ export function settingsPageText(page: SettingsPage): string {
   const a = page.address;
   const addr = a ? [a.street, [a.city, a.state].filter(Boolean).join(", "), a.zip].filter(Boolean).join(", ") : "";
   lines.push(`Address: ${dash(addr)} (tell me a new address to update it)`);
+  // Membership & verification — moved here from Payments › Membership (2026-10-04).
+  lines.push("", "Membership & verification", ...membershipSectionLines(page.standing));
   if (page.hasTransportation) {
     lines.push("", "Transportation Documents — Required to activate your transportation badge. Keep these up to date.");
     for (const d of page.documents) {

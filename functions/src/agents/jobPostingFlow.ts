@@ -11,9 +11,11 @@ import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { describeSharedProfile } from "./profileBriefing";
 import { deriveCareLevel } from "./clientJobPostingContract";
 import { lookupZipPlace } from "../utils/geocode";
-import { normalizeCareNeeds, extractCareNeedDetails, type CanonicalCareCategory } from "../utils/careNeedCategories";
+import { canonicalizeCareNeeds } from "./careNeedsTaxonomy";
+import { serviceLabel, serviceLabels, serviceMenuText } from "./caregiverServiceLabels";
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
 import { formatDateForDisplay } from "../utils/scheduledTime";
+import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from "../utils/medicationInstruction";
 
 const db = admin.firestore();
 
@@ -844,9 +846,8 @@ async function careNeedsQuestion(phone: string): Promise<string> {
   // 2026-09-08 (live-caught): "you" is second person — "does you need" reads
   // as broken grammar; every other name here is third person ("does Samira
   // need"). needCareVerb (below) picks the right conjugation either way.
-  return `What kind of care ${needCareVerb(name)} ${name} need? Things like personal care ` +
-    `(bathing, grooming), mobility help, memory care, medication reminders, meals, rides, companionship, ` +
-    `or light housekeeping.`;
+  // The website's step: the eight by name, nothing underneath (2026-10-04).
+  return `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText()}`;
 }
 
 function needCareVerb(name: string): "do" | "does" {
@@ -1021,7 +1022,7 @@ async function handleJpAskCareNeeds(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const name = await recipientsDisplayName(phone, session);
-  const REASK = `What kind of care ${needCareVerb(name)} ${name} need? (e.g. personal care, meals, companionship, mobility)`;
+  const REASK = `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText()}`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1029,48 +1030,24 @@ async function handleJpAskCareNeeds(
     await sendMessage(chatId, REASK);
     return;
   }
-  const raw = await parseWithClaude(
-    'Extract care needs as a JSON array of strings. Map to these standard values: ' +
-    '"Personal Care" (bathing, grooming, hygiene, dressing), ' +
-    '"Mobility Assistance" (walking, transfers, fall prevention), ' +
-    '"Dementia / Memory Care" (dementia, Alzheimer\'s, cognitive support), ' +
-    '"Medication Reminders" (meds, pills, prescriptions), ' +
-    '"Meal Preparation" (cooking, meals, food, nutrition), ' +
-    '"Transportation" (driving, errands, appointments), ' +
-    '"Companionship" (social, activities, conversation), ' +
-    '"Light Housekeeping" (cleaning, laundry, tidying). ' +
-    'Return a JSON array of matching standard values, or an empty array. Only return the JSON array.',
-    text
-  );
-  let careNeeds: CanonicalCareCategory[] = [];
-  const parsedNeeds = parseJsonLoose(raw, "handleJpAskCareNeeds");
-  if (Array.isArray(parsedNeeds) && parsedNeeds.length > 0) {
-    // The LLM is asked for standard category names but sometimes returns the
-    // finer-grained symptom/task instead ("bathing" instead of "Personal
-    // Care") — normalize onto the same 8 categories the web wizard uses, so
-    // this matches what CarePlan.tsx expects and what caregiver skill-matching
-    // actually searches on (both keyed on the parent category, never the
-    // sub-task — see careNeedCategories.ts).
-    careNeeds = normalizeCareNeeds(parsedNeeds);
-  }
+  // Names or the family's words → the website's eight (the mapper both sides
+  // share); medical care is never a need; off-list words are left off and said
+  // so; nothing is stored underneath a category (2026-10-04).
+  const canon = await canonicalizeCareNeeds([text]);
+  const notes: string[] = [];
+  if (canon.medical.length) notes.push(`Caregivers here don't administer medication or give medical treatment, so "${canon.medical.join('", "')}" isn't a type of care I can add — the closest on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
+  if (canon.unmapped.length) notes.push(`"${canon.unmapped.join('", "')}" isn't one of the types of care on the list, so I've left it off.`);
+  if (canon.unresolved.length) notes.push(`I couldn't place "${canon.unresolved.join('", "')}" — which of the list did you mean?`);
+  const careNeeds = canon.careNeeds;
   if (careNeeds.length === 0) {
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}${REASK}`);
     return;
   }
-  const needsLabel = careNeeds.slice(0, 3).join(", ") + (careNeeds.length > 3 ? ` +${careNeeds.length - 3} more` : "");
+  const needsLabel = `${notes.join(" ")}${notes.length ? " " : ""}${serviceLabels(careNeeds).join(", ")}`;
   // jobCareLevel derived, never asked — see the JP_STEP_ORDER comment at the
   // top of the file for why.
   const jobCareLevel = deriveCareLevel([], careNeeds);
-  // 2026-09-14 (live-caught): normalizeCareNeeds correctly collapses "bathing"
-  // onto its parent category ("Personal Care") for caregiver matching — but
-  // that's not the whole website model. The Care Plan page ALSO tracks which
-  // specific sub-task within that category was named (careNeedDetails,
-  // CarePlan.tsx) and shows it as its own chip nested under the category.
-  // Matched against the family's own raw message (not the LLM's
-  // already-category-mapped output above, which has lost the specific word
-  // by this point) so a fine-grained mention isn't silently dropped.
-  const jobCareNeedDetails = extractCareNeedDetails([text], careNeeds);
-  await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel, jobCareNeedDetails });
+  await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel });
   await updateJobStep(phone, "jp_ask_rate");
   await sendMessage(chatId,
     `${needsLabel} — noted! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`
@@ -1113,7 +1090,7 @@ async function handleJpAskRate(
   const name = await recipientsDisplayName(phone, session);
   await sendMessage(chatId,
     `${rateLabel} — sounds good! Last question: can you briefly describe a typical care day for ${name}?\n\n` +
-    "(A sentence or two is great — this helps caregivers understand the role)"
+    "A sentence or two is great. Caregivers browsing jobs can read this, so leave out medical details, addresses, and anything private."
   );
 }
 
@@ -1121,7 +1098,7 @@ async function handleJpAskDescription(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const name = await recipientsDisplayName(phone, session);
-  const REASK = `Can you describe a typical care day for ${name}? A sentence or two is great.`;
+  const REASK = `Can you describe a typical care day for ${name}? A sentence or two is great. Caregivers browsing jobs can read this, so leave out medical details, addresses, and anything private.`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1130,6 +1107,10 @@ async function handleJpAskDescription(
     return;
   }
   const description = text.trim().slice(0, 500);
+  if (isMedicationInstruction(description)) {
+    await sendMessage(chatId, `${MEDICATION_INSTRUCTION_MESSAGE} ${REASK}`);
+    return;
+  }
   await mergeJobData(phone, { jobDescription: description });
   await updateJobStep(phone, "jp_confirm_post");
   const jobData = await getJobData(phone);
@@ -1277,7 +1258,7 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
   const timesLabel = times.length > 0
     ? times.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(" & ")
     : "TBD";
-  const needsLabel = careNeeds.length > 0 ? careNeeds.join(", ") : "General care";
+  const needsLabel = careNeeds.length > 0 ? careNeeds.map(serviceLabel).join(", ") : "General care";
   // 2026-09-08 (live-caught): the zip code was captured and stored correctly
   // (city/state resolve from it via lookupZipPlace) but never shown in this
   // summary at all, unlike the site's own review screen (Step6Review.tsx),

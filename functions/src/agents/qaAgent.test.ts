@@ -601,7 +601,7 @@ describe("buildCaregiverCoreContext", () => {
   it("surfaces service area, skills, availability, and verification/account status", () => {
     const out = buildCaregiverCoreContext(fullDoc);
     expect(out).toContain("SERVICE AREA: San Jose, 95112.");
-    expect(out).toContain("specialties: dementia care, mobility support");
+    expect(out).toContain("services: dementia care, mobility support"); // skills ?? services ?? specialties, the page's order (2026-10-04)
     expect(out).toContain("certifications: CNA, CPR");
     expect(out).toContain("6 years experience");
     expect(out).toContain("languages: English, Spanish");

@@ -1,3 +1,4 @@
+import { serviceLabel } from './signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -1511,7 +1512,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                             <p><span className="text-[var(--color-neutral-400)]">Rating:</span> {Number(profile.rating).toFixed(1)} ⭐</p>
                                         )}
                                         {profile?.skills && profile.skills.length > 0 && (
-                                            <p><span className="text-[var(--color-neutral-400)]">Skills:</span> {profile.skills.slice(0, 3).join(', ')}</p>
+                                            <p><span className="text-[var(--color-neutral-400)]">Skills:</span> {profile.skills.slice(0, 3).map(serviceLabel).join(', ')}</p>
                                         )}
                                     </div>
                                 </div>

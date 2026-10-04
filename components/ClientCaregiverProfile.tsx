@@ -1,3 +1,4 @@
+import { serviceLabel } from './caregiver/signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
@@ -434,7 +435,7 @@ export default function ClientCaregiverProfile({
                 <div className="flex flex-wrap gap-2">
                   {caregiver.skills.filter(s => s !== 'Transportation' || caregiver.hasTransportation).map(s => (
                     <span key={s} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-medium">
-                      <CheckCircle className="w-3 h-3" /> {s}
+                      <CheckCircle className="w-3 h-3" /> {serviceLabel(s)}
                     </span>
                   ))}
                 </div>

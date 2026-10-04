@@ -8,6 +8,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver, CaregiverDocument, UserProfile } from '../../types';
 import { geocodeToLatLng } from '../../utils/geocode';
 import { usePhoneReauth } from '../../hooks/usePhoneReauth';
+import { AccountStandingSection } from './AccountStandingSection';
 
 const DELETE_RECAPTCHA_CONTAINER = 'caregiver-settings-delete-recaptcha';
 
@@ -28,7 +29,7 @@ function formatDob(raw: string): string {
 }
 
 export const CaregiverAccountSettings: React.FC = () => {
-  const { currentUser, addToast, blockedIds, blockedUserProfiles, unblockUser } = useCareConnex();
+  const { currentUser, addToast, blockedIds, blockedUserProfiles, unblockUser, setMembershipModalOpen } = useCareConnex();
   const blockedProfiles = [
     ...Object.entries(blockedUserProfiles).map(([id, p]) => ({ id, ...p })),
     ...Array.from(blockedIds).filter(id => !blockedUserProfiles[id]).map(id => ({ id, name: 'Blocked User', photo: '' })),
@@ -38,10 +39,14 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [openAccount, setOpenAccount] = useState(true);
   const [openTransport, setOpenTransport] = useState(false);
   const [openBlocked, setOpenBlocked] = useState(false);
+  const [openStanding, setOpenStanding] = useState(true);
+  // Pause folds like the other sections (founder, 2026-10-04); it opens by itself while paused.
+  const [openPause, setOpenPause] = useState(false);
 
   // Same pause/reactivate a caregiver could already do over SMS
   // (pause_account/reactivate_account) — website entry point added 2026-09-06.
   const [pausedUntil, setPausedUntil] = useState<string | null>(null);
+  useEffect(() => { if (pausedUntil && pausedUntil > new Date().toISOString()) setOpenPause(true); }, [pausedUntil]);
   const [togglingPause, setTogglingPause] = useState(false);
   const [resumeDateDraft, setResumeDateDraft] = useState('');
 
@@ -548,6 +553,11 @@ export const CaregiverAccountSettings: React.FC = () => {
           </div>
         </Accordion>
 
+        {/* ── Membership & verification (moved here from Payments › Membership, 2026-10-04) ── */}
+        <Accordion open={openStanding} onToggle={() => setOpenStanding(o => !o)} title="Membership & verification">
+          <AccountStandingSection profile={profile} addToast={addToast} onActivate={() => setMembershipModalOpen(true)} />
+        </Accordion>
+
         {/* ── Transportation Documents ── */}
         {hasTransportation && (
           <Accordion
@@ -672,12 +682,14 @@ export const CaregiverAccountSettings: React.FC = () => {
         </Accordion>
 
         {/* ── Pause Account ── */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3 p-5">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
+        <Accordion
+          open={openPause}
+          onToggle={() => setOpenPause(o => !o)}
+          title={isPaused ? 'Your account is paused' : 'Pause your account'}
+          badge={isPaused ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">Paused</span> : undefined}
+        >
+          <div className="p-5 flex items-center justify-between gap-4 flex-wrap">
             <div>
-              <p className="text-sm font-semibold text-slate-900 mb-1">
-                {isPaused ? 'Your account is paused' : 'Pause your account'}
-              </p>
               <p className="text-sm text-slate-500">
                 {isPaused
                   ? (pausedUntil && pausedUntil !== '2099-12-31'
@@ -712,7 +724,7 @@ export const CaregiverAccountSettings: React.FC = () => {
               {togglingPause ? 'Saving...' : (isPaused ? 'Reactivate' : 'Pause account')}
             </button>
           </div>
-        </div>
+        </Accordion>
 
         {/* ── Delete Account ── */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3 p-5">

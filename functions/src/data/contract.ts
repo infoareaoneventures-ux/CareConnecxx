@@ -322,6 +322,13 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Bridge between web phone verification and SMS inbound (functions/src/linq/webhooks.ts). Carries role + (optional) name typed on /start; the inbound webhook seeds name into agent_sessions.onboardingData (firstName for client, name for caregiver) and routes straight to the first real question (caregiver_ask_location / client_ask_senior) so Evia greets by first name and never re-asks or rewrites the typed name (2026-10-03). Web reads its own doc (hooks/useOnboardingSession.ts); writes server-side only (createWebOnboardingSession callable).",
   },
+  zep_aliases: {
+    path: "zep_aliases",
+    docId: "composite", // the NEW phone's digits (= the Zep user id it would have had)
+    caraWrites: true,
+    webReads: false,
+    notes: "Phone-change memory alias (functions/src/phoneRekey.ts → memory/zepClient.ts setZepUserAlias, 2026-10-04): { zepUserId: <old digits>, from, createdAt }. The Zep user id is the phone's digits, so a caregiver who changes her number would otherwise lose everything Evia learned; canonicalZepUserId resolves through this doc at the Zep boundary (cached, fail-open). Server-only; the web never reads it.",
+  },
   notifications: {
     path: "notifications",
     docId: "auto",

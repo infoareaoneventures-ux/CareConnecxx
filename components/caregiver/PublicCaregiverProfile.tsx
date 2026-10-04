@@ -1,3 +1,4 @@
+import { serviceLabel } from './signup/constants';
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Star, MapPin, ShieldCheck, Calendar, Loader2 } from 'lucide-react';
@@ -145,7 +146,7 @@ export const PublicCaregiverProfile: React.FC = () => {
             <p className="font-bold text-slate-900 mb-3">Skills &amp; Services</p>
             <div className="flex flex-wrap gap-2">
               {profile.skills.map(s => (
-                <span key={s} className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">{s}</span>
+                <span key={s} className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">{serviceLabel(s)}</span>
               ))}
             </div>
           </div>

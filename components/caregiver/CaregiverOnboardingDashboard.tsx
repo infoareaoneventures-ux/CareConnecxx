@@ -1,3 +1,4 @@
+import { serviceLabel } from './signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -643,7 +644,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                       <p><span className="text-slate-400">Rating:</span> {Number((profile as any).rating).toFixed(1)} ⭐</p>
                     )}
                     {(profile as any).skills?.length > 0 && (
-                      <p><span className="text-slate-400">Skills:</span> {(profile as any).skills.slice(0, 3).join(', ')}</p>
+                      <p><span className="text-slate-400">Skills:</span> {(profile as any).skills.slice(0, 3).map(serviceLabel).join(', ')}</p>
                     )}
                   </div>
                 </div>

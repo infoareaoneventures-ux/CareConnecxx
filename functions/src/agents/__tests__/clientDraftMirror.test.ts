@@ -52,10 +52,11 @@ describe("buildClientDraftMirror — wizard home address + care-need details (20
     expect(buildClientDraftMirror("u1", "+1", { sameAsHomeAddress: false, street: "1 Main St" })._customAddressOpen).toBe(true);
     expect(buildClientDraftMirror("u1", "+1", { street: "1 Main St" })).not.toHaveProperty("_homeAddress");
   });
-  it("carries careNeedDetails and reads the wizard's home address back into Evia's fields", () => {
+  it("never mirrors sub-tasks (gone 2026-10-04) and reads the wizard's home address back into Evia's fields", () => {
     const out = buildClientDraftMirror("u1", "+1", { careNeeds: ["Personal Care"], careNeedDetails: { "Personal Care": ["Bathing"] } });
-    expect(out.careNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
+    expect(out).not.toHaveProperty("careNeedDetails");
     const back = mapJobPostingsDocToOnboardingData({ clientId: "u1", _homeAddress: { street: "9 Elm", zipCode: "95134", city: "San Jose", state: "CA" }, _customAddressOpen: false, careNeedDetails: { "Personal Care": ["Bathing"] } });
-    expect(back).toMatchObject({ homeStreet: "9 Elm", homeZipCode: "95134", homeCity: "San Jose", homeState: "CA", sameAsHomeAddress: true, careNeedDetails: { "Personal Care": ["Bathing"] } });
+    expect(back).toMatchObject({ homeStreet: "9 Elm", homeZipCode: "95134", homeCity: "San Jose", homeState: "CA", sameAsHomeAddress: true });
+    expect(back).not.toHaveProperty("careNeedDetails");
   });
 });

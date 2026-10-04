@@ -1,16 +1,20 @@
-// The caregiver Payments page › Membership tab, texted
-// (components/caregiver/CaregiverPaymentsPage.tsx `tab === 'membership'`:
-// MembershipCard + ApprovedDriverCard).
+// The caregiver Account Settings › "Membership & verification" section, texted
+// (components/caregiver/AccountStandingSection.tsx — moved there from the
+// Payments › Membership tab on 2026-10-04: membership with its next charge, the
+// background check with its last clear and next check, the driving record).
 //
-// Same reads as the page: membershipStatus off the merged profile (the caregiver
-// doc wins over the user doc), the subscription record under customers/{uid}
-// (live first, else whatever exists — caregiverMembershipBilling.readCaregiverSubscriptionRecord,
-// the page's getSubscriptionStatus), and the driver fields on the caregiver doc.
-// Same buttons through the same server paths: Activate Membership = the
-// membership checkout (send_onboarding_link caregiver_membership →
-// createCaregiverMembershipCheckout), Manage = the Stripe Billing Portal
-// (createCaregiverBillingPortalUrl). The page's Refresh button has no twin:
-// every text already reads live.
+// Same reads as the section: membershipStatus off the merged profile (the
+// caregiver doc wins over the user doc), the subscription record under
+// customers/{uid} (live first, else whatever exists —
+// caregiverMembershipBilling.readCaregiverSubscriptionRecord, the page's
+// getSubscriptionStatus), the background-check and driver fields on the
+// caregiver doc with the dashboard card's own rules. Same buttons through the
+// same server paths: Activate Membership = the membership checkout
+// (send_onboarding_link caregiver_membership → createCaregiverMembershipCheckout),
+// Manage = the Stripe Billing Portal (createCaregiverBillingPortalUrl), Authorize
+// = the texted FCRA consent page (send_onboarding_link caregiver_background_check,
+// the same consent function the site's modal calls). Refresh has no twin: every
+// text already reads live.
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { caregiverAnnualDisplay } from "../config/pricing";
@@ -18,20 +22,30 @@ import { DEFAULT_TZ } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
+export type DriverCard =
+  | "approved"             // isApprovedDriver AND the badge is live (documents approved too)
+  | "cleared_docs_pending" // isApprovedDriver but a document is still missing / unapproved
+  | "pending"              // MVR running
+  | "included"             // offers Transportation, MVR not started
+  | "offer";               // does not offer Transportation
+
+/** The section's background-check card states — the dashboard card's rules (CaregiverOnboardingDashboard). */
+export type BgCard =
+  | { kind: "consent"; renewal: boolean }
+  | { kind: "cleared"; clearedOn: string | null }
+  | { kind: "in_progress"; detail: "under_review" | "on_hold" | "running" }
+  | { kind: "not_approved" }
+  | { kind: "not_started" };
+
 export interface MembershipTab {
-  status: string | null;          // the page's badge key (active / trialing / past_due / payment_failed / canceled …)
+  status: string | null;          // the badge key (active / trialing / past_due / payment_failed / canceled …)
   isActive: boolean;              // active || trialing — the page's rule
   periodEnd: Date | null;         // customers/{uid}/subscriptions current_period_end
   cancelAtPeriodEnd: boolean;
+  bg: BgCard;
   driver: DriverCard;
+  mvrClearedOn: string | null;
 }
-
-export type DriverCard =
-  | "approved"            // isApprovedDriver AND the badge is live (documents approved too)
-  | "cleared_docs_pending" // isApprovedDriver but a document is still missing / unapproved
-  | "pending"             // MVR running
-  | "included"            // offers Transportation, MVR not started
-  | "offer";              // does not offer Transportation
 
 /** The page's STATUS_BADGE labels. */
 export const STATUS_LABEL: Record<string, string> = {
@@ -45,7 +59,7 @@ export const WHATS_INCLUDED = [
   "Messaging",
 ];
 
-/** The ApprovedDriverCard's four states, title + body as the page prints them. */
+/** The driver card's states, title + body as the page prints them. */
 export const DRIVER_CARD_TEXT: Record<DriverCard, string> = {
   approved: "Approved Driver ✓ — Families who need a driver can see your verified-driver badge.",
   cleared_docs_pending: "Driving record cleared — your transportation badge turns on once your driver's license, insurance and registration are approved.",
@@ -68,8 +82,13 @@ const toDate = (v: unknown): Date | null => {
 /** The page's date: toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }). */
 export const longDate = (d: Date): string =>
   new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: DEFAULT_TZ }).format(d);
+/** The page's toLocaleDateString() for cleared dates (en-US numeric). */
+export const shortDate = (v: unknown): string | null => {
+  const d = toDate(v);
+  return d ? new Intl.DateTimeFormat("en-US", { month: "numeric", day: "numeric", year: "numeric", timeZone: DEFAULT_TZ }).format(d) : null;
+};
 
-/** The ApprovedDriverCard's branch for this record (page conditions, in the page's order). */
+/** The driver card's branch for this record (page conditions, in the page's order). */
 export function driverCardFor(cg: Record<string, unknown>, badgeLive: boolean): DriverCard {
   const isApprovedDriver = cg.isApprovedDriver === true;
   if (isApprovedDriver) return badgeLive ? "approved" : "cleared_docs_pending";
@@ -78,6 +97,20 @@ export function driverCardFor(cg: Record<string, unknown>, badgeLive: boolean): 
   const services = (Array.isArray(cg.services) ? cg.services : Array.isArray(cg.skills) ? cg.skills : []) as string[];
   if (services.includes("Transportation")) return "included";
   return "offer";
+}
+
+/** The background-check card's branch — AccountStandingSection.backgroundCheckState, verbatim rules. */
+export function bgCardFor(cg: Record<string, unknown>): BgCard {
+  const bg = (cg.backgroundCheckData ?? {}) as Record<string, unknown>;
+  const needsConsent = bg.consentRequired === true || bg.invitationStatus === "awaiting_consent";
+  if (needsConsent) return { kind: "consent", renewal: bg.consentReason === "renewal" };
+  if (cg.verificationStatus === "rejected") return { kind: "not_approved" };
+  const cleared = cg.verified === true || cg.backgroundCheckStatus === "clear" || cg.backgroundCheckComplete === true;
+  if (cleared) return { kind: "cleared", clearedOn: shortDate(bg.checkrClearedAt ?? bg.completedAt ?? cg.approvedAt) };
+  if (bg.checkrCandidateId) {
+    return { kind: "in_progress", detail: bg.status === "consider" ? "under_review" : bg.status === "suspended" ? "on_hold" : "running" };
+  }
+  return { kind: "not_started" };
 }
 
 export async function loadMembershipTab(caregiverId: string): Promise<MembershipTab> {
@@ -99,12 +132,48 @@ export async function loadMembershipTab(caregiverId: string): Promise<Membership
     isActive: status === "active" || status === "trialing",
     periodEnd: toDate(sub?.current_period_end),
     cancelAtPeriodEnd: sub?.cancel_at_period_end === true,
+    bg: bgCardFor(cg),
     driver: driverCardFor(cg, hasValidTransportDocs(cg)),
+    mvrClearedOn: shortDate(cg.mvrClearedAt),
   };
 }
 
-export function membershipTabText(tab: MembershipTab): string {
-  const lines: string[] = ["Payments · Membership", ""];
+/** The background-check card, one line: the page's title + body (+ dates). */
+export function bgCardText(tab: MembershipTab): string {
+  const b = tab.bg;
+  const renewal = tab.isActive && tab.periodEnd ? ` · Next check with your renewal on ${longDate(tab.periodEnd)}` : "";
+  switch (b.kind) {
+    case "consent":
+      return b.renewal
+        ? "Background check: Renew your background check — Your annual membership renewed. Authorize this year's background check refresh to stay bookable. Reply AUTHORIZE for the link."
+        : "Background check: Start your background check — Authorize your background check, it takes about 2 minutes. Your SSN and date of birth go directly to Checkr, never to Evia. Reply AUTHORIZE for the link.";
+    case "cleared":
+      return `Background check: Cleared${b.clearedOn ? ` ${b.clearedOn}` : ""}${renewal}`;
+    case "in_progress":
+      return b.detail === "under_review"
+        ? "Background check: Under review — This is normal, our team will follow up if anything is needed."
+        : b.detail === "on_hold"
+          ? "Background check: On hold — Checkr is gathering additional information. Check your email from Checkr for next steps."
+          : "Background check: In progress — Checkr emailed you a secure link, it usually takes about 5 minutes.";
+    case "not_approved":
+      return "Background check: Not approved — Contact support if you have questions.";
+    default:
+      return "Background check: Starts right after your membership is active — it's included in the annual fee.";
+  }
+}
+
+/** The driver card, one line, with the cleared date the page adds. */
+export function driverCardText(tab: MembershipTab): string {
+  const base = DRIVER_CARD_TEXT[tab.driver];
+  if (tab.mvrClearedOn && (tab.driver === "approved" || tab.driver === "cleared_docs_pending")) {
+    return base.replace(" — ", ` — Cleared ${tab.mvrClearedOn} · `);
+  }
+  return base;
+}
+
+/** The whole section as the page shows it (no header) — reused by the Account Settings twin. */
+export function membershipSectionLines(tab: MembershipTab): string[] {
+  const lines: string[] = [];
   if (!tab.isActive) {
     lines.push(
       "No active membership",
@@ -118,17 +187,21 @@ export function membershipTabText(tab: MembershipTab): string {
     lines.push(`${label} · Evia Membership — Annual plan`);
     if (tab.cancelAtPeriodEnd) lines.push(`⚠ Cancels on ${tab.periodEnd ? longDate(tab.periodEnd) : "—"}`);
     else if (tab.periodEnd) lines.push(`Renews ${longDate(tab.periodEnd)}`);
-    lines.push("", "What's included:", ...WHATS_INCLUDED.map((l) => `✓ ${l}`));
-    lines.push("", "Manage membership — update payment method, cancel, or view invoices via Stripe: reply MANAGE MEMBERSHIP for your link.");
+    lines.push("What's included:", ...WHATS_INCLUDED.map((l) => `✓ ${l}`));
+    lines.push("Manage membership — update payment method, cancel, or view invoices via Stripe: reply MANAGE MEMBERSHIP for your link.");
   }
-  lines.push("", DRIVER_CARD_TEXT[tab.driver]);
-  return lines.join("\n");
+  lines.push("", bgCardText(tab), "", driverCardText(tab));
+  return lines;
+}
+
+export function membershipTabText(tab: MembershipTab): string {
+  return ["Settings · Membership & verification", "", ...membershipSectionLines(tab)].join("\n");
 }
 
 export async function sendCaregiverMembership(chatId: string, caregiverId: string) {
   const tab = await loadMembershipTab(caregiverId);
   await sendMessage(chatId, membershipTabText(tab));
-  return { sent: true, isActive: tab.isActive, status: tab.status, driver: tab.driver };
+  return { sent: true, isActive: tab.isActive, status: tab.status, backgroundCheck: tab.bg.kind, driver: tab.driver };
 }
 
 /** The Manage button: a Stripe Billing Portal link (same server path as the site's v1-createCaregiverBillingPortalSession). */
@@ -138,7 +211,7 @@ export async function sendMembershipPortalLink(chatId: string, caregiverId: stri
       import("../caregiverMembershipBilling"), import("../stripe"), import("../config/appUrl"),
     ]);
     try {
-      const url = await createCaregiverBillingPortalUrl(getStripeClient(), caregiverId, appLink("/caregiver/payments"));
+      const url = await createCaregiverBillingPortalUrl(getStripeClient(), caregiverId, appLink("/caregiver/settings"));
       await sendMessage(chatId, `Manage your membership (update payment method, cancel, or view invoices) — this link signs you in to Stripe: ${url}`);
       return true;
     } catch (err) {
@@ -172,11 +245,29 @@ export async function sendMembershipActivateLink(phone: string, chatId: string, 
   return false;
 }
 
-// ── Keywords (routeCaregiver): MEMBERSHIP · MANAGE MEMBERSHIP · ACTIVATE ──
+/** The background-check card's Authorize button: the texted FCRA consent page (the same consent function the site's modal calls). */
+export async function sendAuthorizeLink(phone: string, chatId: string, caregiverId: string): Promise<boolean> {
+  const tab = await loadMembershipTab(caregiverId);
+  if (tab.bg.kind !== "consent") {
+    await sendMessage(chatId, `Nothing to authorize right now — ${bgCardText(tab).replace(/^Background check: /, "your background check is: ")}`);
+    return false;
+  }
+  try {
+    const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
+    const r = await runSendOnboardingLinkAction({ phone, linkType: "caregiver_background_check" }, { caller: "sms_agent", role: "caregiver", phone });
+    if (r.sent) return true;
+    if (r.throttled) { await sendMessage(chatId, `Your authorization link went out about ${r.minutesSinceLastSend ?? "a few"} minutes ago — tap that one, or reply LINK and I'll resend it.`); return false; }
+  } catch (err) { console.error("[caregiverMembership] authorize link failed:", err); }
+  await sendMessage(chatId, "I couldn't generate your authorization link right now — reply AUTHORIZE again in a moment.");
+  return false;
+}
+
+// ── Keywords (routeCaregiver): MEMBERSHIP · MANAGE MEMBERSHIP · ACTIVATE · AUTHORIZE ──
 export async function handleMembershipKeyword(phone: string, chatId: string, caregiverId: string, text: string): Promise<"handled" | "passthrough"> {
-  const upper = text.trim().toUpperCase();
-  if (upper === "MEMBERSHIP" || upper === "MY MEMBERSHIP") { await sendCaregiverMembership(chatId, caregiverId); return "handled"; }
-  if (upper === "MANAGE MEMBERSHIP" || upper === "BILLING" || upper === "INVOICES" || upper === "MY INVOICES") { await sendMembershipPortalLink(chatId, caregiverId); return "handled"; }
-  if (upper === "ACTIVATE" || upper === "ACTIVATE MEMBERSHIP" || upper === "RENEW" || upper === "RENEW MEMBERSHIP") { await sendMembershipActivateLink(phone, chatId, caregiverId); return "handled"; }
+  const upper = text.trim().toUpperCase().replace(/\s+/g, " ");
+  if (["MEMBERSHIP", "MY MEMBERSHIP", "VERIFICATION", "MY BACKGROUND CHECK", "BACKGROUND CHECK"].includes(upper)) { await sendCaregiverMembership(chatId, caregiverId); return "handled"; }
+  if (["MANAGE MEMBERSHIP", "BILLING", "INVOICES", "MY INVOICES"].includes(upper)) { await sendMembershipPortalLink(chatId, caregiverId); return "handled"; }
+  if (["ACTIVATE", "ACTIVATE MEMBERSHIP", "RENEW", "RENEW MEMBERSHIP"].includes(upper)) { await sendMembershipActivateLink(phone, chatId, caregiverId); return "handled"; }
+  if (["AUTHORIZE", "AUTHORIZE BACKGROUND CHECK", "AUTHORIZE CHECK"].includes(upper)) { await sendAuthorizeLink(phone, chatId, caregiverId); return "handled"; }
   return "passthrough";
 }

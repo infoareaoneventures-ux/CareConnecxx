@@ -1,3 +1,4 @@
+import { serviceLabel } from '../caregiver/signup/constants';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Shield, ChevronLeft, ChevronRight, User, Check,
@@ -1149,7 +1150,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                           : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
                       }`}
                     >
-                      <span>{need}</span>
+                      <span>{serviceLabel(need)}</span>
                       {selected && <Check size={12} className="flex-shrink-0 text-indigo-600 ml-1" />}
                     </button>
                   );

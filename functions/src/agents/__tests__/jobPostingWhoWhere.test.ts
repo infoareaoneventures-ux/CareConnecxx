@@ -412,7 +412,7 @@ describe("jp_ask_location", () => {
     // own default the moment the address/city is known — never asked.
     expect(stored.jobPostingData.jobTitle).toBe("Senior care in San Jose");
     expect(stored.jobPostingStep).toBe("jp_ask_care_needs");
-    expect(String(sendMessage.mock.calls[0][1])).toContain("What kind of care");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("What type of care");
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("pets"); // no re-ask of pets/smoking
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("title"); // never asked
   });
@@ -477,7 +477,7 @@ describe("jp_ask_location_environment", () => {
     expect(stored.jobPostingData.petsInHome).toBe(false);
     expect(stored.jobPostingData.smokingHousehold).toBe(false);
     expect(stored.jobPostingStep).toBe("jp_ask_care_needs");
-    expect(String(sendMessage.mock.calls[0][1])).toContain("What kind of care");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("What type of care");
   });
 });
 

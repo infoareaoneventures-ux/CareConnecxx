@@ -632,7 +632,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
 
   // Escalating dunning communication — tone sharpens with each failed attempt,
   // and the final attempt warns that access is about to end.
-  const billingUrl = appLink(isCaregiverMember ? "/caregiver/membership" : "/client/membership");
+  const billingUrl = appLink(isCaregiverMember ? "/caregiver/settings" : "/client/membership");
   let dunningMsg: string;
   if (isFinalAttempt) {
     dunningMsg =
@@ -915,7 +915,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
       .get();
     if (!sessionSnap.empty) {
       const phone = sessionSnap.docs[0].id;
-      const billingUrl = appLink(isCaregiverMember ? "/caregiver/membership" : "/client/membership");
+      const billingUrl = appLink(isCaregiverMember ? "/caregiver/settings" : "/client/membership");
       const { sendViaInteractionAgent } = await import("./agents/caraAgent");
       await sendViaInteractionAgent(phone, {
         content:

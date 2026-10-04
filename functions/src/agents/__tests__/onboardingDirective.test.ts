@@ -14,7 +14,7 @@ describe("buildOnboardingDirective", () => {
     const d = buildOnboardingDirective("client", { firstName: "Imran" });
     expect(d).toContain("save_onboarding_field");
     expect(d).toContain("the first and last name of the person who needs care");
-    expect(d).toContain("what kind of help is needed day to day");
+    expect(d).toContain("what type of care is needed");
     expect(d).toContain("which days of the week");
     // firstName is known → shown as known, not as still-needed
     expect(d).toMatch(/already have it[\s\S]*first name|first name[\s\S]*already have it/i);
@@ -144,6 +144,19 @@ describe("buildOnboardingDirective", () => {
     const d = buildOnboardingDirective("client", {}).toLowerCase();
     expect(d).toContain("one question per message");
     expect(d).toContain("never send a numbered list");
+  });
+
+  it("care types = the website's eight by name, only those, read back, medical never a need, no sweep; the description carries the public-post warning (2026-10-04)", () => {
+    const d = buildOnboardingDirective("client", { firstName: "Imran", seniorName: "Dorothy" }).toLowerCase();
+    expect(d).toContain("mobility assistance\ndementia / memory care\nmedication reminders only\npersonal care\ncompanionship\ntransportation\nmeal preparation\nlight housekeeping");
+    expect(d).toContain("read back");
+    expect(d).toContain("is not saved");
+    expect(d).toContain("reminding when it's time, not giving them");
+    expect(d).toContain("never suggest they put medical details anywhere else");
+    expect(d).toContain("no follow-up sweep");
+    expect(d).toContain("caregivers browsing jobs can read it");
+    expect(d).toContain("never suggest what to put in it");
+    expect(d).not.toContain("weave two or three natural examples");
   });
 });
 

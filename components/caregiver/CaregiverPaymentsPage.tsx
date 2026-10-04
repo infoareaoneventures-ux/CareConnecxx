@@ -1,9 +1,10 @@
+import { serviceLabel } from './signup/constants';
 import React, { useState, useEffect, useMemo } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import {
   Zap, CheckCircle2, AlertCircle, Lock,
   ExternalLink, Calendar, DollarSign, FileDown,
-  ShieldCheck, RefreshCw, XCircle, ChevronDown, ChevronUp, X, CheckCircle, Car,
+  ChevronDown, ChevronUp, X, CheckCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CaregiverTopNav } from './CaregiverTopNav';
@@ -12,21 +13,14 @@ import { InstantPayoutModal } from './InstantPayoutModal';
 import { CompletedShift, SubmitShiftHoursModal } from '../payroll/SubmitShiftHoursModal';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { shiftHoursService, dbService } from '../../services/api';
-import { checkOnboardingStatus, requestInstantPayout, getPayoutBalance, getSubscriptionStatus, getCaregiverBillingPortalUrl } from '../../services/stripeService';
+import { checkOnboardingStatus, requestInstantPayout, getPayoutBalance } from '../../services/stripeService';
 import { db } from '../../lib/firebase';
 import type { Caregiver } from '../../types';
 import { paymentMethodLabel } from '../../types';
-import { hasValidTransportDocs } from '../../utils/transportDocs';
 
 // ── types ───────────────────────────────────────────────────────────────────
 
-type Tab = 'timesheets' | 'payouts' | 'membership';
-
-interface SubscriptionInfo {
-  status: string | null;
-  currentPeriodEnd: Date | null;
-  cancelAtPeriodEnd: boolean;
-}
+type Tab = 'timesheets' | 'payouts';
 
 interface LineItem {
   type: string;
@@ -1123,7 +1117,7 @@ const ShiftDetailModal: React.FC<{ shiftId: string; onClose: () => void }> = ({ 
                                   <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
                                     <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
                                       <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
-                                      <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{cat}</p>
+                                      <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{serviceLabel(cat)}</p>
                                       {subs.length > 0 && doneSubCount > 0 && (
                                         <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subs.length}</span>
                                       )}
@@ -1324,17 +1318,21 @@ const SubmittableShiftCard: React.FC<{
 // ── main page ─────────────────────────────────────────────────────────────────
 
 export const CaregiverPaymentsPage: React.FC = () => {
-  const { currentUser, addToast, setMembershipModalOpen } = useCareConnex();
+  const { currentUser, addToast } = useCareConnex();
   const navigate = useNavigate();
   const uid = currentUser?.uid ?? '';
 
-  // Deep-linkable via ?tab=payouts|timesheets|membership — the "Set up payouts"
-  // checklist CTA (CaregiverOnboardingDashboard.tsx) sends caregivers straight
-  // here rather than making them find the tab themselves.
+  // Deep-linkable via ?tab=payouts|timesheets — the "Set up payouts" checklist
+  // CTA (CaregiverOnboardingDashboard.tsx) sends caregivers straight here. The
+  // old ?tab=membership moved to Account Settings › Membership & verification
+  // (2026-10-04) and redirects there.
   const initialTab = (() => {
     const t = new URLSearchParams(window.location.search).get('tab');
-    return (t === 'payouts' || t === 'timesheets' || t === 'membership') ? t : 'timesheets';
+    return (t === 'payouts' || t === 'timesheets') ? t : 'timesheets';
   })();
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('tab') === 'membership') navigate('/caregiver/settings', { replace: true });
+  }, [navigate]);
   const [tab, setTab] = useState<Tab>(initialTab);
   const [tsFilter, setTsFilter] = useState<'unsubmitted' | 'pending' | 'history'>('unsubmitted');
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
@@ -1359,11 +1357,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const [liveBalance, setLiveBalance] = useState<{ instantAvailable: number; pending: number } | null>(null);
   const [openingDashboard, setOpeningDashboard] = useState(false);
   const [liveBalanceLoading, setLiveBalanceLoading] = useState(false);
-
-  // Membership tab state
-  const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
-  const [subLoading, setSubLoading] = useState(false);
-  const [managing, setManaging] = useState(false);
 
   // ── data subscriptions ──────────────────────────────────────────────────────
 
@@ -1409,16 +1402,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
     });
     return () => { active = false; try { (unsub as any)?.(); } catch {} };
   }, [uid]);
-
-  // Load membership subscription details when tab opens
-  useEffect(() => {
-    if (tab !== 'membership' || subscription !== null) return;
-    setSubLoading(true);
-    getSubscriptionStatus()
-      .then(s => setSubscription({ status: s.status, currentPeriodEnd: s.currentPeriodEnd, cancelAtPeriodEnd: s.cancelAtPeriodEnd }))
-      .catch(() => setSubscription({ status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false }))
-      .finally(() => setSubLoading(false));
-  }, [tab, subscription]);
 
   // On return from Stripe onboarding, force a status refresh
   useEffect(() => {
@@ -1638,29 +1621,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
     }
   };
 
-  const handleManageMembership = async () => {
-    setManaging(true);
-    try {
-      const url = await getCaregiverBillingPortalUrl();
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (e: any) {
-      const code = e?.code as string | undefined;
-      let msg = 'Could not open billing portal. Please try again.';
-      if (code === 'functions/not-found' || e?.message?.includes('No billing account')) {
-        msg = 'No billing account found. Please purchase a membership first.';
-      } else if (code === 'functions/unauthenticated') {
-        msg = 'Please log in to manage your membership.';
-      } else if (code === 'functions/internal' || code === 'internal') {
-        msg = 'Billing portal unavailable right now. Please try again later.';
-      } else if (e?.message && !['internal', 'unknown'].includes(e.message)) {
-        msg = e.message;
-      }
-      addToast(msg, 'error');
-    } finally {
-      setManaging(false);
-    }
-  };
-
   // ── render ────────────────────────────────────────────────────────────────
 
   if (!uid) return null;
@@ -1678,7 +1638,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
           {([
             { id: 'timesheets',  label: 'Timesheets',  badge: actionCount },
             { id: 'payouts',     label: 'Payouts',     badge: 0 },
-            { id: 'membership',  label: 'Membership',  badge: 0 },
           ] as { id: Tab; label: string; badge: number }[]).map(t => (
             <button
               key={t.id}
@@ -2080,26 +2039,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
           </div>
         )}
 
-        {/* ── MEMBERSHIP TAB ────────────────────────────────────────────── */}
-        {tab === 'membership' && (
-          <div className="space-y-4">
-            <MembershipCard
-              profile={profile}
-              subscription={subscription}
-              loading={subLoading}
-              onRefresh={() => { setSubscription(null); }}
-              onGetMembership={() => setMembershipModalOpen(true)}
-              onManage={handleManageMembership}
-              managing={managing}
-            />
-            <ApprovedDriverCard
-              isApprovedDriver={(profile as any)?.isApprovedDriver === true}
-              badgeLive={hasValidTransportDocs(profile as any)}
-              mvrPending={(profile as any)?.mvrStatus === 'pending' || ((profile as any)?.mvrPaid === true && (profile as any)?.isApprovedDriver !== true)}
-              offersTransportation={((profile as any)?.services || (profile as any)?.skills || []).includes('Transportation')}
-            />
-          </div>
-        )}
       </div>
 
       {/* Modals */}
@@ -2112,235 +2051,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
         />
       )}
     </div>
-  );
-};
-
-// ── ApprovedDriverCard ─────────────────────────────────────────────────────────
-// Surfaces the caregiver's Approved Driver (MVR) status. The flat membership
-// covers the driving record check (founder, 2026-09-25), so there is nothing to
-// buy here any more: it runs with the background check when Transportation is
-// on the profile, or on its own when transportation is added later.
-
-interface ApprovedDriverCardProps {
-  isApprovedDriver: boolean;
-  /** The badge families actually see needs the documents approved too (utils/transportDocs). */
-  badgeLive: boolean;
-  mvrPending: boolean;
-  offersTransportation: boolean;
-}
-const ApprovedDriverCard: React.FC<ApprovedDriverCardProps> = ({
-  isApprovedDriver, badgeLive, mvrPending, offersTransportation,
-}) => {
-  if (isApprovedDriver && !badgeLive) {
-    // The driving record cleared but a document is still missing / unapproved — the
-    // badge is not visible yet, so don't say it is (2026-10-03).
-    return (
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-        <div className="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
-          <Car className="w-5 h-5 text-blue-600" />
-        </div>
-        <div className="flex-1">
-          <p className="font-semibold text-slate-900 text-sm">Driving record cleared</p>
-          <p className="text-xs text-slate-500">Your transportation badge turns on once your driver's license, insurance and registration are approved.</p>
-        </div>
-      </div>
-    );
-  }
-  if (isApprovedDriver) {
-    return (
-      <div className="bg-white rounded-2xl border border-blue-200 p-5 flex items-center gap-3">
-        <div className="w-11 h-11 bg-blue-500 rounded-xl flex items-center justify-center flex-shrink-0">
-          <Car className="w-5 h-5 text-white" />
-        </div>
-        <div className="flex-1">
-          <p className="font-semibold text-slate-900 text-sm flex items-center gap-1.5">
-            Approved Driver <CheckCircle className="w-4 h-4 text-blue-600" />
-          </p>
-          <p className="text-xs text-slate-500">Families who need a driver can see your verified-driver badge.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (mvrPending) {
-    return (
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-        <div className="w-11 h-11 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
-          <Car className="w-5 h-5 text-slate-400" />
-        </div>
-        <div className="flex-1">
-          <p className="font-semibold text-slate-900 text-sm">Driver check in progress</p>
-          <p className="text-xs text-slate-500">Your Motor Vehicle Report is being reviewed. We'll activate your Approved Driver badge once it clears.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (offersTransportation) {
-    return (
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-        <div className="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
-          <Car className="w-5 h-5 text-blue-600" />
-        </div>
-        <div className="flex-1">
-          <p className="font-semibold text-slate-900 text-sm">Driving record check included</p>
-          <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-            Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears — no extra charge.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-      <div className="w-11 h-11 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
-        <Car className="w-5 h-5 text-slate-400" />
-      </div>
-      <div className="flex-1">
-        <p className="font-semibold text-slate-900 text-sm">Offer transportation?</p>
-        <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-          Add Transportation to your services and upload your driver's license, insurance, and registration. Your membership already covers the driving record check.
-        </p>
-      </div>
-    </div>
-  );
-};
-
-// ── MembershipCard ────────────────────────────────────────────────────────────
-
-const STATUS_BADGE: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-  active:         { label: 'Active',          color: 'text-green-700',  bg: 'bg-green-50 border-green-200',  icon: <CheckCircle2 className="w-4 h-4 text-green-600" /> },
-  trialing:       { label: 'Trial',           color: 'text-blue-700',   bg: 'bg-blue-50 border-blue-200',    icon: <ShieldCheck className="w-4 h-4 text-blue-600" /> },
-  past_due:       { label: 'Payment due',     color: 'text-amber-700',  bg: 'bg-amber-50 border-amber-200',  icon: <AlertCircle className="w-4 h-4 text-amber-600" /> },
-  payment_failed: { label: 'Payment failed',  color: 'text-red-700',    bg: 'bg-red-50 border-red-200',      icon: <XCircle className="w-4 h-4 text-red-600" /> },
-  canceled:       { label: 'Canceled',        color: 'text-slate-600',  bg: 'bg-slate-50 border-slate-200',  icon: <XCircle className="w-4 h-4 text-slate-400" /> },
-};
-
-interface MembershipCardProps {
-  profile: Caregiver | null;
-  subscription: SubscriptionInfo | null;
-  loading: boolean;
-  onRefresh: () => void;
-  onGetMembership: () => void;
-  onManage: () => Promise<void>;
-  managing: boolean;
-}
-
-const MembershipCard: React.FC<MembershipCardProps> = ({
-  profile, subscription, loading, onRefresh, onGetMembership, onManage, managing,
-}) => {
-  const status = profile?.membershipStatus as string | undefined;
-  const isActive = status === 'active' || status === 'trialing';
-  const badge = status ? STATUS_BADGE[status] : null;
-
-  const renewalDate = subscription?.currentPeriodEnd
-    ? subscription.currentPeriodEnd.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-    : null;
-
-  if (loading) {
-    return (
-      <div className="bg-white rounded-2xl border border-slate-200 p-8 flex items-center justify-center gap-2 text-slate-400 text-sm">
-        <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
-      </div>
-    );
-  }
-
-  if (!isActive) {
-    return (
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
-        <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-          <ShieldCheck className="w-7 h-7 text-slate-400" />
-        </div>
-        <h3 className="font-bold text-slate-900 mb-1">No active membership</h3>
-        <p className="text-sm text-slate-500 mb-5">
-          {status === 'canceled'
-            ? 'Your membership was canceled. Renew to access jobs and platform features.'
-            : 'Activate your membership to start accepting bookings and applying for jobs.'}
-        </p>
-        <button
-          onClick={onGetMembership}
-          className="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-xl transition-colors"
-        >
-          Activate Membership
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      {/* Status hero */}
-      <div className="bg-gradient-to-br from-primary-600 to-blue-700 rounded-3xl p-6 text-white relative overflow-hidden">
-        <div className="absolute right-4 top-4 opacity-10">
-          <ShieldCheck size={100} />
-        </div>
-        <div className="relative z-10">
-          <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-semibold mb-3 ${badge ? badge.bg + ' ' + badge.color : 'bg-white/20 text-white border-white/20'}`}>
-            {badge?.icon}
-            {badge?.label ?? status}
-          </div>
-          <p className="text-white/70 text-sm mb-0.5">Evia Membership</p>
-          {/* No hardcoded amount here — members on the legacy $66.49 price and the
-              current flat $69.99 price both land on this page; exact billing lives in
-              the Stripe portal via Manage. */}
-          <p className="text-2xl font-bold">Annual plan</p>
-          {subscription?.cancelAtPeriodEnd ? (
-            <p className="text-sm text-amber-200 mt-2">
-              ⚠ Cancels on {renewalDate ?? '—'}
-            </p>
-          ) : renewalDate ? (
-            <p className="text-sm text-white/60 mt-2 flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5" /> Renews {renewalDate}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      {/* What's included */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5">
-        <p className="font-bold text-slate-900 mb-3">What's included</p>
-        <ul className="space-y-2.5">
-          {[
-            'Keep 100% of your rate on every booking — families pay the service fee',
-            'Access all job postings and apply instantly',
-            'Background check badge on your profile',
-            'Messaging',
-          ].map(item => (
-            <li key={item} className="flex items-start gap-2.5 text-sm text-slate-700">
-              <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
-              {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* Manage */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center justify-between gap-4">
-        <div>
-          <p className="font-semibold text-slate-900 text-sm">Manage membership</p>
-          <p className="text-xs text-slate-500 mt-0.5">Update payment method, cancel, or view invoices via Stripe.</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={onRefresh}
-            disabled={loading}
-            className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-40"
-            title="Refresh status"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            onClick={onManage}
-            disabled={managing}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors disabled:opacity-60"
-          >
-            {managing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
-            {managing ? 'Opening…' : 'Manage'}
-          </button>
-        </div>
-      </div>
-    </>
   );
 };
 

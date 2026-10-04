@@ -26,8 +26,9 @@ import { listClientInterviews } from "../agents/interviewsTab";
 import { presentCaregiverSearch, searchCaregivers } from "../agents/caregiverSearch";
 import {
   readCarePlanPage, resolveRecipient, savePlanSection, setRecipientLocation, addRecipient, removeRecipient,
-  saveEmergencyContacts, confirmCarePlanReviewed, toCareType, CARE_NEED_SUBS,
+  saveEmergencyContacts, confirmCarePlanReviewed, toCareType,
 } from "../agents/carePlanPage";
+import { SERVICE_LABELS as CARE_TYPE_LABELS } from "../agents/caregiverServiceLabels";
 import { cancelVisit, cancelWholeBooking, cancelPendingRequest, cancelPendingAmendment, withdrawReplacementRequest } from "../agents/bookingCancel";
 import { createScheduleAmendment, loadCaregiverAvailability, checkVisitBlock, normDayAbbr, blockToRange, describeBlock, describeRange, ABBR_TO_FULL as VISIT_DAY_FULL, type TimeBlock as VisitTimeBlock } from "../agents/visitRequest";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
@@ -77,6 +78,7 @@ import { resolveCaregiverRate as resolveCaregiverRateShared } from "../utils/car
 // with the scripted bookingFlow.ts, which owns the whole booking conversation
 // and the site's Send Booking write since 2026-09-17).
 import { bookingTimeToMinutes } from "../agents/bookingResolution";
+import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from "../utils/medicationInstruction";
 
 // Resolve caregiver name + hourly rate from the caregiver doc. Mirrors the
 // name fallbacks used by the live `request_booking` path (name/fullName) so a
@@ -757,8 +759,8 @@ export const MCP_TOOLS: McpTool[] = [
       "else too (\"I also look after my dad\"). The form REQUIRES first name, relationship (Myself / Parent / Grandparent / Spouse / " +
       "Sibling / Other) and a care location with a street address (pick one already on file from get_care_plan's locationPool, or " +
       "give a new street/city/state/zip); it also takes care needs (the page's fixed pills: Mobility Assistance, Dementia / Memory " +
-      "Care, Medication Reminders, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping) with optional " +
-      "sub-tasks, and a note. Collect what's missing conversationally, read it back, then call. Non-medical: never record " +
+      "Care, Medication Reminders Only, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping — nothing " +
+      "underneath), and a note. Collect what's missing conversationally, read it back, then call. Non-medical: never record " +
       "medications, diagnoses or conditions. Only for a NEW recipient — edits go through update_care_plan.",
     input_schema: {
       type: "object",
@@ -771,7 +773,6 @@ export const MCP_TOOLS: McpTool[] = [
         relationship:    { type: "string", description: "Myself, Parent, Grandparent, Spouse, Sibling or Other (required)." },
         age:             { type: ["number", "string"], description: "Age, if known." },
         careNeeds:       { type: "array", items: { type: "string" }, description: "Care needs from the page's list." },
-        careNeedDetails: { type: "object", description: "Optional sub-tasks per need, e.g. { \"Meal Preparation\": [\"Breakfast\"] }." },
         notes:           { type: "string", description: "The Notes section, if the family gave one." },
         location:        { type: "object", description: "Care location: { street, city, state, zipCode } — street is required.", properties: { street: { type: "string" }, city: { type: "string" }, state: { type: "string" }, zipCode: { type: "string" } } },
       },
@@ -824,11 +825,6 @@ export const MCP_TOOLS: McpTool[] = [
         title:         { type: "string", description: "Job title shown to caregivers, 10-80 characters — same field as the website's 'Job title' box." },
         notes:         { type: "string", description: "Description of the job, 50-2500 characters — what a caregiver should know (responsibilities, tasks, etc.). Same as the website's required 'Details' field; never accept phone numbers or emails here." },
         careTypes:     { type: "array", items: { type: "string" } },
-        careNeedDetails: {
-          type: "object",
-          description: "Optional sub-tasks per care type, e.g. { \"Mobility Assistance\": [\"Ambulation\", \"Transfer Assist\"] } — same as the website's sub-task checkboxes under each care type.",
-          additionalProperties: { type: "array", items: { type: "string" } },
-        },
         frequency:     { type: "string", description: "e.g. 'weekly', 'one-time'" },
         days:          { type: "array", items: { type: "string" } },
         timeOfDay:     { type: "array", items: { type: "string" } },
@@ -929,8 +925,8 @@ export const MCP_TOOLS: McpTool[] = [
     name: "update_care_plan",
     description:
       "Edit one section of the website's Care Plan page for one care recipient — the pencil on that section: " +
-      "'careNeeds' (the fixed pills; removing a need also drops its sub-tasks, like the page), 'careNeedDetails' (sub-tasks " +
-      "under a selected need, e.g. Meal Preparation → Breakfast), 'notes', 'lifestyle' (pass only the fields changing), " +
+      "'careNeeds' (the page's eight pills — Mobility Assistance, Dementia / Memory Care, Medication Reminders Only, Personal Care, " +
+      "Companionship, Transportation, Meal Preparation, Light Housekeeping; nothing underneath), 'notes', 'lifestyle' (pass only the fields changing), " +
       "'careLocation' (street/city/state/zipCode — an address already in locationPool is reused, a new one is geocoded and " +
       "added to the pool), 'emergencyContacts' (the Emergency Contacts card — items {name, relation, phone, isPrimary}; the " +
       "card holds at most 2 contacts including the signup contact; phone must be 10+ digits), or 'reviewed' (the 'Looks good' " +
@@ -941,10 +937,10 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-        field:    { type: "string", enum: ["careNeeds", "careNeedDetails", "notes", "lifestyle", "careLocation", "emergencyContacts", "reviewed"], description: "Which section to edit." },
+        field:    { type: "string", enum: ["careNeeds", "notes", "lifestyle", "careLocation", "emergencyContacts", "reviewed"], description: "Which section to edit." },
         value:    {
           description:
-            "careNeeds: array of pills (set) or one pill (append/remove). careNeedDetails: { \"<need>\": [sub-tasks] } (set/append/remove on that need). " +
+            "careNeeds: array of pills (set) or one pill (append/remove) — names or the family's words ('bathing' is Personal Care). " +
             "notes: string. lifestyle: partial object of {favoriteActivities[], favoriteActivitiesOther, helpActivities[], entertainment[], entertainmentOther, " +
             "enjoysConversation, prefersQuiet, familyInArea, familyVisitFreq, friendsVisitors, friendsVisitFreq, hasAppointments, appointmentsDetails}. " +
             "careLocation: {street, city, state, zipCode}. emergencyContacts: array (set) or one contact (append/remove) of {name, relation, phone, isPrimary}. reviewed: true.",
@@ -958,7 +954,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_caregiver_profile",
     description:
-      "Update your own caregiver profile — hourly rate, bio, gender, address (street / zipCode / city / state — a 5-digit zipCode fills city and state like the page's ZIP lookup), or weekly availability. " +
+      "Update your own caregiver profile — the My Profile page's fields: hourlyRate (1 person), rateFor2Seniors, rateFor3PlusSeniors (any amount above $0 — the caregiver's to set), yearsExperience (one of the five buckets), " +
+      "maxClients ('1' | '2' | '3+'), languages (from the page's six), jobType (occasional | part-time | full-time), serviceRadius (5 | 10 | 15 | 25 | 50 miles), bio; " +
+      "and Account Settings' gender and address (street / zipCode / city / state — a 5-digit zipCode fills city and state like the page's ZIP lookup). Weekly availability goes through update_caregiver_availability. " +
       "Only you can update your own profile. Changes take effect immediately. To change your " +
       "PHONE NUMBER, pass requestPhoneChange:true instead of a new number — login here is by " +
       "phone number, so it emails a secure link to the address on file and the new number is " +
@@ -967,7 +965,14 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         caregiverId:        { type: "string",  description: "Your caregiver Firestore document ID" },
-        hourlyRate:         { type: "number",  description: "Your new hourly rate in dollars" },
+        hourlyRate:         { type: "number",  description: "Rate for 1 person, in dollars — any amount above $0 (the caregiver's to set)" },
+        rateFor2Seniors:    { type: "number",  description: "Rate for 2 people — any amount above $0, or 0 to clear" },
+        rateFor3PlusSeniors:{ type: "number",  description: "Rate for 3+ people — any amount above $0, or 0 to clear" },
+        yearsExperience:    { type: "string",  description: "One of: < 1 year, 1-2 years, 3-5 years, 5-10 years, 10+ years (a number of years is bucketed)" },
+        maxClients:         { type: "string",  description: "Max clients at once: '1', '2' or '3+'" },
+        languages:          { type: "array", items: { type: "string" }, description: "Languages spoken — from the page's list: English, Spanish, French, Mandarin, Vietnamese, Tagalog" },
+        jobType:            { type: "string",  description: "Looking for: occasional, part-time or full-time (one)" },
+        serviceRadius:      { type: "number",  description: "Willing to travel within: 5, 10, 15, 25 or 50 miles" },
         bio:                { type: "string",  description: "Your updated bio (max 2500 characters)" },
         phone:              { type: "string",  description: "Your current session phone; used to verify account ownership and never changed by this tool" },
         requestPhoneChange: { type: "boolean", description: "Set true to start a phone number change (see description) — a request flag, not the new number itself" },
@@ -1211,15 +1216,33 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_membership",
     description:
-      "The caregiver Payments page's Membership tab, TEXTED by the tool itself (agents/caregiverMembership.ts): the status badge (Active / Trial — or No active membership with the page's sentence), Evia Membership — Annual plan, Renews <date> or ⚠ Cancels on <date>, What's included, the Manage-via-Stripe line, and the Approved Driver card. " +
-      "manageLink:true texts the page's Manage button — a signed-in Stripe Billing Portal link (update payment method, cancel, invoices). activate:true texts the page's Activate Membership checkout link (refused with a pointer to Manage when already active). " +
-      "Call it for 'my membership', 'when does my membership renew', 'cancel my membership', 'update my card', 'my invoices', 'am I an approved driver'. Send nothing else this turn.",
+      "Account Settings › Membership & verification, TEXTED by the tool itself (agents/caregiverMembership.ts; moved from the Payments page 2026-10-04): the membership (Active / Trial badge or No active membership, Annual plan, Renews <date> or ⚠ Cancels on <date>, What's included, the Manage-via-Stripe line), the background check (authorize / cleared <date> + next check with the renewal / in progress / not approved / not started), and the driving record card. " +
+      "manageLink:true texts the page's Manage button — a signed-in Stripe Billing Portal link (update payment method, cancel, invoices). activate:true texts the page's Activate Membership checkout link (refused with a pointer to Manage when already active). authorizeLink:true texts the background-check card's Authorize button — the FCRA consent page (refused with the current state when no authorization is waiting). " +
+      "Call it for 'my membership', 'when does my membership renew', 'cancel my membership', 'update my card', 'my invoices', 'my background check', 'when is my next background check', 'am I an approved driver'. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
         manageLink:  { type: "boolean", description: "Text the signed-in Stripe Billing Portal link instead of the tab (the Manage button)" },
-        activate:    { type: "boolean", description: "Text the membership checkout link instead of the tab (the Activate Membership button)" },
+        activate:    { type: "boolean", description: "Text the membership checkout link instead of the section (the Activate Membership button)" },
+        authorizeLink: { type: "boolean", description: "Text the background-check consent page instead of the section (the Authorize button)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "show_my_profile",
+    description:
+      "The caregiver's own My Profile page (/caregiver/profile), TEXTED by the tool itself (agents/caregiverMyProfile.ts): hero (photo, Verified/Pending, name, " +
+      "stars, city, rate, Transportation chip), About (bio + languages), Care Services, Rates (1 / 2 / 3+ people, experience, max clients), Weekly Availability " +
+      "(Looking for + the grid), Location & Travel, Reviews. Call when the caregiver asks to see her profile or what families see. " +
+      "edit starts the page's Edit button as a flow (texted by the tool): photo (upload link), bio, languages, services, rates, jobtype (Looking for), availability (the grid), travel. " +
+      "Send nothing else that turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        edit:        { type: "string", enum: ["photo", "bio", "languages", "services", "rates", "jobtype", "availability", "travel"], description: "Start this section's Edit instead of texting the page" },
       },
       required: ["caregiverId"],
     },
@@ -2439,6 +2462,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "search_memory",
   "show_membership",
   "show_account_settings",
+  "show_my_profile",
   "request_email_change",
   "contact_support",
   "get_notifications",
@@ -3440,7 +3464,7 @@ async function executeToolCall(
         if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:get_membership_page" } }).catch(() => {});
         const { readMembershipPage } = await import("../agents/membershipPage");
-        // Families only — the caregiver Payments › Membership tab is show_membership.
+        // Families only — the caregiver's Settings › Membership & verification is show_membership.
         const page = await readMembershipPage(input.userId as string);
         return {
           success: true, ...page, page: "Membership", url: `${getAppUrl()}/client/membership`,
@@ -4492,7 +4516,7 @@ async function executeToolCall(
       const { clientId, field, value, action, recipientFirstName } = input as {
         clientId: string; field: string; value: unknown; action: "set" | "append" | "remove"; recipientFirstName?: string;
       };
-      const ALLOWED_FIELDS = ["careNeeds", "careNeedDetails", "notes", "lifestyle", "careLocation", "emergencyContacts", "reviewed"];
+      const ALLOWED_FIELDS = ["careNeeds", "notes", "lifestyle", "careLocation", "emergencyContacts", "reviewed"];
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
       if (!ALLOWED_FIELDS.includes(field)) {
         return { success: false, error: `Field '${field}' is not on the Care Plan page. Sections: ${ALLOWED_FIELDS.join(", ")}` };
@@ -4554,38 +4578,19 @@ async function executeToolCall(
 
       if (field === "careNeeds") {
         const pills = (Array.isArray(value) ? value : [value]).map((v) => toCareType(String(v)));
-        if (pills.some((p) => !p)) return toolError("INVALID_INPUT", `Care needs must be from the page's list: ${Object.keys(CARE_NEED_SUBS).join(", ")}`);
+        if (pills.some((p) => !p)) return toolError("INVALID_INPUT", `Care needs must be from the page's list: ${CARE_TYPE_LABELS.join(", ")}`);
         let careNeeds: string[];
         if (action === "append") careNeeds = Array.from(new Set([...plan.careNeeds, ...(pills as string[])]));
         else if (action === "remove") careNeeds = plan.careNeeds.filter((n) => !(pills as string[]).includes(n));
         else careNeeds = Array.from(new Set(pills as string[]));
-        // Dropping a need drops its sub-tasks, exactly like the page's toggle.
-        const careNeedDetails = Object.fromEntries(Object.entries(plan.careNeedDetails ?? {}).filter(([need]) => careNeeds.includes(need)));
+        const careNeedDetails: Record<string, string[]> = {}; // no sub-tasks since 2026-10-04
         const updated = await savePlanSection(clientId, recipient, { careNeeds, careNeedDetails });
         logAudit({ eventType: "senior_profile_updated", userId: clientId, data: { source: "mcp:update_care_plan", field, action, recipient: recipient.key } }).catch(() => {});
-        return { success: true, updated: field, action, recipient: recipient.name, careNeeds: updated.careNeeds, careNeedDetails: updated.careNeedDetails };
-      }
-
-      if (field === "careNeedDetails") {
-        if (typeof value !== "object" || value === null || Array.isArray(value)) return toolError("INVALID_INPUT", "careNeedDetails needs { \"<need>\": [sub-tasks] }");
-        const details: Record<string, string[]> = { ...(plan.careNeedDetails ?? {}) };
-        for (const [rawNeed, rawSubs] of Object.entries(value as Record<string, unknown>)) {
-          const need = toCareType(rawNeed);
-          if (!need) return toolError("INVALID_INPUT", `"${rawNeed}" isn't one of the page's care needs`);
-          if (!plan.careNeeds.includes(need)) return toolError("INVALID_INPUT", `${need} isn't selected for ${recipient.name} — add it to careNeeds first (the page only shows sub-tasks under a selected need)`);
-          const allowed = CARE_NEED_SUBS[need] ?? [];
-          const subs = (Array.isArray(rawSubs) ? rawSubs : [rawSubs]).map(String);
-          const bad = subs.find((x) => !allowed.includes(x));
-          if (bad) return toolError("INVALID_INPUT", `"${bad}" isn't a sub-task the page offers under ${need}: ${allowed.join(", ")}`);
-          const cur = details[need] ?? [];
-          details[need] = action === "append" ? Array.from(new Set([...cur, ...subs])) : action === "remove" ? cur.filter((x) => !subs.includes(x)) : subs;
-        }
-        const updated = await savePlanSection(clientId, recipient, { careNeedDetails: details });
-        logAudit({ eventType: "senior_profile_updated", userId: clientId, data: { source: "mcp:update_care_plan", field, action, recipient: recipient.key } }).catch(() => {});
-        return { success: true, updated: field, action, recipient: recipient.name, careNeedDetails: updated.careNeedDetails };
+        return { success: true, updated: field, action, recipient: recipient.name, careNeeds: updated.careNeeds };
       }
 
       if (field === "notes") {
+        if (isMedicationInstruction(value)) return { success: false, error: MEDICATION_INSTRUCTION_MESSAGE, sayVerbatim: true };
         const updated = await savePlanSection(clientId, recipient, { notes: String(value ?? "").trim() });
         logAudit({ eventType: "senior_profile_updated", userId: clientId, data: { source: "mcp:update_care_plan", field, recipient: recipient.key } }).catch(() => {});
         return { success: true, updated: field, action: "set", recipient: recipient.name, notes: updated.notes };
@@ -4609,7 +4614,7 @@ async function executeToolCall(
     // ── New write tools ────────────────────────────────────────────────────────
 
     if (name === "update_caregiver_profile") {
-      const { caregiverId, hourlyRate, bio, phone: actingPhone, requestPhoneChange, city, gender, street, zipCode, state } = input as Record<string, unknown>;
+      const { caregiverId, hourlyRate, rateFor2Seniors, rateFor3PlusSeniors, yearsExperience, maxClients, languages, jobType, serviceRadius, bio, phone: actingPhone, requestPhoneChange, city, gender, street, zipCode, state } = input as Record<string, unknown>;
       if (!caregiverId || !actingPhone) return toolError("INVALID_INPUT", "caregiverId and phone are required");
       const caregiverRef = db.collection("caregivers").doc(caregiverId as string);
       const caregiverSnap = await caregiverRef.get();
@@ -4652,14 +4657,47 @@ async function executeToolCall(
         return { success: true, sentTo: email };
       }
       if (bio && typeof bio === "string" && bio.length > 2500) return toolError("INVALID_INPUT", "bio must be 2500 characters or fewer");
-      if (hourlyRate != null) {
-        const rate = Number(hourlyRate);
-        if (!Number.isFinite(rate) || rate < 15 || rate > 150) {
-          return toolError("INVALID_INPUT", "hourlyRate must be between 15 and 150");
+      // The rate is the caregiver's to set (founder 2026-10-04): the 1-person rate is more than $0,
+      // 2 / 3+ people may be 0 (not offered). No floor, no ceiling — same as the wizard and the page.
+      const { RATE_RULE_TEXT, toExperienceBucket, toServiceRadius } = await import("../agents/onboardingContract");
+      for (const [key, v] of [["hourlyRate", hourlyRate], ["rateFor2Seniors", rateFor2Seniors], ["rateFor3PlusSeniors", rateFor3PlusSeniors]] as const) {
+        if (v == null) continue;
+        const rate = Number(v);
+        if (!Number.isFinite(rate) || rate < 0 || (key === "hourlyRate" && rate <= 0)) {
+          return toolError("INVALID_INPUT", key === "hourlyRate" ? RATE_RULE_TEXT : `${key} must be 0 (not offered) or a positive amount`);
         }
       }
       const patch: Record<string, unknown> = { updatedAt: nowIso };
-      if (hourlyRate         != null) patch.hourlyRate         = Number(hourlyRate);
+      if (hourlyRate          != null) patch.hourlyRate          = Number(hourlyRate);
+      if (rateFor2Seniors     != null) patch.rateFor2Seniors     = Number(rateFor2Seniors);
+      if (rateFor3PlusSeniors != null) patch.rateFor3PlusSeniors = Number(rateFor3PlusSeniors);
+      if (yearsExperience != null) {
+        const bucket = toExperienceBucket(yearsExperience);
+        if (!bucket) return toolError("INVALID_INPUT", "yearsExperience must be one of the page's buckets (< 1 year, 1-2 years, 3-5 years, 5-10 years, 10+ years)");
+        patch.yearsExperience = bucket; patch.experience = bucket; // the page writes both
+      }
+      if (maxClients != null) {
+        const { MAX_CLIENTS_OPTIONS } = await import("../agents/caregiverMyProfile");
+        if (!MAX_CLIENTS_OPTIONS.includes(String(maxClients))) return toolError("INVALID_INPUT", `maxClients must be one of: ${MAX_CLIENTS_OPTIONS.join(", ")}`);
+        patch.maxClients = String(maxClients);
+      }
+      if (languages != null) {
+        const { LANGUAGE_OPTIONS } = await import("../agents/caregiverMyProfile");
+        const list = (Array.isArray(languages) ? languages : [languages]).map((l) => LANGUAGE_OPTIONS.find((o) => o.toLowerCase() === String(l).trim().toLowerCase()));
+        if (!list.length || list.some((l) => !l)) return toolError("INVALID_INPUT", `languages must come from the page's list: ${LANGUAGE_OPTIONS.join(", ")}`);
+        patch.languages = LANGUAGE_OPTIONS.filter((o) => list.includes(o));
+      }
+      if (jobType != null) {
+        const { JOB_TYPE_OPTIONS } = await import("../agents/caregiverMyProfile");
+        const id = JOB_TYPE_OPTIONS.find((j) => j.id === String(jobType).trim().toLowerCase().replace(/[\s_]+/g, "-"))?.id;
+        if (!id) return toolError("INVALID_INPUT", "jobType must be occasional, part-time or full-time");
+        patch.jobTypes = [id]; // the page's single-choice pills, stored as a one-element array
+      }
+      if (serviceRadius != null) {
+        const r = toServiceRadius(serviceRadius);
+        if (!r) return toolError("INVALID_INPUT", "serviceRadius must be 5, 10, 15, 25 or 50 miles");
+        patch.serviceRadius = r;
+      }
       if (bio                != null) patch.bio                = bio;
       // Account Settings › Gender (the page's four options) and Address (the page's
       // saveAddress: street / zipCode / city / state + the "City, ST" location label;
@@ -4803,16 +4841,16 @@ async function executeToolCall(
     }
 
     if (name === "create_senior_profile") {
-      const { clientId, name: fullName, firstName, lastName, relationship, age, careNeeds, careNeedDetails, notes, location } = input as Record<string, unknown>;
+      const { clientId, name: fullName, firstName, lastName, relationship, age, careNeeds, notes, location } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
       const [fromFullFirst, ...fromFullRest] = String(fullName ?? "").trim().split(/\s+/).filter(Boolean);
       const first = String(firstName ?? fromFullFirst ?? "").trim();
       const last = String(lastName ?? fromFullRest.join(" ") ?? "").trim();
       const loc = (location && typeof location === "object" ? location : {}) as Record<string, unknown>;
+      if (isMedicationInstruction(notes)) return { success: false, error: MEDICATION_INSTRUCTION_MESSAGE, sayVerbatim: true };
       const r = await addRecipient(clientId as string, {
         firstName: first, lastName: last, relationship: String(relationship ?? ""), age: (age as string | number | undefined) ?? "",
         careNeeds: Array.isArray(careNeeds) ? (careNeeds as string[]) : [],
-        careNeedDetails: careNeedDetails && typeof careNeedDetails === "object" ? (careNeedDetails as Record<string, string[]>) : undefined,
         notes: typeof notes === "string" ? notes : "",
         location: { street: String(loc.street ?? ""), city: String(loc.city ?? ""), state: String(loc.state ?? ""), zipCode: String(loc.zipCode ?? "") },
       });
@@ -4859,7 +4897,7 @@ async function executeToolCall(
 
     if (name === "create_job_post") {
       const {
-        clientId, title, notes, careTypes, careNeedDetails, frequency, days, timeOfDay, hourlyRate, streetAddress,
+        clientId, title, notes, careTypes, frequency, days, timeOfDay, hourlyRate, streetAddress,
         zipCode, startDate, endDate, careLevel, minHoursPerWeek, caregiversNeeded, careRecipients,
       } = input as Record<string, unknown>;
       // The page's "New Request" button runs gate('booking') (PostsPage.tsx / ClientDashboard.tsx).
@@ -4880,6 +4918,7 @@ async function executeToolCall(
       if (typeof notes !== "string" || notes.trim().length < 50 || notes.trim().length > 2500) {
         return toolError("INVALID_INPUT", "notes (job description) is required, 50-2500 characters");
       }
+      if (isMedicationInstruction(notes)) return { success: false, error: MEDICATION_INSTRUCTION_MESSAGE, sayVerbatim: true };
       if (!Array.isArray(careTypes) || careTypes.length === 0 || !zipCode) {
         return toolError("INVALID_INPUT", "clientId, careTypes (non-empty), and zipCode are required");
       }
@@ -4923,7 +4962,7 @@ async function executeToolCall(
       // recipient this job covers, not just new ones — mirrorJobPostRecipientsToWeb
       // already safely no-ops the roster write for someone who matches the
       // existing primary recipient, while still syncing their care plan
-      // (careNeeds/careNeedDetails/notes) to this job post. Before 2026-09-07
+      // (careNeeds/notes) to this job post. Before 2026-09-07
       // this only ran when careRecipients held a brand-new person, so an
       // existing-only recipient's care plan (and Notes) never got this job
       // post's details at all.
@@ -4932,7 +4971,6 @@ async function executeToolCall(
           uid:             clientId as string,
           careRecipients:  careRecipients as { firstName: string; lastName?: string; relationship?: string }[],
           careTypes:       careTypes as string[],
-          careNeedDetails: (careNeedDetails ?? undefined) as Record<string, unknown> | undefined,
           description:     (notes as string).trim(),
           streetAddress:   (streetAddress ?? undefined) as string | undefined,
           city:            place?.city,
@@ -5305,6 +5343,23 @@ async function executeToolCall(
     }
 
     // ── Account Settings (2026-10-03): the page texted whole; Resend = the page's queue action; Upload = the tokened page ──
+    // ── My Profile (2026-10-04): the page texted whole; edit = the page's Edit buttons as flows ──
+    if (name === "show_my_profile") {
+      const { caregiverId, edit, phone: mpPhone } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
+      const sess = await findCaregiverSession(caregiverId as string, mpPhone);
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      const mp = await import("../agents/caregiverMyProfile");
+      if (typeof edit === "string" && edit) {
+        const sessSnap = await db.collection("agent_sessions").doc(sess.phone).get();
+        await mp.startMyProfileEdit(edit as import("../agents/caregiverMyProfile").MyProfileEdit, sess.phone, sess.chatId, caregiverId as string, (sessSnap.data() ?? {}) as Record<string, unknown>);
+        return { success: true, edit, note: "The section's first question (or the upload link) was texted — send nothing else this turn." };
+      }
+      const r = await mp.sendMyProfile(sess.chatId, caregiverId as string);
+      return { success: true, ...r, note: "The My Profile page was texted — send nothing else this turn." };
+    }
+
     if (name === "show_account_settings") {
       const { caregiverId, resendEmailLink, documentsLink, phone: asPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
@@ -5324,9 +5379,9 @@ async function executeToolCall(
       return { success: true, ...r, note: "The Account Settings page was texted — send nothing else this turn." };
     }
 
-    // ── Payments › Membership (2026-10-03): the tab texted whole; Manage = the Billing Portal; Activate = the checkout link ──
+    // ── Settings › Membership & verification (2026-10-03, moved from Payments 2026-10-04): the section texted whole; Manage = the Billing Portal; Activate = the checkout link; Authorize = the consent page ──
     if (name === "show_membership") {
-      const { caregiverId, manageLink, activate, phone: mbPhone } = input as Record<string, unknown>;
+      const { caregiverId, manageLink, activate, authorizeLink, phone: mbPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, mbPhone);
@@ -5340,8 +5395,12 @@ async function executeToolCall(
         const ok = await mb.sendMembershipActivateLink(sess.phone, sess.chatId, caregiverId as string);
         return { success: ok, note: ok ? "The membership checkout link was texted — send nothing else this turn." : "The refusal (or throttle notice) was texted — send nothing else this turn." };
       }
+      if (authorizeLink === true) {
+        const ok = await mb.sendAuthorizeLink(sess.phone, sess.chatId, caregiverId as string);
+        return { success: ok, note: ok ? "The background-check consent page was texted — send nothing else this turn." : "The refusal (or throttle notice) was texted — send nothing else this turn." };
+      }
       const r = await mb.sendCaregiverMembership(sess.chatId, caregiverId as string);
-      return { success: true, ...r, note: "The Membership tab was texted — send nothing else this turn." };
+      return { success: true, ...r, note: "Membership & verification was texted — send nothing else this turn." };
     }
 
     // ── Payments › Payouts (2026-10-01): the tab texted whole; Cash Out = the modal as a flow ──
@@ -6813,43 +6872,96 @@ async function executeToolCall(
       // of help" question was skipped entirely and the Care Plan showed a
       // bogus pill. Canonicalize at save time; if NOTHING maps, the answer is
       // not a care need at all — refuse it and steer the model back.
+      // Medication instructions never reach a caregiver in the description (2026-10-04) — one
+      // shared rule with the site's own boxes; the family hears the same line.
+      if (role === "client" && fieldName === "jobDescription" && isMedicationInstruction(fieldValue)) {
+        return {
+          ok: true,
+          saved: false,
+          invalidValue: true,
+          guidance: `Not saved — it contains medication instructions. Tell them, in these words: "${MEDICATION_INSTRUCTION_MESSAGE}" Then ask for the description again, or move on if they'd rather skip it. Never suggest what to write instead.`,
+        };
+      }
+      let careNeedsGuidance = "";
       if (role === "client" && fieldName === "careNeeds") {
-        const rawTerms = (Array.isArray(fieldValue) ? fieldValue : [fieldValue])
-          .map((t) => String(t ?? "").trim()).filter(Boolean);
-        const { canonicalizeCareNeeds, CARE_NEED_CATEGORIES } = await import("../agents/careNeedsTaxonomy");
-        let canon: Awaited<ReturnType<typeof canonicalizeCareNeeds>> | null = null;
-        try { canon = rawTerms.length ? await canonicalizeCareNeeds(rawTerms) : null; }
+        // The website's "What type of care is needed? Select all that apply." —
+        // the same eight the caregiver side offers, by name, nothing underneath
+        // (2026-10-04). Names or the family's words → the eight, MERGED onto what's
+        // saved ({"replace": [...]} swaps the list), medical never a need, off-list
+        // not saved; the result tells the model what landed and what didn't.
+        const { canonicalizeCareNeeds } = await import("../agents/careNeedsTaxonomy");
+        const { serviceLabels, serviceMenuText, orderedCanonicalServices } = await import("../agents/caregiverServiceLabels");
+        const replaceReq = fieldValue && typeof fieldValue === "object" && !Array.isArray(fieldValue) && Array.isArray((fieldValue as Record<string, unknown>).replace);
+        const rawInput = replaceReq ? (fieldValue as Record<string, unknown>).replace : fieldValue;
+        const rawTerms = (Array.isArray(rawInput) ? rawInput : [rawInput]).map((t) => String(t ?? "").trim()).filter(Boolean);
+        const prevSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const prevNeeds = replaceReq ? [] : (((prevSnap.data()?.onboardingData ?? {}) as Record<string, unknown>).careNeeds as unknown[] | undefined) ?? [];
+        let canon: Awaited<ReturnType<typeof canonicalizeCareNeeds>> = { careNeeds: [], careNeedDetails: {}, medical: [], unmapped: [], unresolved: rawTerms };
+        try { if (rawTerms.length) canon = await canonicalizeCareNeeds(rawTerms); }
         catch (err) { console.error("save_onboarding_field: care-needs canonicalization failed:", err); }
-        if (canon && canon.careNeeds.length === 0) {
+        const merged = orderedCanonicalServices([...prevNeeds, ...canon.careNeeds]);
+        const q = (xs: string[]) => xs.map((x) => `"${x}"`).join(", ");
+        const medicalNote = canon.medical.length
+          ? ` ${q(canon.medical)} is medical care — caregivers here don't administer medication or give medical treatment, so it is NOT a care need and was not saved. Say so plainly; the closest on the list is Medication Reminders Only (reminding when it's time to take them, not giving them) — ask whether THAT fits before saving it.`
+          : "";
+        const unmappedNote = canon.unmapped.length
+          ? ` ${q(canon.unmapped)} isn't one of the types of care on the list, so it was left off — say so in one line. If they were answering how OFTEN care is needed, that belongs in careFrequency, not careNeeds.`
+          : "";
+        const unresolvedNote = canon.unresolved.length
+          ? ` Couldn't place ${q(canon.unresolved)} — don't guess; ask which of the eight they mean, by name.`
+          : "";
+        if (!merged.length) {
           return {
             ok: true,
             saved: false,
             invalidValue: true,
-            guidance: `"${rawTerms.join(", ")}" doesn't describe a kind of day-to-day help — it isn't one of the site's care needs (${CARE_NEED_CATEGORIES.join(", ")}). ` +
-              `If they were answering how OFTEN care is needed, that belongs in careFrequency, not careNeeds. Save nothing for careNeeds now; when you reach that step, ask what kind of help their loved one needs day to day (bathing, meals, rides, medication reminders, company…) and save the matching category names.`,
+            guidance: `Nothing in "${rawTerms.join(", ")}" is one of the website's eight types of care, so nothing was saved for careNeeds.${medicalNote}${unmappedNote}${unresolvedNote} If they were answering how OFTEN care is needed, that belongs in careFrequency, not careNeeds. Then ask again — your own short line, followed by the eight by name, one per line, never numbered:\n${serviceMenuText()}`,
           };
         }
-        if (canon) {
-          onboardingDataPatch = { careNeeds: canon.careNeeds, careNeedDetails: canon.careNeedDetails };
-          if (canon.unmapped.length) {
-            console.info("save_onboarding_field: care-need terms left unmapped (kept out of careNeeds)", { phone, unmapped: canon.unmapped });
-          }
-        }
+        onboardingDataPatch = { careNeeds: merged, careNeedDetails: {} };
+        careNeedsGuidance = ` Care needed on their plan now: ${serviceLabels(merged).join(", ")} — read these names back in your acknowledgment.${medicalNote}${unmappedNote}${unresolvedNote} No follow-up sweep: don't ask whether they also need other types; more named later are added automatically. A correction is saved as careNeeds with {"replace": [the corrected list]}.`;
       }
-      // Care-services canonicalization: keep the caregiver's RAW specialties as
-      // profile flavor, and also write the canonical skills/services enum the
-      // webapp checkboxes + matching engine read. Never let a canonicalization
-      // failure lose the specialties — the raw value is already in the patch.
+      // Care services = the website's "What services do you offer?" step — the
+      // eight PRIMARY_SERVICES and nothing else (founder 2026-10-04). The
+      // caregiver's words (names or her own) are mapped onto the eight; what fits
+      // is MERGED onto what's already saved (a later "I also do meal prep" adds;
+      // { replace: [...] } as the value swaps the whole list for a correction),
+      // what fits none of the eight is NOT saved, and medical care (administering
+      // medication, injections, wound care…) is never a service here. The record
+      // only ever carries the exact site strings — specialties, skills and
+      // services are the same list. The tool result tells the model exactly what
+      // landed and what was left off so it can say so.
+      let servicesGuidance = "";
       if (role === "caregiver" && fieldName === "specialties") {
-        try {
-          const { canonicalizeCaregiverServices } = await import("../agents/caregiverServices");
-          const canonical = await canonicalizeCaregiverServices(normalizedValue);
-          if (canonical.length) {
-            onboardingDataPatch = { specialties: normalizedValue, skills: canonical, services: canonical };
-          }
-        } catch (err) {
-          console.error("save_onboarding_field: service canonicalization failed (keeping raw specialties):", err);
+        const { mapCaregiverServices, serviceLabels, serviceMenuText, orderedCanonicalServices } = await import("../agents/caregiverServices");
+        const replaceReq = fieldValue && typeof fieldValue === "object" && !Array.isArray(fieldValue) && Array.isArray((fieldValue as Record<string, unknown>).replace);
+        const rawInput = replaceReq ? (fieldValue as Record<string, unknown>).replace : fieldValue;
+        const rawText = (Array.isArray(rawInput) ? rawInput : [rawInput]).map((t) => String(t ?? "").trim()).filter(Boolean).join(", ");
+        const prevSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const prevData = (prevSnap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+        const prevList = replaceReq ? [] : ([prevData.skills, prevData.services, prevData.specialties].find(Array.isArray) as unknown[] | undefined) ?? [];
+        const mapping = await mapCaregiverServices(rawInput);
+        const merged = orderedCanonicalServices([...prevList, ...mapping.matched]);
+        const q = (xs: string[]) => xs.map((x) => `"${x}"`).join(", ");
+        const medicalNote = mapping.medical.length
+          ? ` ${q(mapping.medical)} is medical care — caregivers here don't administer medication or give medical treatment, so it is NOT a service and was not saved. Say so plainly; the closest service on the list is Medication Reminders Only (reminding when it's time to take them, not giving them) — ask whether THAT fits before saving it.`
+          : "";
+        const unmappedNote = mapping.unmapped.length
+          ? ` ${q(mapping.unmapped)} isn't one of the services on the list, so it was left off — tell them that in one line (no apology, no judgment).`
+          : "";
+        const unresolvedNote = mapping.unresolved.length
+          ? ` Couldn't place ${q(mapping.unresolved)} — don't guess; ask which of the eight they mean, by name.`
+          : "";
+        if (!merged.length) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `Nothing in "${rawText}" is one of the website's eight services, so nothing was saved.${medicalNote}${unmappedNote}${unresolvedNote} Then show the list again — your own short line, followed by the eight by name, one per line, never numbered:\n${serviceMenuText()}`,
+          };
         }
+        onboardingDataPatch = { specialties: merged, skills: merged, services: merged };
+        servicesGuidance = ` Services on their profile now: ${serviceLabels(merged).join(", ")} — read these names back in your acknowledgment ("Got it — …").${medicalNote}${unmappedNote}${unresolvedNote} No follow-up sweep: never ask whether they also do other services; if they name more later it's added automatically. If they say a saved one is wrong, save specialties again with {"replace": [the corrected list]}.`;
       }
       // Availability shape guard: the model sometimes saves the caregiver's
       // words verbatim ("mornings and evenings") instead of the {days,hours}
@@ -6879,17 +6991,17 @@ async function executeToolCall(
           console.error("save_onboarding_field: availability normalization failed (keeping raw):", err);
         }
       }
-      // Wizard rate rule (handleSaveRates): "$15 to $200" — anything else is not
-      // saved and the model re-asks (live 2026-09-26: "$3/hr" was accepted).
+      // The rate is theirs to set (founder 2026-10-04): any dollar amount above $0 saves;
+      // zero or no number is not saved and the model re-asks — never a comment on the amount.
       if (role === "caregiver" && fieldName === "hourlyRate") {
-        const { coerceCaregiverRate, CAREGIVER_RATE_MIN, CAREGIVER_RATE_MAX } = await import("../agents/onboardingContract");
+        const { coerceCaregiverRate, RATE_EXAMPLE } = await import("../agents/onboardingContract");
         const rate = coerceCaregiverRate(fieldValue);
         if (rate === null) {
           return {
             ok: true,
             saved: false,
             invalidValue: true,
-            guidance: `"${String(fieldValue)}" isn't a rate the website accepts — it has to be a dollar amount from $${CAREGIVER_RATE_MIN} to $${CAREGIVER_RATE_MAX} an hour. Say that plainly (no judgment about the number) and ask for their minimum hourly rate again.`,
+            guidance: `"${String(fieldValue)}" isn't a rate — it has to be a dollar amount above $0 (e.g. $${RATE_EXAMPLE}). Ask for their minimum hourly rate again, plainly, with no judgment about any amount.`,
           };
         }
         onboardingDataPatch = { hourlyRate: rate };
@@ -7040,7 +7152,7 @@ async function executeToolCall(
               : " Nothing usable was found in that for availability — ask which days of the week they can work AND whether they're more mornings, afternoons, evenings, or overnights.";
         }
       }
-      const combinedGuidance = `${emailGuidance}${uploadGuidance}${availabilityGuidance}`.trim();
+      const combinedGuidance = `${emailGuidance}${uploadGuidance}${availabilityGuidance}${servicesGuidance}${careNeedsGuidance}`.trim();
       return {
         ok: true, fieldName, saved: true, missing, collectionComplete: missing.length === 0,
         ...(combinedGuidance ? { guidance: combinedGuidance } : {}),

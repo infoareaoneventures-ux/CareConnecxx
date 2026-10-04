@@ -1,3 +1,4 @@
+import { serviceLabel } from '../caregiver/signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -402,7 +403,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
         {booking.careNeeds?.length > 0 && (
           <div className="flex flex-wrap gap-1 pt-1">
             {booking.careNeeds.map((n: string) => (
-              <span key={n} className="text-xs bg-primary-50 text-primary-700 border border-primary-100 px-2 py-0.5 rounded-full">{n}</span>
+              <span key={n} className="text-xs bg-primary-50 text-primary-700 border border-primary-100 px-2 py-0.5 rounded-full">{serviceLabel(n)}</span>
             ))}
           </div>
         )}
@@ -447,7 +448,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
                           return (
                             <div key={need} className="rounded-xl border border-blue-200 overflow-hidden">
                               <div className="bg-blue-50 px-3 py-1.5">
-                                <span className="text-xs font-semibold text-blue-700">{need}</span>
+                                <span className="text-xs font-semibold text-blue-700">{serviceLabel(need)}</span>
                               </div>
                               {subtasks.length > 0 && (
                                 <div className="px-3 py-2 flex flex-wrap gap-1.5">
@@ -1131,7 +1132,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                           return (
                             <div key={need} className="rounded-xl border border-blue-200 overflow-hidden">
                               <div className="bg-blue-50 px-3 py-1.5">
-                                <span className="text-xs font-semibold text-blue-700">{need}</span>
+                                <span className="text-xs font-semibold text-blue-700">{serviceLabel(need)}</span>
                               </div>
                               {subtasks.length > 0 && (
                                 <div className="px-3 py-2 flex flex-wrap gap-1.5">

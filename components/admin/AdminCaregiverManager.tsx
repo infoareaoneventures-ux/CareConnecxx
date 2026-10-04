@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { PRIMARY_SERVICES, serviceLabel } from '../caregiver/signup/constants';
 import {
   Search, Star, Shield, Edit2, Save, X, Ban, CheckCircle, Clock,
   Bell, RefreshCw, AlertCircle, Calendar, Tag, ChevronDown, ChevronUp,
@@ -14,11 +15,9 @@ type Panel = 'profile' | 'appointments' | 'verification';
 type ModerationAction = 'ban' | 'unban' | 'suspend' | 'unsuspend' | 'notify' | 'reset' | null;
 type ToastState = { msg: string; type: 'success' | 'error' } | null;
 
-const SKILLS_OPTIONS = [
-  'Driving', 'Meal Preparation', 'Medical Assistance', 'Companionship',
-  'Personal Care', 'Housekeeping', 'Physical Therapy Support',
-  'Dementia Care', 'Hospice Support', 'Overnight Care',
-];
+// The same eight the caregiver wizard offers (2026-10-04) — an admin edit can't
+// write a service the site never offers.
+const SKILLS_OPTIONS: string[] = [...PRIMARY_SERVICES];
 
 const VER_FILTERS = ['all', 'pending', 'submitted', 'approved', 'rejected'] as const;
 
@@ -535,7 +534,7 @@ export const AdminCaregiverManager: React.FC = () => {
                             {SKILLS_OPTIONS.map(s => (
                               <label key={s} className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 cursor-pointer text-sm text-slate-700">
                                 <input type="checkbox" checked={form.skills?.includes(s) || false} onChange={() => toggleSkill(s)} className="rounded accent-primary-600" />
-                                {s}
+                                {serviceLabel(s)}
                               </label>
                             ))}
                           </div>
@@ -544,7 +543,7 @@ export const AdminCaregiverManager: React.FC = () => {
                     ) : (
                       <div className="flex flex-wrap gap-1.5">
                         {selected.skills?.length ? selected.skills.map(s => (
-                          <span key={s} className="px-2.5 py-0.5 bg-primary-50 text-primary-700 text-xs rounded-full font-medium">{s}</span>
+                          <span key={s} className="px-2.5 py-0.5 bg-primary-50 text-primary-700 text-xs rounded-full font-medium">{serviceLabel(s)}</span>
                         )) : <span className="text-slate-400 text-sm italic">None listed</span>}
                       </div>
                     )}

@@ -28,6 +28,7 @@ vi.mock("../actions/sendOnboardingLinkAction", () => ({ runSendOnboardingLinkAct
 vi.mock("../pauseAccount", () => ({ pauseCaregiver: (...a: any[]) => (hoisted.pause as any)(...a), reactivateCaregiver: (...a: any[]) => (hoisted.reactivate as any)(...a) }));
 
 import { loadSettingsPage, settingsPageText, resolveDocStatus, handleSettingsKeyword, GENDER_OPTIONS } from "../caregiverSettings";
+import { DRIVER_CARD_TEXT } from "../caregiverMembership";
 
 beforeEach(() => {
   hoisted.docs.clear(); hoisted.sent.length = 0; hoisted.resend.mockClear(); hoisted.pause.mockClear(); hoisted.reactivate.mockClear();
@@ -62,7 +63,7 @@ describe("loadSettingsPage — the page's reads", () => {
 });
 
 describe("settingsPageText — the sections word for word", () => {
-  it("account basics, no documents section without Transportation, blocked names, the pause card, the delete line", async () => {
+  it("account basics, the Membership & verification section (moved from Payments, 2026-10-04), no documents section without Transportation, blocked names, the pause card, the delete line", async () => {
     const t = settingsPageText(await loadSettingsPage("cg1"));
     expect(t).toBe([
       "Account Settings", "",
@@ -72,6 +73,16 @@ describe("settingsPageText — the sections word for word", () => {
       "Recovery email: hamse143@gmail.com — Not confirmed yet (reply RESEND EMAIL LINK)",
       "Phone number: +14088745451 (to change it, tell me — a secure link goes to your recovery email)",
       "Address: 20 Descanso dr, san jose, CA, 95134 (tell me a new address to update it)",
+      "",
+      "Membership & verification",
+      // this fixture has no membershipStatus → the section's not-active state
+      "No active membership",
+      "Activate your membership to start accepting bookings and applying for jobs.",
+      "Reply ACTIVATE for your membership link ($69.99/year).",
+      "",
+      "Background check: Starts right after your membership is active — it's included in the annual fee.",
+      "",
+      DRIVER_CARD_TEXT.offer,
       "",
       "Blocked Users: Pat Lee (tell me to unblock someone)",
       "",

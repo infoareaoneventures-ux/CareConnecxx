@@ -1,3 +1,4 @@
+import { serviceLabel } from '../../caregiver/signup/constants';
 import React from 'react';
 import { Loader2 } from 'lucide-react';
 import { StepProps, TIME_OF_DAY_OPTIONS, CARE_LEVEL_OPTIONS } from './types';
@@ -74,7 +75,7 @@ export const Step6Review: React.FC<Step6Props> = ({
         />
         <Row
           label="Care needs"
-          value={<>{data.careTypes.join(', ') || '—'}{careLevelLabel && <> · <span className="text-slate-500">{careLevelLabel}</span></>}</>}
+          value={<>{data.careTypes.map(serviceLabel).join(', ') || '—'}{careLevelLabel && <> · <span className="text-slate-500">{careLevelLabel}</span></>}</>}
           onEdit={() => onEditStep(2)}
         />
         <Row label="Rate & payment" value={`${rateSummary} · Credit Card`} onEdit={() => onEditStep(3)} />

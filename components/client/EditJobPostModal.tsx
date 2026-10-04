@@ -1,3 +1,5 @@
+import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
+import { serviceLabel } from '../caregiver/signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2, Check, Calendar, DollarSign, Heart, Home } from 'lucide-react';
@@ -100,6 +102,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
 
   const handleSave = async () => {
     if (form.careTypes.length === 0) { onShowToast('Select at least one care type', 'error'); return; }
+    if (isMedicationInstruction(form.description)) { onShowToast(MEDICATION_INSTRUCTION_MESSAGE, 'error'); return; }
     if (!db) { onShowToast('Database error', 'error'); return; }
 
     setSaving(true);
@@ -161,6 +164,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
               maxLength={2500}
               className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-primary-400 resize-none"
             />
+            <p className="mt-2 text-xs text-slate-500">Caregivers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.</p>
           </section>
 
           <hr className="border-slate-100" />
@@ -269,7 +273,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
             <div className="flex flex-wrap gap-2">
               {CARE_TYPES.map(ct => (
                 <button key={ct} type="button" onClick={() => toggleArr('careTypes', ct)} className={chip(form.careTypes.includes(ct))}>
-                  {ct}
+                  {serviceLabel(ct)}
                 </button>
               ))}
             </div>
@@ -292,7 +296,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
                     type="number"
                     value={form.rate || ''}
                     onChange={e => set({ rate: Number(e.target.value) })}
-                    min={10} max={200}
+                    min={1}
                     className="w-full pl-7 pr-12 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-primary-400"
                     placeholder="0"
                   />

@@ -1,3 +1,4 @@
+import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../../utils/medicationInstruction';
 import React, { useEffect } from 'react';
 import { StepProps } from './types';
 
@@ -31,6 +32,10 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
     }
     if (desc.length > MAX_DESC) {
       onShowToast(`Description must be ${MAX_DESC} characters or fewer`, 'error');
+      return;
+    }
+    if (isMedicationInstruction(desc)) {
+      onShowToast(MEDICATION_INSTRUCTION_MESSAGE, 'error');
       return;
     }
     onContinue();
@@ -79,7 +84,7 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
             className="w-full px-4 py-3 rounded-xl border-2 border-slate-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100 focus:outline-none resize-none"
           />
           <p className="mt-2 text-xs text-slate-500">
-            For your own privacy and security, please do not include phone numbers or email addresses here.
+            Caregivers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.
           </p>
         </div>
       </div>

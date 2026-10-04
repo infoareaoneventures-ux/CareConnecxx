@@ -1,3 +1,4 @@
+import { serviceLabel } from './signup/constants';
 import React, { useEffect, useState } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -531,7 +532,7 @@ const RequestCard: React.FC<{
                               return (
                                 <div key={n} className="rounded-xl border border-blue-200 overflow-hidden">
                                   <div className="bg-blue-50 px-3 py-2">
-                                    <span className="text-xs font-semibold text-blue-700">{n}</span>
+                                    <span className="text-xs font-semibold text-blue-700">{serviceLabel(n)}</span>
                                   </div>
                                   {subtasks.length > 0 && (
                                     <div className="px-3 py-2 flex flex-wrap gap-1.5">
@@ -1057,7 +1058,7 @@ const BookingGroupCard: React.FC<{
                       return (
                         <div key={need} className="rounded-xl border border-blue-200 overflow-hidden">
                           <div className="bg-blue-50 px-3 py-1.5">
-                            <span className="text-xs font-semibold text-blue-700">{need}</span>
+                            <span className="text-xs font-semibold text-blue-700">{serviceLabel(need)}</span>
                           </div>
                           {subtasks.length > 0 && (
                             <div className="px-3 py-2 flex flex-wrap gap-1.5">
@@ -1505,7 +1506,7 @@ const BookingGroupCard: React.FC<{
                                   <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${allDone ? 'bg-white border-white' : 'border-primary-300 bg-white'}`}>
                                     {allDone && <CheckCircle className="w-2.5 h-2.5 text-primary-500" />}
                                   </div>
-                                  <span className={`text-xs font-semibold ${allDone ? 'text-white line-through' : 'text-primary-700'}`}>{need}</span>
+                                  <span className={`text-xs font-semibold ${allDone ? 'text-white line-through' : 'text-primary-700'}`}>{serviceLabel(need)}</span>
                                 </button>
                                 <div className="px-2 pb-1">{subtasks.map((sub: string) => checkboxRow(`${ri}_${need}_${sub}`, sub, true))}</div>
                               </div>
@@ -1522,7 +1523,7 @@ const BookingGroupCard: React.FC<{
                               <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${done ? 'bg-white border-white' : 'border-primary-300'}`}>
                                 {done && <CheckCircle className="w-2.5 h-2.5 text-primary-500" />}
                               </div>
-                              <span className={`text-xs font-semibold ${done ? 'text-white line-through' : 'text-primary-700'}`}>{need}</span>
+                              <span className={`text-xs font-semibold ${done ? 'text-white line-through' : 'text-primary-700'}`}>{serviceLabel(need)}</span>
                             </button>
                           );
                         })}
@@ -1820,7 +1821,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
                                         <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
                                           <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
                                             <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
-                                            <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{cat}</p>
+                                            <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{serviceLabel(cat)}</p>
                                             {subs.length > 0 && doneSubCount > 0 && (
                                               <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subs.length}</span>
                                             )}
@@ -2522,7 +2523,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                                     <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
                                       <div className={`flex items-center gap-2 px-3 py-2 ${allDone ? 'bg-green-50' : 'bg-slate-50'}`}>
                                         <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${allDone ? 'text-green-500' : 'text-slate-300'}`} />
-                                        <p className={`text-xs font-semibold flex-1 ${allDone ? 'text-green-700' : 'text-primary-600'}`}>{cat}</p>
+                                        <p className={`text-xs font-semibold flex-1 ${allDone ? 'text-green-700' : 'text-primary-600'}`}>{serviceLabel(cat)}</p>
                                         <span className="text-[10px] text-slate-400">{doneCnt}/{subs.length}</span>
                                       </div>
                                       <div className="px-3 py-2 space-y-1.5 border-t border-slate-100">
@@ -2547,7 +2548,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                                   <button key={ci} onClick={() => toggleTask(key)}
                                     className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
                                     <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${done ? 'text-green-500' : 'text-slate-300'}`} />
-                                    <span className="font-semibold">{cat}</span>
+                                    <span className="font-semibold">{serviceLabel(cat)}</span>
                                   </button>
                                 );
                               })}

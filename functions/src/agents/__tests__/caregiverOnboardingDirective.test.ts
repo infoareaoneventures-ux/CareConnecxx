@@ -150,15 +150,22 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).not.toContain("at least 150 characters");
   });
 
-  it("surfaces concrete care services in the ask and sweeps the rest once", () => {
+  it("care services = the website's menu: the eight by name, only those, read back, no sweep (2026-10-04)", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
     expect(d).toContain("care services");
-    // a few concrete menu items named so the caregiver knows what counts
-    expect(d).toContain("companionship");
-    expect(d).toContain("medication reminders");
-    expect(d).toContain("transportation");
-    // one sweep, not a recited list
-    expect(d).toContain("sweep the rest once");
+    // the whole menu, by name, one per line — the label the site shows
+    expect(d).toContain("mobility assistance\ndementia / memory care\nmedication reminders only\npersonal care\ncompanionship\ntransportation\nmeal preparation\nlight housekeeping");
+    expect(d).toContain("no numbers");
+    expect(d).toContain("read back");
+    // off-list and medical answers are refused, not forced in
+    expect(d).toContain("is not saved");
+    expect(d).toContain("medical care is never a service");
+    expect(d).toContain("reminding when it's time, not giving them");
+    expect(d).toContain('{"replace"');
+    // no follow-up sweep, no pressure
+    expect(d).toContain("no follow-up sweep");
+    expect(d).not.toContain("sweep the rest once");
+    expect(d).not.toContain("families search by these");
     // the website's onboarding services step offers exactly these eight — no
     // hospice care / post-surgery recovery / etc. (2026-09-26, confirmed against
     // the live "What services do you offer?" screen).
@@ -185,9 +192,23 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(both).toContain("✓ which days, and which parts of the day");
   });
 
-  it("states the wizard's $15–$200 rate rule", () => {
+  it("the rate is theirs to set — any amount above $0, the $25 example, no judgment (2026-10-04)", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
-    expect(d).toContain("$15 to $200");
+    expect(d).toContain("any amount above $0");
+    expect(d).toContain("e.g. $25");
+    expect(d).toContain("never call any amount too low or too high");
+    expect(d).not.toContain("$15 to $200");
+  });
+
+  it("lists the saved services by their shown names so the read-back is exact (2026-10-04)", () => {
+    const d = buildCaregiverOnboardingDirective({ specialties: ["Medication Reminders", "Personal Care"] });
+    expect(d).toContain("saved services: Medication Reminders Only, Personal Care");
+  });
+
+  it("experience and travel distance are asked with the website's own choices in the line (2026-10-04)", () => {
+    const d = buildCaregiverOnboardingDirective({}).toLowerCase();
+    expect(d).toContain("under 1, 1–2, 3–5, 5–10, or 10+");
+    expect(d).toContain("5, 10, 15, 25, 50 miles?");
   });
 
   it("job type is a single choice, like the wizard's picker", () => {

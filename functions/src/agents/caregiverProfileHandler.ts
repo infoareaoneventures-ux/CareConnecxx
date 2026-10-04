@@ -7,6 +7,9 @@ import { getAppUrl } from "../config/appUrl";
 import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
 import { answerHumanMidFlow } from "./humanReply";
 import { businessTodayStr } from "../utils/scheduledTime";
+import { mapCaregiverServices, orderedCanonicalServices, serviceLabels, SERVICE_LABELS, serviceMenuText } from "./caregiverServices";
+import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
+import { LANGUAGE_OPTIONS, JOB_TYPE_OPTIONS, MAX_CLIENTS_OPTIONS, TRAVEL_OPTIONS, jobTypeLabel } from "./caregiverMyProfile";
 
 const db = admin.firestore();
 
@@ -25,12 +28,23 @@ const APP_URL = getAppUrl();
  */
 
 export type ProfileUpdateField =
-  | "rate"
-  | "skills"
-  | "bio"
+  | "rates"       // My Profile › Rates › Edit (1 / 2 / 3+ people, experience, max clients — one save, like the page)
+  | "skills"      // My Profile › Care Services › Edit
+  | "bio"         // My Profile › About › Edit (bio)
+  | "languages"   // My Profile › About › Edit (languages)
+  | "jobtype"     // My Profile › Weekly Availability › Looking for
+  | "travel"      // My Profile › Location & Travel › Edit (serviceRadius)
   | "photo"
   | "pause"
   | "reactivate";
+
+const FLOW_TTL = () => new Date(Date.now() + 30 * 60 * 1000).toISOString();
+
+/** Legacy sessions parked as "rate" (before 2026-10-04) continue in the rates flow. */
+function normalizeField(v: unknown): ProfileUpdateField | undefined {
+  if (v === "rate") return "rates";
+  return typeof v === "string" ? (v as ProfileUpdateField) : undefined;
+}
 
 async function isQuestionOrOther(text: string, currentQuestion: string): Promise<boolean> {
   const result = await parseWithClaude(
@@ -52,12 +66,6 @@ async function answerMidFlow(text: string, reAsk: string): Promise<string> {
   });
 }
 
-const KNOWN_SPECIALTIES = [
-  "dementia", "alzheimer's", "mobility", "post-surgery", "companionship",
-  "medication reminders", "hospice support", "diabetes support",
-  "transportation", "meal prep", "personal care", "bathing", "transfers",
-  "respite care", "parkinson's", "stroke recovery", "cognitive support",
-];
 
 async function clearProfileFlow(phone: string): Promise<void> {
   await db.collection("agent_sessions").doc(phone).update({
@@ -66,6 +74,23 @@ async function clearProfileFlow(phone: string): Promise<void> {
     profileUpdateValue: admin.firestore.FieldValue.delete(),
     stateExpiresAt:     admin.firestore.FieldValue.delete(),
   }).catch(() => {});
+}
+
+/** The My Profile page's Edit buttons (caregiverMyProfile.ts keywords): park the flow and ask its first question. */
+export async function startProfileFlow(
+  field: ProfileUpdateField, caregiverId: string, phone: string, chatId: string, session: Record<string, unknown>,
+): Promise<void> {
+  if (field === "photo") return handlePhotoUpdate(caregiverId, phone, "", session, chatId);
+  await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "collect", profileUpdateField: field, stateExpiresAt: FLOW_TTL() });
+  const q: Record<string, string> = {
+    rates: RATES_Q,
+    skills: `Which services would you like to add or remove? The list is: ${SERVICE_LABELS.join(", ")}. (For example "add Personal Care" or "remove Transportation".)`,
+    bio: BIO_Q,
+    languages: LANGUAGES_Q,
+    jobtype: JOB_TYPE_Q,
+    travel: TRAVEL_Q,
+  };
+  await sendMessage(chatId, q[field] ?? "What would you like to change?");
 }
 
 /**
@@ -83,7 +108,7 @@ export async function handleCaregiverProfileUpdate(
   chatId:         string,
   field?:         ProfileUpdateField,
 ): Promise<void> {
-  const activeField = (field ?? (session.profileUpdateField as ProfileUpdateField | undefined));
+  const activeField = normalizeField(field ?? session.profileUpdateField);
   if (!activeField) {
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",
@@ -101,8 +126,11 @@ export async function handleCaregiverProfileUpdate(
   // (set by the router when it sees a media part) — see webhooks.ts wiring.
 
   switch (activeField) {
-    case "rate":       return handleRateUpdate(caregiverId, caregiverPhone, text, session, chatId);
+    case "rates":      return handleRatesUpdate(caregiverId, caregiverPhone, text, session, chatId);
     case "skills":     return handleSkillsUpdate(caregiverId, caregiverPhone, text, session, chatId);
+    case "languages":  return handleLanguagesUpdate(caregiverId, caregiverPhone, text, session, chatId);
+    case "jobtype":    return handleJobTypeUpdate(caregiverId, caregiverPhone, text, session, chatId);
+    case "travel":     return handleTravelUpdate(caregiverId, caregiverPhone, text, session, chatId);
     case "bio":        return handleBioUpdate(caregiverId, caregiverPhone, text, session, chatId);
     case "photo":      return handlePhotoUpdate(caregiverId, caregiverPhone, text, session, chatId);
     case "pause":      return handlePauseAccount(caregiverId, caregiverPhone, text, session, chatId);
@@ -110,72 +138,124 @@ export async function handleCaregiverProfileUpdate(
   }
 }
 
-// ── RATE ────────────────────────────────────────────────────────────────────
+// ── RATES ───────────────────────────────────────────────────────────────────
+// The page's Rates › Edit: 1 Person / 2 People / 3+ People ($15–$200), years of
+// experience (the five buckets) and max clients at once (1 / 2 / 3+), saved
+// TOGETHER by one Save — hourlyRate, rateFor2Seniors, rateFor3PlusSeniors,
+// yearsExperience + experience, maxClients. Over text: say what changes, see the
+// whole section read back, YES saves all six fields exactly like the page.
 
-async function handleRateUpdate(
+export interface RatesDraft { hourlyRate: number; rateFor2: number; rateFor3: number; experience: string; maxClients: string }
+
+export const RATES_Q =
+  `What would you like to change — your rate for 1 person, 2 people or 3+ people (e.g. $${RATE_EXAMPLE} an hour — the number is yours), ` +
+  `your years of experience (${EXPERIENCE_BUCKETS.join(", ")}), or how many clients at once (${MAX_CLIENTS_OPTIONS.join(", ")})?`;
+
+export function ratesFromRecord(cg: Record<string, unknown>): RatesDraft {
+  const n = (v: unknown) => { const x = typeof v === "number" ? v : Number(v); return Number.isFinite(x) && x > 0 ? x : 0; };
+  return {
+    hourlyRate: n(cg.hourlyRate),
+    rateFor2: n(cg.rateFor2Seniors) || n(cg.rateForTwo),
+    rateFor3: n(cg.rateFor3PlusSeniors) || n(cg.rateForThree),
+    experience: typeof cg.yearsExperience === "string" ? cg.yearsExperience : typeof cg.experience === "string" ? cg.experience : "",
+    maxClients: typeof cg.maxClients === "string" && cg.maxClients ? cg.maxClients : "1",
+  };
+}
+
+/** The Rates section as the page shows it. */
+export function ratesRecap(d: RatesDraft): string {
+  const lines: string[] = [];
+  if (d.hourlyRate > 0) lines.push(`1 Person: $${d.hourlyRate}/hr`);
+  if (d.rateFor2 > 0) lines.push(`2 People: $${d.rateFor2}/hr`);
+  if (d.rateFor3 > 0) lines.push(`3+ People: $${d.rateFor3}/hr`);
+  if (!lines.length) lines.push("No rate set yet.");
+  const bits = [d.experience ? `${d.experience} experience` : "", `Up to ${d.maxClients} client${d.maxClients !== "1" ? "s" : ""} at once`].filter(Boolean);
+  lines.push(bits.join(" · "));
+  return lines.join("\n");
+}
+
+async function handleRatesUpdate(
   caregiverId: string, phone: string, text: string,
   session: Record<string, unknown>, chatId: string,
 ): Promise<void> {
   const step = (session.profileUpdateStep as string) ?? "collect";
-
-  if (step === "collect") {
-    const reAsk = "What hourly rate would you like? (e.g. \"$25\" — must be between $15 and $150)";
-    if (await isQuestionOrOther(text, reAsk)) {
-      await sendMessage(chatId, await answerMidFlow(text, reAsk));
-      return;
-    }
-    const raw = await parseWithClaude(
-      "Extract the requested hourly rate as a number (no $ sign). " +
-        "If the caregiver hasn't yet mentioned a rate, reply: __none__. " +
-        "Reply with just the number, e.g. 25.",
-      text,
-      10,
+  const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+  const current = ratesFromRecord((cgSnap.data() ?? {}) as Record<string, unknown>);
+  let draft: RatesDraft = current;
+  if (step === "confirm") {
+    try { draft = { ...current, ...(JSON.parse((session.profileUpdateValue as string) ?? "{}") as Partial<RatesDraft>) }; } catch { /* keep current */ }
+  }
+  const confirmLine = `Your Rates section would read:\n${ratesRecap(draft)}\n\nReply YES to save, NO to leave it as it is, or tell me another change.`;
+  const reAsk = step === "confirm" ? confirmLine : RATES_Q;
+  if (await isQuestionOrOther(text, reAsk)) {
+    await sendMessage(chatId, await answerMidFlow(text, reAsk));
+    return;
+  }
+  if (step === "confirm") {
+    const decision = await parseWithClaude(
+      '"yes", "save", "confirm", "do it" → YES. "no", "cancel", "wait", "never mind" → NO. Anything describing a rate, years of experience or a number of clients → CHANGE. Reply exactly YES, NO or CHANGE.',
+      text, 8,
     );
-    const rate = parseFloat(raw);
-    if (raw === "__none__" || isNaN(rate)) {
-      await db.collection("agent_sessions").doc(phone).update({
-        profileUpdateStep:  "collect",
-        profileUpdateField: "rate",
-        stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    if (decision.toUpperCase().startsWith("YES")) {
+      await clearProfileFlow(phone);
+      // The page's Save, field for field (CaregiverProfile.tsx Rates › onSave).
+      await db.collection("caregivers").doc(caregiverId).update({
+        hourlyRate:          draft.hourlyRate || 0,
+        rateFor2Seniors:     draft.rateFor2 || 0,
+        rateFor3PlusSeniors: draft.rateFor3 || 0,
+        yearsExperience:     draft.experience,
+        experience:          draft.experience,
+        maxClients:          draft.maxClients,
       });
-      await sendMessage(chatId, reAsk);
+      await sendMessage(chatId, `Done — your Rates section now reads:\n${ratesRecap(draft)}`);
       return;
     }
-    if (rate < 15 || rate > 150) {
-      await sendMessage(chatId, `Hourly rate must be between $15 and $150 — you said $${rate}. What rate would you like?`);
+    if (decision.toUpperCase().startsWith("NO")) {
+      await clearProfileFlow(phone);
+      await sendMessage(chatId, "No problem — your rates weren't changed.");
       return;
     }
-    await db.collection("agent_sessions").doc(phone).update({
-      profileUpdateStep:  "confirm",
-      profileUpdateField: "rate",
-      profileUpdateValue: String(rate),
-      stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    });
-    await sendMessage(chatId, `Set your hourly rate to $${rate}/hr? Just say yes to save it, or no to cancel.`);
-    return;
+    // CHANGE → fall through and parse the new values onto the draft
   }
-
-  // confirm
-  const proposedRate = parseFloat((session.profileUpdateValue as string) ?? "0");
-  const reAskConfirm = `Set your hourly rate to $${proposedRate}/hr? Just say yes to save it, or no to cancel.`;
-  if (await isQuestionOrOther(text, reAskConfirm)) {
-    await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
-    return;
-  }
-  const decision = await parseWithClaude(
-    '"yes", "save", "confirm", "do it" → YES. "no", "cancel", "wait", "never mind" → NO. Reply exactly YES or NO.',
-    text, 5,
+  const raw = await parseWithClaude(
+    "Extract the caregiver's requested changes to her Rates section. Reply with raw JSON only: " +
+      '{"hourlyRate": number or null, "rateFor2": number or null, "rateFor3": number or null, ' +
+      `"experience": one of [${EXPERIENCE_BUCKETS.map((b) => `"${b}"`).join(", ")}] or null, "maxClients": "1" | "2" | "3+" or null}. ` +
+      'hourlyRate is the rate for ONE person ("my rate", "$28", "28 an hour"). rateFor2 is for 2 people, rateFor3 for 3 or more; ' +
+      '"same as one person" means the one-person number. A number of years ("6 years") maps onto the bucket it falls in. ' +
+      "Only include what they clearly stated; everything else null.",
+    text,
+    120,
   );
-  await clearProfileFlow(phone);
-  if (decision === "YES" && proposedRate > 0) {
-    await db.collection("caregivers").doc(caregiverId).update({
-      hourlyRate:      proposedRate,
-      rateUpdatedAt:   new Date().toISOString(),
-    });
-    await sendMessage(chatId, `Done — your hourly rate is now $${proposedRate}/hr.`);
-  } else {
-    await sendMessage(chatId, "No problem — your rate wasn't changed.");
+  let changes: Partial<RatesDraft> = {};
+  try {
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    const n = (v: unknown): number | undefined => { if (v === null || v === undefined || v === "") return undefined; const x = Number(v); return Number.isFinite(x) ? x : undefined; };
+    const r1 = n(p.hourlyRate), r2 = n(p.rateFor2), r3 = n(p.rateFor3);
+    if (r1 !== undefined) changes.hourlyRate = r1;
+    if (r2 !== undefined) changes.rateFor2 = r2;
+    if (r3 !== undefined) changes.rateFor3 = r3;
+    if (typeof p.experience === "string" && p.experience) { const b = toExperienceBucket(p.experience); if (b) changes.experience = b; }
+    if (typeof p.maxClients === "string" && MAX_CLIENTS_OPTIONS.includes(p.maxClients)) changes.maxClients = p.maxClients;
+  } catch { changes = {}; }
+  if (!Object.keys(changes).length) {
+    await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: step, profileUpdateField: "rates", stateExpiresAt: FLOW_TTL() });
+    await sendMessage(chatId, `I didn't catch a change in that. ${RATES_Q}`);
+    return;
   }
+  // The page's one rule: the 1-person rate is more than $0; 2 / 3+ people may be 0 (not offered), never negative.
+  if ((changes.hourlyRate !== undefined && changes.hourlyRate <= 0) || (changes.rateFor2 !== undefined && changes.rateFor2 < 0) || (changes.rateFor3 !== undefined && changes.rateFor3 < 0)) {
+    await sendMessage(chatId, `${RATE_RULE_TEXT}. What rate would you like?`);
+    return;
+  }
+  const next: RatesDraft = { ...draft, ...changes };
+  await db.collection("agent_sessions").doc(phone).update({
+    profileUpdateStep:  "confirm",
+    profileUpdateField: "rates",
+    profileUpdateValue: JSON.stringify(next),
+    stateExpiresAt:     FLOW_TTL(),
+  });
+  await sendMessage(chatId, `Your Rates section would read:\n${ratesRecap(next)}\n\nReply YES to save, NO to leave it as it is, or tell me another change.`);
 }
 
 // ── SKILLS ──────────────────────────────────────────────────────────────────
@@ -184,20 +264,26 @@ async function handleSkillsUpdate(
   caregiverId: string, phone: string, text: string,
   session: Record<string, unknown>, chatId: string,
 ): Promise<void> {
+  // The profile page's Care Services editor (CaregiverProfile.tsx): the eight
+  // PRIMARY_SERVICES as checkboxes, saved to services + skills (specialties is
+  // the same list). Over text: add / remove / replace by name or in her own
+  // words, mapped onto the eight (founder 2026-10-04: only those, ever), read
+  // back by the shown names, confirmed, written to all three fields. Adding
+  // Transportation needs the three documents on the record first — the same
+  // rule the page enforces before Save.
   const step = (session.profileUpdateStep as string) ?? "collect";
+  const menu = SERVICE_LABELS.join(", ");
 
   if (step === "collect") {
-    const reAsk = "Which specialties would you like to add or remove? " +
-      "(e.g. \"add dementia and hospice\", or \"remove mobility\")";
+    const reAsk = `Which services would you like to add or remove? The list is: ${menu}. (For example "add Personal Care" or "remove Transportation".)`;
     if (await isQuestionOrOther(text, reAsk)) {
       await sendMessage(chatId, await answerMidFlow(text, reAsk));
       return;
     }
     const raw = await parseWithClaude(
-      "Parse the caregiver's skill-update request. Reply JSON: " +
-        '{"action":"add"|"remove"|"replace","skills":["skill1","skill2"]}. ' +
-        "Skills should be lowercase short phrases. " +
-        "If the caregiver hasn't said yet, reply: __none__.",
+      "Parse the caregiver's request to change the care services on her profile. Reply JSON: " +
+        '{"action":"add"|"remove"|"replace","skills":["each service or kind of care she named, in her words"]}. ' +
+        "If she hasn't said yet, reply: __none__.",
       text,
       150,
     );
@@ -211,36 +297,62 @@ async function handleSkillsUpdate(
       return;
     }
     let action: "add" | "remove" | "replace" = "add";
-    let skills: string[] = [];
+    let words: string[] = [];
     try {
       const parsed = JSON.parse(raw);
       action = ["add", "remove", "replace"].includes(parsed.action) ? parsed.action : "add";
-      skills = Array.isArray(parsed.skills) ? parsed.skills.map((s: unknown) => String(s).toLowerCase().trim()).filter(Boolean) : [];
+      words = Array.isArray(parsed.skills) ? parsed.skills.map((s: unknown) => String(s).trim()).filter(Boolean) : [];
     } catch { /* fall through */ }
 
-    if (skills.length === 0) {
-      await sendMessage(chatId, await generateCaraMessage({
-        audience: "caregiver",
-        language: (session.preferredLanguage as string) === "es" ? "es" : "en",
-        context: "The caregiver tried to update their specialties but you couldn't pick out any specific skills. Warmly ask them to try again, with examples like \"add dementia care\" or \"remove mobility\". You MUST include those example phrasings.",
-        fallback: "I didn't catch any specific skills in that. Try \"add dementia care\" or \"remove mobility\".",
-        maxTokens: 80,
-      }));
+    const mapping = words.length ? await mapCaregiverServices(words) : { matched: [], medical: [], unmapped: [], unresolved: [] };
+    const notes: string[] = [];
+    if (mapping.medical.length) notes.push(`Caregivers here don't administer medication or give medical treatment, so "${mapping.medical.join('", "')}" isn't a service I can add — the closest one on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
+    if (mapping.unmapped.length) notes.push(`"${mapping.unmapped.join('", "')}" isn't one of the services on the list, so I've left it off.`);
+    if (mapping.unresolved.length) notes.push(`I couldn't place "${mapping.unresolved.join('", "')}" — which of the list did you mean?`);
+    if (mapping.matched.length === 0) {
+      await db.collection("agent_sessions").doc(phone).update({
+        profileUpdateStep:  "collect",
+        profileUpdateField: "skills",
+        stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      });
+      await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Pick from these:\n${serviceMenuText()}`);
       return;
     }
 
-    // Show proposed change against current
     const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-    const current = (cgSnap.data()?.specialties ?? []) as string[];
-    const currentNorm = current.map(s => s.toLowerCase());
+    const cg = (cgSnap.data() ?? {}) as Record<string, unknown>;
+    const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+    const current = orderedCanonicalServices([...arr(cg.skills), ...arr(cg.services), ...arr(cg.specialties)]);
 
-    let proposed: string[] = [];
-    if (action === "add") {
-      proposed = [...new Set([...currentNorm, ...skills])];
-    } else if (action === "remove") {
-      proposed = currentNorm.filter(s => !skills.includes(s));
-    } else {
-      proposed = skills;
+    let proposed: string[];
+    if (action === "add") proposed = orderedCanonicalServices([...current, ...mapping.matched]);
+    else if (action === "remove") proposed = current.filter((s) => !mapping.matched.includes(s));
+    else proposed = mapping.matched;
+
+    // The page's rule: Transportation can't be saved until the three documents are on the record.
+    if (proposed.includes("Transportation") && !current.includes("Transportation")) {
+      const docs = (cg.documents ?? {}) as Record<string, { url?: unknown } | undefined>;
+      const missing = ["driversLicense", "insurance", "registration"].filter((k) => !docs[k]?.url);
+      if (missing.length) {
+        await clearProfileFlow(phone);
+        let linkSent = false;
+        try {
+          const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
+          const r = await runSendOnboardingLinkAction({ phone, linkType: "caregiver_transport_docs" }, { caller: "sms_agent", role: "caregiver", phone });
+          linkSent = !!r.sent;
+        } catch (err) { console.error("[caregiverProfileHandler] transport docs link failed:", err); }
+        await sendMessage(chatId,
+          "Upload your driver's license, vehicle insurance, and registration to offer transportation" +
+          (linkSent ? " — the upload link is right below." : " — reply DOCUMENTS for the upload link.") +
+          " Once all three are in, tell me to add Transportation again and I'll save it.");
+        return;
+      }
+    }
+
+    if (proposed.join("|") === current.join("|")) {
+      await clearProfileFlow(phone);
+      await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Your services already read: ${serviceLabels(current).join(", ") || "(none)"} — nothing to change.`);
+      return;
     }
 
     await db.collection("agent_sessions").doc(phone).update({
@@ -250,18 +362,18 @@ async function handleSkillsUpdate(
       stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
     await sendMessage(chatId,
-      `Updated skills will be: ${proposed.length ? proposed.join(", ") : "(none)"}\n\n` +
-      `Want me to save that?`,
+      `${notes.join(" ")}${notes.length ? " " : ""}Your services will be: ${serviceLabels(proposed).join(", ") || "(none)"}.\n\n` +
+      `Reply YES to save that, or NO to leave them as they are.`,
     );
     return;
   }
 
   // confirm
   const proposed = (() => {
-    try { return JSON.parse((session.profileUpdateValue as string) ?? "[]") as string[]; }
-    catch { return []; }
+    try { return orderedCanonicalServices(JSON.parse((session.profileUpdateValue as string) ?? "[]") as unknown[]); }
+    catch { return [] as string[]; }
   })();
-  const reAskConfirm = `So — want me to save these skills: ${proposed.join(", ") || "(none)"}?`;
+  const reAskConfirm = `So — save these services: ${serviceLabels(proposed).join(", ") || "(none)"}? Reply YES or NO.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;
@@ -272,15 +384,151 @@ async function handleSkillsUpdate(
   );
   await clearProfileFlow(phone);
   if (decision === "YES") {
+    // The page's write: services + skills — only the eight, nothing else.
     await db.collection("caregivers").doc(caregiverId).update({
-      specialties:        proposed,
-      skillsUpdatedAt:    new Date().toISOString(),
+      services:           proposed,
+      skills:             proposed,
     });
-    await sendMessage(chatId, `Done — your specialties are updated.`);
+    await sendMessage(chatId, `Done — your services now read: ${serviceLabels(proposed).join(", ") || "(none)"}.`);
   } else {
-    await sendMessage(chatId, "No problem — your skills weren't changed.");
+    await sendMessage(chatId, "No problem — your services weren't changed.");
   }
-  void KNOWN_SPECIALTIES;
+}
+
+// ── LANGUAGES — About › Edit, the six language pills (CaregiverProfile.tsx LANGUAGES) ──
+export const BIO_Q = "What would you like your bio to say? This is what families see on your profile — your own words.";
+export const LANGUAGES_Q = `Which languages do you speak? ${LANGUAGE_OPTIONS.join(", ")} — name as many as apply.`;
+export const JOB_TYPE_Q = `What are you looking for — ${JOB_TYPE_OPTIONS.map((j) => j.label).join(", ")}? (One choice.)`;
+export const TRAVEL_Q = `How far are you willing to travel for a visit — ${TRAVEL_OPTIONS.join(", ")} miles?`;
+
+async function yesNo(text: string): Promise<"YES" | "NO" | "OTHER"> {
+  const d = await parseWithClaude('"yes", "save", "confirm" → YES. "no", "cancel", "wait" → NO. Anything else → OTHER. Reply exactly YES, NO or OTHER.', text, 6);
+  const u = d.toUpperCase();
+  return u.startsWith("YES") ? "YES" : u.startsWith("NO") ? "NO" : "OTHER";
+}
+
+async function handleLanguagesUpdate(
+  caregiverId: string, phone: string, text: string,
+  session: Record<string, unknown>, chatId: string,
+): Promise<void> {
+  const step = (session.profileUpdateStep as string) ?? "collect";
+  if (step === "collect") {
+    if (await isQuestionOrOther(text, LANGUAGES_Q)) { await sendMessage(chatId, await answerMidFlow(text, LANGUAGES_Q)); return; }
+    const raw = await parseWithClaude(
+      "The caregiver is choosing the languages she speaks from a FIXED list: " + LANGUAGE_OPTIONS.map((l) => `"${l}"`).join(", ") + ". " +
+        'Reply with raw JSON only: {"action": "set" | "add" | "remove", "languages": [exact names from the list], "other": [anything she named that is not on the list]}. ' +
+        '"I speak X and Y" is set; "add X" / "also X" is add; "remove X" / "not X" is remove. If she named nothing, reply {"action":"set","languages":[],"other":[]}.',
+      text, 120,
+    );
+    let action: "set" | "add" | "remove" = "set"; let picked: string[] = []; let other: string[] = [];
+    try {
+      const p = JSON.parse(raw) as Record<string, unknown>;
+      action = p.action === "add" || p.action === "remove" ? p.action : "set";
+      picked = (Array.isArray(p.languages) ? p.languages : []).map((v) => LANGUAGE_OPTIONS.find((l) => l.toLowerCase() === String(v).trim().toLowerCase())).filter((v): v is string => !!v);
+      other = (Array.isArray(p.other) ? p.other : []).map((v) => String(v).trim()).filter(Boolean);
+    } catch { /* re-ask below */ }
+    const note = other.length ? `"${other.join('", "')}" isn't one of the options, so I've left it off. ` : "";
+    if (!picked.length) {
+      await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "collect", profileUpdateField: "languages", stateExpiresAt: FLOW_TTL() });
+      await sendMessage(chatId, `${note}${LANGUAGES_Q}`);
+      return;
+    }
+    const cg = (await db.collection("caregivers").doc(caregiverId).get()).data() ?? {};
+    const current: string[] = Array.isArray(cg.languages) && cg.languages.length ? (cg.languages as string[]) : ["English"];
+    let proposed: string[];
+    if (action === "add") proposed = LANGUAGE_OPTIONS.filter((l) => current.includes(l) || picked.includes(l));
+    else if (action === "remove") proposed = current.filter((l) => !picked.includes(l));
+    else proposed = LANGUAGE_OPTIONS.filter((l) => picked.includes(l));
+    if (!proposed.length) { await sendMessage(chatId, `${note}At least one language has to stay on your profile. ${LANGUAGES_Q}`); return; }
+    await db.collection("agent_sessions").doc(phone).update({
+      profileUpdateStep: "confirm", profileUpdateField: "languages", profileUpdateValue: JSON.stringify(proposed), stateExpiresAt: FLOW_TTL(),
+    });
+    await sendMessage(chatId, `${note}Your languages will be: ${proposed.join(", ")}.\n\nReply YES to save that, or NO to leave them as they are.`);
+    return;
+  }
+  const proposed = (() => { try { return JSON.parse((session.profileUpdateValue as string) ?? "[]") as string[]; } catch { return [] as string[]; } })();
+  const reAskConfirm = `So — save these languages: ${proposed.join(", ")}? Reply YES or NO.`;
+  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm)); return; }
+  const d = await yesNo(text);
+  if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
+  await clearProfileFlow(phone);
+  if (d === "YES" && proposed.length) {
+    await db.collection("caregivers").doc(caregiverId).update({ languages: proposed });
+    await sendMessage(chatId, `Done — your languages now read: ${proposed.join(", ")}.`);
+  } else {
+    await sendMessage(chatId, "No problem — your languages weren't changed.");
+  }
+}
+
+// ── LOOKING FOR — Weekly Availability › the job-type pills (single choice, jobTypes: [id]) ──
+async function handleJobTypeUpdate(
+  caregiverId: string, phone: string, text: string,
+  session: Record<string, unknown>, chatId: string,
+): Promise<void> {
+  const step = (session.profileUpdateStep as string) ?? "collect";
+  if (step === "collect") {
+    if (await isQuestionOrOther(text, JOB_TYPE_Q)) { await sendMessage(chatId, await answerMidFlow(text, JOB_TYPE_Q)); return; }
+    const raw = await parseWithClaude(
+      'Which ONE job type is the caregiver choosing? "occasional" / "now and then" / "as needed" → occasional. "part time" / "a few days a week" → part-time. "full time" / "every day" → full-time. ' +
+        "Reply exactly occasional, part-time, full-time, or none.",
+      text, 10,
+    );
+    const id = JOB_TYPE_OPTIONS.find((j) => j.id === raw.trim().toLowerCase())?.id;
+    if (!id) {
+      await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "collect", profileUpdateField: "jobtype", stateExpiresAt: FLOW_TTL() });
+      await sendMessage(chatId, JOB_TYPE_Q);
+      return;
+    }
+    await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "confirm", profileUpdateField: "jobtype", profileUpdateValue: id, stateExpiresAt: FLOW_TTL() });
+    await sendMessage(chatId, `Looking for: ${jobTypeLabel(id)}.\n\nReply YES to save that, or NO to leave it as it is.`);
+    return;
+  }
+  const id = String(session.profileUpdateValue ?? "");
+  const reAskConfirm = `So — set Looking for to ${jobTypeLabel(id)}? Reply YES or NO.`;
+  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm)); return; }
+  const d = await yesNo(text);
+  if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
+  await clearProfileFlow(phone);
+  if (d === "YES" && JOB_TYPE_OPTIONS.some((j) => j.id === id)) {
+    // The page's Save writes jobTypes as a one-element array of the hyphenated id.
+    await db.collection("caregivers").doc(caregiverId).update({ jobTypes: [id] });
+    await sendMessage(chatId, `Done — Looking for: ${jobTypeLabel(id)}.`);
+  } else {
+    await sendMessage(chatId, "No problem — nothing changed.");
+  }
+}
+
+// ── TRAVEL — Location & Travel › Edit (serviceRadius: 5 / 10 / 15 / 25 / 50 miles; the address lives in Account Settings) ──
+async function handleTravelUpdate(
+  caregiverId: string, phone: string, text: string,
+  session: Record<string, unknown>, chatId: string,
+): Promise<void> {
+  const step = (session.profileUpdateStep as string) ?? "collect";
+  if (step === "collect") {
+    if (await isQuestionOrOther(text, TRAVEL_Q)) { await sendMessage(chatId, await answerMidFlow(text, TRAVEL_Q)); return; }
+    const raw = await parseWithClaude("Extract the travel distance in miles as a number. If none is stated, reply none. Reply with just the number.", text, 10);
+    const radius = toServiceRadius(raw);
+    if (!radius) {
+      await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "collect", profileUpdateField: "travel", stateExpiresAt: FLOW_TTL() });
+      await sendMessage(chatId, TRAVEL_Q);
+      return;
+    }
+    await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "confirm", profileUpdateField: "travel", profileUpdateValue: String(radius), stateExpiresAt: FLOW_TTL() });
+    await sendMessage(chatId, `Willing to travel within ${radius} miles.\n\nReply YES to save that, or NO to leave it as it is.`);
+    return;
+  }
+  const radius = Number(session.profileUpdateValue ?? 0);
+  const reAskConfirm = `So — set your travel distance to ${radius} miles? Reply YES or NO.`;
+  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm)); return; }
+  const d = await yesNo(text);
+  if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
+  await clearProfileFlow(phone);
+  if (d === "YES" && TRAVEL_OPTIONS.includes(radius)) {
+    await db.collection("caregivers").doc(caregiverId).update({ serviceRadius: radius });
+    await sendMessage(chatId, `Done — willing to travel within ${radius} miles.`);
+  } else {
+    await sendMessage(chatId, "No problem — nothing changed.");
+  }
 }
 
 // ── BIO ─────────────────────────────────────────────────────────────────────
@@ -292,13 +540,13 @@ async function handleBioUpdate(
   const step = (session.profileUpdateStep as string) ?? "collect";
 
   if (step === "collect") {
-    const reAsk = "What would you like your new bio to say? (Up to ~300 characters — this is what families see on your profile.)";
+    const reAsk = BIO_Q;
     if (await isQuestionOrOther(text, reAsk)) {
       await sendMessage(chatId, await answerMidFlow(text, reAsk));
       return;
     }
     const trimmed = text.trim();
-    if (trimmed.length < 15) {
+    if (!trimmed) {
       await db.collection("agent_sessions").doc(phone).update({
         profileUpdateStep:  "collect",
         profileUpdateField: "bio",
@@ -307,7 +555,7 @@ async function handleBioUpdate(
       await sendMessage(chatId, reAsk);
       return;
     }
-    const bio = trimmed.slice(0, 300);
+    const bio = trimmed.slice(0, 2500);
     await db.collection("agent_sessions").doc(phone).update({
       profileUpdateStep:  "confirm",
       profileUpdateField: "bio",
@@ -333,7 +581,6 @@ async function handleBioUpdate(
   if (decision === "YES" && proposedBio) {
     await db.collection("caregivers").doc(caregiverId).update({
       bio:              proposedBio,
-      bioUpdatedAt:     new Date().toISOString(),
     });
     await sendMessage(chatId, "Done — your bio is updated.");
   } else {
@@ -458,7 +705,7 @@ async function handleReactivate(
  */
 export function profileFieldFromIntent(intent: string): ProfileUpdateField | undefined {
   switch (intent) {
-    case "UPDATE_RATE":    return "rate";
+    case "UPDATE_RATE":    return "rates";
     case "UPDATE_SKILLS":  return "skills";
     case "UPDATE_BIO":     return "bio";
     case "UPDATE_PHOTO":   return "photo";

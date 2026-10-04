@@ -1,3 +1,4 @@
+import { serviceLabel } from '../caregiver/signup/constants';
 import React, { useState, useEffect, useMemo } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { useNavigate } from 'react-router-dom';
@@ -530,7 +531,7 @@ const ShiftRow: React.FC<{
                                       <div key={ci} className="border border-slate-200 rounded-xl overflow-hidden">
                                         <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
                                           <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
-                                          <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{cat}</p>
+                                          <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{serviceLabel(cat)}</p>
                                           {subs.length > 0 && doneSubCount > 0 && (
                                             <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subs.length}</span>
                                           )}

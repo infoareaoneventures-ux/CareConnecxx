@@ -52,6 +52,7 @@ import {
   type SendBookingEligibleInterview,
 } from "./bookingResolution";
 import { SHIFT_PLATFORM_FEE_RATE } from "../billing/config";
+import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from "../utils/medicationInstruction";
 
 const db = admin.firestore();
 
@@ -1255,6 +1256,10 @@ async function handleBkAskMessage(
     await sendMessage(chatId, `${BK_DIDNT_CATCH} ${QUESTION}`);
     return;
   }
+  if (isMedicationInstruction(trimmed)) {
+    await sendMessage(chatId, `${MEDICATION_INSTRUCTION_MESSAGE} ${QUESTION}`);
+    return;
+  }
   await mergeFlowData(phone, { message: trimmed });
   await updateStep(phone, "bk_confirm");
   const updated = await getFlowData(phone);
@@ -1682,6 +1687,10 @@ async function handleBkConfirm(
       await sendMessage(chatId, "What would you like the note to say?");
       return;
     }
+    if (isMedicationInstruction(notesText)) {
+      await sendMessage(chatId, `${MEDICATION_INSTRUCTION_MESSAGE} What would you like the note to say instead?`);
+      return;
+    }
     const recipients = data.careRecipients ?? [];
     if (!recipients.length) {
       await sendMessage(chatId, "I couldn't find a care plan to update that on — reply YES to send as-is, or NO to cancel.");
@@ -1708,6 +1717,10 @@ async function handleBkConfirm(
 
   if (action === "edit_message") {
     if (typeof parsed?.newMessage === "string" && parsed.newMessage.trim()) {
+      if (isMedicationInstruction(parsed.newMessage)) {
+        await sendMessage(chatId, `${MEDICATION_INSTRUCTION_MESSAGE} What would you like the note to say instead?`);
+        return;
+      }
       await mergeFlowData(phone, { message: parsed.newMessage.trim().slice(0, 500) });
       const updated = await getFlowData(phone);
       await sendMessage(chatId, buildBookingRecap(updated));

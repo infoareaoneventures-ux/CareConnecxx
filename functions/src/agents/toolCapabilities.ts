@@ -83,6 +83,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_notifications:        ["messaging"],  // the website's bell as data — see agents/notificationsPage.ts
   get_account_settings:     ["care_plan"],   // the website's Account Settings page as data — see agents/accountSettingsPage.ts
   show_account_settings:    ["care_plan"],   // the caregiver Account Settings page, texted whole (2026-10-03)
+  show_my_profile:          ["care_plan"],   // the caregiver's own My Profile page, texted whole; edit = its Edit buttons as flows (2026-10-04)
   set_subscription_status:  ["billing"],
   show_timesheets:          ["billing"],            // Payments › Timesheets tab, texted whole (2026-10-01)
   start_submit_hours_flow:  ["billing"],            // Timesheets › Submit hours modal as a flow (2026-10-01)
@@ -91,7 +92,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   retry_shift_payment:      ["billing"],            // parity 2026-07-06: agent mirror of v1-retryShiftPayment
   request_instant_payout:   ["billing"],
   show_payouts:             ["billing"],            // Payments › Payouts tab, texted whole (2026-10-01)
-  show_membership:          ["billing"],            // Payments › Membership tab, texted whole (2026-10-03)
+  show_membership:          ["billing"],            // Settings › Membership & verification, texted whole (2026-10-03; moved from Payments 2026-10-04)
   get_payout_status:        ["billing"],
   review_shift_hours:       ["billing", "care_plan"],
   get_pending_timesheets:   ["billing"],

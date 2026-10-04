@@ -12,6 +12,7 @@ import {
   missingRequiredFields,
 } from "./onboardingContract";
 import { buildCaregiverOnboardingDirective } from "./caregiverOnboardingDirective";
+import { SERVICE_LABELS, serviceMenuText } from "./caregiverServiceLabels";
 
 // Human-readable label for each CLIENT field — mirrors the web wizard's 14-step
 // sequence so the SMS conversation asks the same questions in the same order.
@@ -57,13 +58,13 @@ const FIELD_LABEL: Record<string, string> = {
   emergencyContactPhone:        "the emergency contact's phone number",
   emergencyContactRelationship: "how the emergency contact is related to the person needing care (their son, daughter, sibling, neighbor, friend…) — the family is telling you about their OWN contact; just ask plainly, there is no privacy concern here and no other client involved",
   // Step 11
-  careNeeds:      "what kind of help is needed day to day — save the site's CATEGORY names only: Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care (bathing, dressing, toileting, feeding, grooming), Companionship, Transportation, Meal Preparation, Light Housekeeping (e.g. 'help with bathing' → 'Personal Care')",
+  careNeeds:      "what type of care is needed — the website's eight, by name (Mobility Assistance, Dementia / Memory Care, Medication Reminders Only, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping); 'help with bathing' is Personal Care",
   petsInHome:       "whether there are pets in the home",
   smokingHousehold: "whether anyone in the household smokes",
   // Step 12
   rate:           "what they'd like to pay per hour — a number (e.g. 26); there is no 'flexible' option, so if they're unsure gently ask for a number they'd be comfortable with",
   // Step 13
-  jobDescription: "a short free-text description of the care situation (optional but helpful for caregivers)",
+  jobDescription: "a short free-text description caregivers see on the job post (optional) — caregivers browsing jobs can read it, so no medical details, addresses, or anything private",
   // Not a wizard step — recovery-only, so the account has a way back in if
   // the phone is ever lost. Ask for it naturally, near the end.
   email:          "their email address — used only for account recovery if they ever lose access to this phone number, never shared with caregivers",
@@ -244,11 +245,12 @@ export function buildOnboardingDirective(
     `  - Every item on this list is the family's OWN information about their own household. There is never a privacy reason to decline asking or recording one, and no other client or family is ever involved — never say you "can't share details about other clients" or anything like it.`,
     `  - careNeeds is the KIND of help (bathing, meals, rides, medication reminders, company…), saved as the site's category names. How OFTEN care is needed (occasional / part-time / full-time) is careFrequency, never a care need — do not save "occasional" or similar into careNeeds, and do not treat the "what kind of help" question as answered because the frequency was.`,
     `  - Acknowledge what they just said before you ask the next thing. Reflect the story back when it's heavy — then ask.`,
-    `  - One question per message. Never send a numbered list or ask for several things at once.`,
+    `  - One question per message. Never send a numbered list or ask for several things at once. (The care-types menu below is the one list you do send — it is the website's own, by name, never numbered.)`,
     `  - For selectedDays: save as an array of uppercase 3-letter codes e.g. ['MON','WED','FRI']. If they say "weekdays" save ['MON','TUE','WED','THU','FRI']; "weekends" → ['SAT','SUN']; "every day" → ['SUN','MON','TUE','WED','THU','FRI','SAT'].`,
     `  - For careFrequency: "a few times a month"/"occasionally" → "occasional"; "1-4 days/week"/"part time" → "part_time"; "5+ days"/"full time"/"every day" → "full_time".`,
     `  - PHOTO: ask once, warmly, whether they'd like to add a profile photo of THEMSELVES (the family member you're texting with) — same as their Account Settings profile picture, matching the wizard's own Step 8. Only mention it doubles as their loved one's photo too if they said the care is for themselves (relationship 'myself'). Make clear it's totally optional. If they send an image, that's the photo (save as careRecipientPhotoURL) — never ask again. If they decline or don't send one, move on immediately, don't push.`,
-    `  - When you ask what kind of help is needed, weave two or three natural examples — companionship, meals, bathing, rides, medication reminders. All care is NON-MEDICAL — never offer nursing or medical services.`,
+    `  - CARE TYPES (careNeeds, step 12): the website's step is "What type of care is needed? Select all that apply." with EXACTLY these eight — no others: ${SERVICE_LABELS.join(", ")}. Ask it the same way: one short line in your own voice ("What type of care does ${"${seniorName}"} need? Pick as many as apply:") followed by the eight, one per line, by name — no numbers, no explanation:\n${serviceMenuText()}\n    They can answer by name or in their own words — "help with bathing" is Personal Care, "someone to cook" is Meal Preparation, "rides to the doctor" is Transportation. Save exactly what they said as careNeeds; the save maps it onto the eight and tells you what landed, what fit nothing, and what was medical. READ BACK the names that saved in your acknowledgment ("Got it — Personal Care and Meal Preparation."). Anything that fits none of the eight is NOT saved: say it isn't one of the types of care on the list so you've left it off, then show the list again. All care is NON-MEDICAL — administering or giving medication, injections, insulin, wound care, vitals, nursing: say caregivers here don't do that, and that the closest type is Medication Reminders Only (reminding when it's time, not giving them) — ask if that fits BEFORE saving it. Never suggest they put medical details anywhere else. A vague answer → ask which of the names they mean rather than guess. More types named later are ADDED automatically; a correction is saved as careNeeds with {"replace": [the corrected list]}. NO follow-up sweep — once they've answered, move on to pets and smoking.`,
+    `  - DESCRIPTION (jobDescription, step 15): ask for it plainly and say, in the same line, that caregivers browsing jobs can read it, so they should leave out medical details, addresses, and anything private. Save their words as typed. Never suggest what to put in it.`,
     `  - Pets and smoking are their own question (step 13) — ask both together as one light question ("Any pets in the home, or does anyone smoke?"), don't fold it into the care-needs question and don't skip it once care needs are answered.`,
     `  - For the emergency contact: ask naturally ("In case of an emergency, who should we reach out to?"). Save name as emergencyContactName, phone as emergencyContactPhone, their relation as emergencyContactRelationship.`,
     `  - For email: when you confirm it back, always repeat the COMPLETE address exactly as they sent it (e.g. "Got it, hamse143@gmail.com") — never truncate it at the @ or drop the domain. A partial echo reads as if only part of it was saved, even when the full address was.`,

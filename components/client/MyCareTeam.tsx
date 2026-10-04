@@ -1,3 +1,4 @@
+import { serviceLabel } from '../caregiver/signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Star, Calendar, Shield, Heart, MessageSquare, User, Search, RefreshCw } from 'lucide-react';
@@ -320,7 +321,7 @@ export const MyCareTeam: React.FC = () => {
                 className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary-700"
               >
                 <Shield className="w-3 h-3 mr-1" />
-                {specialty}
+                {serviceLabel(specialty)}
               </span>
             ))}
           </div>

@@ -14,7 +14,7 @@ vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(asyn
 
 import { caregiverAccountEventCopy } from "../caregiverAccountEvents";
 
-const TAB = "https://eviacares.com/caregiver/payments?tab=membership";
+const TAB = "https://eviacares.com/caregiver/settings";
 
 describe("caregiverAccountEventCopy — membership notices", () => {
   it("paid / renewed: the bell links to the dashboard, the text carries the consent page itself", () => {

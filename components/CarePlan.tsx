@@ -1,4 +1,6 @@
 
+import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../utils/medicationInstruction';
+import { serviceLabel } from './caregiver/signup/constants';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Phone, FileText, ChevronLeft, Plus, Trash2, Loader2, User,
@@ -33,16 +35,9 @@ const CARE_NEED_COLORS: Record<string, { border: string; chip: string; title: st
   'Light Housekeeping':                { border: 'border-l-teal-400',   chip: 'bg-teal-50 border-teal-100 text-teal-700',     title: 'text-teal-800' },
 };
 
-const CARE_NEED_SUBS: Record<string, string[]> = {
-  'Mobility Assistance': ['Ambulation', 'Transfer Assist'],
-  'Dementia / Memory Care': ['Supervision / Safety monitoring', 'Memory support', 'Redirection / cueing'],
-  'Medication Reminders': ['Morning', 'Afternoon', 'Evening', 'Bedtime'],
-  'Personal Care': ['Bathing', 'Dressing Assistance', 'Toileting', 'Feeding', 'Comb Hair', 'Oral Hygiene', 'Skin Care', 'Physical Activity'],
-  'Companionship': [],
-  'Transportation': ['Doctor appointments', 'Grocery shopping', 'Pharmacy visits', 'Hairdresser / barber'],
-  'Meal Preparation': ['Breakfast', 'Lunch', 'Snack', 'Dinner'],
-  'Light Housekeeping': ['Light housekeeping (dusting, vacuuming, mopping)', 'Change bed linens', 'Change bath towels', 'Take out trash'],
-};
+// The sub-task chips under each care need left the page 2026-10-04 (founder: the
+// eight, nothing underneath — same as the caregiver side). careNeedDetails stays
+// in the data shape, always {}.
 
 const FAV_ACTIVITIES = ['Walk', 'Reading', 'Cooking', 'Gardening', 'Watching TV', 'Socializing', 'Going outside', 'Exercise', 'Hobbies', 'Other'];
 const HELP_ACTIVITIES: string[] = [];
@@ -465,6 +460,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       const hasLocation = draftPlan.locations.some(l => l.street || l.city);
       if (!hasLocation) { onShowToast('Please select or add a care location', 'error'); return; }
     }
+    if (editingSection === 'notes' && isMedicationInstruction(draftPlan.notes)) { onShowToast(MEDICATION_INSTRUCTION_MESSAGE, 'error'); return; }
     setSavingSection(true);
     // Strip blank entries and undefined fields — Firestore rejects undefined values
     // Geocode each location so lat/lng travels with the address everywhere it's used
@@ -672,6 +668,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     }
     const loc = newDraft.locations[0];
     if (!loc || !loc.street.trim()) { onShowToast('Please select or enter a care location with a street address', 'error'); return; }
+    if (isMedicationInstruction(newDraft.notes)) { onShowToast(MEDICATION_INSTRUCTION_MESSAGE, 'error'); return; }
     if (!currentPlanId || !db) return;
     setSavingRecipient(true);
     try {
@@ -1009,8 +1006,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   <div className="space-y-2">
                     {CARE_TYPES.map(need => {
                       const selected = newDraft.careNeeds.includes(need);
-                      const subs = CARE_NEED_SUBS[need] || [];
-                      const selectedSubs = newDraft.careNeedDetails?.[need] || [];
                       return (
                         <div key={need} className={`rounded-xl overflow-hidden transition-all ${selected ? 'border-2 border-primary-300' : 'border border-slate-200 hover:border-slate-300'}`}>
                           <button type="button"
@@ -1022,23 +1017,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             }}
                             className="w-full px-4 py-3 text-left transition-colors"
                             style={selected ? { backgroundColor: '#dbeafe' } : undefined}>
-                            <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
+                            <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{serviceLabel(need)}</span>
                           </button>
-                          {selected && subs.length > 0 && (
-                            <div className="px-4 py-3 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
-                              {subs.map(sub => {
-                                const subSel = selectedSubs.includes(sub);
-                                return (
-                                  <button key={sub} type="button"
-                                    onClick={() => setNewDraft(p => ({ ...p, careNeedDetails: { ...p.careNeedDetails, [need]: toggleArr(selectedSubs, sub) } }))}
-                                    className="px-3 py-1 rounded-full border text-xs font-medium transition-all flex items-center gap-1"
-                                    style={subSel ? { backgroundColor: '#dbeafe', borderColor: '#93c5fd', color: '#1d4ed8' } : { backgroundColor: '#ffffff', borderColor: '#e2e8f0', color: '#64748b' }}>
-                                    {subSel && <Check size={10} className="flex-shrink-0" />}{sub}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
                         </div>
                       );
                     })}
@@ -1215,8 +1195,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                         <div className="space-y-2 mb-4">
                           {CARE_TYPES.map(need => {
                             const selected = draft.careNeeds.includes(need);
-                            const subs = CARE_NEED_SUBS[need] || [];
-                            const selectedSubs = draft.careNeedDetails?.[need] || [];
                             return (
                               <div key={need} className={`rounded-xl overflow-hidden transition-all ${selected ? 'border-2 border-primary-300' : 'border border-slate-200 hover:border-slate-300'}`}>
                                 <button type="button"
@@ -1228,30 +1206,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                   }}
                                   className="w-full px-4 py-3 text-left transition-colors"
                                   style={selected ? { backgroundColor: '#dbeafe' } : undefined}>
-                                  <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{need}</span>
+                                  <span className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-slate-500'}`}>{serviceLabel(need)}</span>
                                 </button>
-                                {selected && subs.length > 0 && (
-                                  <div className="px-4 py-3 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
-                                    {subs.map(sub => {
-                                      const subSelected = selectedSubs.includes(sub);
-                                      return (
-                                        <button key={sub} type="button"
-                                          onClick={() => setDraftPlan(prev => prev ? {
-                                            ...prev,
-                                            careNeedDetails: { ...prev.careNeedDetails, [need]: toggleArr(selectedSubs, sub) }
-                                          } : prev)}
-                                          className="px-3 py-1 rounded-full border text-xs font-medium transition-all flex items-center gap-1"
-                                          style={subSelected
-                                            ? { backgroundColor: '#dbeafe', borderColor: '#93c5fd', color: '#1d4ed8' }
-                                            : { backgroundColor: '#ffffff', borderColor: '#e2e8f0', color: '#64748b' }
-                                          }>
-                                          {subSelected && <Check size={10} className="flex-shrink-0" />}
-                                          {sub}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                )}
                               </div>
                             );
                           })}
@@ -1269,19 +1225,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             {rPlan.careNeeds.length > 0 ? (
                               <div className="space-y-2">
                                 {rPlan.careNeeds.map(need => {
-                                  const subs = rPlan.careNeedDetails?.[need] || [];
                                   return (
                                     <div key={need} className="rounded-xl border-2 border-primary-300 overflow-hidden">
                                       <div className="px-4 py-3" style={{ backgroundColor: '#dbeafe' }}>
-                                        <p className="text-sm font-bold text-primary-700">{displayName(need)}</p>
+                                        <p className="text-sm font-bold text-primary-700">{serviceLabel(displayName(need))}</p>
                                       </div>
-                                      {subs.length > 0 && (
-                                        <div className="px-4 py-3 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
-                                          {subs.map(sub => (
-                                            <span key={sub} className="px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-medium text-slate-600">{sub}</span>
-                                          ))}
-                                        </div>
-                                      )}
                                     </div>
                                   );
                                 })}

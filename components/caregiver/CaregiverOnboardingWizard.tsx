@@ -9,6 +9,7 @@ import { blocksToWeeklySlots } from '../../services/availabilityService';
 import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
+  serviceLabel,
   EXPERIENCE_LEVELS,
   JOB_TYPES,
   MAX_CLIENTS_OPTIONS,
@@ -259,7 +260,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const handleSaveRates = async () => {
     if (!form.hourlyRate) { onShowToast('Please enter your minimum hourly rate', 'error'); return; }
     const rate = parseInt(form.hourlyRate);
-    if (rate < 15 || rate > 200) { onShowToast('Hourly rate must be between $15 and $200', 'error'); return; }
+    if (!(rate > 0)) { onShowToast('Your rate has to be more than $0', 'error'); return; }
     setIsLoading(true);
     try {
       const rateData: Record<string, any> = {
@@ -819,7 +820,7 @@ const ServicesStep: React.FC<{
                   isOn ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'
                 }`}>
                 <span className={`text-sm font-medium ${isOn ? 'text-indigo-700' : 'text-slate-600'}`}>
-                  {isOn && '✓ '}{service}
+                  {isOn && '✓ '}{serviceLabel(service)}
                 </span>
                 <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
                   isOn ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300'
@@ -876,7 +877,7 @@ const RatesStep: React.FC<{
   const handleNext = () => {
     if (!hourlyRate) { onShowToast('Please enter your minimum hourly rate', 'error'); return; }
     const rate = parseInt(hourlyRate);
-    if (rate < 15 || rate > 200) { onShowToast('Hourly rate must be between $15 and $200', 'error'); return; }
+    if (!(rate > 0)) { onShowToast('Your rate has to be more than $0', 'error'); return; }
     onNext();
   };
 

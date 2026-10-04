@@ -289,6 +289,13 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (past === "handled") return "handled";
     }
 
+    // ── PROFILE · PHOTO · BIO · LANGUAGES · SERVICES · RATES · LOOKING FOR · AVAILABILITY · TRAVEL — the My Profile page (agents/caregiverMyProfile.ts) ──
+    if (session.caregiverId) {
+      const { handleMyProfileKeyword } = await import("../agents/caregiverMyProfile");
+      const mp = await handleMyProfileKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (mp === "handled") return "handled";
+    }
+
     // ── SETTINGS · RESEND EMAIL LINK · DOCUMENTS · PAUSE [date] · REACTIVATE — the Account Settings page (agents/caregiverSettings.ts) ──
     if (session.caregiverId) {
       const { handleSettingsKeyword } = await import("../agents/caregiverSettings");
@@ -296,7 +303,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (st === "handled") return "handled";
     }
 
-    // ── MEMBERSHIP · MANAGE MEMBERSHIP · ACTIVATE — the Payments page's Membership tab (agents/caregiverMembership.ts) ──
+    // ── MEMBERSHIP · MANAGE MEMBERSHIP · ACTIVATE · AUTHORIZE — Settings › Membership & verification (agents/caregiverMembership.ts) ──
     if (session.caregiverId) {
       const { handleMembershipKeyword } = await import("../agents/caregiverMembership");
       const mb = await handleMembershipKeyword(phone, chatId, session.caregiverId, text);

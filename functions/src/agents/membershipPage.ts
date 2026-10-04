@@ -45,7 +45,7 @@ const toMs = (v: unknown): number => {
   return Date.parse(String(v));
 };
 
-// Families only: the caregiver Payments › Membership tab has its own twin (caregiverMembership.ts, 2026-10-03).
+// Families only: the caregiver's Settings › Membership & verification has its own twin (caregiverMembership.ts, 2026-10-03).
 export function shapeMembershipPage(sub: Record<string, unknown> | null): MembershipPage {
   const plan = CLIENT_PLAN;
   const status = sub ? String(sub.status ?? "") || null : null;

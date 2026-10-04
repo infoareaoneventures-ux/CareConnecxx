@@ -496,15 +496,16 @@ export function availabilityComplete(value: unknown): boolean {
   return normalizeDays(a.days).length > 0 && hasTimeOfDaySignal(a.hours);
 }
 
-// The wizard's rate rule (CaregiverOnboardingWizard.tsx handleSaveRates):
-// "Hourly rate must be between $15 and $200".
-export const CAREGIVER_RATE_MIN = 15;
-export const CAREGIVER_RATE_MAX = 200;
+// The rate is the caregiver's to set (founder 2026-10-04): any amount above $0,
+// no floor, no ceiling — the wizard's handleSaveRates and the profile page's
+// Rates save check the same one thing. "$25" stays everywhere as the EXAMPLE.
+export const RATE_EXAMPLE = 25;
+export const RATE_RULE_TEXT = "Your rate has to be more than $0";
 
-/** Caregiver hourly rate → a number inside the wizard's $15–$200 range, else null (caller re-asks). */
+/** Caregiver hourly rate → a positive dollar amount, else null (caller re-asks). */
 export function coerceCaregiverRate(value: unknown): number | null {
   const n = coerceClientRate(value);
-  return n !== null && n >= CAREGIVER_RATE_MIN && n <= CAREGIVER_RATE_MAX ? n : null;
+  return n !== null && n > 0 ? n : null;
 }
 
 // Required fields still missing from the collected data, in flow order.

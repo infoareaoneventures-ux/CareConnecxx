@@ -131,9 +131,10 @@ export async function textCaregiverGateBlock(
   } catch (err) {
     console.error("caregiverAccessGate: link mint failed, falling back to the site page", err);
   }
-  const fallback = reason === "membership" ? "/caregiver/membership"
-    : reason === "background" ? "/caregiver/dashboard"
-    : "/caregiver/settings";
+  // Membership & verification lives on Account Settings (2026-10-04): Activate,
+  // Authorize and the documents all have their card there.
+  const fallback = "/caregiver/settings";
+  void reason;
   await sendMessage(chatId, { parts: [{ type: "link", value: appLink(fallback) }] });
 }
 

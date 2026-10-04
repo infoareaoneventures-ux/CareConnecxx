@@ -424,6 +424,69 @@ describe("save_onboarding_field jobType canonicalization (Fix 3)", () => {
   });
 });
 
+// Care services (2026-10-04): the save is the website's "select all that apply"
+// gate — only the eight land, merged onto what's saved, medical/off-list words
+// never reach the record, and the model is told what landed and what didn't.
+vi.mock("../../agents/caregiverServices", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/caregiverServices")>();
+  return {
+    ...actual,
+    mapCaregiverServices: vi.fn(async (raw: unknown) => {
+      const terms = (Array.isArray(raw) ? raw : [raw]).map((t) => String(t).toLowerCase());
+      const matched: string[] = [];
+      const medical: string[] = [];
+      const unmapped: string[] = [];
+      for (const t of terms) {
+        if (t.includes("bath")) matched.push("Personal Care");
+        else if (t.includes("meal")) matched.push("Meal Preparation");
+        else if (t.includes("insulin")) medical.push(t);
+        else unmapped.push(t);
+      }
+      return { matched: actual.orderedCanonicalServices(matched), medical, unmapped, unresolved: [] };
+    }),
+  };
+});
+
+describe("save_onboarding_field specialties = the website's services step gate (2026-10-04)", () => {
+  const PHONE = "+15555550077";
+  beforeEach(() => { hoisted.reset(); });
+  const saved = () => hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData ?? {};
+
+  it("writes ONLY the eight, to specialties + skills + services alike, and tells the model to read the names back", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "specialties", fieldValue: ["bathing", "hospice"],
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(saved().specialties).toEqual(["Personal Care"]);
+    expect(saved().skills).toEqual(["Personal Care"]);
+    expect(saved().services).toEqual(["Personal Care"]);
+    expect(r.guidance).toContain("Services on their profile now: Personal Care");
+    expect(r.guidance).toContain('"hospice" isn\'t one of the services on the list');
+    expect(r.guidance).toContain("No follow-up sweep");
+  });
+
+  it("a later answer ADDS (merge), a {replace} value swaps the list", async () => {
+    await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "specialties", fieldValue: ["bathing"] });
+    await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "specialties", fieldValue: "I also do meals" });
+    expect(saved().skills).toEqual(["Personal Care", "Meal Preparation"]);
+    await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "specialties", fieldValue: { replace: ["meals"] } });
+    expect(saved().skills).toEqual(["Meal Preparation"]);
+    expect(saved().specialties).toEqual(["Meal Preparation"]);
+  });
+
+  it("medical care alone saves nothing and steers to Medication Reminders Only with the menu", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "specialties", fieldValue: "I give insulin shots",
+    }) as any;
+    expect(r.saved).toBe(false);
+    expect(r.invalidValue).toBe(true);
+    expect(saved().skills).toBeUndefined();
+    expect(r.guidance).toContain("medical care");
+    expect(r.guidance).toContain("Medication Reminders Only");
+    expect(r.guidance).toContain("Mobility Assistance\nDementia / Memory Care\nMedication Reminders Only\nPersonal Care\nCompanionship\nTransportation\nMeal Preparation\nLight Housekeeping");
+  });
+});
+
 // Zip → city/state auto-derivation (2026-08-22): a client's zipCode save must
 // deterministically derive city/state via the same zippopotam.us lookup the
 // website wizard uses — never left to the model to extract/guess a city from
@@ -524,14 +587,20 @@ describe("save_onboarding_field client wizard-parity values (rate / startDate / 
     expect(onboardingData().rate).toBeUndefined();
   });
 
-  it("caregiver hourlyRate outside the wizard's $15–$200 is NOT saved — re-ask with the range (2026-09-26: '$3/hr' was accepted)", async () => {
+  it("caregiver hourlyRate: any amount above $0 saves (the rate is theirs — no floor, no ceiling, 2026-10-04); zero is NOT saved and re-asked", async () => {
+    const zero = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "hourlyRate", fieldValue: "0",
+    }) as any;
+    expect(zero.saved).toBe(false);
+    expect(zero.invalidValue).toBe(true);
+    expect(zero.guidance).toMatch(/above \$0/);
+    expect(onboardingData().hourlyRate).toBeUndefined();
     const low = await handleToolCall("save_onboarding_field", {
       phone: PHONE, role: "caregiver", fieldName: "hourlyRate", fieldValue: "3",
     }) as any;
-    expect(low.saved).toBe(false);
-    expect(low.invalidValue).toBe(true);
-    expect(low.guidance).toMatch(/\$15 to \$200/);
-    expect(onboardingData().hourlyRate).toBeUndefined();
+    expect(low.saved).toBe(true);
+    expect(onboardingData().hourlyRate).toBe(3);
+    hoisted.reset();
     const ok = await handleToolCall("save_onboarding_field", {
       phone: PHONE, role: "caregiver", fieldName: "hourlyRate", fieldValue: "$23/hr",
     }) as any;
@@ -624,13 +693,28 @@ describe("save_onboarding_field client care needs + field-name aliases (2026-09-
   beforeEach(() => { hoisted.reset(); });
   const onboardingData = () => hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData ?? {};
 
-  it("careNeeds are stored as the site's category names (+ sub-tasks), never the raw words", async () => {
+  it("careNeeds are stored as the site's category names — nothing underneath — never the raw words", async () => {
     const r = await handleToolCall("save_onboarding_field", {
       phone: PHONE, role: "client", fieldName: "careNeeds", fieldValue: ["Bathing", "help with meals"],
     }) as any;
     expect(r.saved).toBe(true);
     expect(onboardingData().careNeeds).toEqual(["Personal Care", "Meal Preparation"]);
-    expect(onboardingData().careNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
+    expect(onboardingData().careNeedDetails).toEqual({});
+    expect(r.guidance).toContain("Care needed on their plan now: Personal Care, Meal Preparation");
+  });
+
+  it("jobDescription: medication instructions never reach the caregiver — refused with the one line, nothing stored (2026-10-04)", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "jobDescription", fieldValue: "Mom is sweet. Give her two of the blue pills at 8 and skip the water pill on weekends.",
+    }) as any;
+    expect(r.saved).toBe(false);
+    expect(r.invalidValue).toBe(true);
+    expect(r.guidance).toContain("medication instructions can't be saved here");
+    expect(onboardingData().jobDescription).toBeUndefined();
+    const ok = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "jobDescription", fieldValue: "Mom takes medication morning and evening and likes a walk after lunch.",
+    }) as any;
+    expect(ok.saved).toBe(true);
   });
 
   it("a frequency answer is NOT a care need — refused with guidance, nothing stored", async () => {

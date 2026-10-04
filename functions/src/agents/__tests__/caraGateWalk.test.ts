@@ -890,10 +890,10 @@ describe("client gate absorb — volunteered details at awaiting steps", () => {
 
     await handleOnboardingStep(PHONE, CHAT, "mom also needs help with bathing", session);
 
-    // The volunteered task lands as the Care Plan CATEGORY (+ sub-task), never
-    // the raw word — same canonicalizer as collection (2026-09-26).
+    // The volunteered task lands as the Care Plan CATEGORY, never the raw word
+    // and nothing underneath (2026-10-04) — same canonicalizer as collection.
     expect(stored().onboardingData.careNeeds).toEqual(["companionship", "Personal Care"]);
-    expect(stored().onboardingData.careNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
+    expect(stored().onboardingData.careNeedDetails).toEqual({});
     const last = String(JSON.stringify(sentMessages.at(-1)?.text));
     expect(last).toMatch(/care plan|added/i);       // specific ack
     expect(last).toMatch(/membership|ready|link/i); // gate reminder still present

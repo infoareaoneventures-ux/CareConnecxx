@@ -274,7 +274,7 @@ describe("update_care_plan — careNeeds syncs senior_profiles.needs (2026-09-11
 describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
   beforeEach(() => { hoisted.reset(); geocodeStreetAddress.mockClear(); lookupZipPlace.mockReset(); });
 
-  it("first recipient in the household: writes the primary roster fields + the plan the family filled in (needs, sub-tasks, note, location) + the pool + needs mirror — no senior_profiles.add", async () => {
+  it("first recipient in the household: writes the primary roster fields + the plan the family filled in (needs, note, location — no sub-tasks) + the pool + needs mirror — no senior_profiles.add", async () => {
     lookupZipPlace.mockResolvedValueOnce({ lat: 0, lng: 0, city: "San Jose", state: "CA" });
     const r = await handleToolCall("create_senior_profile", {
       clientId: CLIENT, name: "Jane Doe", relationship: "Parent", age: 78,
@@ -287,7 +287,7 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     expect(jobDoc).toMatchObject({ careRecipientFirstName: "Jane", careRecipientLastName: "Doe", relationship: "Parent", careRecipientAge: "78" });
     const plan = hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.jane_doe;
     expect(plan.careNeeds).toEqual(["Meal Preparation", "Personal Care"]);
-    expect(plan.careNeedDetails).toEqual({ "Meal Preparation": ["Breakfast"] });
+    expect(plan.careNeedDetails).toEqual({}); // sub-tasks left the page 2026-10-04 — a passed map is ignored
     expect(plan.notes).toBe("she likes to go shopping");
     expect(plan.locations).toEqual([{ street: "4746 campbell ave", city: "San Jose", state: "CA", zipCode: "95130", lat: 37.3, lng: -121.9 }]);
     expect(plan.lifestyle.favoriteActivities).toEqual([]);
@@ -366,13 +366,19 @@ describe("update_care_plan — Care Needs & Tasks, Emergency Contacts, Looks goo
     expect(plan.lifestyle.favoriteActivities).toEqual([]); // whole-plan write carries the page's empty lifestyle/tasks shape
   });
 
-  it("careNeedDetails sets sub-tasks only under a selected need and only from the page's list", async () => {
+  it("notes: medication instructions are refused with the one line and nothing is written (2026-10-04)", async () => {
+    hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: { careNeeds: ["Meal Preparation"], careNeedDetails: {}, notes: "n" } } });
+    const r = await handleToolCall("update_care_plan", { clientId: CLIENT, field: "notes", value: "Give her 2 pills at bedtime", action: "set" }) as any;
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("medication instructions can't be saved here");
+    expect(hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.jane_doe.notes).toBe("n");
+  });
+
+  it("careNeedDetails is no longer a section of the page (2026-10-04) — the tool refuses it", async () => {
     hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: { careNeeds: ["Meal Preparation"], careNeedDetails: {} } } });
-    const r = await handleToolCall("update_care_plan", { clientId: CLIENT, field: "careNeedDetails", value: { "Meal Preparation": ["Breakfast", "Dinner"] }, action: "set" }) as any;
-    expect(r.success).toBe(true);
-    expect(hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.jane_doe.careNeedDetails).toEqual({ "Meal Preparation": ["Breakfast", "Dinner"] });
-    expect(((await handleToolCall("update_care_plan", { clientId: CLIENT, field: "careNeedDetails", value: { "Personal Care": ["Bathing"] }, action: "set" })) as any)._toolError).toBe(true); // not selected
-    expect(((await handleToolCall("update_care_plan", { clientId: CLIENT, field: "careNeedDetails", value: { "Meal Preparation": ["Brunch"] }, action: "set" })) as any)._toolError).toBe(true); // not on the page
+    const r = await handleToolCall("update_care_plan", { clientId: CLIENT, field: "careNeedDetails", value: { "Meal Preparation": ["Breakfast"] }, action: "set" }) as any;
+    expect(r.success).toBe(false);
+    expect(hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.jane_doe.careNeedDetails).toEqual({});
   });
 
   it("emergencyContacts append mints an id, validates the phone, and respects the card's 2-contact cap (signup contact counts)", async () => {

@@ -1,3 +1,4 @@
+import { serviceLabel } from './caregiver/signup/constants';
 import React, { useState, useEffect, useMemo } from 'react';
 import { billedHourlyRate } from '../utils/pricing';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -618,7 +619,7 @@ export default function FindCaregivers() {
           </span>
         </div>
         <input
-          type="range" min={15} max={100} step={5}
+          type="range" min={20} max={100} step={5}
           value={maxRate}
           onChange={(e) => setMaxRate(Number(e.target.value))}
           className="w-full accent-teal-600"
@@ -701,7 +702,7 @@ export default function FindCaregivers() {
                 onChange={() => toggleSetItem(selectedSpecialties, key, setSelectedSpecialties)}
                 className="accent-teal-600 rounded"
               />
-              {key}
+              {serviceLabel(key)}
             </label>
           ))}
         </div>

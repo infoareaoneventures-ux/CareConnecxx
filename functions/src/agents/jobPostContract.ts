@@ -151,7 +151,6 @@ export async function mirrorJobPostRecipientsToWeb(params: {
   uid: string;
   careRecipients: JobPostRecipient[];
   careTypes: string[];
-  careNeedDetails?: Record<string, unknown>;
   description?: string;
   streetAddress?: string;
   city?: string;
@@ -160,7 +159,7 @@ export async function mirrorJobPostRecipientsToWeb(params: {
   petsInHome?: boolean;
   smokingHousehold?: boolean;
 }): Promise<void> {
-  const { uid, careRecipients, careTypes, careNeedDetails, description, streetAddress, city, state, zipCode, petsInHome, smokingHousehold } = params;
+  const { uid, careRecipients, careTypes, description, streetAddress, city, state, zipCode, petsInHome, smokingHousehold } = params;
   if (careRecipients.length === 0) return;
   const db = admin.firestore();
   try {
@@ -209,7 +208,7 @@ export async function mirrorJobPostRecipientsToWeb(params: {
       const existingLocs = cpData?.recipientPlans?.[key]?.locations;
       const updates: Record<string, unknown> = {
         [`recipientPlans.${key}.careNeeds`]:       careTypes,
-        [`recipientPlans.${key}.careNeedDetails`]: careNeedDetails || {},
+        [`recipientPlans.${key}.careNeedDetails`]: {}, // no sub-tasks since 2026-10-04
         [`recipientPlans.${key}.notes`]:           (description ?? "").trim(),
       };
       if (!existingLocs?.length) {
@@ -219,7 +218,7 @@ export async function mirrorJobPostRecipientsToWeb(params: {
         await cpRef.update(updates);
       } catch (e: any) {
         if (e.code === "not-found") {
-          await cpRef.set({ recipientPlans: { [key]: { careNeeds: careTypes, careNeedDetails: careNeedDetails || {}, notes: (description ?? "").trim(), locations: locationEntry } } });
+          await cpRef.set({ recipientPlans: { [key]: { careNeeds: careTypes, careNeedDetails: {}, notes: (description ?? "").trim(), locations: locationEntry } } });
         }
       }
     }

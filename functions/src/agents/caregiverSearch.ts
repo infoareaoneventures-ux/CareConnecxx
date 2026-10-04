@@ -22,6 +22,7 @@
 // The former matchingAgent.ts (Claude-scored top-3 with its own message) and
 // the tool's own extras (never re-show, hide hired/declined, widen when
 // empty, care-needs ranking) had no page equivalent and were removed.
+import { serviceLabel } from "./caregiverServiceLabels";
 import * as admin from "firebase-admin";
 import { isCaregiverBookable, type CaregiverEligibilityFields } from "../utils/caregiverEligibility";
 import { haversineDistanceMiles, hasValidTransportDocs } from "./caregiverMatchScoring";
@@ -261,7 +262,7 @@ export function caregiverCardText(c: CaregiverCard): string {
   // as the profile page (ClientCaregiverProfile.tsx / caregiverProfilePage.ts)
   // and the site's Find Caregivers card (parity fix, 2026-09-22).
   const visibleSkills = c.skills.filter((s) => s !== "Transportation" || c.hasReliableTransportation);
-  const skills = visibleSkills.length > 0 ? `${visibleSkills.slice(0, 2).join(", ")}${visibleSkills.length > 2 ? ` +${visibleSkills.length - 2}` : ""}` : "";
+  const skills = visibleSkills.length > 0 ? `${visibleSkills.slice(0, 2).map(serviceLabel).join(", ")}${visibleSkills.length > 2 ? ` +${visibleSkills.length - 2}` : ""}` : "";
   const stateLabel = c.state === "active_booking" ? "Active booking with you"
     : c.state === "interview_requested" ? "Interview requested — waiting on their reply"
     : c.state === "rebook" ? "Worked with you before — can re-book"

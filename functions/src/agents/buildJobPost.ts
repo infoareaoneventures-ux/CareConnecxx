@@ -132,7 +132,7 @@ export async function buildAndSaveJobPost(params: {
   const seniorAge     = onboardingData.age as number | undefined;
 
   const careNeeds      = (jobData.jobCareNeeds     ?? []) as string[];
-  const careNeedDetails = (jobData.jobCareNeedDetails ?? {}) as Record<string, string[]>;
+  const careNeedDetails: Record<string, string[]> = {}; // sub-tasks left the family screens 2026-10-04
   const careLevel      = (jobData.jobCareLevel     ?? "moderate") as string;
   const startDate      = (jobData.jobStartDate     ?? "") as string;
   const frequency      = (jobData.jobFrequency     ?? "occasional") as string;
@@ -212,13 +212,8 @@ export async function buildAndSaveJobPost(params: {
       age:          r.age ?? (key === seniorKey ? seniorAge : undefined),
       relationship: r.relationship ?? "",
       careNeeds,
-      // Matches the website's own two-level model (CarePlan.tsx's
-      // careNeeds + careNeedDetails) — careNeeds is the parent category
-      // ("Personal Care"), careNeedDetails is which specific sub-task chip
-      // within it was actually named ("Bathing"). Previously only the
-      // category was ever written here, so a family saying "bathing" showed
-      // "Personal Care" on the Care Plan page with no sub-task selected at
-      // all (2026-09-14, live-caught).
+      // careNeedDetails stays in the shape (always {}) — the sub-task chips were
+      // dropped from every family screen 2026-10-04.
       careNeedDetails,
       careLevel,
       // (no `conditions` — diagnoses are out of scope; the site never writes them)

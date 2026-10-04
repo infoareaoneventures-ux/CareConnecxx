@@ -13,7 +13,8 @@
 // own) so the webhook can import it without touching the legacy runner.
 
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { isFieldFilled, toExperienceBucket, toServiceRadius, availabilityComplete, CAREGIVER_RATE_MIN, CAREGIVER_RATE_MAX } from "./onboardingContract";
+import { isFieldFilled, toExperienceBucket, toServiceRadius, availabilityComplete } from "./onboardingContract";
+import { orderedCanonicalServices } from "./caregiverServiceLabels";
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 const JOB_TYPES = new Set(["occasional", "part_time", "full_time"]);
@@ -76,8 +77,18 @@ export async function absorbCaregiverFields(
     const bucket = toExperienceBucket(parsed.yearsExperience);
     if (bucket) candidates.yearsExperience = bucket;
   }
-  const specialties = cleanStringArray(parsed.specialties);
-  if (specialties.length) candidates.specialties = specialties;
+  // Care services = the website's eight only (2026-10-04): the caregiver's words
+  // are mapped onto PRIMARY_SERVICES before anything is kept — never a raw word
+  // on the record. What fits nothing is dropped here; the loop's save tool (not
+  // the absorber) is where Evia tells her what was left off.
+  const specialtyWords = cleanStringArray(parsed.specialties);
+  if (specialtyWords.length) {
+    try {
+      const { mapCaregiverServices } = await import("./caregiverServices");
+      const { matched } = await mapCaregiverServices(specialtyWords);
+      if (matched.length) candidates.specialties = matched;
+    } catch { /* nothing kept */ }
+  }
   if (parsed.availability && typeof parsed.availability === "object" && !Array.isArray(parsed.availability)) {
     const a = parsed.availability as Record<string, unknown>;
     const days  = cleanStringArray(a.days);
@@ -87,8 +98,8 @@ export async function absorbCaregiverFields(
   if (typeof parsed.jobType === "string" && JOB_TYPES.has(parsed.jobType)) {
     candidates.jobType = parsed.jobType;
   }
-  // Wizard rate rule: $15–$200/hr (handleSaveRates) — nothing outside is ever stored.
-  if (typeof parsed.hourlyRate === "number" && parsed.hourlyRate >= CAREGIVER_RATE_MIN && parsed.hourlyRate <= CAREGIVER_RATE_MAX) {
+  // The rate is theirs to set — any amount above $0 (founder 2026-10-04); zero is never stored.
+  if (typeof parsed.hourlyRate === "number" && parsed.hourlyRate > 0) {
     candidates.hourlyRate = parsed.hourlyRate;
   }
   if (typeof parsed.email === "string" && EMAIL_RE.test(parsed.email.trim().toLowerCase())) {
@@ -134,28 +145,29 @@ export async function absorbCaregiverFields(
       if (days.length !== curDays.length || hours !== curHours) out.availability = { days, hours };
       continue;
     }
+    if (k === "specialties") continue; // one list on three fields — merged below
     if (isFieldFilled(existing[k])) continue;
     out[k] = v;
   }
 
-  // When we recovered fresh specialties, also write the canonical skills/services
-  // enum the webapp checkboxes + matching engine read (mirrors the save handler's
-  // canonicalization). Only when skills isn't already set, and never at the cost
-  // of the raw specialties, which are already in `out`.
-  if (Array.isArray(out.specialties) && out.specialties.length && !isFieldFilled(existing.skills)) {
-    try {
-      const { canonicalizeCaregiverServices } = await import("./caregiverServices");
-      const canonical = await canonicalizeCaregiverServices(out.specialties);
-      if (canonical.length) {
-        out.skills = canonical;
-        out.services = canonical;
-      }
-    } catch {
-      /* keep raw specialties; canonicalization is best-effort */
-    }
+  // Services are ONE list on three fields (specialties = skills = services, the
+  // exact site strings). Absorbed services are ADDED onto what's already saved —
+  // the wizard's "select all that apply" — never removed here.
+  if (Array.isArray(candidates.specialties) && candidates.specialties.length) {
+    const merged = mergeServices(existing, candidates.specialties as string[]);
+    if (merged) { out.specialties = merged; out.skills = merged; out.services = merged; }
   }
 
   return out;
+}
+
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+/** The saved list + the new services, in menu order; null when nothing new was added. */
+function mergeServices(existing: Record<string, unknown>, added: string[]): string[] | null {
+  const prev = orderedCanonicalServices([...arr(existing.skills), ...arr(existing.services), ...arr(existing.specialties)]);
+  const merged = orderedCanonicalServices([...prev, ...added]);
+  return merged.length !== prev.length ? merged : null;
 }
 
 const unionCI = (existing: unknown, added: string[]): string[] | null => {
@@ -206,15 +218,17 @@ export async function absorbCaregiverProfileUpdate(
   let parsed: Record<string, unknown> = {};
   try { parsed = JSON.parse(raw); } catch { /* keep {} */ }
 
-  let addedSpecialties: string[] = Array.isArray(fresh.specialties) ? (fresh.specialties as string[]) : [];
-  for (const key of ["specialties"] as const) {
-    if (out[key]) continue; // first pass already handled the empty-field case
-    const added = cleanStringArray(parsed[key]);
-    if (!added.length) continue;
-    const merged = unionCI(existing[key], added);
-    if (merged) {
-      out[key] = merged;
-      if (key === "specialties") addedSpecialties = added;
+  // Services: the same eight-only gate as collection — her words mapped onto the
+  // site's strings, ADDED onto the saved list, written to all three fields.
+  if (!out.specialties) {
+    const added = cleanStringArray(parsed.specialties);
+    if (added.length) {
+      try {
+        const { mapCaregiverServices } = await import("./caregiverServices");
+        const { matched } = await mapCaregiverServices(added);
+        const merged = matched.length ? mergeServices(existing, matched) : null;
+        if (merged) { out.specialties = merged; out.skills = merged; out.services = merged; }
+      } catch { /* best-effort */ }
     }
   }
 
@@ -231,21 +245,6 @@ export async function absorbCaregiverProfileUpdate(
         hours: addedHours || curHours,
       };
     }
-  }
-
-  // Specialties grew → extend the canonical skills/services enums additively
-  // with the canonical form of ONLY the new specialties (never shrink or
-  // re-derive the whole list: the webapp checkboxes may hold services the
-  // canonicalizer wouldn't re-derive from specialties alone).
-  if (addedSpecialties.length && !out.services) {
-    try {
-      const { canonicalizeCaregiverServices } = await import("./caregiverServices");
-      const canonical = await canonicalizeCaregiverServices(addedSpecialties);
-      const mergedServices = unionCI(existing.services, canonical);
-      const mergedSkills   = unionCI(existing.skills,   canonical);
-      if (mergedServices) out.services = mergedServices;
-      if (mergedSkills)   out.skills   = mergedSkills;
-    } catch { /* best-effort */ }
   }
 
   return out;

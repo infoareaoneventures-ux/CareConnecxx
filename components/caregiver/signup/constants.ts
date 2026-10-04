@@ -10,15 +10,15 @@ export const PRIMARY_SERVICES = [
   'Light Housekeeping',
 ] as const;
 
-// Additional service checkboxes (no duplicates with PRIMARY_SERVICES)
-export const ADDITIONAL_SERVICES = [
-  'Hospice Care',
-  'Post-Surgery Recovery',
-  'Incontinence Care',
-  'Fall Risk Management',
-  'Diabetes Management',
-  'Physical Therapy Support',
-] as const;
+// Display label for a service wherever the eight are shown (wizard, profile
+// chips, Find Caregivers filter, admin editor, Evia's texts). The STORED value
+// stays the PRIMARY_SERVICES string; only Medication Reminders reads differently
+// (founder 2026-10-04: reminders only — caregivers never administer medication).
+// Mirrored byte-for-byte in functions/src/agents/caregiverServiceLabels.ts.
+export const SERVICE_DISPLAY_LABEL: Record<string, string> = {
+  'Medication Reminders': 'Medication Reminders Only',
+};
+export const serviceLabel = (name: string): string => SERVICE_DISPLAY_LABEL[name] ?? name;
 
 // Certifications
 export const CERTIFICATIONS = ['CNA', 'HHA', 'RN', 'LPN'] as const;

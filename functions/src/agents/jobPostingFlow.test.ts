@@ -47,6 +47,12 @@ vi.mock("./buildJobPost", () => ({
   jobLiveMessage:       "Your care request is submitted! I'll reach out as soon as applications start coming in.",
 }));
 
+// The shared services mapper (caregiverServices.ts) talks to the quick model
+// through utils/parseWithClaude — a separate seam from the flow's own Anthropic
+// client mock below.
+const mapper = vi.hoisted(() => ({ mapperReply: vi.fn(async (..._a: unknown[]) => "{}") }));
+vi.mock("../utils/parseWithClaude", () => ({ parseWithClaude: (...a: unknown[]) => mapper.mapperReply(...a) }));
+
 vi.mock("../utils/claudeClient", () => ({
   getSharedClient: () => ({
     messages: { create: (...args: unknown[]) => hoisted.messagesCreate(...args) },
@@ -318,6 +324,26 @@ describe("buildJobSummary (2026-09-09: care level dropped from the summary)", ()
 // flat item with no parent category, and caregiver skill-matching (tagged at
 // category granularity) never finds a match. handleJpAskCareNeeds now runs
 // the raw extraction through normalizeCareNeeds before storing it.
+describe("handleJpAskDescription — medication instructions never reach the post (2026-10-04)", () => {
+  beforeEach(() => { process.env.CONVERGENCE_UNFLIPPED = "job_posting"; });
+  afterEach(() => { delete process.env.CONVERGENCE_UNFLIPPED; });
+
+  it("refuses with the one line and asks again; nothing merged", async () => {
+    mapper.mapperReply.mockResolvedValueOnce("NO"); // back-out check
+    modelReplies("NO");                               // isQuestionOrOther
+    await handleJobPostingStep(PHONE, CHAT, "She is lovely. Give her two pills at 8 and skip the water pill on weekends.", {
+      ...SESSION,
+      jobPostingStep: "jp_ask_description",
+      jobPostingData: { jobFrequency: "occasional", jobCareNeeds: ["Companionship"], jobHourlyRate: 25 },
+    });
+    const merged = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobDescription);
+    expect(merged).toBeUndefined();
+    const sent = String(sendMessage.mock.calls.at(-1)?.[1]);
+    expect(sent).toContain("medication instructions can't be saved here");
+    expect(sent).toContain("describe a typical care day");
+  });
+});
+
 describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical categories (2026-09-11)", () => {
   // job_posting is a DEFAULT_FLIPPED_FLOWS flow (dispatch resolves the step
   // from field-completion, not the literal jobPostingStep string) — force the
@@ -327,8 +353,10 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
   afterEach(() => { delete process.env.CONVERGENCE_UNFLIPPED; });
 
   it("stores the canonical category, not the fine-grained term the model returned", async () => {
-    // Call 1: isQuestionOrOther → NO. Call 2: care-needs extraction.
-    modelReplies("NO", '["bathing", "medication reminders"]');
+    // Call 1: isQuestionOrOther → NO. Call 2: the shared services mapper (the sentence is not a direct hit).
+    modelReplies("NO");
+    // utils/parseWithClaude is used twice on this turn: the back-out check (stepHandler) first, then the mapper.
+    mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: ["Personal Care", "Medication Reminders"], medical: [], unmapped: [] }));
 
     await handleJobPostingStep(PHONE, CHAT, "she needs help bathing and remembering her meds", {
       ...SESSION,
@@ -337,17 +365,15 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
     });
 
     const call = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeeds);
-    expect(call?.[0].jobPostingData.jobCareNeeds).toEqual(["Personal Care", "Medication Reminders"]);
+    expect(call?.[0].jobPostingData.jobCareNeeds).toEqual(["Medication Reminders", "Personal Care"]); // the menu's order
   });
 
-  // 2026-09-14 (live-caught): saying "bathing" correctly selected the
-  // "Personal Care" category but left no sub-task recorded at all — unlike
-  // doing the same thing on the website, which also selects the "Bathing"
-  // chip nested under the category (CarePlan.tsx's careNeeds +
-  // careNeedDetails). Matched against the family's own raw message, not the
-  // model's already-category-mapped output, which has lost the specific word.
-  it("also records the specific sub-task named within the category, not just the category itself", async () => {
-    modelReplies("NO", '["bathing", "medication reminders"]');
+  // 2026-10-04: the sub-task chips left the family screens — nothing is stored
+  // underneath a category, and the read-back uses the shown names.
+  it("stores the category only (no jobCareNeedDetails) and reads the shown names back", async () => {
+    modelReplies("NO");
+    // utils/parseWithClaude is used twice on this turn: the back-out check (stepHandler) first, then the mapper.
+    mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: ["Personal Care", "Medication Reminders"], medical: [], unmapped: [] }));
 
     await handleJobPostingStep(PHONE, CHAT, "she needs help bathing and remembering her meds", {
       ...SESSION,
@@ -355,12 +381,15 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
       jobPostingData: { jobFrequency: "occasional" },
     });
 
-    const call = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeedDetails);
-    expect(call?.[0].jobPostingData.jobCareNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
+    const call = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeeds);
+    expect(call?.[0].jobPostingData.jobCareNeedDetails).toBeUndefined();
+    const sent = hoisted.sendMessage.mock.calls.map((c) => String(c[1])).join("\n");
+    expect(sent).toContain("Medication Reminders Only, Personal Care — noted!");
   });
 
   it("re-asks instead of storing an empty result when nothing normalizes", async () => {
-    modelReplies("NO", '["something unrelated"]');
+    modelReplies("NO");
+    mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: [], medical: [], unmapped: ["not sure what she needs"] }));
 
     await handleJobPostingStep(PHONE, CHAT, "not sure what she needs", {
       ...SESSION,
@@ -370,6 +399,8 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
 
     const call = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeeds);
     expect(call).toBeUndefined();
-    expect(String(sendMessage.mock.calls[0][1])).toMatch(/what kind of care/i);
+    expect(String(sendMessage.mock.calls[0][1])).toMatch(/isn't one of the types of care on the list/);
+    expect(String(sendMessage.mock.calls[0][1])).toMatch(/what type of care/i);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Mobility Assistance\nDementia / Memory Care\nMedication Reminders Only");
   });
 });

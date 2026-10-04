@@ -1,3 +1,5 @@
+import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
+import { PRIMARY_SERVICES, serviceLabel } from '../caregiver/signup/constants';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -31,16 +33,8 @@ const RESCHEDULE_TIME_SLOTS: string[] = (() => {
   return slots;
 })();
 
-const CARE_NEED_SUBS: Record<string, string[]> = {
-  'Mobility Assistance': ['Ambulation', 'Transfer Assist'],
-  'Dementia / Memory Care': ['Supervision / Safety monitoring', 'Memory support', 'Redirection / cueing'],
-  'Medication Reminders': ['Morning', 'Afternoon', 'Evening', 'Bedtime'],
-  'Personal Care': ['Bathing', 'Dressing Assistance', 'Toileting', 'Feeding', 'Comb Hair', 'Oral Hygiene', 'Skin Care', 'Physical Activity'],
-  'Companionship': [],
-  'Transportation': ['Doctor appointments', 'Grocery shopping', 'Pharmacy visits', 'Hairdresser / barber'],
-  'Meal Preparation': ['Breakfast', 'Lunch', 'Snack', 'Dinner'],
-  'Light Housekeeping': ['Light housekeeping (dusting, vacuuming, mopping)', 'Change bed linens', 'Change bath towels', 'Take out trash'],
-};
+// The Send Booking modal's care needs = the eight (PRIMARY_SERVICES), nothing
+// underneath — the sub-task chips left every family screen 2026-10-04.
 const LIFESTYLE_FAVORITES = ['Walk', 'Reading', 'Cooking', 'Gardening', 'Watching TV', 'Socializing', 'Going outside', 'Exercise', 'Hobbies', 'Other'];
 const LIFESTYLE_HELP: string[] = [];
 const LIFESTYLE_ENTERTAINMENT = ['Music', 'Movies', 'TV Shows', 'Theater', 'Other'];
@@ -854,6 +848,9 @@ export const PostsPage: React.FC = () => {
     const user = auth?.currentUser;
     if (!user || !db) return;
     const fdb = db;
+    // Medication instructions never travel to the caregiver in a note (2026-10-04).
+    const noteTexts = [bookingDraft.note, ...Object.values(bookingDraft.recipientDrafts).map(d => d?.notes ?? '')];
+    if (noteTexts.some(isMedicationInstruction)) { addToast(MEDICATION_INSTRUCTION_MESSAGE, 'error'); return; }
     gate('booking', interview.caregiverName, async () => {
     setSendingBooking(true);
     try {
@@ -2166,7 +2163,7 @@ export const PostsPage: React.FC = () => {
                                   {(loadedPlan.recipientPlans[r.key]?.careNeeds || []).length > 0 && (
                                     <div className="flex flex-wrap gap-1 mt-1.5">
                                       {(loadedPlan.recipientPlans[r.key].careNeeds as string[]).slice(0, 3).map(n => (
-                                        <span key={n} className="text-[10px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded-full">{n}</span>
+                                        <span key={n} className="text-[10px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded-full">{serviceLabel(n)}</span>
                                       ))}
                                       {loadedPlan.recipientPlans[r.key].careNeeds.length > 3 && (
                                         <span className="text-[10px] text-slate-400">+{loadedPlan.recipientPlans[r.key].careNeeds.length - 3} more</span>
@@ -2227,9 +2224,8 @@ export const PostsPage: React.FC = () => {
                                       </p>
                                       {editingBookingDetails ? (
                                         <div className="space-y-2">
-                                          {Object.keys(CARE_NEED_SUBS).map(need => {
+                                          {PRIMARY_SERVICES.map(need => {
                                             const needOn = rd.careNeeds.includes(need);
-                                            const allSubs = CARE_NEED_SUBS[need];
                                             return (
                                               <div key={need} className={`rounded-xl border-2 px-3 py-2.5 transition-colors ${needOn ? 'border-primary-300 bg-primary-50' : 'border-slate-200 bg-white'}`}>
                                                 <button type="button" onClick={() => {
@@ -2239,22 +2235,8 @@ export const PostsPage: React.FC = () => {
                                                   <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${needOn ? 'border-primary-500 bg-primary-500' : 'border-slate-300 bg-white'}`}>
                                                     {needOn && <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
                                                   </div>
-                                                  <span className={`text-sm font-semibold ${needOn ? 'text-slate-800' : 'text-slate-500'}`}>{need}</span>
+                                                  <span className={`text-sm font-semibold ${needOn ? 'text-slate-800' : 'text-slate-500'}`}>{serviceLabel(need)}</span>
                                                 </button>
-                                                {needOn && allSubs.length > 0 && (
-                                                  <div className="flex flex-wrap gap-1.5 mt-2 pl-6">
-                                                    {allSubs.map(task => {
-                                                      const taskOn = (rd.careNeedDetails[need] || []).includes(task);
-                                                      return (
-                                                        <button key={task} type="button"
-                                                          onClick={() => updRd({ careNeedDetails: { ...rd.careNeedDetails, [need]: taskOn ? (rd.careNeedDetails[need] || []).filter(t => t !== task) : [...(rd.careNeedDetails[need] || []), task] } })}
-                                                          className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${taskOn ? 'bg-primary-500 border-primary-500 text-white' : 'bg-white border-slate-300 text-slate-500 hover:border-primary-300'}`}>
-                                                          {task}
-                                                        </button>
-                                                      );
-                                                    })}
-                                                  </div>
-                                                )}
                                               </div>
                                             );
                                           })}
@@ -2264,17 +2246,11 @@ export const PostsPage: React.FC = () => {
                                           {rd.careNeeds.length === 0
                                             ? <span className="text-xs text-slate-400">None selected</span>
                                             : rd.careNeeds.map(n => {
-                                              const tasks = rd.careNeedDetails[n] || [];
                                               return (
                                                 <div key={n} className="rounded-xl border-2 border-primary-300 overflow-hidden">
                                                   <div className="px-4 py-3" style={{ backgroundColor: '#dbeafe' }}>
-                                                    <p className="text-sm font-bold text-primary-700">{n}</p>
+                                                    <p className="text-sm font-bold text-primary-700">{serviceLabel(n)}</p>
                                                   </div>
-                                                  {tasks.length > 0 && (
-                                                    <div className="px-4 py-3 flex flex-wrap gap-2" style={{ backgroundColor: '#f5f9ff' }}>
-                                                      {tasks.map(t => <span key={t} className="px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-medium text-slate-600">{t}</span>)}
-                                                    </div>
-                                                  )}
                                                 </div>
                                               );
                                             })

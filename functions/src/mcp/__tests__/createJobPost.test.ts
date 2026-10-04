@@ -227,7 +227,17 @@ describe("create_job_post", () => {
     // 2026-09-07: sub-task detail (e.g. "Ambulation"/"Transfer Assist" under
     // "Mobility Assistance") — the site's Step 3 checkboxes — had no way to
     // reach carePlans at all before this.
-    it("writes careNeedDetails (sub-tasks) to carePlans.recipientPlans", async () => {
+    it("refuses a description that carries medication instructions — nothing posted (2026-10-04)", async () => {
+      lookupZipPlace.mockResolvedValue({ city: "Austin", state: "TX" });
+      const r = await handleToolCall("create_job_post", {
+        clientId: CLIENT, title: TITLE, notes: "Looking for a kind caregiver for my mother three mornings a week. Please give her 2 pills with breakfast.", careTypes: ["Mobility Assistance"], hourlyRate: 25, zipCode: "78701",
+      }) as any;
+      expect(r.success).toBe(false);
+      expect(r.error).toContain("medication instructions can't be saved here");
+      expect(hoisted.sets.filter((w) => w.path.startsWith("job_posts/"))).toHaveLength(0);
+    });
+
+    it("never writes sub-tasks to carePlans.recipientPlans (the chips left the family screens 2026-10-04)", async () => {
       lookupZipPlace.mockResolvedValue({ city: "Austin", state: "TX" });
       await handleToolCall("create_job_post", {
         clientId: CLIENT, title: TITLE, notes: NOTES, careTypes: ["Mobility Assistance"], hourlyRate: 25, zipCode: "78701",
@@ -235,7 +245,8 @@ describe("create_job_post", () => {
         careRecipients: [{ firstName: "Rosie" }],
       });
       const cp = hoisted.docState.get(`carePlans/${CLIENT}`);
-      expect(cp.recipientPlans.rosie_noname.careNeedDetails).toEqual({ "Mobility Assistance": ["Ambulation", "Transfer Assist"] });
+      expect(cp.recipientPlans.rosie_noname.careNeedDetails).toEqual({});
+      expect(cp.recipientPlans.rosie_noname.careNeeds).toEqual(["Mobility Assistance"]);
     });
 
     it("mirrors streetAddress into carePlans.locationPool and the recipient's location, never into job_posts", async () => {

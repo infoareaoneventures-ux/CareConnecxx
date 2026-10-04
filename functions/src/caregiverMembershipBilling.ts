@@ -1,4 +1,4 @@
-// ONE path for everything the caregiver Payments › Membership tab does with
+// ONE path for everything the caregiver's Settings › Membership & verification does with
 // Stripe, shared by the site's callables (stripe.ts) and every text Evia sends
 // (onboardingConversation.ts, agents/caregiverMembership.ts):
 //

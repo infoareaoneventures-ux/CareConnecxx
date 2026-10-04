@@ -1,3 +1,4 @@
+import { serviceLabel } from './signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -796,7 +797,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                                 <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center ${allDone ? 'bg-white border-white' : 'border-primary-300 bg-white'}`}>
                                   {allDone && <CheckCircle className="w-2.5 h-2.5 text-primary-500" />}
                                 </div>
-                                <span className={`text-xs font-semibold ${allDone ? 'text-white line-through' : 'text-primary-700'}`}>{need}</span>
+                                <span className={`text-xs font-semibold ${allDone ? 'text-white line-through' : 'text-primary-700'}`}>{serviceLabel(need)}</span>
                               </button>
                               <div className="px-3 pb-1">
                                 {subtasks.map((sub: string) => {
@@ -823,7 +824,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                             <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center ${done ? 'bg-white border-white' : 'border-primary-300 bg-white'}`}>
                               {done && <CheckCircle className="w-2.5 h-2.5 text-primary-500" />}
                             </div>
-                            <span className={`text-xs font-semibold ${done ? 'text-white line-through' : 'text-primary-700'}`}>{need}</span>
+                            <span className={`text-xs font-semibold ${done ? 'text-white line-through' : 'text-primary-700'}`}>{serviceLabel(need)}</span>
                           </button>
                         );
                       })}

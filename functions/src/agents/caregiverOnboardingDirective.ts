@@ -27,10 +27,10 @@ import {
   offersTransportation,
   EXPERIENCE_BUCKETS,
   TRAVEL_RADIUS_OPTIONS,
-  CAREGIVER_RATE_MIN,
-  CAREGIVER_RATE_MAX,
+  RATE_EXAMPLE,
 } from "./onboardingContract";
 import { normalizeDays, hasTimeOfDaySignal } from "./caregiverAvailability";
+import { SERVICE_LABELS, serviceLabels, serviceMenuText } from "./caregiverServiceLabels";
 import { FALLBACK_RANGE } from "../utils/marketRateRange";
 import { caregiverAnnualDisplay } from "../config/pricing";
 
@@ -45,7 +45,7 @@ export const CAREGIVER_FIELD_LABEL: Record<string, string> = {
   profilePhoto:       "a profile photo — sent through the upload link (send_onboarding_link with linkType caregiver_photo), never typed",
   jobType:            "whether they're looking for occasional, part-time, or full-time work (pick ONE)",
   availability:       "which days, and which parts of the day (mornings/afternoons/evenings/overnight)",
-  specialties:        "the care services they offer (families search by these)",
+  specialties:        "the care services they offer — the website's eight, by name",
   yearsExperience:    `years of caregiving experience — one of: ${EXPERIENCE_BUCKETS.join(", ")}`,
   transportDocuments: "their driver's license, vehicle insurance, and vehicle registration — ONLY because they offer transportation; sent through the upload link (send_onboarding_link with linkType caregiver_transport_docs), never typed",
   hourlyRate:         "their minimum hourly rate", // rate-range hint appended in the builder (live market data)
@@ -74,7 +74,7 @@ export function buildCaregiverOnboardingDirective(
 ): string {
   const data    = onboardingData ?? {};
   const labelFor = (field: string): string => {
-    if (field === "hourlyRate") return `their minimum hourly rate — $${CAREGIVER_RATE_MIN} to $${CAREGIVER_RATE_MAX}/hr (most caregivers charge ${rateRangeText})`;
+    if (field === "hourlyRate") return `their minimum hourly rate — any amount above $0, e.g. $${RATE_EXAMPLE} (most caregivers charge ${rateRangeText})`;
     if (field === "availability") {
       // Two pickers on the website: say exactly which half is still needed so
       // a half-answered availability never gets re-asked from scratch.
@@ -88,6 +88,10 @@ export function buildCaregiverOnboardingDirective(
       if (!days.length && hasTimes) {
         return `which days of the week they can work — you ALREADY have their parts of the day ("${String(a.hours)}"); ask only about the days, do not re-ask the times`;
       }
+    }
+    if (field === "specialties" && Array.isArray(data.specialties) && data.specialties.length) {
+      // The saved list by its shown names, so the read-back ("Got it — …") is exact.
+      return `the care services they offer — saved services: ${serviceLabels(data.specialties as string[]).join(", ")} (read these names back when you acknowledge)`;
     }
     return CAREGIVER_FIELD_LABEL[field] ?? field;
   };
@@ -149,17 +153,17 @@ export function buildCaregiverOnboardingDirective(
     `  - EVERY turn: first call save_onboarding_field for whatever they just told you, THEN reply. A short or one-word answer to your last question IS that field's value — save it immediately, don't ask them to confirm it and don't move on without saving it.`,
     `  - Acknowledge what they just said before you ask the next thing. Their experience is a story,`,
     `    not a checklist — reflect it back when it's meaningful ("six years with dementia clients is real expertise") — then ask.`,
-    `  - One question per message. Never send a numbered list or ask for several things at once.`,
+    `  - One question per message. Never send a numbered list or ask for several things at once. (The care-services menu below is the one list you do send — it is the website's own, by name, never numbered.)`,
     `  - ADDRESS: ask for their home address in one natural line (street, city, ZIP). Save street and zipCode; city and state fill in from the ZIP automatically (save them too if they said them). Families never see the street — mention that if they hesitate.`,
     `  - PHOTO: when the photo is the next item, do NOT ask them to describe or text one — call send_onboarding_link (caregiver_photo) and say a clear, friendly headshot helps families choose. If they text a photo instead, that works too (it's saved the same way).`,
     `  - JOB TYPE: occasional, part-time, or full-time — ONE choice, save jobType as occasional | part_time | full_time.`,
     `  - AVAILABILITY is TWO pieces, exactly like the website's picker: (1) the days of the week and (2) the parts of the day. Ask for both in ONE natural line: "Which days can you work, and are you more mornings, afternoons, evenings, or overnights? Any mix is fine." Save what they give as availability. If they answer only ONE piece (just "Monday", or just "mornings"), save it and ask for the OTHER piece before anything else — never assume days or times they didn't state, and never move on until both are saved (the save result tells you which half is still missing). Clock times ("weekdays 9 to 5") count as parts of the day.`,
     `  - ECHO WHAT YOU SAVED: right after they give availability, reflect back the days and parts of day you understood in plain words before the next question ("Perfect — Monday and Wednesday mornings and afternoons, got it. …"). If you got it wrong they'll correct you and you just re-save. Don't ask them to confirm and don't make it its own message — fold it into your acknowledgment.`,
-    `  - CARE SERVICES (the specialties field): families filter caregivers by specific services. The website offers EXACTLY these eight — no others: Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping. When you ask, name a few concrete ones so they know what counts — "What kinds of care do you do? Things like companionship, dementia or memory care, medication reminders, personal care, mobility help, transportation, meal prep, or light housekeeping?" — conversational, not a recited list. Save whatever they say as specialties, mapped to the closest of those eight. Then, if they only named one or two, sweep the rest ONCE in a single casual line ("Got it. Do you also help with any of the others — meds, meals, transportation, housekeeping?") and add whatever they confirm. Never mention or save a service outside those eight (no hospice care, post-surgery recovery, etc. — the website doesn't offer them at this step), and never pressure them to claim services they don't do.`,
-    `  - EXPERIENCE: save yearsExperience as one of the buckets (${EXPERIENCE_BUCKETS.join(" / ")}) — a number like "6 years" is fine, it's bucketed on save. Their story often answers this: if they said it, save it, don't re-ask.`,
+    `  - CARE SERVICES (the specialties field): the website's step is "What services do you offer? Senior Care — select all that apply" with EXACTLY these eight — no others: ${SERVICE_LABELS.join(", ")}. Ask it the same way: one short line in your own voice ("Next, what services do you offer? Pick as many as apply:") followed by the eight, one per line, by name — no numbers, no explanation of why:\n${serviceMenuText()}\n    They can answer by name or in their own words — "bathing" is Personal Care, "cooking" is Meal Preparation, "I drive people to appointments" is Transportation, "all of them" is all eight. Save exactly what they said as specialties; the save maps it onto the eight and tells you what landed, what fit nothing, and what was medical. READ BACK the names that saved in your acknowledgment ("Got it — Personal Care and Meal Preparation."). Anything that fits none of the eight (hospice, wound care, gardening…) is NOT saved: say it isn't one of the services on the list so you've left it off, then show the list again. Medical care is never a service here — administering or giving medication, injections, insulin, dosages, wound care, vitals: say caregivers here don't do that, and that the closest service is Medication Reminders Only (reminding when it's time, not giving them) — ask if that fits BEFORE saving it. A vague answer ("I help around the house") → ask which of the names they mean rather than guess. More services named later are ADDED automatically; a correction ("not meal prep, I meant personal care") is saved as specialties with {"replace": [the corrected list]}. NO follow-up sweep: once they've answered, move on — never ask "do you also do X?" and never pressure them to claim a service.`,
+    `  - EXPERIENCE: the website's picker has five choices — ask with them in the line ("How many years of caregiving experience do you have — under 1, 1–2, 3–5, 5–10, or 10+?"). Save yearsExperience as one of the buckets (${EXPERIENCE_BUCKETS.join(" / ")}) — a number like "6 years" is fine, it's bucketed on save. Their story often answers this: if they said it, save it, don't re-ask.`,
     `  - TRANSPORTATION DOCUMENTS: only if their services include transportation. When it's the next item, call send_onboarding_link (caregiver_transport_docs) and say they'll need their driver's license, vehicle insurance, and vehicle registration — all three, our team reviews them after the background and driving-record checks. Never collect these by describing them in chat.`,
-    `  - RATE: their MINIMUM hourly rate as a dollar amount. The website only accepts $${CAREGIVER_RATE_MIN} to $${CAREGIVER_RATE_MAX} an hour — a number outside that is not saved; say the site needs it in that range and ask again. Share the typical range (${rateRangeText}) if they seem unsure, but within the range the number is THEIR call - never pressure them up or down.`,
-    `  - TRAVEL DISTANCE: how far they're willing to travel for a visit — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles. If they have no preference, save 10 (the usual pick) and say so.`,
+    `  - RATE: their MINIMUM hourly rate as a dollar amount — any amount above $0 is theirs to set, no floor and no ceiling (the website's box shows "e.g. ${RATE_EXAMPLE}" as the example). Zero or no number is not saved — ask again. Share the typical range (${rateRangeText}) if they seem unsure, but the number is THEIR call - never pressure them up or down, and never call any amount too low or too high.`,
+    `  - TRAVEL DISTANCE: the website's picker has five choices — ask with them in the line ("How far are you willing to travel for a visit — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles?"). Save the one they pick (a number in between rounds to the nearest). If they have no preference, save 10 (the usual pick) and say so.`,
     `  - EMAIL: mention it's used to set up their payout account (it's usually already on file from signup — then never ask).`,
     `  - BIO: families see it on their profile — save whatever they give you, in their own words. No minimum length and no skip-nagging; if they write one short line, that's their bio. A voice memo is a nice option to offer if typing is a pain, but never pressure them to write more.`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,

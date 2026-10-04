@@ -1,3 +1,4 @@
+import { serviceLabel } from '../caregiver/signup/constants';
 import React, { useEffect, useState } from 'react';
 import { Star, MapPin, ArrowRight, CheckCircle, Clock, Heart, Shield, MessageSquare } from 'lucide-react';
 import { ViewType } from '../../types';
@@ -162,7 +163,7 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
                                     <div className="flex flex-wrap gap-2 mb-6 mt-1">
                                         {cg.specialties.map((skill, j) => (
                                             <span key={j} className="px-3.5 py-1.5 bg-slate-100 border border-slate-200 text-slate-800 text-[13px] font-medium rounded-[1rem]">
-                                                {skill}
+                                                {serviceLabel(skill)}
                                             </span>
                                         ))}
                                     </div>

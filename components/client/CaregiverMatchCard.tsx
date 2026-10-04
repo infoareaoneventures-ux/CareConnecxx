@@ -1,3 +1,4 @@
+import { serviceLabel } from '../caregiver/signup/constants';
 import React, { useState } from 'react';
 import { formatExperience } from '../../utils/experience';
 import { billedHourlyRate } from '../../utils/pricing';
@@ -128,7 +129,7 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
           <div className="flex flex-wrap gap-2 mb-6 mt-1">
             {caregiver.skills.slice(0, 3).map((skill: string) => (
               <span key={skill} className="px-3.5 py-1.5 bg-slate-100 border border-slate-200 text-slate-800 text-[13px] font-medium rounded-[1rem]">
-                {skill}
+                {serviceLabel(skill)}
               </span>
             ))}
           </div>

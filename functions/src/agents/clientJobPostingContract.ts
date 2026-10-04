@@ -141,8 +141,6 @@ export interface ClientJobPostingsDoc {
   petsInHome: boolean; smokingHousehold: boolean;
   rate?: number; rateFlexible: boolean; paymentMethod?: string;
   jobDescription?: string;
-  /** Site taxonomy sub-tasks per category (CarePlan.tsx / Step3CareNeeds.tsx careNeedDetails). */
-  careNeedDetails?: Record<string, string[]>;
   clientId: string; phone: string; status: string; source: string;
 }
 
@@ -207,7 +205,6 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     rateFlexible,
     paymentMethod: (d.paymentMethod as string) || undefined,
     jobDescription: (d.jobDescription as string) || undefined,
-    careNeedDetails: (d.careNeedDetails && typeof d.careNeedDetails === "object" && Object.keys(d.careNeedDetails as object).length) ? (d.careNeedDetails as Record<string, string[]>) : undefined,
     clientId: uid,
     phone,
     status: "active",
@@ -383,7 +380,6 @@ export function mapJobPostingsDocToOnboardingData(
   // The wizard has no "flexible" rate — only a numeric rate maps back.
   if (typeof d.rate === "number" && d.rate > 0) out.rate = d.rate;
   if (d.jobDescription) out.jobDescription = d.jobDescription;
-  if (d.careNeedDetails && typeof d.careNeedDetails === "object") out.careNeedDetails = d.careNeedDetails;
   // The wizard's home-address step (its own draft field names, saved per step by
   // ClientJobPostingWizard) → Evia's home* fields, so a family who typed their
   // address on the site is never asked for it again over text.
@@ -449,7 +445,6 @@ export function buildClientDraftMirror(uid: string, phone: string, d: Record<str
   if (d.smokingHousehold !== undefined) out.smokingHousehold = d.smokingHousehold === true;
   if (d.rate !== undefined && d.rate !== null && d.rate !== "") { take("rate", true); out.rateFlexible = full.rateFlexible === true; }
   take("jobDescription", has(d.jobDescription));
-  if (d.careNeedDetails && typeof d.careNeedDetails === "object" && Object.keys(d.careNeedDetails as object).length) out.careNeedDetails = d.careNeedDetails;
   // The wizard's home-address step reads its OWN draft fields (_homeAddress /
   // _customAddressOpen), not street/city — without this the step opened empty
   // on the site after Evia had already collected the address (live 2026-09-20).

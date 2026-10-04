@@ -16,6 +16,7 @@ import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import { ProfileApprovalBanner } from './caregiver/ProfileApprovalBanner';
 import {
   PRIMARY_SERVICES,
+  serviceLabel,
   EXPERIENCE_LEVELS,
   TIME_BLOCKS,
   DAYS,
@@ -374,7 +375,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                       }`}>
                         {editServices.includes(service) && <CheckCircle className="w-3 h-3 text-white" />}
                       </div>
-                      {service}
+                      {serviceLabel(service)}
                     </button>
                   ))}
                 </div>
@@ -382,7 +383,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <div className="flex flex-wrap gap-2">
                   {displayServices.length > 0
                     ? displayServices.map((s: string) => (
-                        <span key={s} className="text-sm bg-primary-50 text-primary-700 px-3 py-1.5 rounded-full font-medium">{s}</span>
+                        <span key={s} className="text-sm bg-primary-50 text-primary-700 px-3 py-1.5 rounded-full font-medium">{serviceLabel(s)}</span>
                       ))
                     : <p className="text-sm text-slate-400 italic">No services added yet. Tap Edit to add.</p>
                   }
@@ -498,14 +499,18 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                     setEditMaxClients(displayMaxClients);
                     setEditingSection('rates');
                   }}
-                  onSave={() => saveSection({
+                  onSave={() => {
+                    // The wizard's one rule: the 1-person rate is more than $0 (founder 2026-10-04 — no floor, no ceiling).
+                    if (!(Number(editRate) > 0)) { onShowToast('Your rate has to be more than $0', 'error'); return; }
+                    saveSection({
                     hourlyRate: Number(editRate) || 0,
                     rateFor2Seniors: Number(editRateTwo) || 0,
                     rateFor3PlusSeniors: Number(editRateThree) || 0,
                     yearsExperience: editExperience,
                     experience: editExperience,
                     maxClients: editMaxClients,
-                  })}
+                    });
+                  }}
                 />
               </div>
               {editingSection === 'rates' ? (
@@ -524,8 +529,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                             type="number"
                             className="flex-1 py-2.5 px-2 text-sm focus:outline-none min-w-0"
                             value={value}
-                            min={15}
-                            max={200}
+                            min={1}
                             placeholder="0"
                             onChange={e => setter(e.target.value)}
                           />

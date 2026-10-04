@@ -63,7 +63,7 @@ const BILLING_KINDS = new Set<CaregiverAccountEventKind>([
  */
 export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: CaregiverAccountEventContext = {}): { title: string; body: string; text?: string } {
   const dash = appLink("/caregiver/dashboard");
-  const membership = appLink("/caregiver/payments?tab=membership");
+  const membership = appLink("/caregiver/settings"); // Membership & verification lives on Account Settings (2026-10-04)
   switch (kind) {
     case "membership_paid":
       return {

@@ -2058,7 +2058,7 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   const age        = d.age ? `${d.age}` : "";
   // Care needs only — diagnoses/conditions are never collected (non-medical scope).
   const conditions = Array.isArray(d.careNeeds) && (d.careNeeds as string[]).length
-    ? describeCareNeeds(d.careNeeds as string[], d.careNeedDetails as Record<string, string[]> | undefined)
+    ? describeCareNeeds(d.careNeeds as string[])
     : "";
   // Full street address (2026-08-24), not just city+zip — a wrong house number
   // or street name is a real, consequential mistake (a caregiver can't find
@@ -2275,30 +2275,23 @@ export async function persistClientCareRecords(
   const state        = (d.state        ?? "") as string;
   const rawCareNeeds = (d.careNeeds    ?? []) as string[];
   // Site taxonomy (careNeedsTaxonomy.ts): recipientPlans[key].careNeeds holds the
-  // page's CATEGORY names and careNeedDetails the sub-tasks — never the family's
-  // raw words ("bathing" → Personal Care › Bathing). Written back onto the draft
-  // so the job_postings mirror and the summary use the same names.
-  const canon = rawCareNeeds.length ? await canonicalizeCareNeeds(rawCareNeeds).catch(() => null) : null;
-  // When the taxonomy ran and placed nothing, the draft held no real care
+  // page's CATEGORY names — the eight, nothing underneath (2026-10-04). Written
+  // back onto the draft so the job_postings mirror and the summary use the same
+  // names. When the taxonomy ran and placed nothing, the draft held no real care
   // need (live 2026-09-26: "occasional help") — write NO pills rather than the
-  // raw words; the unmapped text still lands in the Notes below. Raw is kept
-  // only when the canonicalizer itself failed.
+  // raw words. Raw is kept only when the canonicalizer itself failed.
+  const canon = rawCareNeeds.length ? await canonicalizeCareNeeds(rawCareNeeds).catch(() => null) : null;
   const careNeeds = canon ? canon.careNeeds : rawCareNeeds;
-  const careNeedDetails = canon
-    ? canon.careNeedDetails
-    : ((d.careNeedDetails as Record<string, string[]> | undefined) ?? {});
-  if (canon && (!isCanonicalCareNeeds(rawCareNeeds) || !d.careNeedDetails)) {
+  const careNeedDetails: Record<string, string[]> = {};
+  if (canon && (!isCanonicalCareNeeds(rawCareNeeds) || JSON.stringify(careNeeds) !== JSON.stringify(rawCareNeeds))) {
     d = { ...d, careNeeds, careNeedDetails };
     await mergeOnboardingData(phone, { careNeeds, careNeedDetails }).catch(() => {});
   }
   // Care Plan "Notes" = the wizard's "What would you like caregivers to know" (the
   // page falls back to job_postings.jobDescription only when notes is unset, so an
-  // empty string here used to hide the note). Anything the taxonomy could not place
-  // is kept as a note rather than dropped.
-  const noteText = [
-    typeof d.jobDescription === "string" ? d.jobDescription.trim() : "",
-    canon?.unmapped.length ? `Also mentioned: ${canon.unmapped.join(", ")}` : "",
-  ].filter(Boolean).join(" ");
+  // empty string here used to hide the note). The family's own words only — Evia
+  // never adds to the note (2026-10-04).
+  const noteText = typeof d.jobDescription === "string" ? d.jobDescription.trim() : "";
   const seniorAge    = d.age as number | undefined;
   // Home address (account holder) — may differ from care address
   const homeStreet   = (d.homeStreet  as string | undefined) || street;

@@ -1,3 +1,4 @@
+import { serviceLabel } from './signup/constants';
 import React, { useState, useEffect, useCallback } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { createPortal } from 'react-dom';
@@ -655,7 +656,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                               {isCompleted ? (
                                 <div className={`flex items-center gap-2 px-3 py-2 ${catDone ? 'bg-green-50' : 'bg-slate-50'}`}>
                                   <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${catDone ? 'text-green-500' : 'text-slate-300'}`} />
-                                  <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{category}</p>
+                                  <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-green-700 line-through' : 'text-primary-600'}`}>{serviceLabel(category)}</p>
                                   {subtasks.length > 0 && doneSubCount > 0 && (
                                     <span className={`text-[10px] font-semibold ${catDone ? 'text-green-600' : 'text-slate-400'}`}>{doneSubCount}/{subtasks.length}</span>
                                   )}
@@ -668,7 +669,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                                   <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${catDone ? 'bg-primary-500 border-primary-500' : 'border-primary-300 bg-white'}`}>
                                     {catDone && <CheckCircle className="w-2.5 h-2.5 text-white" />}
                                   </div>
-                                  <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-primary-400 line-through' : 'text-primary-600'}`}>{category}</p>
+                                  <p className={`text-xs font-semibold flex-1 ${catDone ? 'text-primary-400 line-through' : 'text-primary-600'}`}>{serviceLabel(category)}</p>
                                 </button>
                               )}
                               {subtasks.length > 0 && (

@@ -37,17 +37,18 @@ describe("hasTimeOfDaySignal", () => {
   });
 });
 
-describe("coerceCaregiverRate — the wizard's $15–$200 rule", () => {
-  it("accepts numbers and numeric strings inside the range", () => {
+describe("coerceCaregiverRate — the rate is theirs: any amount above $0 (founder 2026-10-04)", () => {
+  it("accepts any positive number or numeric string, no floor, no ceiling", () => {
     expect(coerceCaregiverRate(25)).toBe(25);
     expect(coerceCaregiverRate("$23/hr")).toBe(23);
-    expect(coerceCaregiverRate("15")).toBe(15);
-    expect(coerceCaregiverRate(200)).toBe(200);
+    expect(coerceCaregiverRate(3)).toBe(3);
+    expect(coerceCaregiverRate("$3")).toBe(3);
+    expect(coerceCaregiverRate(201)).toBe(201);
   });
-  it("rejects anything outside $15–$200 or non-numeric", () => {
-    expect(coerceCaregiverRate(3)).toBeNull();
-    expect(coerceCaregiverRate("$3")).toBeNull();
-    expect(coerceCaregiverRate(201)).toBeNull();
+  it("rejects zero, negatives and non-numeric", () => {
+    expect(coerceCaregiverRate(0)).toBeNull();
+    expect(coerceCaregiverRate("$0")).toBeNull();
+    expect(coerceCaregiverRate(-5)).toBeNull();
     expect(coerceCaregiverRate("flexible")).toBeNull();
   });
 });

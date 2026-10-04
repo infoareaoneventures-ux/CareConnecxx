@@ -145,7 +145,7 @@ describe("profile tools", () => {
       expect(hoisted.sets).toHaveLength(0);
     });
 
-    it.each([-5, 0, 151, 9999])("rejects an out-of-range hourly rate: %s", async (hourlyRate) => {
+    it.each([-5, 0])("rejects a rate that isn't above $0 (no floor, no ceiling otherwise — 2026-10-04): %s", async (hourlyRate) => {
       hoisted.docState.set("caregivers/cg1", { phone: "+15555550100" });
       const r = await handleToolCall("update_caregiver_profile", {
         caregiverId: "cg1",

@@ -6,6 +6,7 @@
 // Interview Requested / Request Interview, Message, Leave a Review).
 // Built 2026-09-19 (profile page parity). Replaced the old get_caregiver_info
 // body, which read the raw `caregivers` doc the site never shows a family.
+import { serviceLabel } from "./caregiverServiceLabels";
 import * as admin from "firebase-admin";
 import { hasValidTransportDocs } from "./caregiverMatchScoring";
 import { SHIFT_PLATFORM_FEE_RATE } from "../billing/config";
@@ -244,7 +245,7 @@ export function shapeCaregiverProfilePage(
     { label: "3+ People" as const, rate: rec.rateFor3Seniors },
   ]).filter((r): r is { label: "1 Person" | "2 People" | "3+ People"; rate: number } => !!r.rate && Number(r.rate) > 0)
     .map((r) => ({ label: r.label, rate: r.rate, billed: billedHourly(r.rate) }));
-  const careServices = rec.skills.filter((s) => s !== "Transportation" || rec.hasTransportation);
+  const careServices = rec.skills.filter((s) => s !== "Transportation" || rec.hasTransportation).map(serviceLabel);
   const weeklyAvailability = DAY_ORDER
     .map((day) => ({ day, blocks: rec.weeklyAvailability[day] ?? [] }))
     .filter((d) => d.blocks.length > 0);

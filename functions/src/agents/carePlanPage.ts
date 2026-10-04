@@ -30,16 +30,8 @@ export const CARE_TYPES = [
   "Meal Preparation", "Light Housekeeping",
 ] as const;
 
-export const CARE_NEED_SUBS: Record<string, string[]> = {
-  "Mobility Assistance": ["Ambulation", "Transfer Assist"],
-  "Dementia / Memory Care": ["Supervision / Safety monitoring", "Memory support", "Redirection / cueing"],
-  "Medication Reminders": ["Morning", "Afternoon", "Evening", "Bedtime"],
-  "Personal Care": ["Bathing", "Dressing Assistance", "Toileting", "Feeding", "Comb Hair", "Oral Hygiene", "Skin Care", "Physical Activity"],
-  "Companionship": [],
-  "Transportation": ["Doctor appointments", "Grocery shopping", "Pharmacy visits", "Hairdresser / barber"],
-  "Meal Preparation": ["Breakfast", "Lunch", "Snack", "Dinner"],
-  "Light Housekeeping": ["Light housekeeping (dusting, vacuuming, mopping)", "Change bed linens", "Change bath towels", "Take out trash"],
-};
+// The sub-task chips under each care type (CARE_NEED_SUBS) left the page 2026-10-04;
+// recipientPlans[key].careNeedDetails stays in the shape, always {}.
 export const FAV_ACTIVITIES = ["Walk", "Reading", "Cooking", "Gardening", "Watching TV", "Socializing", "Going outside", "Exercise", "Hobbies", "Other"];
 export const ENTERTAINMENT = ["Music", "Movies", "TV Shows", "Theater", "Other"];
 export const FREQ_OPTIONS = ["Daily", "Weekly", "Monthly", "Occasionally"];
@@ -125,7 +117,7 @@ export interface CarePlanPage {
   /** The signup-time emergency contact card (job_postings.emergency*), shown alongside the list. */
   setupContact: { firstName: string; lastName: string; phone: string; relationship: string } | null;
   reviewed: boolean;
-  options: { careTypes: string[]; subtasks: Record<string, string[]>; favoriteActivities: string[]; entertainment: string[]; frequencies: string[]; petTypes: string[]; relationships: string[] };
+  options: { careTypes: string[]; favoriteActivities: string[]; entertainment: string[]; frequencies: string[]; petTypes: string[]; relationships: string[] };
 }
 
 interface LoadedPage extends CarePlanPage {
@@ -224,7 +216,7 @@ async function load(clientId: string): Promise<LoadedPage> {
   return {
     recipients, locationPool: effectivePool, emergencyContacts, setupContact,
     reviewed: !!cp.carePlanReviewedAt,
-    options: { careTypes: [...CARE_TYPES], subtasks: CARE_NEED_SUBS, favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: RELATIONSHIPS },
+    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: RELATIONSHIPS },
     wizard, rawPlans, wizardLocations,
   };
 }
@@ -314,7 +306,7 @@ export async function setRecipientLocation(
 // ── saveNewRecipient ────────────────────────────────────────────────────────
 export interface NewRecipientInput {
   firstName: string; lastName?: string; relationship: string; age?: string | number;
-  careNeeds?: string[]; careNeedDetails?: Record<string, string[]>; notes?: string;
+  careNeeds?: string[]; notes?: string;
   location: Partial<LocationEntry>;
 }
 export type AddRecipientResult =
@@ -345,11 +337,7 @@ export async function addRecipient(clientId: string, input: NewRecipientInput): 
 
   const key = recipientPlanKey(entry.firstName, entry.lastName);
   const careNeeds = (input.careNeeds ?? []).map(toCareType).filter((v): v is string => !!v);
-  const careNeedDetails: Record<string, string[]> = {};
-  for (const [need, subs] of Object.entries(input.careNeedDetails ?? {})) {
-    const n = toCareType(need); if (!n || !careNeeds.includes(n)) continue;
-    careNeedDetails[n] = (subs ?? []).filter((s) => (CARE_NEED_SUBS[n] ?? []).includes(s));
-  }
+  const careNeedDetails: Record<string, string[]> = {}; // no sub-tasks since 2026-10-04
   // Merge the address into the shared locationPool (geocoded), like the page.
   const currentPool = [...page.locationPool];
   let location = currentPool.find((l) => sameLoc(l, input.location));

@@ -89,6 +89,12 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    // Public values the site must agree with the server on (Evia's texting number),
+    // published from the functions env by publicConfig.ts — never written by a browser.
+    match /config/public {
+      allow read: if true;
+      allow write: if false;
+    }
 
     // ==========================================
     // USERS COLLECTION

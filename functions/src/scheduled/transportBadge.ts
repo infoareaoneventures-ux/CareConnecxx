@@ -24,6 +24,8 @@ function isExpiringSoon(expirationDate?: string, daysAhead = 30): boolean {
 export const evaluateTransportBadges = functions.pubsub
   .schedule('every 24 hours')
   .onRun(async () => {
+    // Daily heartbeat for config/public (Evia's number from the functions env) — see publicConfig.ts.
+    await import('../publicConfig').then((m) => m.publishPublicConfig()).catch((err) => console.warn('publishPublicConfig failed:', err));
     const snap = await db.collection('caregivers')
       .where('verified', '==', true)
       .get();

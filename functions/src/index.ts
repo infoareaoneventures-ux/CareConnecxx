@@ -401,6 +401,8 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   // must still land in her /start signup (name, email, role), not a cold consent ask.
   const ttlExpireAt    = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // Firestore TTL purges
   const linqPhoneNumber = process.env.LINQ_PHONE_NUMBER ?? "";
+  // Keep config/public.eviaPhone in step with this env (the site's "Text Evia" links read it).
+  import("./publicConfig").then((m) => m.publishPublicConfig()).catch((err) => console.warn("publishPublicConfig failed:", err));
 
   await db.collection("web_onboarding_sessions").doc(phone).set({
     uid:         context.auth.uid,

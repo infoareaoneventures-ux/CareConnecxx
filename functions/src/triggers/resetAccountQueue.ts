@@ -23,6 +23,7 @@
 // still reset — the phone-keyed parts are simply skipped and noted.
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import { OUTBOUND_QUEUE_COLLECTION } from "../linq/outboundQueue";
 
 const db = admin.firestore();
 const auth = admin.auth();
@@ -126,6 +127,23 @@ export const processResetAccountQueue = functions.firestore
 
     const errors: string[] = [];
     const counts: Record<string, number> = {};
+
+    // Queued / dead-lettered outbound texts (linq_outbound_queue) are addressed by
+    // phone OR by the Linq chat id — nothing else in this sweep would catch them, and
+    // the every-minute drain would deliver them to the old number after the reset
+    // (founder, 2026-10-04: "make sure nothing goes to that number"). Read the chat
+    // id BEFORE agent_sessions/{phone} is deleted below.
+    const targetKeys: string[] = [];
+    if (phone) {
+      targetKeys.push(`phone:${phone}`);
+      const sess = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
+      const chatId = sess?.data()?.chatId as string | undefined;
+      if (chatId) targetKeys.push(`chat:${chatId}`);
+    }
+    for (const key of targetKeys) {
+      counts.linq_outbound_queue = (counts.linq_outbound_queue ?? 0)
+        + await deleteQueryResults(db.collection(OUTBOUND_QUEUE_COLLECTION).where("targetKey", "==", key), errors, `${OUTBOUND_QUEUE_COLLECTION}.${key.split(":")[0]}`);
+    }
 
     // Stripe first — it needs customers/{uid}, which is deleted below.
     await stripeCleanup(uid, errors);

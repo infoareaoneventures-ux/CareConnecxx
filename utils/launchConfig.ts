@@ -19,4 +19,4 @@ function configuredPhone(raw: string | undefined): ConfiguredPhone | null {
 }
 
 export const supportPhone = configuredPhone(import.meta.env.VITE_SUPPORT_PHONE);
-export const linqPhone = configuredPhone(import.meta.env.VITE_LINQ_PHONE_NUMBER);
+// linqPhone (2026-10-04): removed — Evia's number comes from the server via lib/eviaPhone.ts, never a build-time copy.

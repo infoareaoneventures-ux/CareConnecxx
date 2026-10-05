@@ -1,5 +1,5 @@
 import React from 'react';
-import { Heart, Brain, Coffee, Activity, UserPlus, Moon } from 'lucide-react';
+import { Heart, Brain, Coffee, UserPlus, Moon } from 'lucide-react';
 import { ViewType } from '../../types';
 
 interface ServicesSectionProps {
@@ -26,12 +26,6 @@ const services = [
         bgColor: "bg-amber-50"
     },
     {
-        icon: <Activity className="w-8 h-8 text-[#10b981]" strokeWidth={1.5} />,
-        title: "Post-Surgery Recovery",
-        description: "Help with mobility, medication reminders, and comfort during the critical transition from hospital to home to ensure a smooth recovery.",
-        bgColor: "bg-emerald-50"
-    },
-    {
         icon: <UserPlus className="w-8 h-8 text-[#8b5cf6]" strokeWidth={1.5} />,
         title: "Personal Care",
         description: "Dignified and respectful assistance with bathing, dressing, grooming, hygiene, and other essential daily routines.",
@@ -55,7 +49,7 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
                         Comprehensive care tailored to your needs
                     </h2>
                     <p className="text-lg text-slate-600 leading-relaxed">
-                        Find the perfect match for your loved one. Our network of verified caregivers specializes in a wide range of essential in-home senior care services.
+                        Find the perfect match for your loved one. Caregivers on Evia offer a wide range of essential non-medical in-home senior care services.
                     </p>
                 </div>
 

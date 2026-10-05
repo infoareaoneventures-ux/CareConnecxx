@@ -44,7 +44,7 @@ const categories = [
 const popularArticles = [
   { label: 'How do background checks work?', view: 'help-families' as ViewType },
   { label: 'How do I get paid as a caregiver?', view: 'help-caregivers' as ViewType },
-  { label: 'How does AI matching work?', view: 'help-families' as ViewType },
+  { label: 'How does matching work?', view: 'help-families' as ViewType },
   { label: 'How do I set up my caregiver profile?', view: 'help-caregivers' as ViewType },
   { label: "What is Evia's privacy policy?", view: 'help-general' as ViewType },
   { label: 'How do I cancel or reschedule a booking?', view: 'help-families' as ViewType },

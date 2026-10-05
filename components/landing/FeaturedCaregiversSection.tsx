@@ -180,9 +180,9 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
                                     <div className="flex-1 text-center pl-2 pb-1">
                                         <div className="flex items-center justify-center gap-1.5 text-slate-500 mb-1">
                                             <Clock className="w-3.5 h-3.5" />
-                                            <span className="text-[10px] font-bold uppercase tracking-[0.08em]">Verified</span>
+                                            <span className="text-[10px] font-bold uppercase tracking-[0.08em]">Background check</span>
                                         </div>
-                                        <p className="text-[16px] text-slate-900 tracking-tight">Background checked</p>
+                                        <p className="text-[16px] text-slate-900 tracking-tight">Completed</p>
                                     </div>
                                 </div>
                             </div>

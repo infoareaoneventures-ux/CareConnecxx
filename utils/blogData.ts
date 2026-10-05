@@ -45,8 +45,8 @@ export const blogArticles: BlogArticle[] = [
         body: `The cheapest option isn't always the best one. When comparing caregivers or platforms, ask:\n\n1. **What does the background check actually include?** Look for criminal + driving record + identity verification + reference checks — not just a database search.\n2. **Is the caregiver vetted for your specific care needs?** A caregiver with dementia care training is worth more than a general aide for a parent with Alzheimer's.\n3. **What happens if the caregiver calls in sick?** Make sure the platform has backup coverage or a reliable substitution process.\n4. **Can you interview before hiring?** Video interviews let you assess fit before the first visit — a feature traditional agencies rarely offer.`
       }
     ],
-    ctaHeading: 'Find Verified Caregivers in San Jose Starting at $22/hr',
-    ctaBody: 'Browse background-checked caregivers in your neighborhood, read their reviews, and interview them over video before your first booking.'
+    ctaHeading: 'Find Caregivers in San Jose',
+    ctaBody: 'Browse caregivers in your neighborhood who have completed a background check, read their reviews, and interview them before your first booking.'
   },
 
   {
@@ -99,8 +99,8 @@ export const blogArticles: BlogArticle[] = [
         body: `Many families wait too long because they're looking for a crisis as the trigger. But often, seniors themselves will say — directly or indirectly — that they need support. "I haven't been feeling well." "I'm having trouble getting around." "I'm lonely." Listen carefully to these statements. When a parent asks for help, that window of conversation is precious.`
       }
     ],
-    ctaHeading: 'Find a Caregiver Near You in 24 Hours',
-    ctaBody: "Evia matches Bay Area families with verified, background-checked caregivers. AI-powered matching means you see the right candidates — not just whoever's available."
+    ctaHeading: 'Find a Caregiver Near You',
+    ctaBody: "Evia matches Bay Area families with caregivers who have completed a background check, by your care needs, schedule and distance — not just whoever's available."
   },
 
   {
@@ -138,7 +138,7 @@ export const blogArticles: BlogArticle[] = [
       }
     ],
     ctaHeading: 'Interview Caregivers Face-to-Face Before You Hire',
-    ctaBody: 'Evia includes built-in video interviews so you can meet candidates from home before committing to a booking. All caregivers are background-checked and verified before their first interview.'
+    ctaBody: 'Evia sets up a video interview so you can meet candidates from home before committing to a booking. Every caregiver has completed a background check before their first interview.'
   },
 
   {
@@ -171,8 +171,8 @@ export const blogArticles: BlogArticle[] = [
         body: `Many families try to manage dementia care entirely themselves for as long as possible. This commitment is admirable — but it carries a significant risk of caregiver burnout that ultimately harms both the caregiver and the person being cared for.\n\nConsider bringing in professional in-home care when:\n\n- You are losing sleep consistently due to caregiving demands\n- You are missing work, medical appointments, or other obligations\n- You feel resentment, guilt, or hopelessness regularly\n- Your parent requires supervision for safety during the hours you work\n- Personal care tasks have become physically or emotionally difficult to manage\n- Your parent's behavioral symptoms (wandering, agitation) exceed what one person can safely handle\n\nA trained dementia caregiver provides not just assistance with daily tasks, but structured engagement, behavioral redirection, and a second pair of eyes on your loved one's health. Even part-time support (4–6 hours per day) can make an enormous difference in sustainability.`
       }
     ],
-    ctaHeading: 'Find a Dementia-Trained Caregiver Near You',
-    ctaBody: 'Evia filters for caregivers with verified dementia care experience. Use AI matching to find someone trained in Alzheimer\'s and memory care specifically — not just general in-home care.'
+    ctaHeading: 'Find a Dementia Care Caregiver Near You',
+    ctaBody: 'Browse caregivers who list dementia care among their services, read their profiles and reviews, and interview before your first booking.',
   },
 
   {
@@ -206,7 +206,7 @@ export const blogArticles: BlogArticle[] = [
       }
     ],
     ctaHeading: 'Book Reliable Respite Care in the Bay Area',
-    ctaBody: 'Browse vetted respite caregivers in San Jose, Mountain View, Palo Alto, and surrounding cities. Background-checked, reviewed by real families, available for same-week bookings.'
+    ctaBody: 'Browse respite caregivers in San Jose, Mountain View, Palo Alto, and surrounding cities who have completed a background check. Reviewed by families, available for same-week bookings.'
   }
 ];
 

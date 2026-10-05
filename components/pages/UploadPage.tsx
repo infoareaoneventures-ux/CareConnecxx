@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useEviaPhone, eviaPhoneNow } from '../../lib/eviaPhone';
 import { useParams } from 'react-router-dom';
 import { functions } from '../../lib/firebase';
 
@@ -9,7 +10,6 @@ import { functions } from '../../lib/firebase';
 // (caregivers/{uid}.photo / documents.{type}) through v1-uploadOnboardingFile.
 // The old certification upload (/upload/document) is gone — the site never had it.
 
-const LINQ_PHONE = import.meta.env.VITE_LINQ_PHONE_NUMBER || '';
 const MAX_BYTES  = 6 * 1024 * 1024; // must match uploadOnboardingFile server cap
 
 type TransportType = 'driversLicense' | 'insurance' | 'registration';
@@ -100,7 +100,7 @@ const ExpiredScreen: React.FC = () => (
         For your security these links expire after a couple of hours. Text Evia and I'll send you a fresh one.
       </p>
     </div>
-    <a href={LINQ_PHONE ? `sms:${LINQ_PHONE}` : '/'} className="w-full max-w-xs py-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl text-base text-center transition-all active:scale-95">
+    <a href={eviaPhoneNow() ? `sms:${eviaPhoneNow()}` : '/'} className="w-full max-w-xs py-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl text-base text-center transition-all active:scale-95">
       Text Evia for a new link
     </a>
   </Shell>
@@ -117,7 +117,7 @@ const DoneScreen: React.FC<{ title: string }> = ({ title }) => (
       <p className="text-white text-xl font-semibold">{title}</p>
       <p className="text-white/50 text-sm mt-1">Returning to your conversation...</p>
     </div>
-    <a href={LINQ_PHONE ? `sms:${LINQ_PHONE}` : '/'} className="text-blue-400 text-sm underline underline-offset-2">
+    <a href={eviaPhoneNow() ? `sms:${eviaPhoneNow()}` : '/'} className="text-blue-400 text-sm underline underline-offset-2">
       Tap here to return to Evia
     </a>
   </Shell>
@@ -146,7 +146,7 @@ function PhotoUpload() {
     try {
       await uploadFile(file, true);
       setStatus('done');
-      setTimeout(() => { if (LINQ_PHONE) window.location.href = `sms:${LINQ_PHONE}`; }, 1500);
+      setTimeout(() => { if (eviaPhoneNow()) window.location.href = `sms:${eviaPhoneNow()}`; }, 1500);
     } catch (err) {
       const code = errorCode(err);
       if (code === 'unauthenticated') { setStatus('expired'); return; }
@@ -192,7 +192,7 @@ function PhotoUpload() {
 
       {status === 'error' && <p className="text-red-400 text-sm">{errorMsg ?? 'Upload failed. Please try again.'}</p>}
 
-      <a href={LINQ_PHONE ? `sms:${LINQ_PHONE}` : '/'} className="text-white/30 text-xs underline underline-offset-2">
+      <a href={eviaPhoneNow() ? `sms:${eviaPhoneNow()}` : '/'} className="text-white/30 text-xs underline underline-offset-2">
         Cancel — return to conversation
       </a>
     </Shell>
@@ -272,7 +272,7 @@ function TransportUpload() {
 
       {errorMsg && <p className="text-red-400 text-sm">{errorMsg}</p>}
 
-      <a href={LINQ_PHONE ? `sms:${LINQ_PHONE}` : '/'} className="text-white/30 text-xs underline underline-offset-2">
+      <a href={eviaPhoneNow() ? `sms:${eviaPhoneNow()}` : '/'} className="text-white/30 text-xs underline underline-offset-2">
         Return to conversation
       </a>
     </Shell>
@@ -280,6 +280,7 @@ function TransportUpload() {
 }
 
 export default function UploadPage() {
+  useEviaPhone(); // loads the server's number (config/public) before any screen below renders a Text Evia link
   const { type } = useParams<{ type: string }>();
   if (type === 'transport') return <TransportUpload />;
   return <PhotoUpload />;

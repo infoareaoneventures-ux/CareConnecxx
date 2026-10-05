@@ -236,6 +236,8 @@ describe("booking tools", () => {
       hoisted.collState.set("booking_requests", [
         { id: "br1", clientId: "c1", caregiverId: "cg2", caregiverName: "Sam", caregiverPhotoURL: null, rate: 22, status: "accepted", updatedAt: { seconds: 100 } },
       ]);
+      // The replacement rule now runs the membership + background gate on every candidate (2026-10-04).
+      hoisted.docState.set("caregivers/cg2", { membershipStatus: "active", backgroundCheckStatus: "clear" });
       const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1", phone: PHONE }) as any;
       expect(r.success).toBe(true);
       expect(r.count).toBe(1);

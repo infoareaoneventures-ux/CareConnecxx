@@ -69,14 +69,14 @@ describe("loadMembershipTab — the section's reads", () => {
 });
 
 describe("membershipTabText — the three cards word for word", () => {
-  it("active: badge · Evia Membership — Annual plan, Renews <long date>, What's included, Manage via Stripe, background cleared + next check, driver card", async () => {
+  it("active: badge · Evia Membership: Annual plan, Renews <long date>, What's included, Manage via Stripe, background cleared + next check, driver card", async () => {
     const t = membershipTabText(await loadMembershipTab("cg1"));
     expect(t).toBe([
       "Settings · Membership & verification", "",
-      "Active · Evia Membership — Annual plan",
+      "Active · Evia Membership: Annual plan",
       "Renews March 3, 2027",
       "What's included:", ...WHATS_INCLUDED.map((l) => `✓ ${l}`),
-      "Manage membership — update payment method, cancel, or view invoices via Stripe: reply MANAGE MEMBERSHIP for your link.", "",
+      "Manage membership: update payment method, cancel, or view invoices via Stripe, reply MANAGE MEMBERSHIP for your link.", "",
       "Background check: Cleared 9/26/2026 · Next check with your renewal on March 3, 2027", "",
       DRIVER_CARD_TEXT.offer,
     ].join("\n"));
@@ -87,15 +87,15 @@ describe("membershipTabText — the three cards word for word", () => {
     hoisted.docs.set("caregivers/cg1", { membershipStatus: "trialing", isApprovedDriver: true, mvrClearedAt: "2026-09-28T18:00:00.000Z" });
     hoisted.badgeLive = true;
     const t = membershipTabText(await loadMembershipTab("cg1"));
-    expect(t).toContain("Trial · Evia Membership — Annual plan");
-    expect(t).toContain("Driving record check cleared — Cleared 9/28/2026 · Families who need a driver can see Transportation on your profile.");
+    expect(t).toContain("Trial · Evia Membership: Annual plan");
+    expect(t).toContain("Driving record check cleared on 9/28/2026. Families who need a driver can see Transportation on your profile.");
   });
   it("not active: No active membership + the page's sentence (canceled vs activate) + ACTIVATE; background not started", async () => {
     hoisted.docs.set("caregivers/cg1", { membershipStatus: "canceled" });
     let t = membershipTabText(await loadMembershipTab("cg1"));
     expect(t).toContain("No active membership\nYour membership was canceled. Renew to access jobs and platform features.\nReply ACTIVATE for your membership link ($69.99/year).");
     expect(t).not.toContain("What's included");
-    expect(t).toContain("Background check: Starts right after your membership is active — it's included in the annual fee.");
+    expect(t).toContain("Background check: Starts right after your membership is active, it's included in the annual fee.");
     hoisted.docs.set("caregivers/cg1", {}); hoisted.docs.set("users/cg1", {});
     t = membershipTabText(await loadMembershipTab("cg1"));
     expect(t).toContain("No active membership\nActivate your membership to start accepting bookings and applying for jobs.");
@@ -113,8 +113,8 @@ describe("bgCardFor / bgCardText — the dashboard card's rules", () => {
     expect(bgCardFor({ backgroundCheckData: { checkrCandidateId: "c", status: "pending" } })).toEqual({ kind: "in_progress", detail: "running" });
     expect(bgCardFor({})).toEqual({ kind: "not_started" });
     const base = { status: "active", isActive: true, periodEnd: END, cancelAtPeriodEnd: false, driver: "offer" as const, mvrClearedOn: null };
-    expect(bgCardText({ ...base, bg: { kind: "consent", renewal: true } })).toBe("Background check: Renew your background check — Your annual membership renewed. Authorize this year's background check refresh to stay bookable. Reply AUTHORIZE for the link.");
-    expect(bgCardText({ ...base, bg: { kind: "in_progress", detail: "running" } })).toBe("Background check: In progress — Checkr emailed you a secure link, it usually takes about 5 minutes.");
+    expect(bgCardText({ ...base, bg: { kind: "consent", renewal: true } })).toBe("Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check refresh to stay bookable. Reply AUTHORIZE for the link.");
+    expect(bgCardText({ ...base, bg: { kind: "in_progress", detail: "running" } })).toBe("Background check: In progress. Checkr emailed you a secure link, it usually takes about 5 minutes.");
     expect(bgCardText({ ...base, isActive: false, periodEnd: null, bg: { kind: "cleared", clearedOn: "9/26/2026" } })).toBe("Background check: Cleared 9/26/2026");
   });
 });

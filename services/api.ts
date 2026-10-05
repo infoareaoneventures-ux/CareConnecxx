@@ -276,11 +276,16 @@ export const dbService = {
                 ]);
 
                 if (cgDoc.exists && cgDoc.data()) {
+                    const userData = (userDoc.exists ? userDoc.data() : {}) as Record<string, unknown>;
                     return {
-                        ...(userDoc.exists ? userDoc.data() : {}),
+                        ...userData,
                         ...cgDoc.data(),
+                        // Member since = the account's creation (users doc, written at signup),
+                        // then the caregiver record's — the caregiver doc's own createdAt wins the
+                        // spread above, which put a later date on Settings than Evia's text (2026-10-04).
+                        accountCreatedAt: userData.createdAt ?? (cgDoc.data() as Record<string, unknown>).createdAt ?? null,
                         userType: 'caregiver',
-                    } as AdminUser;
+                    } as unknown as AdminUser;
                 }
 
                 if (userDoc.exists) {

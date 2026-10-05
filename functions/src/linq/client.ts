@@ -46,6 +46,9 @@ export type LinqTextDecoration = {
 export interface LinqMessagePart {
   type:              "text" | "media" | "link";
   value?:            string;
+  /** Skip the cross-user PII redaction for this text part — the data is the recipient's own
+   *  (her Account Settings page). Voice lint still runs. Stripped before the body goes to Linq. */
+  keepPii?:          boolean;
   url?:              string;
   attachment_id?:    string;
   text_decorations?: LinqTextDecoration[];
@@ -233,13 +236,14 @@ function isCardSafeUrl(url: string): boolean {
 // "-"/"." as word boundaries, so an unlucky token containing "-bot-" would be
 // corrupted — and a corrupted token bricks the upload/checkout page it gates.
 // Mask URLs before linting, restore them verbatim after.
-function lintTextPreservingUrls(value: string): string {
+function lintTextPreservingUrls(value: string, opts: { redact?: boolean } = {}): string {
   const urls: string[] = [];
   const masked = value.replace(FULL_URL_RE, (m) => {
     urls.push(m);
     return `⟦${urls.length - 1}⟧`;
   });
-  const cleaned = redactPii(lintPreservingLayout(masked)).text;
+  const linted = lintPreservingLayout(masked);
+  const cleaned = opts.redact === false ? linted : redactPii(linted).text;
   const restored = cleaned.replace(/⟦(\d+)⟧/g, (_, i) => urls[Number(i)] ?? "");
   return restored;
 }
@@ -261,8 +265,9 @@ function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
       // scrubbed of SSNs / card numbers / cross-user emails too — not just the
       // runQuickReply path the old outboundGuard covered. Fail open. URLs are
       // masked during the pass so tokens can't be mangled by phrase bans.
-      const cleaned = lintTextPreservingUrls(p.value);
-      return { ...p, value: cleaned || p.value };
+      const cleaned = lintTextPreservingUrls(p.value, { redact: p.keepPii !== true });
+      const { keepPii: _keepPii, ...rest } = p;
+      return { ...rest, value: cleaned || p.value };
     }
     if (p.type !== "link") return p;
     const url =

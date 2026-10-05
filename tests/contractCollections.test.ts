@@ -118,6 +118,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'billing_events', 'visit_billing', 'visit_payments', 'dispute_flags',
     // Misc internal config / metrics
     'system_config', 'experiment_scorecards', 'weekly_digests',
+    'config', // config/public: Evia's texting number published from the functions env (publicConfig.ts), public read-only
     '_meta',
     // Server-only request/workflow records the web does not read directly
     // ('blocks' moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)

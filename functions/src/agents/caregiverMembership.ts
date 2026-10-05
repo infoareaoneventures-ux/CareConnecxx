@@ -65,12 +65,12 @@ export const WHATS_INCLUDED = [
 /** The driver card's states, title + body as the page prints them. */
 export const DRIVER_CARD_TEXT: Record<DriverCard, string> = {
   // AccountStandingSection.DRIVER_CARD_TEXT, "title — body". States what happened, never an approval (founder, 2026-10-04).
-  approved: "Driving record check cleared — Families who need a driver can see Transportation on your profile.",
-  cleared_docs_pending: "Driving record check cleared — Transportation shows on your profile once your driver's license, insurance and registration are approved.",
-  not_approved: "Driving record not approved — Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.",
-  review: "Driving record under review — Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
-  pending: "Driving record check in progress — Your Motor Vehicle Report is in progress. Transportation shows on your profile once it clears and your documents are approved.",
-  included: "Driving record check included — Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears — no extra charge.",
+  approved: "Driving record check cleared. Families who need a driver can see Transportation on your profile.",
+  cleared_docs_pending: "Driving record check cleared. Transportation shows on your profile once your driver's license, insurance and registration are approved.",
+  not_approved: "Driving record not approved. Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.",
+  review: "Driving record under review. Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
+  pending: "Driving record check in progress. Your Motor Vehicle Report is in progress. Transportation shows on your profile once it clears and your documents are approved.",
+  included: "Driving record check included. Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears, at no extra charge.",
   offer: "Offer transportation? Add Transportation to your services and upload your driver's license, insurance, and registration. Your membership already covers the driving record check.",
 };
 
@@ -156,20 +156,20 @@ export function bgCardText(tab: MembershipTab): string {
   switch (b.kind) {
     case "consent":
       return b.renewal
-        ? "Background check: Renew your background check — Your annual membership renewed. Authorize this year's background check refresh to stay bookable. Reply AUTHORIZE for the link."
-        : "Background check: Start your background check — Authorize your background check, it takes about 2 minutes. Your SSN and date of birth go directly to Checkr, never to Evia. Reply AUTHORIZE for the link.";
+        ? "Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check refresh to stay bookable. Reply AUTHORIZE for the link."
+        : "Background check: Start your background check. Authorize your background check, it takes about 2 minutes. Your SSN and date of birth go directly to Checkr, never to Evia. Reply AUTHORIZE for the link.";
     case "cleared":
       return `Background check: Cleared${b.clearedOn ? ` ${b.clearedOn}` : ""}${renewal}`;
     case "in_progress":
       return b.detail === "under_review"
-        ? "Background check: Under review — This is normal, our team will follow up if anything is needed."
+        ? "Background check: Under review. This is normal, our team will follow up if anything is needed."
         : b.detail === "on_hold"
-          ? "Background check: On hold — Checkr is gathering additional information. Check your email from Checkr for next steps."
-          : "Background check: In progress — Checkr emailed you a secure link, it usually takes about 5 minutes.";
+          ? "Background check: On hold. Checkr is gathering additional information. Check your email from Checkr for next steps."
+          : "Background check: In progress. Checkr emailed you a secure link, it usually takes about 5 minutes.";
     case "not_approved":
-      return "Background check: Not approved — Contact support if you have questions.";
+      return "Background check: Not approved. Contact support if you have questions.";
     default:
-      return "Background check: Starts right after your membership is active — it's included in the annual fee.";
+      return "Background check: Starts right after your membership is active, it's included in the annual fee.";
   }
 }
 
@@ -177,7 +177,7 @@ export function bgCardText(tab: MembershipTab): string {
 export function driverCardText(tab: MembershipTab): string {
   const base = DRIVER_CARD_TEXT[tab.driver];
   if (tab.mvrClearedOn && (tab.driver === "approved" || tab.driver === "cleared_docs_pending")) {
-    return base.replace(" — ", ` — Cleared ${tab.mvrClearedOn} · `);
+    return base.replace("Driving record check cleared. ", `Driving record check cleared on ${tab.mvrClearedOn}. `);
   }
   return base;
 }
@@ -195,11 +195,11 @@ export function membershipSectionLines(tab: MembershipTab): string[] {
     );
   } else {
     const label = STATUS_LABEL[tab.status ?? ""] ?? tab.status ?? "";
-    lines.push(`${label} · Evia Membership — Annual plan`);
-    if (tab.cancelAtPeriodEnd) lines.push(`⚠ Cancels on ${tab.periodEnd ? longDate(tab.periodEnd) : "—"}`);
+    lines.push(`${label} · Evia Membership: Annual plan`);
+    if (tab.cancelAtPeriodEnd) lines.push(`⚠ Cancels on ${tab.periodEnd ? longDate(tab.periodEnd) : "the end of your term"}`);
     else if (tab.periodEnd) lines.push(`Renews ${longDate(tab.periodEnd)}`);
     lines.push("What's included:", ...WHATS_INCLUDED.map((l) => `✓ ${l}`));
-    lines.push("Manage membership — update payment method, cancel, or view invoices via Stripe: reply MANAGE MEMBERSHIP for your link.");
+    lines.push("Manage membership: update payment method, cancel, or view invoices via Stripe, reply MANAGE MEMBERSHIP for your link.");
   }
   lines.push("", bgCardText(tab), "", driverCardText(tab));
   return lines;

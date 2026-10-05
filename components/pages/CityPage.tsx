@@ -1,6 +1,6 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ShieldCheck, Star, Clock, MapPin, ArrowRight, Check } from 'lucide-react';
+import { ShieldCheck, Clock, MapPin, ArrowRight, Check } from 'lucide-react';
 import { BloomMark } from '../ui/BloomMark';
 import { ViewType } from '../../types';
 import { SEO } from '../SEO';
@@ -18,15 +18,16 @@ const careTypes = [
   { name: 'Dementia Care', desc: 'Specialized memory care and behavioral support' },
   { name: 'Respite Care', desc: 'Temporary relief for family caregivers' },
   { name: 'Overnight Care', desc: '12-hour overnight supervision and assistance' },
-  { name: 'Post-Surgery Recovery', desc: 'Short-term intensive recovery support' },
 ];
 
+// Founder, 2026-10-04: no competitor comparisons (stale, invite a letter), no "AI",
+// no "no per-booking fees" (there is a 9% service fee on each visit). Plain facts.
 const whyBetter = [
-  { label: 'Background check included in $69.99/yr membership', detail: 'vs. Care.com\'s $300 add-on' },
-  { label: 'AI-powered matching — not random availability', detail: 'vs. keyword-only search' },
-  { label: 'Video interview before your first booking', detail: 'built into every booking flow' },
-  { label: 'Instant payouts for caregivers = better retention', detail: 'caregivers stay longer' },
-  { label: '$29.95/mo for families — vs. $35/mo on Care.com', detail: 'and no per-booking fees' },
+  { label: 'Background check included in the $69.99/yr caregiver membership' },
+  { label: 'Matching by your care needs, schedule and distance' },
+  { label: 'Interview before your first booking' },
+  { label: 'Caregivers keep 100% of their rate, with instant payouts' },
+  { label: '$29.95/mo for families, plus a 9% service fee on each visit' },
 ];
 
 export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
@@ -61,12 +62,6 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
             '@type': 'City',
             name: cityData.name,
             containedInPlace: { '@type': 'AdministrativeArea', name: cityData.county }
-          },
-          aggregateRating: {
-            '@type': 'AggregateRating',
-            ratingValue: '4.9',
-            reviewCount: '512',
-            bestRating: '5'
           }
         }}
       />
@@ -117,20 +112,6 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
           </div>
         </section>
 
-        {/* Stats row */}
-        <section className="bg-paper-100 border-y hairline py-8">
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-              {cityData.localStats.map((stat, i) => (
-                <div key={i}>
-                  <p className="font-display text-2xl font-medium text-ink-900 tracking-tight">{stat.value}</p>
-                  <p className="text-sm text-ink-600 mt-1">{stat.label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
         {/* Services */}
         <section className="py-16 bg-paper-50">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -155,40 +136,13 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
             <h2 className="font-display text-3xl font-semibold text-ink-900 tracking-[-0.02em] mb-3">
               What Does In-Home Care Cost in {cityData.name}?
             </h2>
-            <p className="text-ink-600 mb-10 max-w-2xl">
-              {cityData.name} caregiver hourly rates through Evia typically range from {cityData.avgHourlyRate}/hr — compared to $38–$55/hr through traditional agencies.
+            {/* Founder, 2026-10-04: no invented rate ranges, no agency comparison — the facts only. */}
+            <p className="text-ink-600 mb-6 max-w-2xl">
+              Caregivers on Evia set their own hourly rates and keep 100% of them. You see each caregiver's rate on their profile before you book.
             </p>
-
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-white rounded-2xl border hairline p-6 shadow-sm">
-                <p className="text-xs font-bold text-ink-400 uppercase tracking-widest mb-3">Traditional Agency</p>
-                <div className="font-display text-3xl font-medium text-ink-400 mb-1">$38–$55<span className="text-sm font-normal">/hr</span></div>
-                <p className="text-sm text-ink-400 mb-4">High markup, caregiver earns only $18–22/hr</p>
-                <ul className="space-y-2">
-                  {['No say in who is assigned', 'Background check — limited', 'Long-term contracts common', 'No video interview option'].map((item, i) => (
-                    <li key={i} className="flex items-center gap-2 text-sm text-ink-400">
-                      <span className="w-4 h-4 text-ink-400">✗</span> {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="bg-ink-900 rounded-2xl p-6 shadow-lg relative">
-                <div className="absolute -top-3 left-6">
-                  <span className="bg-white border hairline text-ink-900 text-xs font-bold px-3 py-1 rounded-full shadow-sm">Best Value</span>
-                </div>
-                <p className="text-xs font-bold text-white/60 uppercase tracking-widest mb-3">Evia</p>
-                <div className="font-display text-3xl font-medium text-white mb-1">{cityData.avgHourlyRate}<span className="text-sm font-normal text-white/60">/hr</span></div>
-                <p className="text-sm text-white/60 mb-4">Caregiver earns full rate · $29.95/mo membership</p>
-                <ul className="space-y-2">
-                  {['You choose your caregiver', 'Annual Checkr background check included', 'Cancel anytime, no contract', 'Video interview built in'].map((item, i) => (
-                    <li key={i} className="flex items-center gap-2 text-sm text-white">
-                      <Check className="w-4 h-4 text-white/70 flex-shrink-0" /> {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
+            <p className="text-ink-600 max-w-2xl">
+              Families pay $29.95 a month for membership, plus a 9% service fee on each visit that covers payment processing and coordinating the visit. The caregiver's annual membership includes a background check, so there is no extra charge to you for that.
+            </p>
           </div>
         </section>
 
@@ -196,7 +150,7 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
         <section className="py-16 bg-paper-50">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
             <h2 className="font-display text-3xl font-semibold text-ink-900 tracking-[-0.02em] mb-3">Why {cityData.name} Families Choose Evia</h2>
-            <p className="text-ink-600 mb-10">We're not just cheaper — we're built differently.</p>
+            <p className="text-ink-600 mb-10">Built for families and caregivers.</p>
             <div className="space-y-4">
               {whyBetter.map((item, i) => (
                 <div key={i} className="flex items-start gap-4 p-4 bg-white border hairline rounded-xl">
@@ -205,7 +159,6 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
                   </div>
                   <div>
                     <p className="font-semibold text-ink-900">{item.label}</p>
-                    <p className="text-sm text-ink-400 mt-0.5">{item.detail}</p>
                   </div>
                 </div>
               ))}
@@ -224,20 +177,6 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
                 </span>
               ))}
             </div>
-          </div>
-        </section>
-
-        {/* Testimonial */}
-        <section className="py-16 bg-paper-50">
-          <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <div className="flex justify-center gap-1 mb-5">
-              {[...Array(5)].map((_, i) => <Star key={i} className="w-5 h-5 text-yellow-400 fill-yellow-400" />)}
-            </div>
-            <blockquote className="font-display text-2xl font-medium text-ink-900 leading-relaxed mb-6">
-              "{cityData.testimonial.quote}"
-            </blockquote>
-            <p className="text-ink-900 font-semibold">{cityData.testimonial.name}</p>
-            <p className="text-sm text-ink-400">{cityData.testimonial.neighborhood}</p>
           </div>
         </section>
 
@@ -272,7 +211,7 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
             </div>
             <h2 className="font-display text-3xl font-semibold text-ink-900 tracking-[-0.02em] mb-4">Find a Caregiver in {cityData.name} Today</h2>
             <p className="text-ink-600 mb-8 max-w-xl mx-auto">
-              Browse {cityData.availableCaregivers}+ background-checked caregivers in {cityData.name}. Read reviews, watch intro videos, and interview before your first booking.
+              Browse caregivers in {cityData.name} who have completed a background check. Read reviews and interview before your first booking.
             </p>
             <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
               <Button size="lg" onClick={() => onNavigate('client-signup')}>

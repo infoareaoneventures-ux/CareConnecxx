@@ -90,6 +90,17 @@ export const AdminCaregiverManager: React.FC = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, [showSkillsDropdown]);
 
+  // Payout setup Revoked — the server writes the real payout record (parent +
+  // private/payout, which the browser may not write) so every surface agrees;
+  // see triggers/adminAdvanceQueue.ts (founder, 2026-10-04).
+  const revokeCaregiverPayouts = async (uid: string) => {
+    try {
+      await db!.collection('adminAdvanceQueue').add({ type: 'revoke_caregiver_stripe_connect', uid, createdAt: new Date(), processedAt: null, error: null });
+    } catch (err) {
+      console.warn('adminAdvanceQueue revoke write failed:', err);
+    }
+  };
+
   const advanceCaregiverOnboarding = async (uid: string, step: 'membership' | 'bgcheck' | 'stripe_connect') => {
     try {
       const type = step === 'membership' ? 'advance_caregiver_membership'
@@ -849,12 +860,7 @@ export const AdminCaregiverManager: React.FC = () => {
                           (client writes to private/payout are denied by
                           firestore.rules, same as background check PII) and
                           fires the same stripe_connect finalize task the real
-                          Stripe webhook uses. Revoked only patches the parent
-                          mirror for quick admin testing — it does not clear
-                          private/payout, since forcing a caregiver's actual
-                          Stripe account back to "not connected" isn't a real
-                          admin action the way revoking membership/background
-                          approval is. */}
+                          Stripe webhook uses. Revoked (2026-10-04, founder: option A) ALSO goes through the queue and clears private/payout, so the dashboard, Payments page and Evia agree with this row the moment it is clicked. Neither button touches the caregiver's actual Stripe account; the next live Stripe status check writes Stripe's own answer back. */}
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-700">Payout setup (Stripe Connect)</span>
                         <div className="flex gap-2">
@@ -872,6 +878,7 @@ export const AdminCaregiverManager: React.FC = () => {
                             onClick={async () => {
                               const patch: any = { payoutsEnabled: false, chargesEnabled: false, stripeOnboardingComplete: false };
                               await adminService.updateCaregiver(selected.uid, patch);
+                              await revokeCaregiverPayouts(selected.uid);
                               setSelected(p => p ? { ...p, ...patch } as any : p);
                               showToast('Payout setup revoked', 'success');
                             }}

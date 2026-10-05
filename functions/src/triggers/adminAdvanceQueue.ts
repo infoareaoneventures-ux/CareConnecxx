@@ -21,6 +21,29 @@ export const processAdminAdvanceQueue = functions.firestore
     const data = snap.data() as { type: string; uid: string };
     const { type, uid } = data;
 
+    // Admin revoked payout setup (founder, 2026-10-04 — option A): the SAME record
+    // the Approved path and the real Stripe webhook write, parent + private/payout,
+    // so the dashboard's Payout Setup step, the Payments page, Evia's texts and the
+    // admin row all agree the moment it is clicked (before this, Revoked patched only
+    // the parent mirror and the site kept reading "connected"). No onboarding step
+    // to advance — the caregiver's record change itself notifies her
+    // (onCaregiverAccountChange payouts_disabled). Note: her Stripe account is
+    // untouched; the next live Stripe status check (Setup Payouts / Manage in
+    // Stripe) writes Stripe's own answer back.
+    if (type === "revoke_caregiver_stripe_connect") {
+      try {
+        const { writeCaregiverPayoutPrivate } = await import("../caregiverPrivate");
+        const payoutRevoke = { chargesEnabled: false, payoutsEnabled: false, stripeOnboardingComplete: false };
+        await db.collection("caregivers").doc(uid).set(payoutRevoke, { merge: true });
+        await writeCaregiverPayoutPrivate(uid, payoutRevoke);
+        await snap.ref.update({ processedAt: admin.firestore.FieldValue.serverTimestamp(), error: null });
+      } catch (err) {
+        await snap.ref.update({ error: err instanceof Error ? err.message : String(err), processedAt: admin.firestore.FieldValue.serverTimestamp() });
+        throw err;
+      }
+      return;
+    }
+
     const task = TASK_MAP[type];
     if (!task) {
       await snap.ref.update({

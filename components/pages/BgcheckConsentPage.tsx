@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useEviaPhone } from '../../lib/eviaPhone';
 import { functions } from '../../lib/firebase';
 
 // Token-authenticated FCRA disclosure + authorization for caregivers arriving
@@ -8,7 +9,6 @@ import { functions } from '../../lib/firebase';
 // creates the Checkr candidate + invitation server-side and Checkr emails the
 // caregiver a secure link — SSN/DOB are entered on Checkr's site, never here.
 
-const LINQ_PHONE = import.meta.env.VITE_LINQ_PHONE_NUMBER || '';
 
 const US_STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"];
 
@@ -22,6 +22,7 @@ const FCRA_RIGHTS = [
 type Step = 'disclosure' | 'form' | 'done' | 'expired';
 
 export default function BgcheckConsentPage() {
+  const LINQ_PHONE = useEviaPhone(); // the server's number (config/public), not a build-time copy
   const [step, setStep] = useState<Step>('disclosure');
   const [form, setForm] = useState({
     legalFirstName: '',

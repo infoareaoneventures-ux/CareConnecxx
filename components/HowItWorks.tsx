@@ -24,7 +24,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
          step: "01",
          icon: <Search className="w-6 h-6" />,
          title: "Tell Us What You Need",
-         desc: "Sign up and tell us about your loved one's needs, schedule, and preferences. We'll match you with verified caregivers in your area.",
+         desc: "Sign up and tell us about your loved one's needs, schedule, and preferences. We'll match you with caregivers in your area by your needs, schedule and distance.",
          highlight: "Takes 2 minutes",
          color: "teal"
       },
@@ -32,8 +32,8 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
          step: "02",
          icon: <Search className="w-6 h-6" />,
          title: "Get Matched Instantly",
-         desc: "Our AI analyzes your needs and matches you with verified caregivers in Santa Clara County. View profiles, rates, experience, and reviews. All caregivers are background-checked and identity-verified.",
-         highlight: "Smart AI matching",
+         desc: "We match you with caregivers in Santa Clara County by your care needs, schedule and distance. View profiles, rates, experience, and reviews. Every caregiver has completed a background check.",
+         highlight: "Matched to your needs",
          color: "blue"
       },
       {
@@ -67,8 +67,8 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
          step: "02",
          icon: <ShieldCheck className="w-6 h-6" />,
          title: "Get Verified",
-         desc: "Complete our background check through Checkr. Verified caregivers get priority placement and 3x more job offers. We handle the verification cost.",
-         highlight: "Stand out",
+         desc: "Complete your background check — it's included in your annual membership. Families can book you once it clears.",
+         highlight: "Included in membership",
          color: "blue"
       },
       {
@@ -96,11 +96,11 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
       },
       {
          q: "How is this different from a traditional agency?",
-         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With Evia, you pay caregivers at the rate they set, plus a flat monthly membership and a 9% service fee on each visit. You get more control, better transparency, and caregivers earn more."
+         a: "You pay caregivers at the rate they set, plus a flat $29.95/month membership and a 9% service fee on each visit. Caregivers keep 100% of their rate, you choose who you work with, and there are no long-term contracts."
       },
       {
-         q: "Are the caregivers really verified?",
-         a: "Yes. Every caregiver undergoes a comprehensive background check through Checkr, including criminal history and the sex offender registry — plus driving records for caregivers who offer transportation. We also verify identity through Stripe."
+         q: "Do caregivers complete a background check?",
+         a: "Yes. Every caregiver completes a background check before families can book them, and a driving record check if they offer Transportation. Families complete an identity check too."
       },
       {
          q: "What areas do you serve?",
@@ -117,16 +117,16 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    ];
 
    const features = [
-      { icon: <ShieldCheck className="w-5 h-5" />, text: "Background checked" },
+      { icon: <ShieldCheck className="w-5 h-5" />, text: "Background check completed" },
       { icon: <Clock className="w-5 h-5" />, text: "Clock-in/out tracking" },
-      { icon: <Zap className="w-5 h-5" />, text: "Instant matching" }
+      { icon: <Zap className="w-5 h-5" />, text: "Matched to your needs" }
    ];
 
    return (
       <div id="how-it-works" className="min-h-screen bg-white">
          <SEO
             title="How Evia Works - Simple 4-Step Process"
-            description="Find verified caregivers in Santa Clara County in 4 simple steps. AI-powered matching and background checks included."
+            description="Find caregivers in Santa Clara County in 4 simple steps. Matching by your needs, schedule and distance, with a background check completed by every caregiver."
             keywords="how it works, find caregivers, hire caregivers, senior care process, caregiver matching, Santa Clara County"
             canonicalUrl="https://www.eviacares.com/how-it-works"
          />
@@ -422,106 +422,13 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         <span className="text-xl font-bold">Stripe</span>
                      </a>
                      
-                     {/* Checkr */}
-                     <a 
-                        href="https://checkr.com" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 text-ink-600 hover:text-ink-900 transition-colors"
-                     >
-                        <div className="w-8 h-8 bg-green-600 rounded flex items-center justify-center">
-                           <CheckCircle className="w-5 h-5 text-white" />
-                        </div>
-                        <span className="text-xl font-bold">Checkr</span>
-                     </a>
-                     
-                     {/* WhatsApp */}
-                     <div className="flex items-center gap-2 text-ink-600">
-                        <MessageCircle className="w-8 h-8 text-green-500" />
-                        <span className="text-xl font-bold">WhatsApp</span>
-                     </div>
                   </div>
                   <p className="text-center text-sm text-ink-600 mt-6">
-                     Payments by Stripe • Background checks by Checkr
+                     Payments by Stripe
                   </p>
                </div>
             </section>
 
-            {/* Agency Comparison Table */}
-            <section className="py-20 bg-paper-50">
-               <div className="max-w-4xl mx-auto px-4">
-                  <div className="text-center mb-12">
-                     <h2 className="font-display text-3xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">Why families choose Evia</h2>
-                     <p className="text-ink-600">See how we compare to traditional care agencies</p>
-                  </div>
-
-                  <div className="bg-white rounded-3xl shadow-xl overflow-hidden border hairline">
-                     <div className="overflow-x-auto">
-                        <table className="w-full">
-                           <thead>
-                              <tr className="bg-slate-900 text-white">
-                                 <th className="py-4 px-6 text-left font-semibold">Feature</th>
-                                 <th className="py-4 px-6 text-center font-semibold bg-primary-600">Evia</th>
-                                 <th className="py-4 px-6 text-center font-semibold text-ink-400">Traditional Agency</th>
-                              </tr>
-                           </thead>
-                           <tbody className="divide-y divide-slate-100">
-                              <tr>
-                                 <td className="py-4 px-6 font-medium text-ink-900">Hourly Rate</td>
-                                 <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">The caregiver’s own rate</span>
-                                 </td>
-                                 <td className="py-4 px-6 text-center text-ink-600">$35-50/hour</td>
-                              </tr>
-                              <tr>
-                                 <td className="py-4 px-6 font-medium text-ink-900">Agency Markup</td>
-                                 <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">None — a 9% service fee per visit, shown before you book</span>
-                                 </td>
-                                 <td className="py-4 px-6 text-center text-ink-600">40-50%</td>
-                              </tr>
-                              <tr>
-                                 <td className="py-4 px-6 font-medium text-ink-900">Contract</td>
-                                 <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">Cancel anytime</span>
-                                 </td>
-                                 <td className="py-4 px-6 text-center text-ink-600">6-12 months</td>
-                              </tr>
-                              <tr>
-                                 <td className="py-4 px-6 font-medium text-ink-900">Background Checks</td>
-                                 <td className="py-4 px-6 text-center bg-primary-50">
-                                    <CheckCircle className="w-5 h-5 text-primary-600 mx-auto" />
-                                    <span className="text-sm text-primary-700">Included</span>
-                                 </td>
-                                 <td className="py-4 px-6 text-center text-ink-600">Varies</td>
-                              </tr>
-                              <tr>
-                                 <td className="py-4 px-6 font-medium text-ink-900">Caregiver Choice</td>
-                                 <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">You choose</span>
-                                 </td>
-                                 <td className="py-4 px-6 text-center text-ink-600">They assign</td>
-                              </tr>
-                              <tr>
-                                 <td className="py-4 px-6 font-medium text-ink-900">Membership</td>
-                                 <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">$29.95/month membership</span>
-                                 </td>
-                                 <td className="py-4 px-6 text-center text-ink-600">Hidden in markup</td>
-                              </tr>
-                           </tbody>
-                        </table>
-                     </div>
-                  </div>
-
-                  <div className="mt-8 text-center">
-                     <p className="text-ink-600 mb-4">Average family savings: <span className="font-bold text-primary-600">$400-800/month</span></p>
-                     <Button size="lg" onClick={() => onNavigate('client-signup')}>
-                        Start Saving Today
-                     </Button>
-                  </div>
-               </div>
-            </section>
 
             {/* Service Area Map */}
             <section className="py-20 bg-white">
@@ -649,7 +556,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
 
                   <div className="grid md:grid-cols-2 gap-6 text-left">
                      {[
-                        { title: "Identity Verification", desc: "Every caregiver verified via Stripe & Checkr background checks" },
+                        { title: "Background Checks", desc: "Every caregiver completes a background check before families can book them" },
                         { title: "Secure Payments", desc: "No cash exchanges. All payments tracked via Stripe" },
                         { title: "Shift Tracking", desc: "Caregivers clock in and out on every visit, and you see tasks and notes as they happen" },
                         { title: "Interview First", desc: "Meet your caregiver via video call before making any decisions" },

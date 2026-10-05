@@ -132,7 +132,8 @@ function seedNeedsReplacement() {
   hoisted.docState.set("booking_requests/br-old", {
     clientId: UID, caregiverId: "cg-maria", caregiverName: "Maria Santos", rate: 28, status: "completed", updatedAt: { seconds: 50 },
   });
-  hoisted.docState.set("caregivers/cg-maria", { name: "Maria Santos", hourlyRate: 28 });
+  // A bookable caregiver's real record: the replacement rule now runs the membership + background gate (2026-10-04).
+  hoisted.docState.set("caregivers/cg-maria", { name: "Maria Santos", hourlyRate: 28, membershipStatus: "active", backgroundCheckStatus: "clear" });
   hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID });
 }
 
@@ -154,6 +155,21 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe("startReplacementFlow", () => {
+  it("never offers a caregiver already in another visit at that hour, or one the family blocked (founder, 2026-10-04)", async () => {
+    seedNeedsReplacement();
+    hoisted.docState.set("shifts/sh-other", { clientId: "other-family", caregiverId: "cg-maria", status: "scheduled", date: "2026-09-15", startTime: "12:00", endTime: "15:00" });
+    const { startReplacementFlow } = await import("../replacementFlow");
+    await startReplacementFlow(PHONE, CHAT, session(), { shiftId: "sh1" });
+    const texts = () => sendMessage.mock.calls.map((c: unknown[]) => String(c[1])).join("\n");
+    expect(texts()).not.toContain("Maria Santos");
+    hoisted.docState.delete("shifts/sh-other");
+    hoisted.docState.set("users/" + UID, { blockedUsers: ["cg-maria"] });
+    sendMessage.mockClear();
+    await startReplacementFlow(PHONE, CHAT, session(), { shiftId: "sh1" });
+    expect(texts()).not.toContain("Maria Santos");
+    hoisted.docState.delete("users/" + UID);
+  });
+
   it("texts each candidate's card, records pendingMatches as a replacement list, and asks the modal's one question", async () => {
     seedNeedsReplacement();
     const r = await startReplacementFlow(PHONE, CHAT, session(), { shiftId: "sh1" });

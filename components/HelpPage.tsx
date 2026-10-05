@@ -25,15 +25,15 @@ const familiesContent = [
       },
       {
         q: 'How do I find a caregiver for my senior family member?',
-        a: 'Create a free family account and complete our short care-needs intake. Our AI engine instantly surfaces caregivers matched to your location, schedule, and specific care requirements — whether that is companionship, dementia support, or driving assistance. You can then browse profiles, read reviews, and send a message — or schedule a video interview from a caregiver profile or simply by texting Evia. Once a time is set, both you and the caregiver receive a Google Meet link by text.',
+        a: 'Create a free family account and complete our short care-needs intake. Evia shows you caregivers matched to your location, schedule, and specific care requirements — whether that is companionship, dementia support, or driving assistance. You can then browse profiles, read reviews, and send a message — or schedule a video interview from a caregiver profile or simply by texting Evia. Once a time is set, both you and the caregiver receive a Google Meet link by text.',
       },
       {
         q: 'What types of senior care services are available?',
         a: 'Caregivers on Evia offer companionship, meal preparation, medication reminders, light housekeeping, transportation, mobility assistance, dementia care, and more. All services are non-medical in nature.',
       },
       {
-        q: 'How does AI matching work?',
-        a: "Evia's matching engine analyzes your senior's care needs, personality profile, location, and preferred schedule, and cross-references them against each caregiver's verified skills, availability, distance, and past reliability score. The best matches appear at the top of your results.",
+        q: 'How does matching work?',
+        a: "Evia matches on your care plan: the care needs, schedule and location you give, against each caregiver's services, availability and distance. The closest matches appear at the top of your results.",
       },
       {
         q: 'Can I manage care for a family member who lives in another city?',
@@ -46,7 +46,7 @@ const familiesContent = [
     faqs: [
       {
         q: 'Are caregivers background checked?',
-        a: 'Every caregiver on Evia must pass a comprehensive annual background check processed by Checkr before their profile becomes visible to families. We also monitor for new records throughout the year.',
+        a: 'Every caregiver on Evia completes a background check before families can book them, and again each year with their membership.',
       },
       {
         q: 'How does the review system work?',
@@ -133,19 +133,19 @@ const caregiversContent = [
     faqs: [
       {
         q: 'How do I create a caregiver profile?',
-        a: 'Click "Find Jobs" on the homepage and follow our guided signup flow. You will add your experience, skills, availability, hourly rate, and a short bio. After submitting, our team reviews your application and runs your background check through Checkr before activating your profile.',
+        a: 'Click "Find Jobs" on the homepage and follow our guided signup flow. You will add your experience, skills, availability, hourly rate, and a short bio. After that, your background check runs with your membership, and families can book you once it clears.',
       },
       {
         q: 'How long does approval take?',
-        a: 'Profile review typically takes 1–3 business days. Background check results from Checkr usually arrive within 24–72 hours. You will receive an email and SMS notification as soon as your profile is approved.',
+        a: 'Profile review typically takes 1–3 business days. Background check results usually arrive within a few days. You will receive an email and SMS notification as soon as your profile is approved.',
       },
       {
         q: 'Do I need prior professional experience?',
-        a: 'Prior senior care experience is valued but not always required for companion or light-housekeeping roles. Specialized roles such as dementia care or medication management do require documented experience or certification.',
+        a: 'Prior senior care experience is valued but not always required for companion or light-housekeeping roles. Specialized roles such as dementia care benefit from documented experience. Evia is for non-medical care, so no medical credentials are involved.',
       },
       {
         q: 'What does the background check include?',
-        a: 'Our annual background check, processed by Checkr, includes a national criminal database search, sex offender registry check, and county courthouse records search. Some positions may include a motor vehicle report.',
+        a: 'Our annual background check covers criminal history records, and a driving record check for caregivers who offer Transportation. It runs with your membership each year.',
       },
     ],
   },

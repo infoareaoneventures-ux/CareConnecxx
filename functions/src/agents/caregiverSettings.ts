@@ -86,7 +86,9 @@ export async function loadSettingsPage(caregiverId: string): Promise<SettingsPag
   const cg = (cgSnap.data() ?? {}) as Record<string, unknown>;
   const p = { ...user, ...cg } as Record<string, unknown>; // dbService.getUser: caregiver doc wins
   const name = str(p.name);
-  const created = toDate(p.createdAt);
+  // Member since = the account's creation (users/{uid}.createdAt, written at signup), then the
+  // caregiver record's — the site's Settings reads the same (dbService.getUser accountCreatedAt). 2026-10-04.
+  const created = toDate(user.createdAt) ?? toDate(cg.createdAt);
   const { isEmailVerified } = await import("../accountRecovery");
   const docs = (p.documents ?? {}) as Record<string, Record<string, unknown> | undefined>;
   const services = (Array.isArray(p.skills) ? p.skills : Array.isArray(p.services) ? p.services : []) as string[];
@@ -120,31 +122,32 @@ export async function loadSettingsPage(caregiverId: string): Promise<SettingsPag
 }
 
 export const DOC_STATUS_TEXT: Record<DocStatus, string> = {
-  approved: "Approved", expired: "Expired — re-upload", rejected: "Rejected — re-upload", done: "Under Review", idle: "Not uploaded",
+  approved: "Approved", expired: "Expired (re-upload)", rejected: "Rejected (re-upload)", done: "Under Review", idle: "Not uploaded",
 };
 
 export function settingsPageText(page: SettingsPage): string {
-  const dash = (v: string | null | undefined) => (v && v.trim()) || "—";
+  // "not set", never "—": the send filter rewrites every em dash to a comma (safety/linter.ts), which turned "Last name: —" into "Last name:," (founder, 2026-10-04).
+  const dash = (v: string | null | undefined) => (v && v.trim()) || "not set";
   const lines: string[] = ["Account Settings", ""];
   lines.push(`Account Basics · Member since ${dash(page.memberSince)}`);
   lines.push(`First name: ${dash(page.firstName)}`, `Last name: ${dash(page.lastName)}`, `Date of birth: ${dash(page.dob)}`);
   lines.push(`Gender: ${dash(page.gender)} (tell me to set it: ${GENDER_OPTIONS.join(", ")})`);
   lines.push(page.email
-    ? `Recovery email: ${page.email} — ${page.emailVerified ? "Confirmed" : "Not confirmed yet (reply RESEND EMAIL LINK)"}`
-    : "Recovery email: — (tell me an email to add one)");
-  lines.push(`Phone number: ${dash(page.phone)} (to change it, tell me — a secure link goes to your recovery email)`);
+    ? `Recovery email: ${page.email} (${page.emailVerified ? "Confirmed" : "Not confirmed yet, reply RESEND EMAIL LINK"})`
+    : "Recovery email: not set (tell me an email to add one)");
+  lines.push(`Phone number: ${dash(page.phone)} (to change it, tell me, and a secure link goes to your recovery email)`);
   const a = page.address;
   const addr = a ? [a.street, [a.city, a.state].filter(Boolean).join(", "), a.zip].filter(Boolean).join(", ") : "";
   lines.push(`Address: ${dash(addr)} (tell me a new address to update it)`);
   // Membership & verification — moved here from Payments › Membership (2026-10-04).
   lines.push("", "Membership & verification", ...membershipSectionLines(page.standing));
   if (page.hasTransportation) {
-    lines.push("", "Transportation Documents — Required to offer Transportation. Keep these up to date.");
+    lines.push("", "Transportation Documents: required to offer Transportation. Keep these up to date.");
     for (const d of page.documents) {
       lines.push(`${d.label}: ${DOC_STATUS_TEXT[d.status]}${d.expires && (d.status === "approved" || d.status === "expired") ? ` · Expires ${ymdToLocal(d.expires)}` : ""}`);
     }
     if (page.documents.filter((d) => d.status === "done" || d.status === "approved").length < 3) {
-      lines.push("All three documents are required to activate the transportation badge.");
+      lines.push("All three documents are required to offer Transportation.");
     }
     lines.push("Reply DOCUMENTS for your upload link.");
   }
@@ -152,9 +155,9 @@ export function settingsPageText(page: SettingsPage): string {
   lines.push("");
   if (page.isPaused) {
     const dated = page.pausedUntil && page.pausedUntil !== "2099-12-31";
-    lines.push(`Your account is paused — ${dated ? `You'll automatically become active again on ${page.pausedUntil}. Reactivate sooner anytime.` : "You won't show up for new matches until you reactivate. Fully reversible anytime."} Reply REACTIVATE.`);
+    lines.push(`Your account is paused. ${dated ? `You'll automatically become active again on ${page.pausedUntil}. Reactivate sooner anytime.` : "You won't show up for new matches until you reactivate. Fully reversible anytime."} Reply REACTIVATE.`);
   } else {
-    lines.push("Pause your account — Taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime. Reply PAUSE, or PAUSE 2026-11-01 to resume on a date.");
+    lines.push("Pause your account: taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime. Reply PAUSE, or PAUSE 2026-11-01 to resume on a date.");
   }
   lines.push("", "Deleting your account is permanent and cannot be undone. To delete it, tell me and I'll confirm with you first.");
   return lines.join("\n");
@@ -162,7 +165,9 @@ export function settingsPageText(page: SettingsPage): string {
 
 export async function sendCaregiverSettings(chatId: string, caregiverId: string) {
   const page = await loadSettingsPage(caregiverId);
-  await sendMessage(chatId, settingsPageText(page));
+  // keepPii: the recovery email on this page is the caregiver's own — the send filter's
+  // cross-user email redaction would strip its domain ("hamse143@", founder 2026-10-04).
+  await sendMessage(chatId, { parts: [{ type: "text", value: settingsPageText(page), keepPii: true }] });
   return { sent: true, emailVerified: page.emailVerified, hasTransportation: page.hasTransportation, isPaused: page.isPaused, blockedCount: page.blocked.length };
 }
 

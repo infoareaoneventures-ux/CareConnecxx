@@ -101,7 +101,7 @@ export const generateOrganizationSchema = () => ({
   name: 'Evia',
   url: SITE_URL,
   logo: `${SITE_URL}/icon-512.png`,
-  description: 'Connect with verified caregivers instantly. AI-powered matching for senior care.',
+  description: 'Connect with local caregivers who have completed a background check. Matching by your care needs, schedule and distance.',
   sameAs: [
     // Add social media URLs when available
   ],
@@ -132,8 +132,8 @@ export const generateServiceSchema = () => ({
     '@type': 'Organization',
     name: 'Evia'
   },
-  description: 'AI-powered caregiver matching for senior care',
-  serviceType: 'Health Care'
+  description: 'Caregiver matching for non-medical in-home senior care',
+  serviceType: 'Non-medical in-home care'
 });
 
 export const generateFAQSchema = (faqs: Array<{question: string, answer: string}>) => ({

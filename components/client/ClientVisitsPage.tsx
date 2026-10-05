@@ -30,6 +30,10 @@ interface Shift {
   cancelledBy?: 'client' | 'caregiver';
   replacementRequestId?: string;
   replacementCaregiverName?: string;
+  /** Written by the server (onShiftStatusChanged) when the shift flips to
+   * needs_replacement — the ONE candidate rule shared with Evia (2026-10-04). */
+  replacementCandidates?: ReplacementCandidate[];
+  replacementCandidatesAt?: string;
   /** Who proposed the pending reschedule fields below. Undefined when there's
    * no pending proposal on this shift. */
   rescheduledBy?: 'client' | 'caregiver';
@@ -566,6 +570,8 @@ interface ReplacementCandidate {
   hourlyRate?: number | null;
   rating?: number;
   distanceMiles?: number | null;
+  /** Miles beyond her own travel radius — the server offers a stranger up to 20 miles past it, flagged (2026-10-04). */
+  milesBeyondRadius?: number;
   source: 'care_team' | 'match';
 }
 
@@ -725,6 +731,10 @@ const ReplacementPickerModal: React.FC<ReplacementPickerModalProps> = ({ shift, 
 
   useEffect(() => {
     let cancelled = false;
+    // The server's list first — it ran the rules the browser cannot (other
+    // families' shifts, the gate, blocks both ways, radius). The in-page
+    // ranking below is the fallback for a shift written before 2026-10-04.
+    if (Array.isArray(shift.replacementCandidates) && shift.replacementCandidates.length) { setCandidates(shift.replacementCandidates); return; }
     if (!db) { setCandidates([]); return; }
     fetchReplacementCandidates(db, clientUid, shift.caregiverId, shift)
       .then(list => { if (!cancelled) setCandidates(list); })
@@ -796,7 +806,9 @@ const ReplacementPickerModal: React.FC<ReplacementPickerModalProps> = ({ shift, 
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-slate-800 truncate">{c.name}</p>
                   <p className="text-xs text-slate-400">
-                    {[c.source === 'care_team' ? 'On your Care Team' : null, c.hourlyRate != null ? `$${c.hourlyRate}/hr · $${billedHourlyRate(Number(c.hourlyRate)).toFixed(2)}/hr billed` : null]
+                    {[c.source === 'care_team' ? 'On your Care Team' : null, c.hourlyRate != null ? `$${c.hourlyRate}/hr · $${billedHourlyRate(Number(c.hourlyRate)).toFixed(2)}/hr billed` : null,
+                      // Server flag (2026-10-04): a stranger up to 20 miles past her own travel radius is offered, with this said out loud.
+                      (c.milesBeyondRadius ?? 0) > 0 ? `about ${(c.milesBeyondRadius ?? 0) < 1 ? 'a mile' : `${Math.round(c.milesBeyondRadius ?? 0)} miles`} outside her usual range` : null]
                       .filter(Boolean).join(' · ')}
                   </p>
                 </div>

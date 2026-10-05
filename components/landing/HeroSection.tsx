@@ -55,7 +55,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
 
                 {/* Single quiet trust line */}
                 <p className="text-[13px] text-ink-400 mb-14">
-                    Background-checked caregivers · $29.95/mo flat · Matched in 24–48 hours
+                    Background check required for caregivers · $29.95/mo flat
                 </p>
 
                 {/* Launch film — the product demo, muted seamless loop */}

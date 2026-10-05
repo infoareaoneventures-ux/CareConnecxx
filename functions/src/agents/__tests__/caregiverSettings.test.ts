@@ -18,7 +18,8 @@ vi.mock("firebase-admin", () => {
   }), { FieldValue: {} });
   return { __esModule: true, default: { firestore }, firestore };
 });
-vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async (_c: string, m: string) => { hoisted.sent.push(m); return { message_id: "m" }; }) }));
+// The SETTINGS page goes out as a text part flagged keepPii (her own recovery email stays whole) — capture its text either way.
+vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async (_c: string, m: string | { parts?: Array<{ value?: string }> }) => { hoisted.sent.push(typeof m === "string" ? m : (m?.parts ?? []).map((p) => p.value ?? "").join("\n")); return { message_id: "m" }; }) }));
 vi.mock("../../accountRecovery", () => ({
   isEmailVerified: (d: any) => d?.emailVerified === true && !!d?.email && String(d.emailVerifiedFor ?? "").toLowerCase() === String(d.email).toLowerCase(),
   resendEmailConfirmation: (...a: any[]) => (hoisted.resend as any)(...a),
@@ -68,10 +69,10 @@ describe("settingsPageText — the sections word for word", () => {
     expect(t).toBe([
       "Account Settings", "",
       "Account Basics · Member since 9/26/2026",
-      "First name: Mahad", "Last name: —", "Date of birth: —",
-      `Gender: — (tell me to set it: ${GENDER_OPTIONS.join(", ")})`,
-      "Recovery email: hamse143@gmail.com — Not confirmed yet (reply RESEND EMAIL LINK)",
-      "Phone number: +14088745451 (to change it, tell me — a secure link goes to your recovery email)",
+      "First name: Mahad", "Last name: not set", "Date of birth: not set",
+      `Gender: not set (tell me to set it: ${GENDER_OPTIONS.join(", ")})`,
+      "Recovery email: hamse143@gmail.com (Not confirmed yet, reply RESEND EMAIL LINK)",
+      "Phone number: +14088745451 (to change it, tell me, and a secure link goes to your recovery email)",
       "Address: 20 Descanso dr, san jose, CA, 95134 (tell me a new address to update it)",
       "",
       "Membership & verification",
@@ -80,13 +81,13 @@ describe("settingsPageText — the sections word for word", () => {
       "Activate your membership to start accepting bookings and applying for jobs.",
       "Reply ACTIVATE for your membership link ($69.99/year).",
       "",
-      "Background check: Starts right after your membership is active — it's included in the annual fee.",
+      "Background check: Starts right after your membership is active, it's included in the annual fee.",
       "",
       DRIVER_CARD_TEXT.offer,
       "",
       "Blocked Users: Pat Lee (tell me to unblock someone)",
       "",
-      "Pause your account — Taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime. Reply PAUSE, or PAUSE 2026-11-01 to resume on a date.",
+      "Pause your account: taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime. Reply PAUSE, or PAUSE 2026-11-01 to resume on a date.",
       "",
       "Deleting your account is permanent and cannot be undone. To delete it, tell me and I'll confirm with you first.",
     ].join("\n"));
@@ -100,12 +101,12 @@ describe("settingsPageText — the sections word for word", () => {
     hoisted.docs.set("users/cg1", {});
     const t = settingsPageText(await loadSettingsPage("cg1"));
     expect(t).toContain("First name: Mahad\nLast name: Ali");
-    expect(t).toContain("Recovery email: a@b.com — Confirmed");
-    expect(t).toContain("Transportation Documents — Required to offer Transportation. Keep these up to date.\nDriver's License: Approved · Expires 3/3/2027\nVehicle Insurance: Under Review\nVehicle Registration: Not uploaded\nAll three documents are required to activate the transportation badge.\nReply DOCUMENTS for your upload link.");
+    expect(t).toContain("Recovery email: a@b.com (Confirmed)");
+    expect(t).toContain("Transportation Documents: required to offer Transportation. Keep these up to date.\nDriver's License: Approved · Expires 3/3/2027\nVehicle Insurance: Under Review\nVehicle Registration: Not uploaded\nAll three documents are required to offer Transportation.\nReply DOCUMENTS for your upload link.");
     expect(t).toContain("Blocked Users: You haven't blocked anyone.");
-    expect(t).toContain("Your account is paused — You'll automatically become active again on 2026-11-01. Reactivate sooner anytime. Reply REACTIVATE.");
+    expect(t).toContain("Your account is paused. You'll automatically become active again on 2026-11-01. Reactivate sooner anytime. Reply REACTIVATE.");
     hoisted.docs.set("caregivers/cg1", { pausedUntil: "2099-12-31" });
-    expect(settingsPageText(await loadSettingsPage("cg1"))).toContain("Your account is paused — You won't show up for new matches until you reactivate. Fully reversible anytime. Reply REACTIVATE.");
+    expect(settingsPageText(await loadSettingsPage("cg1"))).toContain("Your account is paused. You won't show up for new matches until you reactivate. Fully reversible anytime. Reply REACTIVATE.");
   });
 });
 

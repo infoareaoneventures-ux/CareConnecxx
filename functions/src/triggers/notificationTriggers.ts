@@ -772,6 +772,20 @@ export const onShiftStatusChanged = functions.firestore
         });
         await notifyClientByText(after.clientId,
           `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}. Text me to find a replacement, or to skip that visit.`);
+        // ONE candidate list for both surfaces (founder, 2026-10-04): the server
+        // computes it here with the full rules — busy that hour, blocked, gate,
+        // Transportation, radius — which the browser cannot (other families'
+        // shifts are not readable). The site's Find a replacement reads it off
+        // the shift; Evia's flow calls the same function live.
+        if (after.caregiverId) {
+          try {
+            const { findReplacementCandidates } = await import('../agents/shiftReplacement');
+            const replacementCandidates = await findReplacementCandidates(after.clientId, after.caregiverId, after);
+            await change.after.ref.update({ replacementCandidates, replacementCandidatesAt: new Date().toISOString() });
+          } catch (err) {
+            console.error('[onShiftStatusChanged] replacement candidates failed:', err);
+          }
+        }
       } else if (after.status === 'cancelled' && after.supersededByBookingId) {
         // The original visit closed out because a REPLACEMENT was accepted
         // (shiftGenerator writes cancelled + supersededByBookingId). The family

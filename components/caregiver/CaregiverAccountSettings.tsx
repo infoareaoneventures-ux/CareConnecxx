@@ -344,8 +344,13 @@ export const CaregiverAccountSettings: React.FC = () => {
     deleteReauth.reset();
   };
 
-  const memberSince = (profile as any)?.createdAt
-    ? new Date((profile as any).createdAt).toLocaleDateString() : '—';
+  // Same rule as Evia's SETTINGS text (caregiverSettings.ts): the account's creation first.
+  const memberSinceRaw = (profile as any)?.accountCreatedAt ?? (profile as any)?.createdAt;
+  const memberSinceDate = !memberSinceRaw ? null
+    : typeof (memberSinceRaw as any)?.toDate === 'function' ? (memberSinceRaw as any).toDate()
+    : typeof (memberSinceRaw as any)?.seconds === 'number' ? new Date((memberSinceRaw as any).seconds * 1000)
+    : new Date(memberSinceRaw as string | number);
+  const memberSince = memberSinceDate && !Number.isNaN(memberSinceDate.getTime()) ? memberSinceDate.toLocaleDateString() : '—';
   const hasTransportation = ((profile as any)?.skills || (profile as any)?.services || []).includes('Transportation');
 
   return (

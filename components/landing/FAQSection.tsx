@@ -14,7 +14,7 @@ export const faqs = [
     },
     {
         question: "What if I don't like the caregiver you match me with?",
-        answer: "No problem. Our AI matching is highly accurate, but if you're not completely satisfied, just text Evia. She will find a new match immediately—no questions asked, no fees. We can even schedule video interviews with up to 3 candidates so you can choose the best fit.",
+        answer: "No problem. If you're not satisfied, just text Evia. She will find a new match, no questions asked, no fees. We can even schedule video interviews with up to 3 candidates so you can choose the best fit.",
         category: "Matching"
     },
     {
@@ -29,7 +29,7 @@ export const faqs = [
     },
     {
         question: "How much does it cost compared to traditional agencies?",
-        answer: "In Santa Clara County, traditional agencies typically charge $32-42/hour while paying caregivers only $18-22/hour. With Evia, families pay the caregiver’s own hourly rate plus a flat $29.95/month membership and a 9% service fee on each visit — caregivers keep 100% of their rate. No agency markup and no long-term contracts.",
+        answer: "Families pay the caregiver's own hourly rate plus a flat $29.95/month membership and a 9% service fee on each visit. Caregivers keep 100% of their rate, and there are no long-term contracts.",
         category: "Pricing"
     },
     {

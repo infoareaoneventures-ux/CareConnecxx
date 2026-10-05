@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Shield, Mail, Phone, Calendar, RefreshCw, X, KeyRound } from 'lucide-react';
+import { Search, Shield, Mail, Phone, Calendar, RefreshCw, X } from 'lucide-react';
 import { dbService } from '../../services/api';
 import { AdminUser } from '../../types';
 
@@ -37,9 +37,14 @@ const ROLE_COLOR: Record<TeamRole, string> = {
 const nameOf = (u: TeamRow): string =>
   u.name || u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || 'Unnamed';
 
-const sinceOf = (iso?: string): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
+// Accepts the shapes a users record's createdAt can have (ISO string, epoch number,
+// Firestore Timestamp, {seconds}) — it printed "—" for Timestamps (founder, 2026-10-04).
+const sinceOf = (raw?: unknown): string => {
+  if (!raw) return '—';
+  const r = raw as { toDate?: () => Date; seconds?: number };
+  const d = typeof r?.toDate === 'function' ? r.toDate()
+    : typeof r?.seconds === 'number' ? new Date(r.seconds * 1000)
+    : new Date(raw as string | number);
   return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
@@ -154,7 +159,6 @@ export const AdminTeamManager: React.FC = () => {
                 <div className="flex items-center gap-3 text-sm text-slate-700"><Mail className="w-4 h-4 text-slate-400" /><span>{selected.email || '—'}</span></div>
                 <div className="flex items-center gap-3 text-sm text-slate-700"><Phone className="w-4 h-4 text-slate-400" /><span>{selected.phone || '—'}</span></div>
                 <div className="flex items-center gap-3 text-sm text-slate-700"><Calendar className="w-4 h-4 text-slate-400" /><span>Since {sinceOf(selected.createdAt)}</span></div>
-                <div className="flex items-center gap-3 text-sm text-slate-700"><KeyRound className="w-4 h-4 text-slate-400" /><span className="font-mono text-xs text-slate-500 break-all">{selected.uid}</span></div>
               </div>
 
               <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-2">

@@ -37,7 +37,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
       {
          icon: <ShieldCheck className="w-6 h-6 text-ink-900" />,
          title: "Annual background checks",
-         desc: "Every caregiver must complete a background check. Background checks are processed by Checkr annually."
+         desc: "Every caregiver completes a background check each year with their membership before families can book them."
       },
       {
          icon: <Clock className="w-6 h-6 text-ink-900" />,
@@ -69,8 +69,8 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
       },
       {
          icon: <ShieldCheck className="w-6 h-6 text-white" />,
-         title: "Industry-respected trust and safety partners",
-         desc: "Evia partners with Checkr for background checks and Stripe for payment processing, two of the most trusted names in their fields."
+         title: "Payments through Stripe",
+         desc: "Payments run through Stripe, so card details never touch Evia."
       }
    ];
 
@@ -93,7 +93,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
       <div className="min-h-screen bg-paper-50 font-sans">
          <SEO
             title="Trust & Safety | Evia"
-            description="Your family's safety is our top priority. Every caregiver on Evia is background checked annually. Learn more about our Trust and Safety tools."
+            description="Your family's safety is our top priority. Every caregiver on Evia completes a background check each year and a profile review before families can book them."
             keywords="trust, safety, background checks, secure payments, safe messaging, Evia"
          />
 
@@ -132,7 +132,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
                      Your family's safety is our top priority.
                   </h1>
                   <p className="text-xl text-ink-600 max-w-2xl mx-auto leading-relaxed">
-                     Every caregiver on Evia is background checked annually. Each caregiver profile is individually reviewed by our Trust and Safety team. Our aim is to provide members with transparency and information to make informed decisions.
+                     Every caregiver on Evia completes a background check each year and a profile review before families can book them. Our aim is to give members the information to make their own informed decisions.
                   </p>
                </div>
             </section>

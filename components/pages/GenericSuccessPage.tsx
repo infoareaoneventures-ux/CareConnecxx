@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { useEviaPhone } from '../../lib/eviaPhone';
 import { useSearchParams } from 'react-router-dom';
 import { functions } from '../../lib/firebase';
 
-const LINQ_PHONE = import.meta.env.VITE_LINQ_PHONE_NUMBER || '';
 
 const MESSAGES: Record<string, { title: string; body: string }> = {
   payment:           { title: 'Payment set up!',        body: "Evia is already searching for caregivers. You'll hear from her shortly." },
@@ -30,6 +30,7 @@ const STRIPE_STATE_COPY: Record<Exclude<StripeVerifyState, 'ok'>, { title: strin
 };
 
 export default function GenericSuccessPage() {
+  const LINQ_PHONE = useEviaPhone(); // the server's number (config/public), not a build-time copy
   const [params]   = useSearchParams();
   const task        = params.get('task') ?? 'payment';
   const token       = params.get('t')    ?? '';

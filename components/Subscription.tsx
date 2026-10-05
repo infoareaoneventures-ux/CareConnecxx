@@ -36,13 +36,11 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
 
     const clientFeatures = [
         "Caregiver matching",
-        "Comprehensive background checks",
+        "Caregivers who have completed a background check",
         "Shift clock-in/out and hours review",
-        "Automated tax forms (1099)",
         "Secure messaging & scheduling",
         "Evia text support, 24/7",
-        "Care plan management tools",
-        "Family manager access"
+        "Care plan management tools"
     ];
 
     const caregiverFeatures = [

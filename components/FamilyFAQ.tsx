@@ -42,8 +42,8 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          },
          {
             id: 'gs-2',
-            q: 'How does the AI matching work?',
-            a: 'Our proprietary AI engine analyzes your specific care needs—such as mobility support, dementia care, or simply companionship—and matches you with caregivers based on their skills, availability, distance, and even personality compatibility to ensure a lasting fit.'
+            q: 'How does matching work?',
+            a: 'Evia matches on what you tell us: the care needs, schedule and location in your care plan, against each caregiver\'s services, availability and distance. You see the matches, read their profiles and reviews, and decide.'
          },
          {
             id: 'gs-3',
@@ -60,7 +60,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'ts-1',
             q: 'Are caregivers background checked?',
-            a: 'Yes, absolutely. Every caregiver on Evia must pass a comprehensive annual background check processed by Checkr before their profile becomes visible to families. We also continually monitor for any new records.'
+            a: 'Yes. Every caregiver on Evia completes a background check before families can book them, and again each year with their membership.'
          },
          {
             id: 'ts-2',

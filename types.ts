@@ -98,11 +98,27 @@ export interface TimeSlot {
 }
 
 // Caregiver Document Types
+/** A new file uploaded over an approved, unexpired document — reviewed beside it,
+ *  so Transportation stays on while it waits (founder, 2026-10-05). Approving it
+ *  replaces the live document; rejecting it leaves the live one until its own expiry. */
+export interface CaregiverDocumentRenewal {
+  url: string;
+  path: string;
+  uploadedAt: string;
+  status: 'pending' | 'rejected';
+  fileName?: string;
+  fileType?: string;
+  notes?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+}
+
 export interface CaregiverDocument {
   url: string;
   path: string;
   uploadedAt: string;
   status: 'pending' | 'approved' | 'rejected';
+  renewal?: CaregiverDocumentRenewal;
   reviewedAt?: string;
   reviewedBy?: string;
   notes?: string;

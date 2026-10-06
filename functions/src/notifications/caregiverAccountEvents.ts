@@ -25,6 +25,7 @@ export type CaregiverAccountEventKind =
   | "bgcheck_canceled" | "bgcheck_action_required" | "bgcheck_not_approved" | "bgcheck_document_required"
   | "bgcheck_link_expired" | "bgcheck_revoked"
   | "transport_doc_approved" | "transport_doc_rejected" | "transport_docs_all_approved" | "transport_doc_expiring"
+  | "transport_renewal_received" | "transport_renewal_approved" | "transport_renewal_rejected"
   | "mvr_clear" | "mvr_review" | "mvr_not_approved" | "transport_badge_earned" | "transport_badge_lost"
   | "payouts_enabled" | "payouts_disabled"
   | "now_bookable";
@@ -43,6 +44,9 @@ export interface CaregiverAccountEventContext {
   docLabel?: string;        // "Driver's License"
   docNotes?: string;        // admin's rejection note
   docs?: string[];          // expiring document labels
+  window?: number;          // reminder window in days (30 / 7)
+  newExpiry?: string;       // renewal approved: the new expiry date (YYYY-MM-DD)
+  renewalPending?: boolean; // badge lost (expired) while a renewal is still under review — no upload ask, team alerted
   reason?: "expired" | "documents" | "mvr" | "services";
 }
 
@@ -82,11 +86,33 @@ async function alertTeamDrivingRecordReview(uid: string, eventId: string): Promi
   }
 }
 
+// A renewal still under review when the document it replaces expires: the caregiver
+// did her part; the team is told to review it that day (founder, 2026-10-05).
+async function alertTeamRenewalPastExpiry(uid: string, eventId: string, docs: string[]): Promise<void> {
+  try {
+    const snap = await db.collection("caregivers").doc(uid).get();
+    const name = String((snap.data() ?? {}).name ?? "A caregiver").trim() || "A caregiver";
+    await db.collection("admin_alerts").add({
+      type: "renewal_past_expiry",
+      severity: "high",
+      resolved: false,
+      caregiverId: uid,
+      caregiverName: name,
+      docs,
+      message: `${name}'s ${docs.join(", ") || "transport document"} expired while the renewal is still under review — Transportation is off until it's approved. Admin › Caregivers › ${name} › Verification.`,
+      dedupeKey: `renewal_past_expiry:${uid}:${eventId}`,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(`[caregiverAccountEvents] admin alert (renewal_past_expiry) failed for ${uid}:`, err);
+  }
+}
+
 // Document notices that ask for an upload — silent while the driving record is Not approved.
-const DOCUMENT_KINDS = new Set<CaregiverAccountEventKind>(["transport_doc_rejected", "transport_doc_expiring", "transport_badge_lost"]);
+const DOCUMENT_KINDS = new Set<CaregiverAccountEventKind>(["transport_doc_rejected", "transport_doc_expiring", "transport_badge_lost", "transport_renewal_received", "transport_renewal_approved", "transport_renewal_rejected"]);
 
 // Notices where uploading a document is the fix — the upload page follows the text.
-const UPLOAD_LINK_KINDS = new Set<CaregiverAccountEventKind>(["transport_doc_rejected", "transport_doc_expiring", "transport_badge_lost"]);
+const UPLOAD_LINK_KINDS = new Set<CaregiverAccountEventKind>(["transport_doc_rejected", "transport_doc_expiring", "transport_badge_lost", "transport_renewal_rejected"]);
 
 async function followWithUploadLink(phone: string, kind: CaregiverAccountEventKind): Promise<void> {
   try {
@@ -218,8 +244,23 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
     case "transport_doc_expiring":
       return {
         title: "Document expiring soon",
-        body: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep Transportation on your profile: ${appLink("/caregiver/settings")}`,
-        text: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within 30 days. Upload a renewal to keep Transportation on your profile — your upload link is right below.`,
+        body: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within ${ctx.window ?? 30} days. Upload the renewal any time — you stay on Transportation while we review it: ${appLink("/caregiver/settings")}`,
+        text: `${(ctx.docs ?? []).join(", ") || "A transport document"} will expire within ${ctx.window ?? 30} days. Upload the renewal any time — you stay on Transportation while we review it — your upload link is right below.`,
+      };
+    case "transport_renewal_received":
+      // Bell only: she just uploaded it, the page already said so.
+      return { title: "Renewal received", body: `Your renewed ${ctx.docLabel ?? "transport document"} is under review. You stay on Transportation meanwhile.`, text: "" };
+    case "transport_renewal_approved":
+      return {
+        title: "Renewal approved",
+        body: `Your renewed ${ctx.docLabel ?? "transport document"} is approved${ctx.newExpiry ? ` — good through ${ctx.newExpiry}` : ""}.`,
+        text: `Your renewed ${ctx.docLabel ?? "transport document"} is approved${ctx.newExpiry ? ` — good through ${ctx.newExpiry}` : ""}. Nothing else to do.`,
+      };
+    case "transport_renewal_rejected":
+      return {
+        title: "Renewal not accepted",
+        body: `Your renewed ${ctx.docLabel ?? "transport document"} wasn't accepted${ctx.docNotes ? `: ${ctx.docNotes}` : ""}. Your current one stays on file until it expires — upload a new renewal: ${appLink("/caregiver/settings")}`,
+        text: `Your renewed ${ctx.docLabel ?? "transport document"} wasn't accepted${ctx.docNotes ? `: ${ctx.docNotes}` : ""}. Your current one stays on file until it expires — upload a new renewal, your upload link is right below.`,
       };
     case "mvr_clear":
       return { title: "Driving record cleared", body: "Your driving record check came back clear." };
@@ -241,11 +282,15 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
     case "transport_badge_lost":
       return {
         title: "Transportation removed from your profile",
-        body: ctx.reason === "expired"
+        body: ctx.reason === "expired" && ctx.renewalPending
+          ? `${(ctx.docs ?? []).join(", ") || "Your transportation document"} expired before your renewal was reviewed. Transportation is off your profile until it's approved — nothing more to upload.`
+          : ctx.reason === "expired"
           ? `One or more of your transportation documents has expired. Upload updated documents to restore Transportation on your profile: ${appLink("/caregiver/settings")}`
           : `Transportation was removed from your profile. Check your transport documents and driving record on your dashboard to restore it: ${dash}`,
         // "" = bell only (the mvr_review text already said it; a services change was her own doing).
-        text: ctx.reason === "expired"
+        text: ctx.reason === "expired" && ctx.renewalPending
+          ? `${(ctx.docs ?? []).join(", ") || "Your transportation document"} expired before we finished reviewing your renewal, so Transportation is off your profile until it's approved. Nothing more to upload.`
+          : ctx.reason === "expired"
           ? `${(ctx.docs ?? []).join(", ") || "One or more of your transportation documents"} expired, so Transportation is off your profile. Upload the renewal to restore it — your upload link is right below.`
           : ctx.reason === "documents"
             ? "A transportation document is no longer approved, so Transportation is off your profile. Re-upload it to restore it — your upload link is right below."
@@ -341,7 +386,7 @@ export async function notifyCaregiverAccountEvent(
   const textWanted = smsBody.trim().length > 0; // "" = bell only
   // Uploading is the fix → the tokened upload page follows the text (the same link
   // the DOCUMENTS keyword and the site's Upload buttons use), instead of a keyword to type.
-  const sendUploadLink = UPLOAD_LINK_KINDS.has(kind) && (kind !== "transport_badge_lost" || ctx.reason === "expired" || ctx.reason === "documents");
+  const sendUploadLink = UPLOAD_LINK_KINDS.has(kind) && (kind !== "transport_badge_lost" || ((ctx.reason === "expired" && !ctx.renewalPending) || ctx.reason === "documents"));
   const created = await writeUserNotification({
     sourcePath: opts.sourcePath ?? `caregivers/${uid}`,
     eventId: opts.eventId,
@@ -354,6 +399,7 @@ export async function notifyCaregiverAccountEvent(
   }).catch((err) => { console.error(`[caregiverAccountEvents] bell failed (${kind}) for ${uid}:`, err); return false; });
   if (!created) return { bell: false, text: false };
   if (kind === "mvr_review") await alertTeamDrivingRecordReview(uid, opts.eventId);
+  if (kind === "transport_badge_lost" && ctx.renewalPending) await alertTeamRenewalPastExpiry(uid, opts.eventId, ctx.docs ?? []);
   // A driving record marked Not approved is final (founder, 2026-10-05): a rejected or
   // expiring document must not ask her to re-upload for a service she cannot offer.
   // Bell only; the next document event texts again if the record is approved later.

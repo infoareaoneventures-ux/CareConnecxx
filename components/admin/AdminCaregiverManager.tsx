@@ -376,6 +376,34 @@ export const AdminCaregiverManager: React.FC = () => {
     }
   };
 
+  // Renewal slot (2026-10-05): approve swaps the renewal in as the live document (new expiry);
+  // reject leaves the live one until its own expiry and shows the reason.
+  const handleRenewalAction = async (docType: DocumentType, action: 'approved' | 'rejected') => {
+    if (!selected) return;
+    const rk = `${docType}__renewal`;
+    const note = docRejectNote[rk] || undefined;
+    setDocProcessing(prev => ({ ...prev, [rk]: true }));
+    try {
+      await documentUploadService.reviewDocumentRenewal(selected.uid, docType, action, note, 'admin', docExpiry[rk] || undefined);
+      setDocRejectOpen(prev => ({ ...prev, [rk]: false }));
+      setDocRejectNote(prev => ({ ...prev, [rk]: '' }));
+      setSelected(prev => {
+        if (!prev) return prev;
+        const cur = ((prev.documents as any)?.[docType] ?? {}) as any;
+        const next = action === 'approved'
+          ? { url: cur.renewal?.url, path: cur.renewal?.path, uploadedAt: cur.renewal?.uploadedAt, status: 'approved', expirationDate: docExpiry[rk] || cur.expirationDate }
+          : { ...cur, renewal: { ...cur.renewal, status: 'rejected', notes: note } };
+        return { ...prev, documents: { ...(prev.documents || {}), [docType]: next } } as Caregiver;
+      });
+      showToast(action === 'approved' ? 'Renewal approved — now the live document' : 'Renewal rejected', 'success');
+      try { const refreshBadge = functions?.httpsCallable('v1-refreshTransportBadge'); if (refreshBadge) await refreshBadge({ uid: selected.uid }); } catch { /* daily job */ }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to review renewal', 'error');
+    } finally {
+      setDocProcessing(prev => ({ ...prev, [rk]: false }));
+    }
+  };
+
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
@@ -1109,6 +1137,56 @@ export const AdminCaregiverManager: React.FC = () => {
                             {doc.status === 'rejected' && doc.notes && (
                               <p className="pl-7 text-xs text-red-600">Reason: {doc.notes}{doc.reviewedAt ? ` · ${new Date(doc.reviewedAt).toLocaleDateString()}` : ''}</p>
                             )}
+                            {doc.renewal && (() => {
+                              const rk = `${key}__renewal`;
+                              const r = doc.renewal as any;
+                              const needsExpiry = REQUIRES_EXPIRY.includes(key);
+                              const canApprove = !needsExpiry || !!docExpiry[rk];
+                              return (
+                                <div className="ml-7 border border-amber-200 bg-amber-50 rounded-lg p-2.5 space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-xs font-semibold ${r.status === 'rejected' ? 'text-red-700' : 'text-amber-800'}`}>
+                                      {r.status === 'rejected' ? 'Renewal rejected' : 'Renewal under review'}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500">uploaded {r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString() : ''}</span>
+                                    <a href={r.url} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-primary-600 hover:underline flex items-center gap-0.5">View <ExternalLink className="w-3 h-3" /></a>
+                                  </div>
+                                  {r.status === 'rejected' && r.notes && <p className="text-xs text-red-600">Reason: {r.notes}</p>}
+                                  {r.status === 'pending' && (
+                                    <>
+                                      {needsExpiry && (
+                                        <div className="flex items-center gap-2">
+                                          <label className="text-xs text-slate-500 whitespace-nowrap">New expiry <span className="text-red-500">*</span></label>
+                                          <input type="date" value={docExpiry[rk] || ''} onChange={e => setDocExpiry(prev => ({ ...prev, [rk]: e.target.value }))}
+                                            className="flex-1 text-xs px-2 py-1 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400" />
+                                        </div>
+                                      )}
+                                      <div className="flex gap-2">
+                                        <button onClick={() => handleRenewalAction(key, 'approved')} disabled={docProcessing[rk] || !canApprove} title={!canApprove ? 'Enter the new expiry date before approving' : ''}
+                                          className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 px-3 py-1.5 rounded-lg disabled:opacity-40">
+                                          <CheckCircle className="w-3 h-3" /> Approve renewal
+                                        </button>
+                                        <button onClick={() => setDocRejectOpen(prev => ({ ...prev, [rk]: !prev[rk] }))} disabled={docProcessing[rk]}
+                                          className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg disabled:opacity-50">
+                                          <X className="w-3 h-3" /> Reject renewal
+                                        </button>
+                                      </div>
+                                      {docRejectOpen[rk] && (
+                                        <div className="flex flex-col gap-1.5">
+                                          <textarea value={docRejectNote[rk] || ''} onChange={e => setDocRejectNote(prev => ({ ...prev, [rk]: e.target.value }))}
+                                            placeholder="Reason (shown to caregiver)…" rows={2}
+                                            className="w-full text-xs px-2 py-1.5 border border-red-200 rounded-lg focus:outline-none focus:border-red-400 resize-none" />
+                                          <button onClick={() => handleRenewalAction(key, 'rejected')} disabled={docProcessing[rk] || !docRejectNote[rk]?.trim()}
+                                            className="flex items-center justify-center gap-1 text-xs font-semibold bg-red-600 text-white px-3 py-1.5 rounded-lg disabled:opacity-50">
+                                            Confirm reject
+                                          </button>
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             {doc.expirationDate && (
                               <p className={`pl-7 text-xs font-medium ${isExpired ? 'text-orange-600' : 'text-slate-500'}`}>
                                 {isExpired ? 'Expired: ' : 'Expires: '}{new Date(doc.expirationDate).toLocaleDateString()}

@@ -219,10 +219,27 @@ export const uploadOnboardingFile = functions
       fileName: safeName, fileType: contentType,
     };
     const db = admin.firestore();
-    await db.collection("caregivers").doc(uid).set(
-      { documents: { [type]: documentData }, ...(isPhoto ? { photo: url } : {}) },
-      { merge: true },
-    );
+    // Renewal slot (founder, 2026-10-05, same rule as services/documentUpload.ts): a
+    // file uploaded over an approved, unexpired transport document waits beside it
+    // so Transportation stays on; the admin's approval swaps it in.
+    const cgRef = db.collection("caregivers").doc(uid);
+    const currentDoc = !isPhoto ? (((await cgRef.get()).data()?.documents ?? {}) as Record<string, any>)[type] : undefined;
+    const liveApproved = (() => {
+      if (!currentDoc || currentDoc.status !== "approved") return false;
+      const exp = typeof currentDoc.expirationDate === "string" ? currentDoc.expirationDate : "";
+      if (!exp) return true;
+      const [y, m, d] = exp.split("-").map(Number);
+      const t = new Date(); t.setHours(0, 0, 0, 0);
+      return new Date(y, m - 1, d) >= t;
+    })();
+    if (liveApproved) {
+      await cgRef.update({ [`documents.${type}.renewal`]: { ...documentData } });
+    } else {
+      await cgRef.set(
+        { documents: { [type]: documentData }, ...(isPhoto ? { photo: url } : {}) },
+        { merge: true },
+      );
+    }
     if (!isPhoto) {
       const sess = (await db.collection("agent_sessions").doc(payload.phone).get()).data() ?? {};
       const existing = ((sess.onboardingData as Record<string, unknown> | undefined)?.transportDocs ?? {}) as Record<string, string>;

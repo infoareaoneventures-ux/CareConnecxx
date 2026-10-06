@@ -281,9 +281,16 @@ export const CaregiverAccountSettings: React.FC = () => {
     setTransportStatus(prev => ({ ...prev, [type]: 'uploading' }));
     try {
       const doc = await documentUploadService.uploadDocument(currentUser.uid, file, type);
-      setProfile(prev => prev ? { ...prev, documents: { ...(prev as any).documents, [type]: doc } } as any : prev);
-      setTransportStatus(prev => ({ ...prev, [type]: 'done' }));
-      addToast('Document uploaded', 'success');
+      if ((doc as any).asRenewal) {
+        // A renewal beside the live document: the card stays Approved, the renewal line shows.
+        setProfile(prev => prev ? { ...prev, documents: { ...(prev as any).documents, [type]: { ...((prev as any).documents?.[type] ?? {}), renewal: { url: doc.url, path: doc.path, uploadedAt: doc.uploadedAt, status: 'pending' } } } } as any : prev);
+        setTransportStatus(prev => ({ ...prev, [type]: 'approved' }));
+        addToast("Renewal uploaded — you stay on Transportation while we review it", 'success');
+      } else {
+        setProfile(prev => prev ? { ...prev, documents: { ...(prev as any).documents, [type]: doc } } as any : prev);
+        setTransportStatus(prev => ({ ...prev, [type]: 'done' }));
+        addToast('Document uploaded', 'success');
+      }
     } catch {
       setTransportStatus(prev => ({ ...prev, [type]: 'error' }));
       addToast('Upload failed. Please try again.', 'error');
@@ -348,6 +355,18 @@ export const CaregiverAccountSettings: React.FC = () => {
   // goes quiet — statuses stay factual, no Action needed, no re-upload ask (founder, 2026-10-05).
   const drivingRecordNotApproved = (profile as any)?.mvrStatus === 'not_approved';
   const docNoteOf = (type: string): string => String((profile as any)?.documents?.[type]?.notes ?? '').trim();
+  // Renewal slot (2026-10-05): a new file waiting beside the live approved document.
+  const renewalOf = (type: string): { status: 'pending' | 'rejected'; notes?: string } | null => {
+    const r = (profile as any)?.documents?.[type]?.renewal;
+    return r && (r.status === 'pending' || r.status === 'rejected') ? r : null;
+  };
+  // Days until an approved document's expiry — the Renew button is quiet beyond 30 days, highlighted inside.
+  const daysUntilExpiry = (type: string): number | null => {
+    const exp = transportExpiry[type]; if (!exp) return null;
+    const [y, m, d] = exp.split('-').map(Number);
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    return Math.round((new Date(y, m - 1, d).getTime() - t.getTime()) / 86400000);
+  };
   // Same rule as Evia's SETTINGS text (caregiverSettings.ts): the account's creation first.
   const memberSinceRaw = (profile as any)?.accountCreatedAt ?? (profile as any)?.createdAt;
   const memberSinceDate = !memberSinceRaw ? null
@@ -617,7 +636,7 @@ export const CaregiverAccountSettings: React.FC = () => {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800">{label}</p>
                       {/* The "what to upload" hint only while a file is wanted (founder, 2026-10-05). */}
-                      {['idle', 'rejected', 'expired', 'error'].includes(transportStatus[type]) && (
+                      {!drivingRecordNotApproved && ['idle', 'rejected', 'expired', 'error'].includes(transportStatus[type]) && (
                         <p className="text-xs text-slate-500">{desc}</p>
                       )}
                       {transportExpiry[type] && (
@@ -629,10 +648,37 @@ export const CaregiverAccountSettings: React.FC = () => {
                         // The admin's rejection reason, the same note Evia's text carries (2026-10-05).
                         <p className="text-xs text-red-700 mt-0.5">Reason: {docNoteOf(type)}</p>
                       )}
+                      {transportStatus[type] === 'approved' && renewalOf(type)?.status === 'pending' && (
+                        <p className="text-xs text-amber-700 mt-0.5">Renewal under review — you stay on Transportation meanwhile.</p>
+                      )}
+                      {transportStatus[type] === 'approved' && renewalOf(type)?.status === 'rejected' && (
+                        <p className="text-xs text-red-700 mt-0.5">Renewal rejected{renewalOf(type)?.notes ? `: ${renewalOf(type)?.notes}` : ''}. Your current document stays on file until it expires.</p>
+                      )}
                     </div>
                     {transportStatus[type] === 'approved' ? (
-                      <span className="flex items-center gap-1 text-green-700 text-xs font-medium shrink-0">
-                        <CheckCircle className="w-3.5 h-3.5" /> Approved
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="flex items-center gap-1 text-green-700 text-xs font-medium">
+                          <CheckCircle className="w-3.5 h-3.5" /> Approved
+                        </span>
+                        {/* Renew any time; asked from 30 days out (founder, 2026-10-05). Not while a renewal waits, not while the driving record is Not approved. */}
+                        {!drivingRecordNotApproved && renewalOf(type)?.status !== 'pending' && (
+                          (daysUntilExpiry(type) ?? 999) <= 30 ? (
+                            <button onClick={() => transportRefs[type].current?.click()}
+                              className="flex items-center gap-1 text-amber-800 text-xs font-semibold border border-amber-300 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100">
+                              <AlertCircle className="w-3.5 h-3.5" /> {renewalOf(type)?.status === 'rejected' ? 'Upload a new renewal' : 'Renew'}
+                            </button>
+                          ) : (
+                            <button onClick={() => transportRefs[type].current?.click()}
+                              className="text-xs text-slate-400 hover:text-primary-600 underline">
+                              Renew
+                            </button>
+                          )
+                        )}
+                      </div>
+                    ) : drivingRecordNotApproved && (transportStatus[type] === 'expired' || transportStatus[type] === 'rejected') ? (
+                      // status only while the driving record is Not approved — nothing is asked of her (founder, 2026-10-05)
+                      <span className={`flex items-center gap-1 text-xs font-medium shrink-0 ${transportStatus[type] === 'expired' ? 'text-orange-700' : 'text-red-700'}`}>
+                        <AlertCircle className="w-3.5 h-3.5" /> {transportStatus[type] === 'expired' ? 'Expired' : 'Rejected'}
                       </span>
                     ) : transportStatus[type] === 'expired' ? (
                       <button onClick={() => transportRefs[type].current?.click()}

@@ -96,12 +96,27 @@ describe("caregiverAccountTransitions — one event per progress-bar change", ()
     expect(kinds({ backgroundCheckStatus: "pending" }, { backgroundCheckStatus: "clear", mvrStatus: "clear", isApprovedDriver: true })).toEqual(["bgcheck_clear"]);
     expect(kinds({ mvrStatus: "pending" }, { mvrStatus: "consider", isApprovedDriver: false })).toEqual(["mvr_review"]);
     expect(kinds({ mvrStatus: "consider", isApprovedDriver: false }, { mvrStatus: "not_approved", isApprovedDriver: false })).toContain("mvr_not_approved");
+    // Renewal slot (2026-10-05): uploaded beside the live document → received; approved swaps it in (not a fresh "document approved"); rejected carries the reason.
+    const live = { url: "old", status: "approved", expirationDate: "2026-12-31" };
+    expect(kinds({ documents: { insurance: live } }, { documents: { insurance: { ...live, renewal: { url: "new", status: "pending" } } } })).toContain("transport_renewal_received");
+    expect(kinds({ documents: { insurance: { ...live, renewal: { url: "new", status: "pending" } } } }, { documents: { insurance: { ...live, renewal: { url: "new", status: "rejected", notes: "blurry" } } } })).toContain("transport_renewal_rejected");
+    const swapped = kinds({ documents: { insurance: { ...live, renewal: { url: "new", status: "pending" } } } }, { documents: { insurance: { url: "new", status: "approved", expirationDate: "2027-12-31" } } });
+    expect(swapped).toContain("transport_renewal_approved");
+    expect(swapped).not.toContain("transport_doc_approved");
+    // Expired while a renewal waits → badge lost names the document and flags the pending renewal (no upload ask).
+    const okDocs = { driversLicense: { url: "u", status: "approved", expirationDate: "2099-01-01" }, registration: { url: "u", status: "approved", expirationDate: "2099-01-01" } };
+    const lostEvents = caregiverAccountTransitions(
+      { documents: { ...okDocs, insurance: { url: "u", status: "approved", expirationDate: "2099-01-01", renewal: { url: "n", status: "pending" } } }, services: ["Transportation"], isApprovedDriver: true },
+      { documents: { ...okDocs, insurance: { url: "u", status: "approved", expirationDate: "2020-01-01", renewal: { url: "n", status: "pending" } } }, services: ["Transportation"], isApprovedDriver: true },
+    );
+    const lost = lostEvents.find((e: { kind: string }) => e.kind === "transport_badge_lost");
+    expect(lost?.ctx).toMatchObject({ reason: "expired", docs: ["Vehicle Insurance"], renewalPending: true });
     // Badge lost: admin revoked the driving record
     expect(caregiverAccountTransitions({ ...TRANSPORT, documents: APPROVED_DOCS, isApprovedDriver: true }, { ...TRANSPORT, documents: APPROVED_DOCS, isApprovedDriver: false }))
       .toEqual([{ kind: "transport_badge_lost", ctx: { reason: "mvr" } }]);
     // Badge lost: a document expired
     expect(caregiverAccountTransitions({ ...TRANSPORT, documents: APPROVED_DOCS, isApprovedDriver: true }, { ...TRANSPORT, documents: { ...APPROVED_DOCS, insurance: { status: "approved", expirationDate: "2020-01-01" } }, isApprovedDriver: true }))
-      .toEqual([{ kind: "transport_badge_lost", ctx: { reason: "expired" } }]);
+      .toMatchObject([{ kind: "transport_badge_lost", ctx: { reason: "expired", renewalPending: false } }]); // + docs: the expired labels (2026-10-05)
   });
 
   it("payouts enabled / disabled", () => {

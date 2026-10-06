@@ -37,7 +37,7 @@ export interface SettingsPage {
   phone: string | null;
   address: { street: string; zip: string; city: string; state: string } | null;
   hasTransportation: boolean;
-  documents: Array<{ type: string; label: string; status: DocStatus; expires: string | null; notes: string | null }>;
+  documents: Array<{ type: string; label: string; status: DocStatus; expires: string | null; notes: string | null; renewal: "pending" | "rejected" | null; renewalNotes: string | null }>;
   blocked: string[];
   pausedUntil: string | null; isPaused: boolean;
   /** Membership & verification (AccountStandingSection) — the same loader the MEMBERSHIP keyword uses. */
@@ -113,6 +113,10 @@ export async function loadSettingsPage(caregiverId: string): Promise<SettingsPag
     hasTransportation: services.includes("Transportation"),
     documents: TRANSPORT_DOCS.map(({ type, label }) => ({
       type, label, status: resolveDocStatus(docs[type]), expires: str(docs[type]?.expirationDate) || null, notes: str(docs[type]?.notes) || null,
+      // Renewal slot (2026-10-05): a new file waiting beside the live approved document.
+      renewal: ((docs[type]?.renewal as Record<string, unknown> | undefined)?.status === "pending" || (docs[type]?.renewal as Record<string, unknown> | undefined)?.status === "rejected")
+        ? ((docs[type]?.renewal as Record<string, unknown>).status as "pending" | "rejected") : null,
+      renewalNotes: str((docs[type]?.renewal as Record<string, unknown> | undefined)?.notes) || null,
     })),
     blocked: blockedIds.map((id) => blockedProfiles[id]?.name || "Blocked User"),
     pausedUntil,
@@ -148,13 +152,17 @@ export function settingsPageText(page: SettingsPage): string {
     if (recordNotApproved) lines.push("Your driving record check didn't meet the requirement for Transportation jobs, so Transportation is off your profile. Your documents stay on file.");
     for (const d of page.documents) {
       const reason = d.status === "rejected" && d.notes ? ` (reason: ${d.notes})` : "";
-      lines.push(`${d.label}: ${DOC_STATUS_TEXT[d.status]}${reason}${d.expires && (d.status === "approved" || d.status === "expired") ? ` · Expires ${ymdToLocal(d.expires)}` : ""}`);
+      // Status only while the record is Not approved — no "(re-upload)" ask, same as the page.
+      const statusText = (s: DocStatus, quiet: boolean) => (quiet ? DOC_STATUS_TEXT[s].replace(" (re-upload)", "") : DOC_STATUS_TEXT[s]);
+      const renewalNote = d.status === "approved" && d.renewal === "pending" ? " · renewal under review, you stay on Transportation meanwhile"
+        : d.status === "approved" && d.renewal === "rejected" ? ` · renewal rejected${d.renewalNotes ? ` (reason: ${d.renewalNotes})` : ""}, your current document stays on file until it expires` : "";
+      lines.push(`${d.label}: ${statusText(d.status, recordNotApproved)}${reason}${d.expires && (d.status === "approved" || d.status === "expired") ? ` · Expires ${ymdToLocal(d.expires)}` : ""}${renewalNote}`);
     }
     if (!recordNotApproved) {
       if (page.documents.filter((d) => d.status === "done" || d.status === "approved").length < 3) {
         lines.push("All three documents are required to offer Transportation.");
       }
-      lines.push("Reply DOCUMENTS for your upload link.");
+      lines.push("Reply DOCUMENTS for your upload link — a renewal uploaded over an approved document waits beside it, so you stay on Transportation while we review it.");
     }
   }
   lines.push("", page.blocked.length ? `Blocked Users: ${page.blocked.join(", ")} (tell me to unblock someone)` : "Blocked Users: You haven't blocked anyone.");

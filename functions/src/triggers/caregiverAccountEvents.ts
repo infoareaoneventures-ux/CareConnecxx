@@ -76,6 +76,14 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
   // ── Transport documents / driving record / badge ──────────────────────────
   const docsB = (b.documents ?? {}) as Doc; const docsA = (a.documents ?? {}) as Doc;
   for (const t of TRANSPORT_DOCS) {
+    // Renewal slot (2026-10-05): a new file beside the live approved document.
+    const rb = docsB[t]?.renewal?.status; const ra = docsA[t]?.renewal?.status;
+    if (ra === "pending" && rb !== "pending") out.push({ kind: "transport_renewal_received", ctx: { docLabel: TRANSPORT_DOC_LABELS[t] } });
+    if (ra === "rejected" && rb !== "rejected") out.push({ kind: "transport_renewal_rejected", ctx: { docLabel: TRANSPORT_DOC_LABELS[t], docNotes: docsA[t]?.renewal?.notes ? String(docsA[t].renewal.notes) : undefined } });
+    if (rb && !ra && docsA[t]?.status === "approved" && docsB[t]?.status === "approved" && docsA[t]?.url !== docsB[t]?.url) {
+      out.push({ kind: "transport_renewal_approved", ctx: { docLabel: TRANSPORT_DOC_LABELS[t], newExpiry: docsA[t]?.expirationDate ? String(docsA[t].expirationDate) : undefined } });
+      continue; // the live document swapped — not a fresh "document approved"
+    }
     const sb = docsB[t]?.status; const sa = docsA[t]?.status;
     if (sb === sa) continue;
     if (sa === "approved") out.push({ kind: "transport_doc_approved", ctx: { docLabel: TRANSPORT_DOC_LABELS[t] } });
@@ -93,7 +101,16 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
   if (badgeB && !badgeA) {
     const reason: CaregiverAccountEventContext["reason"] =
       anyDocExpired(a) ? "expired" : !allDocsApproved(a) ? "documents" : a.isApprovedDriver !== true ? "mvr" : !offersTransportation(a) ? "services" : undefined;
-    out.push({ kind: "transport_badge_lost", ctx: { reason } });
+    // Expired: name the documents; if a renewal is already waiting for review the
+    // text must not ask for an upload, and the team is alerted instead (2026-10-05).
+    const docsNow = (a.documents ?? {}) as Doc;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const expiredTypes = TRANSPORT_DOCS.filter((t) => {
+      const exp = docsNow[t]?.expirationDate as string | undefined; if (!exp) return false;
+      const [y, m, dd] = exp.split("-").map(Number); return new Date(y, m - 1, dd) < today;
+    });
+    const renewalPending = expiredTypes.some((t) => docsNow[t]?.renewal?.status === "pending");
+    out.push({ kind: "transport_badge_lost", ctx: { reason, ...(reason === "expired" ? { docs: expiredTypes.map((t) => TRANSPORT_DOC_LABELS[t]), renewalPending } : {}) } });
   }
 
   // ── Payouts ───────────────────────────────────────────────────────────────

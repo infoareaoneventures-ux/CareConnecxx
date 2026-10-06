@@ -102,7 +102,12 @@ describe("settingsPageText — the sections word for word", () => {
     const t = settingsPageText(await loadSettingsPage("cg1"));
     expect(t).toContain("First name: Mahad\nLast name: Ali");
     expect(t).toContain("Recovery email: a@b.com (Confirmed)");
-    expect(t).toContain("Transportation Documents: required to offer Transportation. Keep these up to date.\nDriver's License: Approved · Expires 3/3/2027\nVehicle Insurance: Under Review\nVehicle Registration: Not uploaded\nAll three documents are required to offer Transportation.\nReply DOCUMENTS for your upload link.");
+    expect(t).toContain("Transportation Documents: required to offer Transportation. Keep these up to date.\nDriver's License: Approved · Expires 3/3/2027\nVehicle Insurance: Under Review\nVehicle Registration: Not uploaded\nAll three documents are required to offer Transportation.\nReply DOCUMENTS for your upload link — a renewal uploaded over an approved document waits beside it, so you stay on Transportation while we review it.");
+    // Renewal slot (2026-10-05): the twin prints the renewal state beside the live document.
+    hoisted.docs.set("caregivers/cg1", { ...hoisted.docs.get("caregivers/cg1"), documents: { driversLicense: { url: "u", status: "approved", expirationDate: "2027-03-03", renewal: { url: "n", status: "pending" } }, insurance: { url: "u", status: "approved", expirationDate: "2027-03-03", renewal: { url: "n", status: "rejected", notes: "blurry" } } } });
+    const t2 = settingsPageText(await loadSettingsPage("cg1"));
+    expect(t2).toContain("Driver's License: Approved · Expires 3/3/2027 · renewal under review, you stay on Transportation meanwhile");
+    expect(t2).toContain("Vehicle Insurance: Approved · Expires 3/3/2027 · renewal rejected (reason: blurry), your current document stays on file until it expires");
     expect(t).toContain("Blocked Users: You haven't blocked anyone.");
     expect(t).toContain("Your account is paused. You'll automatically become active again on 2026-11-01. Reactivate sooner anytime. Reply REACTIVATE.");
     hoisted.docs.set("caregivers/cg1", { pausedUntil: "2099-12-31" });

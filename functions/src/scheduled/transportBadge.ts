@@ -76,19 +76,25 @@ export const evaluateTransportBadges = functions.pubsub
         batch.update(doc.ref, { transportationBadge: shouldHaveBadge });
       }
 
-      // Warn about docs expiring within 30 days
-      const expiringSoon: string[] = [];
-      if (isExpiringSoon(license?.expirationDate) && !isExpired(license?.expirationDate)) expiringSoon.push("Driver's License");
-      if (isExpiringSoon(insurance?.expirationDate) && !isExpired(insurance?.expirationDate)) expiringSoon.push('Vehicle Insurance');
-      if (isExpiringSoon(registration?.expirationDate) && !isExpired(registration?.expirationDate)) expiringSoon.push('Vehicle Registration');
-
-      // Expiring-soon: ONE bell + text per document expiry date (idempotent on
-      // the dates), not one bell a day for 30 days.
-      if (expiringSoon.length > 0) {
-        const expiryKey = [license?.expirationDate, insurance?.expirationDate, registration?.expirationDate].filter(Boolean).join('|');
+      // Renewal reminders (founder, 2026-10-05): at 30 days and again at 7 days, ONE
+      // bell + text per window per expiry date (idempotent on the dates). A document
+      // with a renewal already waiting for review is not nagged. The expiry itself is
+      // announced by transport_badge_lost (expired) when the badge flips.
+      const docsByLabel: Array<[string, any]> = [["Driver's License", license], ['Vehicle Insurance', insurance], ['Vehicle Registration', registration]];
+      const needsRenewal = (d: any) => d?.status === 'approved' && !isExpired(d?.expirationDate) && d?.renewal?.status !== 'pending';
+      const within = (d: any, days: number) => isExpiringSoon(d?.expirationDate, days) && !isExpired(d?.expirationDate);
+      const window7  = docsByLabel.filter(([, d]) => needsRenewal(d) && within(d, 7));
+      const window30 = docsByLabel.filter(([, d]) => needsRenewal(d) && within(d, 30) && !within(d, 7));
+      // The "already sent" key names only the documents in THAT window with their own
+      // dates — renewing one document never re-sends another document's reminder
+      // (founder, 2026-10-05); a renewed document's new date starts its own cycle.
+      const windowKey = (entries: Array<[string, any]>) => entries.map(([l, d]) => `${l}=${d?.expirationDate ?? ''}`).sort().join('|');
+      for (const [entries, days] of [[window30, 30], [window7, 7]] as Array<[Array<[string, any]>, number]>) {
+        if (!entries.length) continue;
+        const labels = entries.map(([l]) => l);
         notifications.push(
           import('../notifications/caregiverAccountEvents').then(({ notifyCaregiverAccountEvent }) =>
-            notifyCaregiverAccountEvent(doc.id, 'transport_doc_expiring', { eventId: `docs_expiring:${expiryKey}`, ctx: { docs: expiringSoon } }),
+            notifyCaregiverAccountEvent(doc.id, 'transport_doc_expiring', { eventId: `docs_expiring_${days}:${windowKey(entries)}`, ctx: { docs: labels, window: days } }),
           ).catch((err) => console.error('transport_doc_expiring notice failed for', doc.id, err)),
         );
       }

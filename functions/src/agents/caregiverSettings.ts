@@ -37,7 +37,7 @@ export interface SettingsPage {
   phone: string | null;
   address: { street: string; zip: string; city: string; state: string } | null;
   hasTransportation: boolean;
-  documents: Array<{ type: string; label: string; status: DocStatus; expires: string | null }>;
+  documents: Array<{ type: string; label: string; status: DocStatus; expires: string | null; notes: string | null }>;
   blocked: string[];
   pausedUntil: string | null; isPaused: boolean;
   /** Membership & verification (AccountStandingSection) — the same loader the MEMBERSHIP keyword uses. */
@@ -112,7 +112,7 @@ export async function loadSettingsPage(caregiverId: string): Promise<SettingsPag
     address: street || zip || city || state ? { street, zip, city, state } : null,
     hasTransportation: services.includes("Transportation"),
     documents: TRANSPORT_DOCS.map(({ type, label }) => ({
-      type, label, status: resolveDocStatus(docs[type]), expires: str(docs[type]?.expirationDate) || null,
+      type, label, status: resolveDocStatus(docs[type]), expires: str(docs[type]?.expirationDate) || null, notes: str(docs[type]?.notes) || null,
     })),
     blocked: blockedIds.map((id) => blockedProfiles[id]?.name || "Blocked User"),
     pausedUntil,
@@ -143,13 +143,19 @@ export function settingsPageText(page: SettingsPage): string {
   lines.push("", "Membership & verification", ...membershipSectionLines(page.standing));
   if (page.hasTransportation) {
     lines.push("", "Transportation Documents: required to offer Transportation. Keep these up to date.");
+    const recordNotApproved = page.standing.driver === "not_approved";
+    // The page's why-line when the driving record is Not approved (documents stay on file, no action asked).
+    if (recordNotApproved) lines.push("Your driving record check didn't meet the requirement for Transportation jobs, so Transportation is off your profile. Your documents stay on file.");
     for (const d of page.documents) {
-      lines.push(`${d.label}: ${DOC_STATUS_TEXT[d.status]}${d.expires && (d.status === "approved" || d.status === "expired") ? ` · Expires ${ymdToLocal(d.expires)}` : ""}`);
+      const reason = d.status === "rejected" && d.notes ? ` (reason: ${d.notes})` : "";
+      lines.push(`${d.label}: ${DOC_STATUS_TEXT[d.status]}${reason}${d.expires && (d.status === "approved" || d.status === "expired") ? ` · Expires ${ymdToLocal(d.expires)}` : ""}`);
     }
-    if (page.documents.filter((d) => d.status === "done" || d.status === "approved").length < 3) {
-      lines.push("All three documents are required to offer Transportation.");
+    if (!recordNotApproved) {
+      if (page.documents.filter((d) => d.status === "done" || d.status === "approved").length < 3) {
+        lines.push("All three documents are required to offer Transportation.");
+      }
+      lines.push("Reply DOCUMENTS for your upload link.");
     }
-    lines.push("Reply DOCUMENTS for your upload link.");
   }
   lines.push("", page.blocked.length ? `Blocked Users: ${page.blocked.join(", ")} (tell me to unblock someone)` : "Blocked Users: You haven't blocked anyone.");
   lines.push("");

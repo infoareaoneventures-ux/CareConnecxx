@@ -16,11 +16,10 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { writeUserNotification } from "../notifications/userNotification";
-import { findCaregiverSession } from "../agents/caregiverAccessGate";
+import { findCaregiverSession, jobRequiresTransport } from "../agents/caregiverAccessGate";
 import { parkedDecision, parkDecision } from "../agents/decisionNotices";
 import {
-  normalizeJobPost, buildJobCard, jobCardLine, caregiverCoords, caregiverRadiusMiles, withinCaregiverRadius,
-} from "../agents/jobBoardPage";
+  normalizeJobPost, buildJobCard, jobCardLine, caregiverCoords, caregiverRadiusMiles, withinCaregiverRadius, drivingJobsHiddenFor } from "../agents/jobBoardPage";
 
 const db = admin.firestore();
 
@@ -50,6 +49,8 @@ export async function sendNewJobNotices(jobId: string, rawJob: Record<string, un
     const cg: Record<string, unknown> = { id: doc.id, ...(doc.data() as Record<string, unknown>) };
     if (cg.optedOut === true) { result.skipped++; continue; }
     if (typeof cg.pausedUntil === "string" && cg.pausedUntil > nowIso) { result.skipped++; continue; }
+    // A Not approved driving record: she is not told about driving jobs (same rule as her lists).
+    if (drivingJobsHiddenFor(cg) && jobRequiresTransport(job)) { result.skipped++; continue; }
     const coords = caregiverCoords(cg);
     if (!withinCaregiverRadius(job, coords, caregiverRadiusMiles(cg))) { result.skipped++; continue; }
     const userSnap = await db.collection("users").doc(doc.id).get().catch(() => null);

@@ -1,4 +1,5 @@
 import { serviceLabel } from './signup/constants';
+import { drivingJobsHiddenFor, jobIncludesDriving } from '../../utils/transportDocs';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -144,7 +145,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   // four nearest, not a different list.
   const hiddenJobIds = new Set<string>(Array.isArray((profile as any).hiddenJobIds) ? (profile as any).hiddenJobIds : []);
   const openJobs = (() => {
-    let filtered = rawJobs.filter((j: any) => !appliedJobIds.has(j.id) && !hiddenJobIds.has(j.id) && j.clientActive !== false);
+    const hideDriving = drivingJobsHiddenFor(profile as any); // Not approved driving record → no driving jobs (same as the Jobs page + Evia)
+    let filtered = rawJobs.filter((j: any) => !appliedJobIds.has(j.id) && !hiddenJobIds.has(j.id) && j.clientActive !== false && !(hideDriving && jobIncludesDriving(j)));
     if (hasLocation && radius > 0) {
       filtered = filtered.filter((j: any) => {
         if (j.lat == null || j.lng == null) return true;

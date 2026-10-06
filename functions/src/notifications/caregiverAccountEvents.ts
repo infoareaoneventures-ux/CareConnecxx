@@ -82,6 +82,9 @@ async function alertTeamDrivingRecordReview(uid: string, eventId: string): Promi
   }
 }
 
+// Document notices that ask for an upload — silent while the driving record is Not approved.
+const DOCUMENT_KINDS = new Set<CaregiverAccountEventKind>(["transport_doc_rejected", "transport_doc_expiring", "transport_badge_lost"]);
+
 // Notices where uploading a document is the fix — the upload page follows the text.
 const UPLOAD_LINK_KINDS = new Set<CaregiverAccountEventKind>(["transport_doc_rejected", "transport_doc_expiring", "transport_badge_lost"]);
 
@@ -351,6 +354,13 @@ export async function notifyCaregiverAccountEvent(
   }).catch((err) => { console.error(`[caregiverAccountEvents] bell failed (${kind}) for ${uid}:`, err); return false; });
   if (!created) return { bell: false, text: false };
   if (kind === "mvr_review") await alertTeamDrivingRecordReview(uid, opts.eventId);
+  // A driving record marked Not approved is final (founder, 2026-10-05): a rejected or
+  // expiring document must not ask her to re-upload for a service she cannot offer.
+  // Bell only; the next document event texts again if the record is approved later.
+  if (DOCUMENT_KINDS.has(kind)) {
+    const cgSnap = await db.collection("caregivers").doc(uid).get().catch(() => null);
+    if (cgSnap?.data()?.mvrStatus === "not_approved") return { bell: true, text: false };
+  }
 
   if (!textWanted) return { bell: true, text: false };
   const phone = phoneForLink ?? await resolveCaregiverPhone(uid).catch(() => undefined);

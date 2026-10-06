@@ -51,3 +51,20 @@ export function hasValidTransportDocs(profile: TransportProfile | null | undefin
   if (!transportDocsApproved(profile)) return false;
   return (profile as any).isApprovedDriver === true;
 }
+
+/** JobBoard.tsx / caregiverAccessGate.ts: a job includes driving when it lists Transportation or requires Driving. */
+export function jobIncludesDriving(job: { careTypes?: string[] | null; requirements?: string[] | null } | null | undefined): boolean {
+  return !!(job?.careTypes?.includes('Transportation') || job?.requirements?.includes('Driving'));
+}
+
+/**
+ * Driving jobs are not listed for a caregiver whose driving record the admin marked
+ * Not approved (founder, 2026-10-05): a "Set Up Transportation" button there would
+ * invite her to set up something already decided against. Everyone else — never
+ * offered Transportation, record running or under review — still sees them with
+ * that button, because for her it is a real path. Same rule in Evia's
+ * jobBoardPage.ts (drivingJobsHiddenFor) and the new-job notice.
+ */
+export function drivingJobsHiddenFor(profile: { mvrStatus?: unknown } | null | undefined): boolean {
+  return profile?.mvrStatus === 'not_approved';
+}

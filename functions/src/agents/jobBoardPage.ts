@@ -111,6 +111,11 @@ export const GATE_BUTTON_LABEL: Record<CaregiverGateReason, JobCard["action"]> =
   transport:  "Set Up Transportation",
 };
 
+/** utils/transportDocs.ts drivingJobsHiddenFor: a Not approved driving record hides driving jobs from her lists (founder, 2026-10-05). */
+export function drivingJobsHiddenFor(cg: Doc | null | undefined): boolean {
+  return cg?.mvrStatus === "not_approved";
+}
+
 export function caregiverCoords(cg: Doc): { lat: number; lng: number } | null {
   const lat = (cg.latitude ?? cg.lat) as number | undefined;
   const lng = (cg.longitude ?? cg.lng) as number | undefined;
@@ -269,6 +274,7 @@ export async function loadAvailableJobs(
     .map((d) => normalizeJobPost({ id: d.id, ...(d.data() as Doc) }))
     .filter((j) => !applied.has(j.id as string) && !hidden.has(j.id as string) && j.clientActive !== false)
     .filter((j) => !blocked.has(j.clientId as string))
+    .filter((j) => !(drivingJobsHiddenFor(cg) && jobRequiresTransport(j)))
     .filter((j) => passesJobBoardFilters(j, opts.filters))
     .filter((j) => withinCaregiverRadius(j, coords, radius));
   if (opts.sort === "nearest" && coords) {

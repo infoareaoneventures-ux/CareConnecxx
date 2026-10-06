@@ -936,7 +936,7 @@ export const AdminCaregiverManager: React.FC = () => {
                         {s.mvrInitiatedAt && !s.mvrClearedAt && <span className="text-xs text-slate-500">Started {new Date(s.mvrInitiatedAt).toLocaleDateString()}</span>}
                       </div>
                       <p className="text-xs text-slate-500 mt-3">
-                        Transportation badge: {s.isApprovedDriver === true && docsApproved ? 'active — MVR clear and all documents approved' : `waiting on ${[s.isApprovedDriver !== true ? 'the MVR' : null, !docsApproved ? 'document approval' : null].filter(Boolean).join(' and ')}`}.
+                        Transportation: {s.mvrStatus === 'not_approved' ? 'not approved — driving record (documents stay on file)' : s.isApprovedDriver === true && docsApproved ? 'live for families — MVR clear and all documents approved' : `waiting on ${[s.isApprovedDriver !== true ? 'the MVR' : null, !docsApproved ? 'document approval' : null].filter(Boolean).join(' and ')}`}.
                       </p>
                     </div>
                   );
@@ -1105,6 +1105,9 @@ export const AdminCaregiverManager: React.FC = () => {
                                   Revise decision
                                 </button>
                               </div>
+                            )}
+                            {doc.status === 'rejected' && doc.notes && (
+                              <p className="pl-7 text-xs text-red-600">Reason: {doc.notes}{doc.reviewedAt ? ` · ${new Date(doc.reviewedAt).toLocaleDateString()}` : ''}</p>
                             )}
                             {doc.expirationDate && (
                               <p className={`pl-7 text-xs font-medium ${isExpired ? 'text-orange-600' : 'text-slate-500'}`}>

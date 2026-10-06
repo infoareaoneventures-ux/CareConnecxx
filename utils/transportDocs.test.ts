@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hasValidTransportDocs, transportDocsApproved } from './transportDocs';
+import { hasValidTransportDocs, transportDocsApproved, drivingJobsHiddenFor, jobIncludesDriving } from './transportDocs';
 
 // The transportation badge families see = all three documents approved AND the
 // driving record (MVR) cleared (founder, 2026-09-25). Neither half alone earns it.
@@ -38,5 +38,20 @@ describe('hasValidTransportDocs (the badge)', () => {
   it('handles missing profiles', () => {
     expect(hasValidTransportDocs(null)).toBe(false);
     expect(hasValidTransportDocs({})).toBe(false);
+  });
+});
+
+describe('driving jobs hidden for a Not approved driving record (founder, 2026-10-05)', () => {
+  it('only the final decision hides them; running, under review or never offered still see them', () => {
+    expect(drivingJobsHiddenFor({ mvrStatus: 'not_approved' })).toBe(true);
+    expect(drivingJobsHiddenFor({ mvrStatus: 'consider' })).toBe(false);
+    expect(drivingJobsHiddenFor({ mvrStatus: 'pending' })).toBe(false);
+    expect(drivingJobsHiddenFor({})).toBe(false);
+    expect(drivingJobsHiddenFor(null)).toBe(false);
+  });
+  it('a job includes driving when it lists Transportation or requires Driving', () => {
+    expect(jobIncludesDriving({ careTypes: ['Transportation'] })).toBe(true);
+    expect(jobIncludesDriving({ requirements: ['Driving'] })).toBe(true);
+    expect(jobIncludesDriving({ careTypes: ['Companionship'] })).toBe(false);
   });
 });

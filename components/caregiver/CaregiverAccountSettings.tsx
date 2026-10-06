@@ -344,6 +344,10 @@ export const CaregiverAccountSettings: React.FC = () => {
     deleteReauth.reset();
   };
 
+  // Driving record marked Not approved (admin's final decision): the documents section
+  // goes quiet — statuses stay factual, no Action needed, no re-upload ask (founder, 2026-10-05).
+  const drivingRecordNotApproved = (profile as any)?.mvrStatus === 'not_approved';
+  const docNoteOf = (type: string): string => String((profile as any)?.documents?.[type]?.notes ?? '').trim();
   // Same rule as Evia's SETTINGS text (caregiverSettings.ts): the account's creation first.
   const memberSinceRaw = (profile as any)?.accountCreatedAt ?? (profile as any)?.createdAt;
   const memberSinceDate = !memberSinceRaw ? null
@@ -580,18 +584,26 @@ export const CaregiverAccountSettings: React.FC = () => {
             open={openTransport}
             onToggle={() => setOpenTransport(o => !o)}
             title="Transportation Documents"
-            badge={Object.values(transportStatus).some(s => s === 'expired' || s === 'rejected')
+            badge={!drivingRecordNotApproved && Object.values(transportStatus).some(s => s === 'expired' || s === 'rejected')
               ? <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-semibold rounded-full">Action needed</span>
               : undefined}
           >
             <div className="p-5 space-y-4">
               <p className="text-sm text-slate-500">Required to offer Transportation. Keep these up to date.</p>
 
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                <p className="text-xs text-amber-800">
-                  Our team reviews these before approving your transportation services. Upload all three to avoid delays.
-                </p>
-              </div>
+              {drivingRecordNotApproved ? (
+                // The final decision lives on the driving record (Membership & verification above);
+                // the documents keep their real status below, with no action asked (founder, 2026-10-05).
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+                  <p className="text-xs text-red-800">Your driving record check didn't meet the requirement for Transportation jobs, so Transportation is off your profile. Your documents stay on file.</p>
+                </div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-xs text-amber-800">
+                    Our team reviews these before Transportation shows on your profile. Upload all three to avoid delays.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-3">
                 {TRANSPORT_DOCS.map(({ type, label, desc }) => (
@@ -604,11 +616,18 @@ export const CaregiverAccountSettings: React.FC = () => {
                   }`}>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800">{label}</p>
-                      <p className="text-xs text-slate-500">{desc}</p>
+                      {/* The "what to upload" hint only while a file is wanted (founder, 2026-10-05). */}
+                      {['idle', 'rejected', 'expired', 'error'].includes(transportStatus[type]) && (
+                        <p className="text-xs text-slate-500">{desc}</p>
+                      )}
                       {transportExpiry[type] && (
                         <p className="text-xs text-slate-400 mt-0.5">
                           Expires {(() => { const [y,m,d] = transportExpiry[type]!.split('-'); return new Date(+y, +m-1, +d).toLocaleDateString(); })()}
                         </p>
+                      )}
+                      {transportStatus[type] === 'rejected' && docNoteOf(type) && (
+                        // The admin's rejection reason, the same note Evia's text carries (2026-10-05).
+                        <p className="text-xs text-red-700 mt-0.5">Reason: {docNoteOf(type)}</p>
                       )}
                     </div>
                     {transportStatus[type] === 'approved' ? (
@@ -654,9 +673,9 @@ export const CaregiverAccountSettings: React.FC = () => {
                 ))}
               </div>
 
-              {TRANSPORT_DOCS.filter(d => ['done', 'approved'].includes(transportStatus[d.type])).length < 3 && (
+              {!drivingRecordNotApproved && TRANSPORT_DOCS.filter(d => ['done', 'approved'].includes(transportStatus[d.type])).length < 3 && (
                 <p className="text-center text-xs text-amber-600 font-medium">
-                  All three documents are required to activate the transportation badge.
+                  All three documents are required to offer Transportation.
                 </p>
               )}
             </div>

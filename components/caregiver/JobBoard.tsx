@@ -11,6 +11,7 @@ import firebase from '../../lib/firebase';
 import { jobApplicationService, useMyApplications } from '../../hooks/useJobApplications';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
+import { drivingJobsHiddenFor, jobIncludesDriving } from '../../utils/transportDocs';
 import { Skeleton } from '../ui/Skeleton';
 
 // Pure math — no API calls. Jobs store lat/lng at creation time.
@@ -202,7 +203,9 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     // as an OBJECT (crashes JSX) / summary instead of title —
                     // coerce to the render contract before anything touches them.
                     const allJobs = snapshot.docs.map(doc => normalizeJobPost({ id: doc.id, ...doc.data() }));
-                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false));
+                    // Driving jobs are not listed while her driving record is Not approved (utils/transportDocs.ts drivingJobsHiddenFor).
+                    const hideDriving = drivingJobsHiddenFor(caregiverProfile as any);
+                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false && !(hideDriving && jobIncludesDriving(job))));
                     setJobsLoading(false);
                 },
                 (error) => {
@@ -213,7 +216,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             );
         return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, applications, onShowToast, hiddenKey]);
+    }, [activeTab, applications, onShowToast, hiddenKey, (caregiverProfile as any)?.mvrStatus]);
 
     // Resolve caregiver coords from profile — used for instant distance math against job.lat/job.lng
     // Falls back to p.lat/p.lng for accounts created before the field-name standardisation

@@ -51,6 +51,11 @@ export const CaregiverProgressCard: React.FC<{
   const services: string[] = (p.services || p.skills || []) as string[];
   const needsTransportDocs = services.includes('Transportation');
   const transportDocsValid = needsTransportDocs ? hasValidTransportDocs(profile) : false;
+  // A driving record marked Not approved is a FINAL decision (founder, 2026-10-05): the
+  // progress card must not announce it on every visit. The step counts as resolved,
+  // the card goes away like it does for a caregiver who never offered Transportation,
+  // and the state lives on Settings (AccountStandingSection) + the Jobs gate.
+  const drivingRecordDecided = p.mvrStatus === 'not_approved';
   // Payout fields live on the owner-only private/payout subdoc — caller must
   // merge dbService.getOwnCaregiverPayoutFields(uid) into `profile` (same
   // pattern CaregiverPaymentsPage.tsx already uses) for this to be accurate.
@@ -58,7 +63,7 @@ export const CaregiverProgressCard: React.FC<{
   // needs a connected payout account regardless of whether they currently
   // accept credit cards (Hamse, 2026-08-23).
   const payoutsSetUp = !!(p.payoutsEnabled && p.chargesEnabled);
-  const isApproved = membershipActive && bgApprovedFull && payoutsSetUp && (!needsTransportDocs || transportDocsValid);
+  const isApproved = membershipActive && bgApprovedFull && payoutsSetUp && (!needsTransportDocs || transportDocsValid || drivingRecordDecided);
   // Field-driven Profile completeness: Evia mirrors each SMS-collected field to
   // caregivers/{uid} as it's collected, but only stamps onboardingStatus
   // 'profile_complete' at the very last (Stripe Connect) step — so gating this
@@ -86,9 +91,20 @@ export const CaregiverProgressCard: React.FC<{
   if (isApproved) return null;
 
   const docs = p.documents || {};
-  const getDocStatus = (key: string) => { const d = docs[key]; return d?.url ? (d.status || 'pending') : 'missing'; };
+  // Expiry-aware, same rule as Settings' resolveDocStatus (an approved document past its
+  // date read as 'approved' here and fell into "under review" — founder, 2026-10-05).
+  const getDocStatus = (key: string) => {
+    const d = docs[key];
+    if (!d?.url) return 'missing';
+    if (d.status === 'approved' && typeof d.expirationDate === 'string' && d.expirationDate) {
+      const [y, m, dd] = d.expirationDate.split('-').map(Number);
+      const t = new Date(); t.setHours(0, 0, 0, 0);
+      if (new Date(y, m - 1, dd) < t) return 'expired';
+    }
+    return d.status || 'pending';
+  };
   const transportDocStatuses = needsTransportDocs ? ['driversLicense', 'insurance', 'registration'].map(k => getDocStatus(k)) : [];
-  const transportNeedsAction = needsTransportDocs && (transportDocStatuses.includes('missing') || transportDocStatuses.includes('rejected'));
+  const transportNeedsAction = needsTransportDocs && (transportDocStatuses.includes('missing') || transportDocStatuses.includes('rejected') || transportDocStatuses.includes('expired'));
 
   // Order: Profile -> Membership -> Background Check -> Payout Setup ->
   // Transport Docs. Payout Setup sits AFTER background check (matching
@@ -196,6 +212,11 @@ export const CaregiverProgressCard: React.FC<{
         ? "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected."
         : 'Your documents are approved. Transportation shows on your profile as soon as your driving record check clears.';
       cardVariant = 'info';
+    } else if (transportDocStatuses.includes('expired')) {
+      cardTitle = 'A document expired';
+      cardDesc = 'One of your transport documents has expired. Re-upload it to restore Transportation on your profile.';
+      cardVariant = 'warning';
+      cardCta = { label: 'Re-upload documents', onClick: () => onNavigate('caregiver-settings') };
     } else if (anyDocRejected) {
       cardTitle = 'Documents rejected';
       cardDesc = 'Some transport documents were rejected. Please re-upload to continue.';
@@ -218,7 +239,7 @@ export const CaregiverProgressCard: React.FC<{
     { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
     { label: 'Background Check', done: bgApprovedFull, inProgress: bgCheckInProgress },
     { label: 'Payout Setup', done: payoutsSetUp, inProgress: bgApprovedFull && !payoutsSetUp },
-    ...(needsTransportDocs ? [{ label: 'Transport Docs', done: transportDocsValid, inProgress: !transportDocsValid && !transportDocStatuses.includes('missing') }] : []),
+    ...(needsTransportDocs ? [{ label: 'Transport Docs', done: transportDocsValid || drivingRecordDecided, inProgress: !transportDocsValid && !drivingRecordDecided && !transportDocStatuses.includes('missing') }] : []),
   ];
 
   return (

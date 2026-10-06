@@ -22,7 +22,10 @@ function isExpiringSoon(expirationDate?: string, daysAhead = 30): boolean {
  * Strips badge if any doc expires. Notifies caregiver when docs are expiring soon.
  */
 export const evaluateTransportBadges = functions.pubsub
-  .schedule('every 24 hours')
+  // 00:05 Pacific (founder, 2026-10-05): a document expires at midnight local time —
+  // families should stop seeing Transportation that night, not up to 24h later.
+  .schedule('5 0 * * *')
+  .timeZone('America/Los_Angeles')
   .onRun(async () => {
     // Daily heartbeat for config/public (Evia's number from the functions env) — see publicConfig.ts.
     await import('../publicConfig').then((m) => m.publishPublicConfig()).catch((err) => console.warn('publishPublicConfig failed:', err));

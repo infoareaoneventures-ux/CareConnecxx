@@ -9,7 +9,8 @@
 // by their Stripe handlers through the same module.
 import * as functions from "firebase-functions/v1";
 import { notifyCaregiverAccountEvent, CaregiverAccountEventKind, CaregiverAccountEventContext } from "../notifications/caregiverAccountEvents";
-import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { isCaregiverBookable, isCaregiverMembershipActiveForFamilies } from "../utils/caregiverEligibility";
+import * as admin from "firebase-admin";
 
 type Doc = Record<string, any>;
 
@@ -65,6 +66,8 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
     if (a.mvrStatus === "clear" && !clearedNow) out.push({ kind: "mvr_clear" });
     if (a.mvrStatus === "consider" || a.mvrStatus === "suspended") out.push({ kind: "mvr_review" });
     if (a.mvrStatus === "not_approved") out.push({ kind: "mvr_not_approved" });
+    // Later MVR, consent-first (2026-10-06): the record parked on "authorize your driving record check".
+    if (a.mvrStatus === "awaiting_consent") out.push({ kind: "mvr_consent_requested" });
   }
   if (!badgeB && badgeA) out.push({ kind: "transport_badge_earned" });
   if (badgeB && !badgeA) {
@@ -84,6 +87,57 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
   return out;
 }
 
+/** Pure: can this caregiver work right now — membership active (incl. Stripe retries) AND background cleared. */
+export function canWork(d: Doc | undefined): boolean {
+  if (!d) return false;
+  const bgOk = d.verified === true || d.backgroundCheckStatus === "clear" || d.backgroundCheckComplete === true;
+  return bgOk && isCaregiverMembershipActiveForFamilies(d);
+}
+/** Pure: did this change lock the caregiver (working → not working)? */
+export function lockedNow(before: Doc | undefined, after: Doc | undefined): boolean {
+  return canWork(before) && !canWork(after);
+}
+
+/**
+ * Founder, 2026-10-06: when a caregiver gets locked (Stripe gave up on the renewal, the
+ * yearly refresh wasn't authorized in time or came back not clear, admin Revoked), the
+ * family must not find out by a no-show. Every upcoming scheduled visit goes through the
+ * SAME write the caregiver's own ✕ makes (cancelShiftLikeThePage) — the family gets the
+ * usual "cancelled the visit… find a replacement or skip it" text and the Needs
+ * Replacement card from onShiftStatusChanged; the reason is never stated. The team gets
+ * one alert with the count.
+ */
+export async function releaseUpcomingVisitsOnLock(uid: string): Promise<number> {
+  const db = admin.firestore();
+  const today = new Date().toISOString().slice(0, 10);
+  const snap = await db.collection("shifts")
+    .where("caregiverId", "==", uid)
+    .where("status", "in", ["scheduled"])
+    .where("date", ">=", today)
+    .limit(120)
+    .get();
+  const { cancelShiftLikeThePage } = await import("../agents/caregiverCancelShiftHandler");
+  let released = 0;
+  for (const d of snap.docs) {
+    const r = await cancelShiftLikeThePage(d.id, "system").catch(() => ({ ok: false as const, reason: "not_found" as const }));
+    if (r.ok) released++;
+  }
+  const cg = (await db.collection("caregivers").doc(uid).get()).data() ?? {};
+  await db.collection("admin_alerts").add({
+    type: "caregiver_locked",
+    severity: released > 0 ? "high" : "medium",
+    resolved: false,
+    caregiverId: uid,
+    caregiverName: String(cg.name ?? "A caregiver"),
+    releasedVisits: released,
+    membershipStatus: cg.membershipStatus ?? null,
+    backgroundCheckStatus: cg.backgroundCheckStatus ?? null,
+    message: `${String(cg.name ?? "A caregiver")} is locked (membership ${cg.membershipStatus ?? "unknown"}, background ${cg.backgroundCheckStatus ?? "unknown"}); ${released} upcoming visit${released === 1 ? "" : "s"} released to the families.`,
+    createdAt: new Date().toISOString(),
+  }).catch(() => {});
+  return released;
+}
+
 export const onCaregiverAccountChange = functions.firestore
   .document("caregivers/{uid}")
   .onUpdate(async (change, context) => {
@@ -94,5 +148,9 @@ export const onCaregiverAccountChange = functions.firestore
     for (const ev of events) {
       await notifyCaregiverAccountEvent(uid, ev.kind, { eventId: context.eventId, ctx: ev.ctx })
         .catch((err) => console.error(`[onCaregiverAccountChange] ${ev.kind} failed for ${uid}:`, err));
+    }
+    if (lockedNow(before, after)) {
+      await releaseUpcomingVisitsOnLock(uid)
+        .catch((err) => console.error(`[onCaregiverAccountChange] visit release failed for ${uid}:`, err));
     }
   });

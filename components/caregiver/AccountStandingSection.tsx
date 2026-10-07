@@ -76,7 +76,7 @@ export function backgroundCheckState(p: any, membershipActive = false): Backgrou
 // Wording states what happened (Checkr's result term "cleared", "under review"),
 // never an approval — "Approved Driver" / "verified-driver badge" are gone
 // (founder, 2026-10-04). Families see "Transportation" on the profile, not a badge.
-export type DriverCard = 'approved' | 'not_approved' | 'review' | 'pending' | 'included' | 'offer';
+export type DriverCard = 'approved' | 'not_approved' | 'review' | 'consent' | 'pending' | 'included' | 'offer';
 
 export function driverCardFor(p: any, badgeLive: boolean): DriverCard {
   const isApprovedDriver = p?.isApprovedDriver === true;
@@ -84,6 +84,7 @@ export function driverCardFor(p: any, badgeLive: boolean): DriverCard {
   void badgeLive;
   if (p?.mvrStatus === 'not_approved') return 'not_approved'; // the admin's final decision after a review (2026-10-04)
   if (p?.mvrStatus === 'consider' || p?.mvrStatus === 'suspended') return 'review';
+  if (p?.mvrStatus === 'awaiting_consent') return 'consent'; // Transportation added after the clear — authorize the MVR (2026-10-06)
   const mvrPending = p?.mvrStatus === 'pending' || (p?.mvrPaid === true && !isApprovedDriver);
   if (mvrPending) return 'pending';
   const services = ((p?.services || p?.skills || []) as string[]);
@@ -92,7 +93,8 @@ export function driverCardFor(p: any, badgeLive: boolean): DriverCard {
 }
 
 export const DRIVER_CARD_TEXT: Record<DriverCard, { title: string; body: string }> = {
-  approved: { title: 'Driving record check cleared', body: 'Families who need a driver can see Transportation on your profile.' },
+  approved: { title: 'Driving record check cleared', body: '' }, // title + "Cleared <date>" only (founder, 2026-10-06)
+  consent: { title: 'Authorize your driving record check', body: 'Transportation is on your profile. Authorize the driving record check to start it — included in your membership.' },
   not_approved: { title: 'Driving record not approved', body: "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected." },
   review: { title: 'Driving record under review', body: "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected." },
   pending: { title: 'Driving record check in progress', body: 'Finish the short form in the email you received. Transportation shows on your profile once it clears.' },
@@ -153,10 +155,10 @@ export const AccountStandingSection: React.FC<{
   const driverText = DRIVER_CARD_TEXT[driver];
   const navigate = useNavigate();
   const mvrClearedOn = shortDate(p?.mvrClearedAt);
-  const driverDate = mvrClearedOn && driver === 'approved' ? `Cleared ${mvrClearedOn} · ` : '';
+  const driverDate = mvrClearedOn && driver === 'approved' ? `Cleared ${mvrClearedOn}${driverText.body ? ' · ' : ''}` : '';
   const driverTone = driver === 'approved' ? { card: 'border-blue-200', icon: 'bg-blue-500', glyph: 'text-white' }
     : driver === 'included' ? { card: 'border-slate-200', icon: 'bg-blue-50', glyph: 'text-blue-600' }
-    : driver === 'review' ? { card: 'border-amber-200 bg-amber-50/40', icon: 'bg-amber-100', glyph: 'text-amber-600' }
+    : driver === 'review' || driver === 'consent' ? { card: 'border-amber-200 bg-amber-50/40', icon: 'bg-amber-100', glyph: 'text-amber-600' }
     : driver === 'not_approved' ? { card: 'border-red-200 bg-red-50/40', icon: 'bg-red-100', glyph: 'text-red-600' }
     : { card: 'border-slate-200', icon: 'bg-slate-100', glyph: 'text-slate-400' };
 
@@ -266,7 +268,7 @@ export const AccountStandingSection: React.FC<{
                   <p className="font-semibold text-slate-900 text-sm">{bg.renewal ? 'Renew your background check' : 'Start your background check'}</p>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {bg.renewal
-                      ? "Your annual membership renewed. Authorize this year's background check refresh to stay bookable."
+                      ? "Your annual membership renewed. Authorize this year's background check within 7 days to stay bookable."
                       : 'Authorize your background check — it takes about 2 minutes. Your SSN and date of birth go directly to Checkr, never to Evia.'}
                   </p>
                 </>
@@ -275,7 +277,7 @@ export const AccountStandingSection: React.FC<{
                 <>
                   <p className="font-semibold text-slate-900 text-sm flex items-center gap-1.5">Background check cleared</p>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {bg.clearedOn ? `Cleared ${bg.clearedOn}` : 'Cleared'}
+                    {bg.clearedOn ? `Cleared ${bg.clearedOn}` : 'Cleared'}{p?.renewalRefresh?.status === 'running' ? " · this year's refresh is running" : ''}
                     {isActive && renewalDate ? ` · Next check with your renewal on ${renewalDate}` : ''}
                   </p>
                 </>
@@ -332,6 +334,14 @@ export const AccountStandingSection: React.FC<{
                 </button>
               )}
             </div>
+            {driver === 'consent' && (
+              <button
+                onClick={() => setShowBgModal(true)}
+                className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white transition-colors"
+              >
+                Authorize driving record check
+              </button>
+            )}
           </div>
       </div>
     </>

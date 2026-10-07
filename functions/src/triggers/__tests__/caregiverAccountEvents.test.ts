@@ -89,6 +89,8 @@ describe("caregiverAccountTransitions — one event per progress-bar change", ()
     // Bundled criminal+MVR clear: the background-check line covers it, no separate driving-record line
     expect(kinds({ backgroundCheckStatus: "pending" }, { backgroundCheckStatus: "clear", mvrStatus: "clear", isApprovedDriver: true })).toEqual(["bgcheck_clear"]);
     expect(kinds({ mvrStatus: "pending" }, { mvrStatus: "consider", isApprovedDriver: false })).toEqual(["mvr_review"]);
+    // Later MVR, consent-first (2026-10-06): parking on consent tells her once.
+    expect(kinds({ ...TRANSPORT }, { ...TRANSPORT, mvrStatus: "awaiting_consent" })).toEqual(["mvr_consent_requested"]);
     expect(kinds({ mvrStatus: "consider", isApprovedDriver: false }, { mvrStatus: "not_approved", isApprovedDriver: false })).toContain("mvr_not_approved");
     // Badge earned when she adds Transportation with the record already clear
     expect(kinds({ isApprovedDriver: true }, { ...TRANSPORT, isApprovedDriver: true })).toEqual(["transport_badge_earned"]);

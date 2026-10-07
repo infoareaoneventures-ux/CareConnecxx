@@ -118,14 +118,14 @@ const urgent = (s: FirebaseFirestore.DocumentData): boolean => {
 };
 
 /** The ✕'s write (CaregiverBookingsPage BookingGroupCard.handleCancelShift). */
-export async function cancelShiftLikeThePage(shiftId: string): Promise<{ ok: true; status: "needs_replacement" | "cancelled" } | { ok: false; reason: "not_found" | "not_scheduled"; status?: string }> {
+export async function cancelShiftLikeThePage(shiftId: string, cancelledBy: "caregiver" | "system" = "caregiver"): Promise<{ ok: true; status: "needs_replacement" | "cancelled" } | { ok: false; reason: "not_found" | "not_scheduled"; status?: string }> {
   const ref = db.collection("shifts").doc(shiftId);
   const snap = await ref.get();
   if (!snap.exists) return { ok: false, reason: "not_found" };
   const shift = snap.data() ?? {};
   if (shift.status !== "scheduled") return { ok: false, reason: "not_scheduled", status: String(shift.status ?? "") };
   const status = urgent(shift) ? "needs_replacement" as const : "cancelled" as const;
-  await ref.update({ status, cancelledBy: "caregiver", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+  await ref.update({ status, cancelledBy, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
   return { ok: true, status };
 }
 

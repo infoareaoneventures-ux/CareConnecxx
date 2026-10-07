@@ -126,7 +126,7 @@ describe("markCaregiverMembershipPaid — the same record from both origins", ()
   it("no Transportation → no mvrPaid; no ids → nothing invented", async () => {
     hoisted.docs.set("caregivers/cg3", { skills: ["Companionship"] });
     await markCaregiverMembershipPaid("cg3");
-    expect(hoisted.docs.get("caregivers/cg3")).toEqual({ skills: ["Companionship"], uid: "cg3", membershipPaid: true, verificationStatus: "submitted" });
+    expect(hoisted.docs.get("caregivers/cg3")).toEqual({ skills: ["Companionship"], uid: "cg3", membershipPaid: true, mvrPaid: false, verificationStatus: "submitted" }); // mvrPaid written to match the profile (2026-10-06)
     expect(hoisted.docs.get("users/cg3")).not.toHaveProperty("subscriptionId");
     expect(hoisted.docs.get("customers/cg3")).toBeUndefined();
   });

@@ -16,6 +16,11 @@ const CASES: Array<{ label: string; input: any; expected: boolean }> = [
   { label: "complete + approved + legacy paid flag, no status", input: { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipPaid: true }, expected: true },
   // 2026-10-06 (founder): a lapsed membership is NOT bookable — families don't meet a caregiver who can't act.
   { label: "complete + approved but membership canceled", input: { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "canceled" }, expected: false },
+  // 2026-10-06 (founder): no lock while Stripe retries — past_due / payment_failed still count as active; canceled / unpaid / inactive do not.
+  { label: "Stripe retry state past_due still bookable", input: { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "past_due" }, expected: true },
+  { label: "Stripe retry state payment_failed still bookable", input: { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "payment_failed" }, expected: true },
+  { label: "unpaid (Stripe gave up) is not", input: { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "unpaid" }, expected: false },
+  { label: "admin Revoked (inactive) is not", input: { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "inactive", membershipPaid: false }, expected: false },
   { label: "complete + approved but no membership at all", input: { onboardingStatus: "profile_complete", verificationStatus: "approved" }, expected: false },
   { label: "projected clearedForFamilies flag is trusted", input: { clearedForFamilies: true }, expected: true },
   { label: "projected clearedForFamilies:false wins over raw fields", input: { clearedForFamilies: false, onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" }, expected: false },

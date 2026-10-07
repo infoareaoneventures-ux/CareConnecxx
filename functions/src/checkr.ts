@@ -181,6 +181,23 @@ export async function initiateMvrOnlyCheck(caregiverUid: string): Promise<void> 
 }
 
 /**
+ * A non-clear result on a caregiver who was CLEARED (the yearly refresh, founder 2026-10-06:
+ * "not clear → the review path") takes the clear away until the team decides — the same
+ * fields the gates read (verified / backgroundCheckStatus / backgroundCheckComplete /
+ * verificationStatus), so she is off the family side and her own actions close at once.
+ * A first-time check has none of these set, so this is a no-op there.
+ */
+function lockOnNonClearResult(cgData: Record<string, any>, updates: Record<string, any>, status: "consider" | "suspended"): void {
+  const wasCleared = cgData.verified === true || cgData.backgroundCheckStatus === "clear" || cgData.backgroundCheckComplete === true;
+  if (!wasCleared) return;
+  updates["verified"] = false;
+  updates["backgroundCheckStatus"] = status;
+  updates["backgroundCheckComplete"] = false;
+  if (cgData.verificationStatus === "approved") updates["verificationStatus"] = "submitted";
+  if (cgData.renewalRefresh?.status === "running") updates["renewalRefresh.status"] = "review";
+}
+
+/**
  * Bundled criminal+MVR report (Transportation on the profile at payment) that
  * came back NON-clear: Checkr gives one overall result for the whole report, so
  * on its own it can't say whether the criminal search or the driving record
@@ -452,6 +469,8 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           // firestore.rules) rather than the client-reachable
           // backgroundCheckData.mvrIncluded — otherwise a caregiver could smuggle
           // mvrIncluded:true via the profile-submission write and self-grant the badge.
+          // Renewal refresh cleared (2026-10-06): the cycle is done; the card shows the new date.
+          if (cgData?.renewalRefresh?.status === "running") updates["renewalRefresh.status"] = "cleared";
           if (cgData?.mvrPaid === true) {
             updates["isApprovedDriver"] = true;
             // The bundled report carries the MVR — record it on the same
@@ -484,6 +503,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           const cgData = cgSnap.data() ?? {};
           // Bundled criminal+MVR report: record the MVR screening's OWN result
           // so the admin's "Driving record" line says which check needs review.
+          lockOnNonClearResult(cgData, updates, "consider");
           await resolveBundledMvrStatus(payload, cgData, updates, "consider");
           await db.collection("admin_alerts").add({
             type:        "background_check_review",
@@ -512,6 +532,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         try {
           const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
           const cgData = cgSnap.data() ?? {};
+          lockOnNonClearResult(cgData, updates, "suspended");
           await resolveBundledMvrStatus(payload, cgData, updates, "suspended");
           await db.collection("admin_alerts").add({
             type:        "background_check_suspended",

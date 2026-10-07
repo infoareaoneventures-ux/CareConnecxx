@@ -61,7 +61,7 @@ describe("loadMembershipTab — the section's reads", () => {
     expect(tab.status).toBe("active");
     expect(tab.isActive).toBe(true);
     expect(tab.periodEnd?.toISOString()).toBe(END.toISOString());
-    expect(tab.bg).toEqual({ kind: "cleared", clearedOn: "9/26/2026" });
+    expect(tab.bg).toEqual({ kind: "cleared", clearedOn: "9/26/2026", refreshRunning: false });
     expect(tab.driver).toBe("offer");
     hoisted.docs.set("caregivers/cg1", { name: "Mahad" });
     expect((await loadMembershipTab("cg1")).status).toBe("canceled");
@@ -88,7 +88,7 @@ describe("membershipTabText — the three cards word for word", () => {
     hoisted.badgeLive = true;
     const t = membershipTabText(await loadMembershipTab("cg1"));
     expect(t).toContain("Trial · Evia Membership: Annual plan");
-    expect(t).toContain("Driving record check cleared on 9/28/2026. Families who need a driver can see Transportation on your profile.");
+    expect(t).toContain("Driving record check: Cleared 9/28/2026"); // title + date only (founder, 2026-10-06)
   });
   it("not active: No active membership + the page's sentence (canceled vs activate) + ACTIVATE; background not started", async () => {
     hoisted.docs.set("caregivers/cg1", { membershipStatus: "canceled" });
@@ -107,13 +107,16 @@ describe("bgCardFor / bgCardText — the dashboard card's rules", () => {
     expect(bgCardFor({ backgroundCheckData: { consentRequired: true, consentReason: "renewal" } })).toEqual({ kind: "consent", renewal: true });
     expect(bgCardFor({ backgroundCheckData: { invitationStatus: "awaiting_consent" } })).toEqual({ kind: "consent", renewal: false });
     expect(bgCardFor({ verificationStatus: "rejected" })).toEqual({ kind: "not_approved" });
-    expect(bgCardFor({ backgroundCheckStatus: "clear", backgroundCheckData: { checkrClearedAt: "2026-09-26T18:00:00Z" } })).toEqual({ kind: "cleared", clearedOn: "9/26/2026" });
+    expect(bgCardFor({ backgroundCheckStatus: "clear", backgroundCheckData: { checkrClearedAt: "2026-09-26T18:00:00Z" } })).toEqual({ kind: "cleared", clearedOn: "9/26/2026", refreshRunning: false });
+    // Renewal (2026-10-06): still cleared while this year's refresh runs — the line says so.
+    expect(bgCardFor({ backgroundCheckStatus: "clear", backgroundCheckData: { checkrClearedAt: "2026-09-26T18:00:00Z" }, renewalRefresh: { status: "running" } })).toEqual({ kind: "cleared", clearedOn: "9/26/2026", refreshRunning: true });
+    expect(bgCardText({ status: "active", isActive: true, periodEnd: null, cancelAtPeriodEnd: false, driver: "offer", mvrClearedOn: null, bg: { kind: "cleared", clearedOn: "9/26/2026", refreshRunning: true } })).toBe("Background check: Cleared 9/26/2026, this year's refresh is running");
     expect(bgCardFor({ backgroundCheckData: { checkrCandidateId: "c", status: "consider" } })).toEqual({ kind: "in_progress", detail: "under_review" });
     expect(bgCardFor({ backgroundCheckData: { checkrCandidateId: "c", status: "suspended" } })).toEqual({ kind: "in_progress", detail: "on_hold" });
     expect(bgCardFor({ backgroundCheckData: { checkrCandidateId: "c", status: "pending" } })).toEqual({ kind: "in_progress", detail: "running" });
     expect(bgCardFor({})).toEqual({ kind: "not_started" });
     const base = { status: "active", isActive: true, periodEnd: END, cancelAtPeriodEnd: false, driver: "offer" as const, mvrClearedOn: null };
-    expect(bgCardText({ ...base, bg: { kind: "consent", renewal: true } })).toBe("Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check refresh to stay bookable. Reply AUTHORIZE for the link.");
+    expect(bgCardText({ ...base, bg: { kind: "consent", renewal: true } })).toBe("Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check within 7 days to stay bookable. Reply AUTHORIZE for the link.");
     expect(bgCardText({ ...base, bg: { kind: "in_progress", detail: "running" } })).toBe("Background check: In progress. Checkr emailed you a secure link, it usually takes about 5 minutes.");
     expect(bgCardText({ ...base, isActive: false, periodEnd: null, bg: { kind: "cleared", clearedOn: "9/26/2026" } })).toBe("Background check: Cleared 9/26/2026");
   });
@@ -124,6 +127,7 @@ describe("driverCardFor — the driver card's branches", () => {
     expect(driverCardFor({ isApprovedDriver: true }, true)).toBe("approved");
     expect(driverCardFor({ isApprovedDriver: true }, false)).toBe("approved");
     expect(driverCardFor({ mvrStatus: "pending" }, false)).toBe("pending");
+    expect(driverCardFor({ mvrStatus: "awaiting_consent", services: ["Transportation"] }, false)).toBe("consent"); // later MVR, consent-first (2026-10-06)
     expect(driverCardFor({ mvrPaid: true }, false)).toBe("pending");
     expect(driverCardFor({ services: ["Transportation"] }, false)).toBe("included");
     expect(driverCardFor({ services: ["Companionship"] }, false)).toBe("offer");

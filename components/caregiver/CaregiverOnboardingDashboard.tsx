@@ -63,7 +63,9 @@ export const CaregiverProgressCard: React.FC<{
   // needs a connected payout account regardless of whether they currently
   // accept credit cards (Hamse, 2026-08-23).
   const payoutsSetUp = !!(p.payoutsEnabled && p.chargesEnabled);
-  const isApproved = membershipActive && bgApprovedFull && payoutsSetUp && (!needsTransportDocs || transportDocsValid || drivingRecordDecided);
+  // Renewal (2026-10-06): the yearly refresh is asked WITHOUT resetting the clear — the card must still show the Authorize step.
+  const renewalConsentPending = p.backgroundCheckData?.consentRequired === true || p.backgroundCheckData?.invitationStatus === 'awaiting_consent';
+  const isApproved = membershipActive && bgApprovedFull && payoutsSetUp && !renewalConsentPending && (!needsTransportDocs || transportDocsValid || drivingRecordDecided);
   // Field-driven Profile completeness: Evia mirrors each SMS-collected field to
   // caregivers/{uid} as it's collected, but only stamps onboardingStatus
   // 'profile_complete' at the very last (Stripe Connect) step — so gating this
@@ -103,6 +105,7 @@ export const CaregiverProgressCard: React.FC<{
   // wait behind an optional review step for it).
   const activeStep = !profileComplete ? 1
     : !hasPaid ? 2
+    : renewalConsentPending ? 3
     : (!checkrInitiated && !bgApprovedFull) ? 3
     : !bgApprovedFull ? 4
     : !payoutsSetUp ? 5
@@ -169,7 +172,7 @@ export const CaregiverProgressCard: React.FC<{
   } else if (activeStep === 3) {
     cardTitle = consentIsRenewal ? 'Renew your background check' : 'Start your background check';
     cardDesc = consentIsRenewal
-      ? "Your annual membership renewed. Authorize this year's background check refresh to stay bookable."
+      ? "Your annual membership renewed. Authorize this year's background check within 7 days to stay bookable."
       : '';
     cardCta = {
       label: consentIsRenewal ? 'Authorize this year\'s check' : 'Start background check',
@@ -195,6 +198,11 @@ export const CaregiverProgressCard: React.FC<{
       cardDesc = "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.";
       cardVariant = 'info';
       cardFooter = 'Under review';
+    } else if (p.mvrStatus === 'awaiting_consent') {
+      // Transportation added after the clear: consent first, same modal as the background check (2026-10-06).
+      cardTitle = 'Authorize your driving record check';
+      cardDesc = 'Transportation is on your profile. Authorize the driving record check to start it — included in your membership.';
+      cardCta = { label: 'Authorize driving record check', onClick: () => setShowBgModal(true) };
     } else if (p.mvrStatus === 'pending' || (p.mvrPaid === true && p.isApprovedDriver !== true)) {
       // Running (same state rule as the Settings card, AccountStandingSection.driverCardFor).
       cardTitle = 'Driving record check in progress';

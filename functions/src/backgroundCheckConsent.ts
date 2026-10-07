@@ -84,6 +84,21 @@ export async function authorizeBackgroundCheck(args: {
   const existingCandidateId: string | undefined = bg.checkrCandidateId;
   const invitationStatus: string | undefined = bg.invitationStatus;
 
+  // Later MVR, consent-first (founder, 2026-10-06): Transportation added after the criminal
+  // check cleared parks the record on mvrStatus 'awaiting_consent' (triggers/transportationMvr.ts).
+  // This authorization — the same page and the same function, from Settings, the dashboard or
+  // Evia's texted link — is what starts the MVR-only check on the existing candidate. The
+  // criminal record is left exactly as it is (no re-submission, no status reset).
+  const bgAwaiting = bg.consentRequired === true || invitationStatus === "awaiting_consent";
+  if (cg.mvrStatus === "awaiting_consent" && !bgAwaiting) {
+    const consentAtMvr = new Date().toISOString();
+    await writeCaregiverBackgroundPII(uid, { legalFirstName: form.legalFirstName, legalLastName: form.legalLastName, zip: form.zipCode });
+    await ref.update({ mvrConsentGivenAt: consentAtMvr, "backgroundCheckData.mvrConsentGivenAt": consentAtMvr });
+    const { initiateMvrOnlyCheck } = await import("./checkr");
+    await initiateMvrOnlyCheck(uid); // sets mvrPaid / mvrCheckInitiated / mvrStatus 'pending'; admin alert if no candidate
+    return { status: "ok", candidateId: existingCandidateId ?? "", invitationUrl: null };
+  }
+
   // Idempotent: a live invitation already exists and nobody is waiting on a
   // (re-)consent — a double-tap must not mint a second candidate.
   const awaitingConsent = invitationStatus === "awaiting_consent" || bg.consentRequired === true;
@@ -94,7 +109,8 @@ export async function authorizeBackgroundCheck(args: {
   // Flat membership (2026-09-25): the MVR rides along whenever the profile
   // offers Transportation (the payment webhook stamps mvrPaid from the same
   // rule; read the profile too in case Transportation was added since).
-  const mvrIncluded = cg.mvrPaid === true || servicesOf(cg).includes("Transportation");
+  // Decided from the live profile only (2026-10-06): the stamp is written from this, never read into it.
+  const mvrIncluded = servicesOf(cg).includes("Transportation");
   const packageSlug = mvrIncluded ? assertMvrCheckConfig("bundled") : CHECKR_PACKAGE;
 
   const workState = (form.state?.trim() || (cg.state as string | undefined) || "").toUpperCase();
@@ -121,28 +137,29 @@ export async function authorizeBackgroundCheck(args: {
   // Dotted-path update: re-points ONLY these fields (the webhook matches on
   // checkrCandidateId, so the doc must follow the invitation the caregiver
   // will actually complete) and leaves the rest of backgroundCheckData alone.
+  // Renewal (founder, 2026-10-06): the refresh runs while the caregiver stays cleared — no
+  // re-submission, no pending status, the current clear date stays until the new one lands.
+  const renewing = consentReason === "renewal";
   const recordPatch: Record<string, unknown> = {
     uid,
-    ...(mvrIncluded && { mvrPaid: true }),
-    verificationStatus: "submitted",
+    mvrPaid: mvrIncluded, // 2026-10-06: written to match the live decision, never left sticky
+    ...(renewing ? { "renewalRefresh.status": "running", "renewalRefresh.authorizedAt": consentAt } : { verificationStatus: "submitted", "backgroundCheckData.status": "pending", "backgroundCheckData.checkrClearedAt": null }),
     "backgroundCheckData.checkrCandidateId": inv.candidateId,
     "backgroundCheckData.consentGiven":      true,
     "backgroundCheckData.consentGivenAt":    consentAt,
     "backgroundCheckData.consentRequired":   false,
     "backgroundCheckData.submittedAt":       consentAt,
-    "backgroundCheckData.status":            "pending",
     "backgroundCheckData.invitationStatus":  "sent",
     "backgroundCheckData.invitationUrl":     invitationUrl,
-    "backgroundCheckData.initiatedVia":      consentReason === "renewal" ? "annual_renewal" : "consent_form",
+    "backgroundCheckData.initiatedVia":      renewing ? "annual_renewal" : "consent_form",
     "backgroundCheckData.mvrIncluded":       mvrIncluded,
-    "backgroundCheckData.checkrClearedAt":   null,
   };
   try {
     await ref.update(recordPatch);
   } catch {
     // No record yet (cannot normally happen — both callers ensure it) → create it.
     await ref.set({
-      uid, ...(mvrIncluded && { mvrPaid: true }), verificationStatus: "submitted",
+      uid, mvrPaid: mvrIncluded, verificationStatus: "submitted",
       backgroundCheckData: {
         checkrCandidateId: inv.candidateId, consentGiven: true, consentGivenAt: consentAt, consentRequired: false,
         submittedAt: consentAt, status: "pending", invitationStatus: "sent", invitationUrl,

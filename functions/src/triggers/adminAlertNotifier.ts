@@ -38,6 +38,9 @@ const SMS_NOTIFY_TYPES = new Set([
   // A caregiver's driving record came back for review (2026-10-04): Transportation
   // is off her profile until the team decides, and nobody else is told.
   "mvr_review",
+  // Renewal timeline (2026-10-06): a refresh not authorized in 7 days; a locked caregiver whose visits were released.
+  "renewal_refresh_locked",
+  "caregiver_locked",
 ]);
 
 function adminSmsText(type: string, alert: Record<string, any>): string {
@@ -52,6 +55,10 @@ function adminSmsText(type: string, alert: Record<string, any>): string {
     case "shift_hours_billing_review":
     case "shift_hours_payment_failed_escalated":
       return `Evia: a timesheet needs the team — ${String(alert.message ?? alert.title ?? type).slice(0, 200)} Open Admin › Finance.`;
+    case "renewal_refresh_locked":
+      return `Evia: ${String(alert.caregiverName ?? "a caregiver")} did not authorize this year's background check within 7 days of renewing — paused until they do. Admin › Caregivers › Verification.`;
+    case "caregiver_locked":
+      return `Evia: ${String(alert.caregiverName ?? "a caregiver")} is locked (membership ${String(alert.membershipStatus ?? "unknown")}, background ${String(alert.backgroundCheckStatus ?? "unknown")}); ${Number(alert.releasedVisits ?? 0)} upcoming visit(s) released to the families. Admin › Caregivers.`;
     case "mvr_review":
       return `Evia: ${String(alert.caregiverName ?? "a caregiver")}'s driving record check came back "${String(alert.mvrStatus ?? "consider")}" — Transportation is off their profile until you decide. Open Admin › Caregivers › Verification.`;
     default:

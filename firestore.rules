@@ -45,7 +45,7 @@ service cloud.firestore {
       return !exists(/databases/$(database)/documents/caregivers/$(other))
         || (get(/databases/$(database)/documents/caregivers/$(other)).data.get('onboardingStatus', '') == 'profile_complete'
             && get(/databases/$(database)/documents/caregivers/$(other)).data.get('verificationStatus', '') == 'approved'
-            && (get(/databases/$(database)/documents/caregivers/$(other)).data.get('membershipStatus', null) in ['active', 'trialing']
+            && (get(/databases/$(database)/documents/caregivers/$(other)).data.get('membershipStatus', null) in ['active', 'trialing', 'past_due', 'payment_failed']
                 || (get(/databases/$(database)/documents/caregivers/$(other)).data.get('membershipStatus', null) == null
                     && get(/databases/$(database)/documents/caregivers/$(other)).data.get('membershipPaid', false) == true)));
     }
@@ -483,7 +483,8 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/caregivers/$(request.auth.uid)).data;
     }
     function caregiverMembershipActive(cg) {
-      return cg.get('membershipStatus', null) in ['active', 'trialing']
+      // Stripe's retry state counts as active (2026-10-06: no lock while Stripe retries).
+      return cg.get('membershipStatus', null) in ['active', 'trialing', 'past_due', 'payment_failed']
         || (cg.get('membershipStatus', null) == null && cg.get('membershipPaid', false) == true);
     }
     function caregiverBackgroundApproved(cg) {

@@ -130,6 +130,8 @@ export { intelligenceCanaryWatch } from './agents/intelligenceCanaryWatch';
 
 // Transportation badge evaluation (daily) + on-demand refresh
 export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';
+// Membership renewal timeline (2026-10-06): card reminder 7 days before; authorize reminder day 5 / lock day 7 after.
+export { renewalRefreshSweep } from './scheduled/renewalRefresh';
 
 // Shift generation: instant on acceptance + daily rolling window
 export { generateRollingShifts, onBookingAccepted, expireStaleShiftReplacements } from './scheduled/shiftGenerator';

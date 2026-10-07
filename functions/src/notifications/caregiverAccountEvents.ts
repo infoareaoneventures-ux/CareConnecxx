@@ -12,6 +12,7 @@
 // Wording: the dashboard card's / bell's own words. No "Reply YES", no reasons,
 // no extra pitch — the site says none of that.
 import * as admin from "firebase-admin";
+import { caregiverAnnualDisplay } from "../config/pricing";
 import { writeUserNotification } from "./userNotification";
 import { appLink } from "../config/appUrl";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
@@ -24,7 +25,8 @@ export type CaregiverAccountEventKind =
   | "bgcheck_consent_received" | "bgcheck_clear" | "bgcheck_review" | "bgcheck_on_hold" | "bgcheck_disputed"
   | "bgcheck_canceled" | "bgcheck_action_required" | "bgcheck_not_approved" | "bgcheck_document_required"
   | "bgcheck_link_expired" | "bgcheck_revoked"
-  | "mvr_clear" | "mvr_review" | "mvr_not_approved" | "transport_badge_earned" | "transport_badge_lost"
+  | "mvr_clear" | "mvr_review" | "mvr_not_approved" | "mvr_consent_requested" | "transport_badge_earned" | "transport_badge_lost"
+  | "membership_renewal_upcoming" | "renewal_refresh_reminder" | "renewal_refresh_locked"
   | "payouts_enabled" | "payouts_disabled"
   | "now_bookable";
 
@@ -94,8 +96,9 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       const charged = ctx.amount ? ` — $${ctx.amount} was charged` : "";
       return {
         title: "Membership renewed",
-        body: `Your annual membership renewed${charged}. Authorize this year's background check refresh to stay bookable. ${dash}`,
-        text: `Your annual membership renewed${charged}. Authorize this year's background check refresh to stay bookable — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
+        // Founder, 2026-10-06: paid first, still cleared, 7 days to authorize (the daily sweep reminds on day 5, locks on day 7).
+        body: `Your annual membership renewed${charged}. Authorize this year's background check within 7 days to stay bookable. ${dash}`,
+        text: `Your annual membership renewed${charged}. Authorize this year's background check within 7 days to stay bookable — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
       };
     }
     case "membership_payment_failed": {
@@ -183,6 +186,35 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
 
     case "mvr_clear":
       return { title: "Driving record cleared", body: "Your driving record check came back clear." };
+    case "membership_renewal_upcoming":
+      // 7 days before the anniversary — caregivers only (founder, 2026-10-06). Nothing to click if the card is fine.
+      return {
+        title: "Your membership renews soon",
+        body: `Your Evia membership renews on ${ctx.date ?? "your renewal date"} for ${ctx.amount ?? caregiverAnnualDisplay()}. If your card has changed, update it under Manage. ${membership}`,
+        text: `Your Evia membership renews on ${ctx.date ?? "your renewal date"} for ${ctx.amount ?? caregiverAnnualDisplay()}. If your card has changed, reply MANAGE MEMBERSHIP for your Stripe billing link.`,
+      };
+    case "renewal_refresh_reminder":
+      return {
+        title: "Two days left to authorize this year's background check",
+        body: `Authorize this year's background check within two days to stay bookable. ${dash}`,
+        text: `Two days left to authorize this year's background check — it takes about 2 minutes: ${ctx.consentUrl ?? dash}`,
+      };
+    case "renewal_refresh_locked":
+      return {
+        title: "Background check refresh not authorized",
+        body: `This year's background check wasn't authorized in time, so you're paused until it clears. Authorize it now. ${dash}`,
+        text: `This year's background check wasn't authorized in time, so you're paused until it clears. Authorize it now — about 2 minutes: ${ctx.consentUrl ?? dash}`,
+      };
+
+    case "mvr_consent_requested":
+      // Later MVR, consent-first (2026-10-06): Transportation added after the criminal check cleared.
+      // Bell → the Settings card's Authorize button; text → the consent page itself (same words as the cards).
+      return {
+        title: "Authorize your driving record check",
+        body: `Transportation is on your profile. Authorize the driving record check to start it — included in your membership. ${membership}`,
+        text: `Transportation is on your profile. Authorize the driving record check to start it — included in your membership. It takes about 2 minutes: ${ctx.consentUrl ?? membership}`,
+      };
+
     case "mvr_review":
       // ONE text for the review: what happened and what it affects — no follow-up
       // promise (founder, 2026-10-04); the TEAM is alerted instead (admin_alerts
@@ -275,7 +307,7 @@ export async function notifyCaregiverAccountEvent(
   // button, by text). Token TTL 14 days — the caregiver may act on it days later.
   const ctx: CaregiverAccountEventContext = { ...(opts.ctx ?? {}) };
   let phoneForLink: string | undefined;
-  if ((kind === "membership_paid" || kind === "membership_renewed" || kind === "bgcheck_link_expired" || kind === "bgcheck_revoked") && !ctx.consentUrl) {
+  if ((kind === "membership_paid" || kind === "membership_renewed" || kind === "bgcheck_link_expired" || kind === "bgcheck_revoked" || kind === "mvr_consent_requested" || kind === "renewal_refresh_reminder" || kind === "renewal_refresh_locked") && !ctx.consentUrl) {
     // The check is part of the membership: no consent link while it is inactive
     // (the consent function refuses it anyway — backgroundCheckConsent.ts, 2026-10-04).
     let membershipActive = true;

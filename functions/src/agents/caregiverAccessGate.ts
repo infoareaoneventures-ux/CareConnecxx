@@ -33,8 +33,10 @@ type Cg = Record<string, unknown> | null | undefined;
 // useCaregiverGate.tsx:89
 export function isCaregiverMembershipActive(cg: Cg): boolean {
   if (!cg) return false;
-  return cg.membershipStatus === "active" || cg.membershipStatus === "trialing"
-    || (!cg.membershipStatus && cg.membershipPaid === true);
+  // Stripe's retry state (past_due / payment_failed) still counts as active (founder, 2026-10-06: no lock while Stripe is retrying — the lock lands when Stripe gives up and cancels); canceled / unpaid / inactive do not.
+  const s = cg.membershipStatus;
+  return s === "active" || s === "trialing" || s === "past_due" || s === "payment_failed"
+    || (!s && cg.membershipPaid === true);
 }
 
 // useCaregiverGate.tsx:90

@@ -755,7 +755,7 @@ export const AdminCaregiverManager: React.FC = () => {
                           <button
                             onClick={async () => {
                               const membershipApproved = (selected as any).membershipPaid === true;
-                              const patch: any = { backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved', ...(membershipApproved ? { onboardingStatus: 'profile_complete' } : {}) };
+                              const patch: any = { backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved', approvedAt: new Date().toISOString(), ...(membershipApproved ? { onboardingStatus: 'profile_complete' } : {}) }; // approvedAt: the card's "Cleared <date>" when no Checkr date exists (2026-10-06)
                               await adminService.updateCaregiver(selected.uid, patch);
                               setSelected(p => p ? { ...p, ...patch } as any : p);
                               advanceCaregiverOnboarding(selected.uid, 'bgcheck');
@@ -901,6 +901,23 @@ export const AdminCaregiverManager: React.FC = () => {
                       <p className="text-xs text-slate-500 mt-3">
                         Transportation: {adminTransportationLine(s)}.
                       </p>
+                    </div>
+                  );
+                })()}
+
+                {/* Renewal refresh (2026-10-06): paid first, 7 days to authorize, cleared while it runs */}
+                {(selected as any).renewalRefresh?.status && (() => {
+                  const rr = (selected as any).renewalRefresh as { status: string; requestedAt?: string; deadlineAt?: string; authorizedAt?: string; lockedAt?: string };
+                  const when = (v?: string) => (v ? new Date(v).toLocaleDateString() : '');
+                  const label = rr.status === 'awaiting_consent' ? `Awaiting authorization (asked ${when(rr.requestedAt)}, due ${when(rr.deadlineAt)})`
+                    : rr.status === 'running' ? `Running (authorized ${when(rr.authorizedAt)})`
+                    : rr.status === 'cleared' ? 'Cleared this cycle'
+                    : rr.status === 'review' ? 'Came back for review'
+                    : rr.status === 'locked' ? `Not authorized in time — locked ${when(rr.lockedAt)}`
+                    : rr.status;
+                  return (
+                    <div className="bg-slate-50 rounded-xl p-4 text-xs text-slate-600">
+                      <span className="font-semibold text-slate-700">Renewal refresh:</span> {label}
                     </div>
                   );
                 })()}

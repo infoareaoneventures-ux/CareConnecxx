@@ -152,7 +152,7 @@ export default function BgcheckConsentPage() {
               <p className="text-xs text-blue-100/80 leading-relaxed">
                 In connection with your application to provide care services through Evia, a consumer report
                 (background check) will be obtained about you from <strong>Checkr, Inc.</strong>, a consumer reporting
-                agency (FCRA § 604). This report may include criminal history and other public record information, and
+                agency (FCRA § 604). This report may include criminal history and other public record information and, if you offer Transportation, your motor vehicle (driving) record, and
                 will be used solely to evaluate your eligibility to join the platform.
               </p>
             </div>

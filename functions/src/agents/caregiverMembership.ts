@@ -25,6 +25,7 @@ const db = admin.firestore();
 
 export type DriverCard =
   | "approved"             // isApprovedDriver — Transportation live (no documents behind it, 2026-10-06)
+  | "consent"              // Transportation added after the clear — authorize the MVR-only check (2026-10-06)
   | "not_approved"         // the admin's final decision after a review (2026-10-04)
   | "review"               // MVR came back consider / suspended — the team is alerted (2026-10-04)
   | "pending"              // MVR running
@@ -34,7 +35,7 @@ export type DriverCard =
 /** The section's background-check card states — the dashboard card's rules (CaregiverOnboardingDashboard). */
 export type BgCard =
   | { kind: "consent"; renewal: boolean }
-  | { kind: "cleared"; clearedOn: string | null }
+  | { kind: "cleared"; clearedOn: string | null; refreshRunning?: boolean }
   | { kind: "in_progress"; detail: "under_review" | "on_hold" | "running" }
   | { kind: "not_approved" }
   | { kind: "not_started" };
@@ -64,7 +65,8 @@ export const WHATS_INCLUDED = [
 /** The driver card's states, title + body as the page prints them. */
 export const DRIVER_CARD_TEXT: Record<DriverCard, string> = {
   // AccountStandingSection.DRIVER_CARD_TEXT, "title — body". States what happened, never an approval (founder, 2026-10-04).
-  approved: "Driving record check cleared. Families who need a driver can see Transportation on your profile.",
+  approved: "Driving record check cleared.",
+  consent: "Authorize your driving record check. Transportation is on your profile. Authorize the driving record check to start it, included in your membership. Reply AUTHORIZE for the link.",
   not_approved: "Driving record not approved. Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.",
   review: "Driving record under review. Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
   pending: "Driving record check in progress. Finish the short form in the email you received. Transportation shows on your profile once it clears.",
@@ -99,6 +101,7 @@ export function driverCardFor(cg: Record<string, unknown>, badgeLive: boolean): 
   void badgeLive;
   if (cg.mvrStatus === "not_approved") return "not_approved";
   if (cg.mvrStatus === "consider" || cg.mvrStatus === "suspended") return "review";
+  if (cg.mvrStatus === "awaiting_consent") return "consent";
   const mvrPending = cg.mvrStatus === "pending" || (cg.mvrPaid === true && !isApprovedDriver);
   if (mvrPending) return "pending";
   const services = (Array.isArray(cg.services) ? cg.services : Array.isArray(cg.skills) ? cg.skills : []) as string[];
@@ -113,7 +116,7 @@ export function bgCardFor(cg: Record<string, unknown>): BgCard {
   if (needsConsent) return { kind: "consent", renewal: bg.consentReason === "renewal" };
   if (cg.verificationStatus === "rejected") return { kind: "not_approved" };
   const cleared = cg.verified === true || cg.backgroundCheckStatus === "clear" || cg.backgroundCheckComplete === true;
-  if (cleared) return { kind: "cleared", clearedOn: shortDate(bg.checkrClearedAt ?? bg.completedAt ?? cg.approvedAt) };
+  if (cleared) return { kind: "cleared", clearedOn: shortDate(bg.checkrClearedAt ?? bg.completedAt ?? cg.approvedAt), refreshRunning: (cg.renewalRefresh as Record<string, unknown> | undefined)?.status === "running" };
   if (bg.checkrCandidateId) {
     return { kind: "in_progress", detail: bg.status === "consider" ? "under_review" : bg.status === "suspended" ? "on_hold" : "running" };
   }
@@ -155,10 +158,10 @@ export function bgCardText(tab: MembershipTab): string {
   switch (b.kind) {
     case "consent":
       return b.renewal
-        ? "Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check refresh to stay bookable. Reply AUTHORIZE for the link."
+        ? "Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check within 7 days to stay bookable. Reply AUTHORIZE for the link."
         : "Background check: Start your background check. Authorize your background check, it takes about 2 minutes. Your SSN and date of birth go directly to Checkr, never to Evia. Reply AUTHORIZE for the link.";
     case "cleared":
-      return `Background check: Cleared${b.clearedOn ? ` ${b.clearedOn}` : ""}${renewal}`;
+      return `Background check: Cleared${b.clearedOn ? ` ${b.clearedOn}` : ""}${b.refreshRunning ? ", this year's refresh is running" : ""}${renewal}`;
     case "in_progress":
       return b.detail === "under_review"
         ? "Background check: Under review. This is normal, our team will follow up if anything is needed."
@@ -175,9 +178,8 @@ export function bgCardText(tab: MembershipTab): string {
 /** The driver card, one line, with the cleared date the page adds. */
 export function driverCardText(tab: MembershipTab): string {
   const base = DRIVER_CARD_TEXT[tab.driver];
-  if (tab.mvrClearedOn && tab.driver === "approved") {
-    return base.replace("Driving record check cleared. ", `Driving record check cleared on ${tab.mvrClearedOn}. `);
-  }
+  // Cleared = title + date only, like the background-check line (founder, 2026-10-06).
+  if (tab.mvrClearedOn && tab.driver === "approved") return `Driving record check: Cleared ${tab.mvrClearedOn}`;
   return base;
 }
 
@@ -258,7 +260,8 @@ export async function sendMembershipActivateLink(phone: string, chatId: string, 
 /** The background-check card's Authorize button: the texted FCRA consent page (the same consent function the site's modal calls). */
 export async function sendAuthorizeLink(phone: string, chatId: string, caregiverId: string): Promise<boolean> {
   const tab = await loadMembershipTab(caregiverId);
-  if (tab.bg.kind !== "consent") {
+  // Authorize = the background check waiting on consent OR the later driving-record check (2026-10-06).
+  if (tab.bg.kind !== "consent" && tab.driver !== "consent") {
     await sendMessage(chatId, `Nothing to authorize right now — ${bgCardText(tab).replace(/^Background check: /, "your background check is: ")}`);
     return false;
   }

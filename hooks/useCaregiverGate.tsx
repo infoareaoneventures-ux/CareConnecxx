@@ -23,7 +23,9 @@ export type BlockReason = 'membership' | 'background' | 'transport' | null;
 
 /** hooks/useAccessGates-style membership rule for caregivers: active / trialing, or legacy membershipPaid with no status. */
 export function caregiverMembershipActive(p: any): boolean {
-  return p?.membershipStatus === 'active' || p?.membershipStatus === 'trialing' || (!p?.membershipStatus && p?.membershipPaid === true);
+  // Stripe's retry state (past_due / payment_failed) still counts as active (founder, 2026-10-06: no lock while Stripe is retrying — the lock lands when Stripe gives up and cancels); canceled / unpaid / inactive do not. Same rule in utils/caregiverEligibility.ts, agents/caregiverAccessGate.ts and firestore.rules.
+  const s = p?.membershipStatus;
+  return s === 'active' || s === 'trialing' || s === 'past_due' || s === 'payment_failed' || (!s && p?.membershipPaid === true);
 }
 
 /**

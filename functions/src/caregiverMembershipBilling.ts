@@ -140,19 +140,23 @@ export async function markCaregiverMembershipPaid(uid: string, details: Membersh
     : (Array.isArray(cg.skills) ? (cg.skills as string[]) : []);
   const includeMVR = services.includes("Transportation");
 
+  // A caregiver with a prior check (renewal / rejoin after a lapse) stays cleared while this
+  // year's refresh runs (founder, 2026-10-06) — only a first payment submits for review.
+  const bgNow = (cg.backgroundCheckData ?? {}) as Record<string, unknown>;
+  const firstCheck = !(bgNow.checkrCandidateId || cg.backgroundCheckStatus === "clear" || cg.verified === true);
   await cgRef.set({
     uid,
     ...(details.phone ? { phone: details.phone } : {}),
     membershipPaid: true,
-    ...(includeMVR ? { mvrPaid: true } : {}),
-    verificationStatus: "submitted",
+    mvrPaid: includeMVR, // written to match the live profile, never left sticky (2026-10-06)
+    ...(firstCheck ? { verificationStatus: "submitted" } : {}),
     ...(details.subscriptionId ? { membershipSubscriptionId: details.subscriptionId } : {}),
   }, { merge: true });
 
   await db().collection("users").doc(uid).set({
     membershipStatus: "active",
     subscriptionActive: true,
-    verificationStatus: "submitted",
+    ...(firstCheck ? { verificationStatus: "submitted" } : {}),
     ...(details.subscriptionId ? { subscriptionId: details.subscriptionId } : {}),
     ...(details.customerId ? { stripeCustomerId: details.customerId } : {}),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),

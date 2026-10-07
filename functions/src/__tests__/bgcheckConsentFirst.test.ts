@@ -102,16 +102,25 @@ describe("requestBackgroundCheckConsent", () => {
     expect(hoisted.adds).toHaveLength(0);
   });
 
-  it("renewal: resets the verified state, keeps the candidate, and asks again even after a clear check", async () => {
+  it("renewal (2026-10-06): asks again WITHOUT resetting the clear — still cleared and working, 7 days to authorize", async () => {
     hoisted.docs.set("caregivers/cg1", {
-      phone: "+15550001111", verified: true, backgroundCheckStatus: "clear", backgroundCheckComplete: true,
+      phone: "+15550001111", verified: true, backgroundCheckStatus: "clear", backgroundCheckComplete: true, verificationStatus: "approved",
       backgroundCheckData: { checkrCandidateId: "cand", invitationStatus: "completed", status: "clear", checkrClearedAt: "2025-09-01" },
     });
     expect(await requestBackgroundCheckConsent("cg1", "renewal")).toBe(true);
     const cg = hoisted.docs.get("caregivers/cg1");
-    expect(cg).toMatchObject({ verified: false, backgroundCheckStatus: "pending", backgroundCheckComplete: false, verificationStatus: "submitted" });
-    expect(cg.backgroundCheckData).toMatchObject({ checkrCandidateId: "cand", consentRequired: true, consentReason: "renewal", invitationStatus: "awaiting_consent", checkrClearedAt: null });
+    expect(cg).toMatchObject({ verified: true, backgroundCheckStatus: "clear", backgroundCheckComplete: true, verificationStatus: "approved" });
+    expect(cg.backgroundCheckData).toMatchObject({ checkrCandidateId: "cand", consentRequired: true, consentReason: "renewal", invitationStatus: "awaiting_consent", checkrClearedAt: "2025-09-01" });
+    expect(cg.renewalRefresh).toMatchObject({ status: "awaiting_consent" });
+    expect(cg.renewalRefresh.deadlineAt > cg.renewalRefresh.requestedAt).toBe(true);
     expect(hoisted.texts).toHaveLength(0);
+  });
+  it("renewal: one refresh per cycle — a refresh already waiting/running, or a clear younger than ~10 months (rejoin after a lapse), is not asked again", async () => {
+    hoisted.docs.set("caregivers/cg1", { phone: "+15550001111", verified: true, backgroundCheckData: { checkrCandidateId: "cand", status: "clear", checkrClearedAt: "2025-09-01" }, renewalRefresh: { status: "running" } });
+    expect(await requestBackgroundCheckConsent("cg1", "renewal")).toBe(false);
+    const recent = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString();
+    hoisted.docs.set("caregivers/cg2", { phone: "+15550002222", verified: true, backgroundCheckData: { checkrCandidateId: "cand2", status: "clear", checkrClearedAt: recent } });
+    expect(await requestBackgroundCheckConsent("cg2", "renewal")).toBe(false);
   });
 });
 
@@ -147,8 +156,9 @@ describe("stripe webhook → consent, never a direct Checkr call", () => {
       data: { object: { id: "in_1", subscription: "sub_1", billing_reason: "subscription_cycle", amount_paid: 6999, currency: "usd", period_start: 1, period_end: 2 } },
     }), makeRes());
     const cg = hoisted.docs.get("caregivers/cg1");
-    expect(cg.verified).toBe(false);
+    expect(cg.verified).toBe(true); // 2026-10-06: still cleared while this year's refresh is asked
     expect(cg.backgroundCheckData).toMatchObject({ checkrCandidateId: "cand", consentRequired: true, consentReason: "renewal" });
+    expect(cg.renewalRefresh).toMatchObject({ status: "awaiting_consent" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

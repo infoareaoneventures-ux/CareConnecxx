@@ -81,8 +81,10 @@ export function isCaregiverMembershipActiveForFamilies(
   caregiver: CaregiverEligibilityFields | undefined | null,
 ): boolean {
   if (!caregiver) return false;
-  if (caregiver.membershipStatus === 'active' || caregiver.membershipStatus === 'trialing') return true;
-  return !caregiver.membershipStatus && caregiver.membershipPaid === true;
+  // Stripe's retry state (past_due / payment_failed) still counts as active (founder, 2026-10-06: no lock while Stripe is retrying — the lock lands when Stripe gives up and cancels); canceled / unpaid / inactive do not.
+  const s = caregiver.membershipStatus;
+  if (s === 'active' || s === 'trialing' || s === 'past_due' || s === 'payment_failed') return true;
+  return !s && caregiver.membershipPaid === true;
 }
 
 /** What a family is told, everywhere, when a caregiver isn't cleared yet — never the reason. */

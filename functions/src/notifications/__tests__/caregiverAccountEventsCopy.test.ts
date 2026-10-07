@@ -22,7 +22,7 @@ describe("caregiverAccountEventCopy — membership notices", () => {
     expect(paid.body).toContain("https://eviacares.com/caregiver/dashboard");
     expect(paid.text).toBe("Your membership is active. Next: authorize your background check — it takes about 2 minutes: https://eviacares.com/bgcheck?t=tok");
     const renewed = caregiverAccountEventCopy("membership_renewed", { amount: "69.99", consentUrl: "https://eviacares.com/bgcheck?t=tok" });
-    expect(renewed.text).toBe("Your annual membership renewed — $69.99 was charged. Authorize this year's background check refresh to stay bookable — it takes about 2 minutes: https://eviacares.com/bgcheck?t=tok");
+    expect(renewed.text).toBe("Your annual membership renewed — $69.99 was charged. Authorize this year's background check within 7 days to stay bookable — it takes about 2 minutes: https://eviacares.com/bgcheck?t=tok");
     // No link available → the text falls back to the dashboard rather than nothing.
     expect(caregiverAccountEventCopy("membership_paid").text).toContain("/caregiver/dashboard");
   });

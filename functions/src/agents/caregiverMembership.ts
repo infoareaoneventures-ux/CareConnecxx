@@ -24,8 +24,7 @@ import { DEFAULT_TZ } from "../utils/scheduledTime";
 const db = admin.firestore();
 
 export type DriverCard =
-  | "approved"             // isApprovedDriver AND Transportation is live on the profile (documents approved too)
-  | "cleared_docs_pending" // isApprovedDriver but a document is still missing / unapproved
+  | "approved"             // isApprovedDriver — Transportation live (no documents behind it, 2026-10-06)
   | "not_approved"         // the admin's final decision after a review (2026-10-04)
   | "review"               // MVR came back consider / suspended — the team is alerted (2026-10-04)
   | "pending"              // MVR running
@@ -66,12 +65,11 @@ export const WHATS_INCLUDED = [
 export const DRIVER_CARD_TEXT: Record<DriverCard, string> = {
   // AccountStandingSection.DRIVER_CARD_TEXT, "title — body". States what happened, never an approval (founder, 2026-10-04).
   approved: "Driving record check cleared. Families who need a driver can see Transportation on your profile.",
-  cleared_docs_pending: "Driving record check cleared. Transportation shows on your profile once your driver's license, insurance and registration are approved.",
   not_approved: "Driving record not approved. Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.",
   review: "Driving record under review. Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
-  pending: "Driving record check in progress. Your Motor Vehicle Report is in progress. Transportation shows on your profile once it clears and your documents are approved.",
+  pending: "Driving record check in progress. Your Motor Vehicle Report is in progress. Transportation shows on your profile once it clears.",
   included: "Driving record check included. Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears, at no extra charge.",
-  offer: "Offer transportation? Add Transportation to your services and upload your driver's license, insurance, and registration. Your membership already covers the driving record check.",
+  offer: "Offer transportation? Add Transportation to your services. Your membership already covers the driving record check. Reply SERVICES to add it.",
 };
 
 const toDate = (v: unknown): Date | null => {
@@ -97,7 +95,8 @@ export const shortDate = (v: unknown): string | null => {
 /** The driver card's branch for this record (page conditions, in the page's order). */
 export function driverCardFor(cg: Record<string, unknown>, badgeLive: boolean): DriverCard {
   const isApprovedDriver = cg.isApprovedDriver === true;
-  if (isApprovedDriver) return badgeLive ? "approved" : "cleared_docs_pending";
+  if (isApprovedDriver) return "approved"; // Transportation live — no documents behind it (2026-10-06)
+  void badgeLive;
   if (cg.mvrStatus === "not_approved") return "not_approved";
   if (cg.mvrStatus === "consider" || cg.mvrStatus === "suspended") return "review";
   const mvrPending = cg.mvrStatus === "pending" || (cg.mvrPaid === true && !isApprovedDriver);
@@ -176,7 +175,7 @@ export function bgCardText(tab: MembershipTab): string {
 /** The driver card, one line, with the cleared date the page adds. */
 export function driverCardText(tab: MembershipTab): string {
   const base = DRIVER_CARD_TEXT[tab.driver];
-  if (tab.mvrClearedOn && (tab.driver === "approved" || tab.driver === "cleared_docs_pending")) {
+  if (tab.mvrClearedOn && tab.driver === "approved") {
     return base.replace("Driving record check cleared. ", `Driving record check cleared on ${tab.mvrClearedOn}. `);
   }
   return base;

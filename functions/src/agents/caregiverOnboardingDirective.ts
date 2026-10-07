@@ -24,7 +24,6 @@
 import {
   CAREGIVER_REQUIRED_FIELDS,
   missingRequiredFields,
-  offersTransportation,
   EXPERIENCE_BUCKETS,
   TRAVEL_RADIUS_OPTIONS,
   RATE_EXAMPLE,
@@ -47,7 +46,6 @@ export const CAREGIVER_FIELD_LABEL: Record<string, string> = {
   availability:       "which days, and which parts of the day (mornings/afternoons/evenings/overnight)",
   specialties:        "the care services they offer — the website's eight, by name",
   yearsExperience:    `years of caregiving experience — one of: ${EXPERIENCE_BUCKETS.join(", ")}`,
-  transportDocuments: "their driver's license, vehicle insurance, and vehicle registration — ONLY because they offer transportation; sent through the upload link (send_onboarding_link with linkType caregiver_transport_docs), never typed",
   hourlyRate:         "their minimum hourly rate", // rate-range hint appended in the builder (live market data)
   serviceRadius:      `how far they're willing to travel — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles (most pick 10)`,
   email:              "their email address (used to set up their payout account)",
@@ -96,8 +94,7 @@ export function buildCaregiverOnboardingDirective(
     return CAREGIVER_FIELD_LABEL[field] ?? field;
   };
   const missing = missingRequiredFields("caregiver", data);
-  // transportDocuments only ever counts when they offer transportation.
-  const required = CAREGIVER_REQUIRED_FIELDS.filter((f) => f !== "transportDocuments" || offersTransportation(data));
+  const required = [...CAREGIVER_REQUIRED_FIELDS];
   const known   = required.filter((f) => !missing.includes(f));
 
   const knownLines = known.length
@@ -109,11 +106,11 @@ export function buildCaregiverOnboardingDirective(
     : "  (all required fields collected)";
 
   const nextField = missing[0];
-  const nextIsUpload = nextField === "profilePhoto" || nextField === "transportDocuments";
+  const nextIsUpload = nextField === "profilePhoto";
   const action = missing.length
     ? (nextIsUpload
       ? `The next item is an UPLOAD (${nextField}). Call send_onboarding_link this turn with linkType ` +
-        `${nextField === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"}, then send ONE short line ` +
+        `caregiver_photo, then send ONE short line ` +
         `saying what to upload and that the link is right below — the tool sends the link itself. Do NOT ask the next ` +
         `question yet; you'll continue automatically once the upload lands.`
       : `Ask for the SINGLE most natural next missing item — the FIRST one listed, in this exact order. ` +
@@ -161,7 +158,6 @@ export function buildCaregiverOnboardingDirective(
     `  - ECHO WHAT YOU SAVED: right after they give availability, reflect back the days and parts of day you understood in plain words before the next question ("Perfect — Monday and Wednesday mornings and afternoons, got it. …"). If you got it wrong they'll correct you and you just re-save. Don't ask them to confirm and don't make it its own message — fold it into your acknowledgment.`,
     `  - CARE SERVICES (the specialties field): the website's step is "What services do you offer? Senior Care — select all that apply" with EXACTLY these eight — no others: ${SERVICE_LABELS.join(", ")}. Ask it the same way: one short line in your own voice ("Next, what services do you offer? Pick as many as apply:") followed by the eight, one per line, by name — no numbers, no explanation of why:\n${serviceMenuText()}\n    They can answer by name or in their own words — "bathing" is Personal Care, "cooking" is Meal Preparation, "I drive people to appointments" is Transportation, "all of them" is all eight. Save exactly what they said as specialties; the save maps it onto the eight and tells you what landed, what fit nothing, and what was medical. READ BACK the names that saved in your acknowledgment ("Got it — Personal Care and Meal Preparation."). Anything that fits none of the eight (hospice, wound care, gardening…) is NOT saved: say it isn't one of the services on the list so you've left it off, then show the list again. Medical care is never a service here — administering or giving medication, injections, insulin, dosages, wound care, vitals: say caregivers here don't do that, and that the closest service is Medication Reminders Only (reminding when it's time, not giving them) — ask if that fits BEFORE saving it. A vague answer ("I help around the house") → ask which of the names they mean rather than guess. More services named later are ADDED automatically; a correction ("not meal prep, I meant personal care") is saved as specialties with {"replace": [the corrected list]}. NO follow-up sweep: once they've answered, move on — never ask "do you also do X?" and never pressure them to claim a service.`,
     `  - EXPERIENCE: the website's picker has five choices — ask with them in the line ("How many years of caregiving experience do you have — under 1, 1–2, 3–5, 5–10, or 10+?"). Save yearsExperience as one of the buckets (${EXPERIENCE_BUCKETS.join(" / ")}) — a number like "6 years" is fine, it's bucketed on save. Their story often answers this: if they said it, save it, don't re-ask.`,
-    `  - TRANSPORTATION DOCUMENTS: only if their services include transportation. When it's the next item, call send_onboarding_link (caregiver_transport_docs) and say they'll need their driver's license, vehicle insurance, and vehicle registration — all three, our team reviews them after the background and driving-record checks. Never collect these by describing them in chat.`,
     `  - RATE: their MINIMUM hourly rate as a dollar amount — any amount above $0 is theirs to set, no floor and no ceiling (the website's box shows "e.g. ${RATE_EXAMPLE}" as the example). Zero or no number is not saved — ask again. Share the typical range (${rateRangeText}) if they seem unsure, but the number is THEIR call - never pressure them up or down, and never call any amount too low or too high.`,
     `  - TRAVEL DISTANCE: the website's picker has five choices — ask with them in the line ("How far are you willing to travel for a visit — ${TRAVEL_RADIUS_OPTIONS.join(", ")} miles?"). Save the one they pick (a number in between rounds to the nearest). If they have no preference, save 10 (the usual pick) and say so.`,
     `  - EMAIL: mention it's used to set up their payout account (it's usually already on file from signup — then never ask).`,

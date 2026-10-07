@@ -11,9 +11,9 @@ import { backgroundCheckState, driverCardFor, DRIVER_CARD_TEXT } from './Account
 
 describe('driverCardFor', () => {
   const docsOk = { services: ['Transportation'], documents: { driversLicense: { status: 'approved' }, insurance: { status: 'approved' }, registration: { status: 'approved' } } };
-  it('cleared with Transportation live, cleared with documents pending', () => {
+  it('cleared = Transportation live', () => {
     expect(driverCardFor({ ...docsOk, isApprovedDriver: true }, true)).toBe('approved');
-    expect(driverCardFor({ ...docsOk, isApprovedDriver: true }, false)).toBe('cleared_docs_pending');
+    expect(driverCardFor({ ...docsOk, isApprovedDriver: true }, false)).toBe('approved'); // no documents behind Transportation (2026-10-06)
   });
   it("the admin's Revoked (consider) and a suspended report read as under review — the dashboard's state the card was missing", () => {
     expect(driverCardFor({ ...docsOk, isApprovedDriver: false, mvrStatus: 'consider' }, false)).toBe('review');

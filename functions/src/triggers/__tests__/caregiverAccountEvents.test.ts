@@ -44,7 +44,6 @@ import { caregiverAccountTransitions, onCaregiverAccountChange } from "../caregi
 import { notifyCaregiverAccountEvent } from "../../notifications/caregiverAccountEvents";
 
 const kinds = (b: any, a: any) => caregiverAccountTransitions(b, a).map((e) => e.kind);
-const APPROVED_DOCS = { driversLicense: { status: "approved" }, insurance: { status: "approved" }, registration: { status: "approved" } };
 const TRANSPORT = { services: ["Transportation"] };
 
 beforeEach(() => hoisted.reset());
@@ -81,42 +80,24 @@ describe("caregiverAccountTransitions — one event per progress-bar change", ()
     expect(kinds({ onboardingStatus: "profile_complete", verificationStatus: "approved" }, { onboardingStatus: "profile_complete", verificationStatus: "approved", bio: "x" })).toEqual([]);
   });
 
-  it("transport: each document decision, all approved, driving record, badge earned / lost", () => {
-    expect(caregiverAccountTransitions({ ...TRANSPORT, documents: { driversLicense: { status: "pending" } } }, { ...TRANSPORT, documents: { driversLicense: { status: "approved" } } }))
-      .toEqual([{ kind: "transport_doc_approved", ctx: { docLabel: "Driver's License" } }]);
-    expect(caregiverAccountTransitions({ ...TRANSPORT, documents: { insurance: { status: "pending" } } }, { ...TRANSPORT, documents: { insurance: { status: "rejected", notes: "blurry" } } }))
-      .toEqual([{ kind: "transport_doc_rejected", ctx: { docLabel: "Vehicle Insurance", docNotes: "blurry" } }]);
-    // Third document approved, MVR not yet cleared → "all approved, badge turns on when the MVR clears"
-    expect(kinds({ ...TRANSPORT, documents: { ...APPROVED_DOCS, registration: { status: "pending" } } }, { ...TRANSPORT, documents: APPROVED_DOCS }))
-      .toEqual(["transport_doc_approved", "transport_docs_all_approved"]);
-    // MVR clears with documents already approved → driving record line + badge earned
-    expect(kinds({ ...TRANSPORT, documents: APPROVED_DOCS, mvrStatus: "pending" }, { ...TRANSPORT, documents: APPROVED_DOCS, mvrStatus: "clear", isApprovedDriver: true }))
+  it("transport (MVR only, 2026-10-06): driving record decisions, badge earned / lost", () => {
+    // MVR clears for a caregiver offering Transportation → driving record line + badge earned
+    expect(kinds({ ...TRANSPORT, mvrStatus: "pending" }, { ...TRANSPORT, mvrStatus: "clear", isApprovedDriver: true }))
       .toEqual(["mvr_clear", "transport_badge_earned"]);
     // Bundled criminal+MVR clear: the background-check line covers it, no separate driving-record line
     expect(kinds({ backgroundCheckStatus: "pending" }, { backgroundCheckStatus: "clear", mvrStatus: "clear", isApprovedDriver: true })).toEqual(["bgcheck_clear"]);
     expect(kinds({ mvrStatus: "pending" }, { mvrStatus: "consider", isApprovedDriver: false })).toEqual(["mvr_review"]);
     expect(kinds({ mvrStatus: "consider", isApprovedDriver: false }, { mvrStatus: "not_approved", isApprovedDriver: false })).toContain("mvr_not_approved");
-    // Renewal slot (2026-10-05): uploaded beside the live document → received; approved swaps it in (not a fresh "document approved"); rejected carries the reason.
-    const live = { url: "old", status: "approved", expirationDate: "2026-12-31" };
-    expect(kinds({ documents: { insurance: live } }, { documents: { insurance: { ...live, renewal: { url: "new", status: "pending" } } } })).toContain("transport_renewal_received");
-    expect(kinds({ documents: { insurance: { ...live, renewal: { url: "new", status: "pending" } } } }, { documents: { insurance: { ...live, renewal: { url: "new", status: "rejected", notes: "blurry" } } } })).toContain("transport_renewal_rejected");
-    const swapped = kinds({ documents: { insurance: { ...live, renewal: { url: "new", status: "pending" } } } }, { documents: { insurance: { url: "new", status: "approved", expirationDate: "2027-12-31" } } });
-    expect(swapped).toContain("transport_renewal_approved");
-    expect(swapped).not.toContain("transport_doc_approved");
-    // Expired while a renewal waits → badge lost names the document and flags the pending renewal (no upload ask).
-    const okDocs = { driversLicense: { url: "u", status: "approved", expirationDate: "2099-01-01" }, registration: { url: "u", status: "approved", expirationDate: "2099-01-01" } };
-    const lostEvents = caregiverAccountTransitions(
-      { documents: { ...okDocs, insurance: { url: "u", status: "approved", expirationDate: "2099-01-01", renewal: { url: "n", status: "pending" } } }, services: ["Transportation"], isApprovedDriver: true },
-      { documents: { ...okDocs, insurance: { url: "u", status: "approved", expirationDate: "2020-01-01", renewal: { url: "n", status: "pending" } } }, services: ["Transportation"], isApprovedDriver: true },
-    );
-    const lost = lostEvents.find((e: { kind: string }) => e.kind === "transport_badge_lost");
-    expect(lost?.ctx).toMatchObject({ reason: "expired", docs: ["Vehicle Insurance"], renewalPending: true });
+    // Badge earned when she adds Transportation with the record already clear
+    expect(kinds({ isApprovedDriver: true }, { ...TRANSPORT, isApprovedDriver: true })).toEqual(["transport_badge_earned"]);
     // Badge lost: admin revoked the driving record
-    expect(caregiverAccountTransitions({ ...TRANSPORT, documents: APPROVED_DOCS, isApprovedDriver: true }, { ...TRANSPORT, documents: APPROVED_DOCS, isApprovedDriver: false }))
+    expect(caregiverAccountTransitions({ ...TRANSPORT, isApprovedDriver: true }, { ...TRANSPORT, isApprovedDriver: false }))
       .toEqual([{ kind: "transport_badge_lost", ctx: { reason: "mvr" } }]);
-    // Badge lost: a document expired
-    expect(caregiverAccountTransitions({ ...TRANSPORT, documents: APPROVED_DOCS, isApprovedDriver: true }, { ...TRANSPORT, documents: { ...APPROVED_DOCS, insurance: { status: "approved", expirationDate: "2020-01-01" } }, isApprovedDriver: true }))
-      .toMatchObject([{ kind: "transport_badge_lost", ctx: { reason: "expired", renewalPending: false } }]); // + docs: the expired labels (2026-10-05)
+    // Badge lost: she removed the service
+    expect(caregiverAccountTransitions({ ...TRANSPORT, isApprovedDriver: true }, { services: ["Companionship"], isApprovedDriver: true }))
+      .toEqual([{ kind: "transport_badge_lost", ctx: { reason: "services" } }]);
+    // Documents no longer exist: a legacy documents map changing is not an event
+    expect(kinds({ ...TRANSPORT, isApprovedDriver: true, documents: { insurance: { status: "pending" } } }, { ...TRANSPORT, isApprovedDriver: true, documents: { insurance: { status: "approved" } } })).toEqual([]);
   });
 
   it("payouts enabled / disabled", () => {

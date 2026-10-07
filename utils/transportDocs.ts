@@ -1,55 +1,29 @@
-const TRANSPORT_DOC_TYPES = ['driversLicense', 'insurance', 'registration'] as const;
+// Transportation on a caregiver's profile (founder, 2026-10-06): the driving record
+// (MVR) through Checkr is the ONLY check behind it — no license / insurance /
+// registration uploads, no admin document review, no expiry tracking. Those were
+// removed with this rule; the caregiver's own attestation when she adds
+// Transportation (own vehicle, valid license, registration and insurance) is the
+// statement of responsibility, and the family is told transport is hers to provide.
+//
+// `hasValidTransportDocs` keeps its historical name because every family-side
+// surface and Evia's matching read it; it now means "Transportation is live".
 
-function parseLocalDate(s: string): Date {
-  const [y, m, d] = s.split('-');
-  return new Date(+y, +m - 1, +d);
-}
+export type TransportProfile = { services?: string[]; skills?: string[]; isApprovedDriver?: boolean; hasValidTransportDocs?: boolean; mvrStatus?: unknown };
 
-function offersTransportation(p: any): boolean {
-  const services: string[] = [...(p.skills || []), ...(p.services || [])];
+export function offersTransportation(p: TransportProfile | null | undefined): boolean {
+  const services: string[] = [...((p?.skills as string[]) || []), ...((p?.services as string[]) || [])];
   return services.includes('Transportation');
 }
 
 /**
- * True when the caregiver offers Transportation AND all three transport
- * documents are admin-approved and unexpired. This is the DOCUMENTS half of
- * the transportation badge only — see hasValidTransportDocs for the badge.
- */
-export type TransportProfile = { documents?: any; services?: string[]; skills?: string[]; isApprovedDriver?: boolean; hasValidTransportDocs?: boolean };
-
-export function transportDocsApproved(profile: TransportProfile | null | undefined): boolean {
-  if (!profile) return false;
-  const p = profile as any;
-  if (!offersTransportation(p)) return false;
-  const docs = p.documents;
-  if (!docs) return false;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const isValid = (doc: any) =>
-    doc?.status === 'approved' &&
-    (!doc.expirationDate || parseLocalDate(doc.expirationDate) >= today);
-  return TRANSPORT_DOC_TYPES.every(t => isValid(docs[t]));
-}
-
-/**
- * The transportation badge families see. Returns true only when the caregiver
- * offers Transportation, all three transport documents are approved and
- * unexpired, AND the driving record (MVR) check cleared (`isApprovedDriver`,
- * written only by the Checkr webhook). Founder, 2026-09-25: the flat
- * membership covers the MVR, and neither the documents nor the MVR alone earns
- * the badge. Single source of truth — no stored field needed.
+ * Transportation live for families: the caregiver offers Transportation AND her
+ * driving record cleared (`isApprovedDriver`, written by the Checkr webhook or the
+ * admin's Approved). Public profile copies carry the precomputed flag — trust it.
  */
 export function hasValidTransportDocs(profile: TransportProfile | null | undefined): boolean {
   if (!profile) return false;
-  // publicCaregiverProfiles (what every FAMILY-side surface reads — Find Caregivers,
-  // the dashboard cards, the profile modal) never carry the documents: the server
-  // computes this same rule from the private record and writes only the resulting
-  // true/false (functions/src/publicCaregiverProfile.ts). Trust it when present;
-  // without it (2026-09-30) the documents lookup below answered "no" for everyone
-  // and the Transportation filter always returned 0.
   if (typeof profile.hasValidTransportDocs === 'boolean') return profile.hasValidTransportDocs;
-  if (!transportDocsApproved(profile)) return false;
-  return (profile as any).isApprovedDriver === true;
+  return offersTransportation(profile) && profile.isApprovedDriver === true;
 }
 
 /** JobBoard.tsx / caregiverAccessGate.ts: a job includes driving when it lists Transportation or requires Driving. */

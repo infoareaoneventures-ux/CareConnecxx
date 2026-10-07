@@ -56,34 +56,29 @@ describe("caregiverAccountEventCopy — membership notices", () => {
     expect(r.text).toBeUndefined();
   });
 
-  it("background / documents / payouts notices: the bell links to the page, the text finishes by text", () => {
+  it("background / driving record / payouts notices: the bell links to the page, the text finishes by text", () => {
     const url = "https://eviacares.com/bgcheck?t=tok";
     expect(caregiverAccountEventCopy("bgcheck_link_expired", { consentUrl: url }).text).toBe(`Your background check link expired. Authorize again and a fresh one comes right back — it takes about 2 minutes: ${url}`);
     expect(caregiverAccountEventCopy("bgcheck_revoked", { consentUrl: url }).text).toBe(`Your background check approval was removed. Authorize a new check to get booked again — it takes about 2 minutes: ${url}`);
-    expect(caregiverAccountEventCopy("transport_doc_rejected", { docLabel: "Vehicle Insurance", docNotes: "blurry" }).text).toBe("Your Vehicle Insurance was rejected: blurry. Please re-upload to continue — your upload link is right below.");
-    expect(caregiverAccountEventCopy("transport_doc_expiring", { docs: ["Driver's License"] }).text).toBe("Driver's License will expire within 30 days. Upload the renewal any time — you stay on Transportation while we review it — your upload link is right below.");
-    expect(caregiverAccountEventCopy("transport_doc_expiring", { docs: ["Driver's License"], window: 7 }).text).toContain("within 7 days");
-    // Renewal slot (2026-10-05): received = bell only; approved names the new expiry; rejected carries the reason + the upload link.
-    expect(caregiverAccountEventCopy("transport_renewal_received", { docLabel: "Vehicle Insurance" }).text).toBe("");
-    expect(caregiverAccountEventCopy("transport_renewal_approved", { docLabel: "Vehicle Insurance", newExpiry: "2027-12-31" }).text).toContain("good through 2027-12-31");
-    expect(caregiverAccountEventCopy("transport_renewal_rejected", { docLabel: "Vehicle Insurance", docNotes: "blurry" }).text).toContain("blurry");
-    expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "expired", docs: ["Vehicle Insurance"] }).text).toBe("Vehicle Insurance expired, so Transportation is off your profile. Upload the renewal to restore it — your upload link is right below.");
-    expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "documents" }).text).toContain("your upload link is right below");
-    // Expired while the renewal is under review: no upload ask (2026-10-05).
-    expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "expired", docs: ["Vehicle Insurance"], renewalPending: true }).text).toBe("Vehicle Insurance expired before we finished reviewing your renewal, so Transportation is off your profile until it's approved. Nothing more to upload.");
     // The driving-record review is ONE text (mvr_review); the removal is bell-only, and no notice says "Reply SETTINGS".
     expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "mvr" }).text).toBe("");
     expect(caregiverAccountEventCopy("mvr_review").text).toBe("Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.");
     expect(caregiverAccountEventCopy("mvr_review").text).not.toMatch(/our team will/i);
     expect(caregiverAccountEventCopy("mvr_not_approved").text).toBe("Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.");
-    for (const k of ["transport_doc_rejected", "transport_doc_expiring", "transport_badge_lost", "mvr_review"] as const) {
-      for (const reason of ["expired", "documents", "mvr", "services", undefined] as const) {
-        expect(caregiverAccountEventCopy(k, { reason, docLabel: "Vehicle Insurance" }).text ?? "").not.toMatch(/SETTINGS|badge/i);
+    // MVR only (2026-10-06): Transportation is the service + the driving record; no documents, no upload links.
+    expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "services" }).text).toBe("");
+    expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "services" }).body).toContain("You removed Transportation");
+    expect(caregiverAccountEventCopy("transport_badge_lost", { reason: "mvr" }).body).toContain("driving record");
+    for (const k of ["transport_badge_lost", "transport_badge_earned", "mvr_review", "mvr_not_approved", "mvr_clear"] as const) {
+      for (const reason of ["mvr", "services", undefined] as const) {
+        const c = caregiverAccountEventCopy(k, { reason });
+        expect(c.text ?? "").not.toMatch(/SETTINGS|badge/i); // the SMS never says Reply SETTINGS; the bell may point at the page
+        expect((c.text ?? "") + " " + c.body).not.toMatch(/document|upload/i);
       }
     }
     expect(caregiverAccountEventCopy("payouts_enabled").text).toBe("Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.");
     expect(caregiverAccountEventCopy("payouts_disabled").text).toBe("Your payout account needs attention — reply SETUP for your Stripe link to finish.");
-    for (const k of ["bgcheck_link_expired", "bgcheck_revoked", "transport_doc_rejected", "transport_doc_expiring", "payouts_enabled", "payouts_disabled"] as const) {
+    for (const k of ["bgcheck_link_expired", "bgcheck_revoked", "payouts_enabled", "payouts_disabled"] as const) {
       expect(caregiverAccountEventCopy(k, { consentUrl: url }).body).toContain("eviacares.com");
       expect(caregiverAccountEventCopy(k, { consentUrl: url }).text).not.toContain("dashboard");
     }

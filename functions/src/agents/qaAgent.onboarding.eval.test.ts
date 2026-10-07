@@ -214,8 +214,8 @@ vi.mock("../mcp/server", () => {
       // minimum length on Evia's side (2026-09-26) — the website keeps its own
       // separate 150-char minimum independently.
       const contract = await import("./onboardingContract");
-      if (role === "caregiver" && (fieldName === "profilePhoto" || fieldName === "transportDocuments" || fieldName === "transportDocs")) {
-        return { ok: true, saved: false, invalidValue: true, guidance: `${fieldName} is never typed — call send_onboarding_link (${fieldName === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"}) instead.` };
+      if (role === "caregiver" && fieldName === "profilePhoto") {
+        return { ok: true, saved: false, invalidValue: true, guidance: `${fieldName} is never typed — call send_onboarding_link (caregiver_photo) instead.` };
       }
       const normalized = contract.normalizeOnboardingFieldValue(fieldName, fieldValue);
       if (role === "caregiver" && fieldName === "yearsExperience" && !contract.EXPERIENCE_BUCKETS.includes(normalized as string)) {

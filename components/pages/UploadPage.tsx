@@ -3,21 +3,14 @@ import { useEviaPhone, eviaPhoneNow } from '../../lib/eviaPhone';
 import { useParams } from 'react-router-dom';
 import { functions } from '../../lib/firebase';
 
-// Evia's tokened upload page. Two kinds (2026-09-25, matching the caregiver
-// wizard): /upload/photo (the profile photo) and /upload/transport (the three
-// transportation documents — driver's license, vehicle insurance, vehicle
-// registration). Both write the same record the site's own pages write
-// (caregivers/{uid}.photo / documents.{type}) through v1-uploadOnboardingFile.
+// Evia's tokened upload page: /upload/photo (the profile photo) writes the same
+// record the site's own pages write (caregivers/{uid}.photo) through
+// v1-uploadOnboardingFile. /upload/transport is retired (2026-10-06): transport
+// documents are no longer collected — Transportation is the service plus the
+// cleared driving record (MVR).
 // The old certification upload (/upload/document) is gone — the site never had it.
 
 const MAX_BYTES  = 6 * 1024 * 1024; // must match uploadOnboardingFile server cap
-
-type TransportType = 'driversLicense' | 'insurance' | 'registration';
-const TRANSPORT_DOCS: { type: TransportType; label: string; desc: string }[] = [
-  { type: 'driversLicense', label: "Driver's License", desc: "Front of your valid driver's license" },
-  { type: 'insurance',      label: 'Vehicle Insurance',    desc: 'Current auto insurance showing active coverage' },
-  { type: 'registration',   label: 'Vehicle Registration', desc: 'Current vehicle registration document' },
-];
 
 const readAsDataURL = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -56,7 +49,7 @@ async function compressImage(file: File): Promise<{ base64: string; contentType:
   }
 }
 
-async function uploadFile(file: File, isPhoto: boolean, documentType?: TransportType): Promise<void> {
+async function uploadFile(file: File, isPhoto: boolean): Promise<void> {
   if (!functions) throw Object.assign(new Error('not connected'), { code: 'unavailable' });
   const token = new URLSearchParams(window.location.search).get('t') ?? '';
   if (!token) throw Object.assign(new Error('no token'), { code: 'unauthenticated' });
@@ -75,7 +68,7 @@ async function uploadFile(file: File, isPhoto: boolean, documentType?: Transport
   // AND advances onboarding. The page has no Firebase Auth session, so a
   // direct Storage write would be rejected by storage.rules.
   const upload = functions.httpsCallable('v1-uploadOnboardingFile');
-  await upload({ token, dataBase64: payload.base64, contentType: payload.contentType, fileName: file.name, ...(documentType ? { documentType } : {}) });
+  await upload({ token, dataBase64: payload.base64, contentType: payload.contentType, fileName: file.name });
 }
 
 function errorCode(err: unknown): string {
@@ -200,88 +193,21 @@ function PhotoUpload() {
 }
 
 // ── Transportation documents (three slots on one page) ───────────────────────
-function TransportUpload() {
-  const [status, setStatus] = useState<Record<TransportType, 'idle' | 'uploading' | 'done' | 'error'>>({
-    driversLicense: 'idle', insurance: 'idle', registration: 'idle',
-  });
-  const [expired, setExpired] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const refs: Record<TransportType, React.RefObject<HTMLInputElement>> = {
-    driversLicense: useRef<HTMLInputElement>(null),
-    insurance: useRef<HTMLInputElement>(null),
-    registration: useRef<HTMLInputElement>(null),
-  };
-
-  const handleFile = async (type: TransportType, file: File) => {
-    setStatus((s) => ({ ...s, [type]: 'uploading' }));
-    setErrorMsg(null);
-    try {
-      await uploadFile(file, false, type);
-      setStatus((s) => ({ ...s, [type]: 'done' }));
-    } catch (err) {
-      const code = errorCode(err);
-      if (code === 'unauthenticated') { setExpired(true); return; }
-      console.error('uploadOnboardingFile failed:', err);
-      if (code === 'invalid-argument' && (err as Error)?.message) setErrorMsg((err as Error).message);
-      setStatus((s) => ({ ...s, [type]: 'error' }));
-    }
-  };
-
-  const allDone = TRANSPORT_DOCS.every(({ type }) => status[type] === 'done');
-  if (expired) return <ExpiredScreen />;
-  if (allDone) return <DoneScreen title="All three documents uploaded!" />;
-
-  return (
-    <Shell>
-      <div className="text-center space-y-2">
-        <div className="w-12 h-12 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center mx-auto">
-          <span className="text-2xl">🚗</span>
-        </div>
-        <h1 className="text-white text-xl font-semibold">Your transportation documents</h1>
-        <p className="text-white/50 text-sm">
-          All three are required to offer transportation. Our team reviews them after your background and driving-record checks.
-        </p>
-      </div>
-
-      <div className="w-full max-w-sm space-y-3">
-        {TRANSPORT_DOCS.map(({ type, label, desc }) => (
-          <div key={type} className={`border rounded-2xl p-4 flex items-center gap-3 ${status[type] === 'done' ? 'border-green-500/40 bg-green-500/10' : 'border-white/10 bg-white/5'}`}>
-            <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-semibold">{label}</p>
-              <p className="text-white/40 text-xs">{desc}</p>
-            </div>
-            {status[type] === 'done' ? (
-              <span className="text-green-400 text-xs font-medium shrink-0">✓ Uploaded</span>
-            ) : status[type] === 'uploading' ? (
-              <Spinner label="" />
-            ) : (
-              <button onClick={() => refs[type].current?.click()} className={`shrink-0 text-xs font-semibold px-3 py-2 rounded-xl transition-all active:scale-95 ${status[type] === 'error' ? 'bg-red-500/20 text-red-300' : 'bg-blue-600 text-white hover:bg-blue-500'}`}>
-                {status[type] === 'error' ? 'Retry' : 'Upload'}
-              </button>
-            )}
-            <input
-              ref={refs[type]}
-              type="file"
-              accept="image/*,.pdf"
-              className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(type, f); }}
-            />
-          </div>
-        ))}
-      </div>
-
-      {errorMsg && <p className="text-red-400 text-sm">{errorMsg}</p>}
-
-      <a href={eviaPhoneNow() ? `sms:${eviaPhoneNow()}` : '/'} className="text-white/30 text-xs underline underline-offset-2">
-        Return to conversation
-      </a>
-    </Shell>
-  );
-}
+// Transport documents were retired (founder, 2026-10-06): the driving record through
+// Checkr is the only check behind Transportation. Old texted links land here.
+const RetiredScreen: React.FC = () => (
+  <Shell>
+    <p className="text-white text-xl font-semibold">No documents needed</p>
+    <p className="text-white/60 text-sm mt-2 max-w-xs">
+      Transportation on Evia no longer asks for a license, insurance or registration upload. Your driving record check, included in your membership, is all that is needed.
+    </p>
+    <a href={eviaPhoneNow() ? `sms:${eviaPhoneNow()}` : '/'} className="mt-6 text-blue-400 text-sm underline underline-offset-2">Questions? Text Evia</a>
+  </Shell>
+);
 
 export default function UploadPage() {
   useEviaPhone(); // loads the server's number (config/public) before any screen below renders a Text Evia link
   const { type } = useParams<{ type: string }>();
-  if (type === 'transport') return <TransportUpload />;
+  if (type === 'transport') return <RetiredScreen />;
   return <PhotoUpload />;
 }

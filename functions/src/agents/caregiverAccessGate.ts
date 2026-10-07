@@ -7,9 +7,9 @@
 //                    membershipPaid === true)                       → "Activate membership"
 //   2. background  — verified === true, or backgroundCheckStatus === "clear",
 //                    or backgroundCheckComplete === true             → "Go to dashboard"
-//   3. transport   — only for TRANSPORT jobs: all three transport documents
+//   3. transport   — only for TRANSPORT jobs: the driving record (MVR) cleared
 //                    approved AND the driving-record (MVR) check cleared
-//                    (utils/transportDocs.ts hasValidTransportDocs)  → "Upload documents"
+//                    (utils/transportDocs.ts hasValidTransportDocs)  → Settings
 // plus `gateMembership` (membership only) for lower-stakes actions — messaging.
 //
 // Over SMS the "modal" is one text with the modal's own copy, followed by the
@@ -20,7 +20,6 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { appLink } from "../config/appUrl";
-import { hasValidTransportDocs as transportDocsApprovedForMatching } from "./caregiverMatchScoring";
 
 const db = admin.firestore();
 
@@ -53,10 +52,10 @@ export function caregiverOffersTransportation(cg: Cg): boolean {
   return services.includes("Transportation");
 }
 
-// utils/transportDocs.ts hasValidTransportDocs: documents approved + MVR cleared.
+// utils/transportDocs.ts hasValidTransportDocs: Transportation live = driving record cleared (no documents, 2026-10-06).
 export function caregiverTransportDocsValid(cg: Cg): boolean {
   if (!cg) return false;
-  return transportDocsApprovedForMatching(cg) && cg.isApprovedDriver === true;
+  return cg.isApprovedDriver === true;
 }
 
 // JobBoard.tsx: `job.careTypes?.includes('Transportation') || job.requirements?.includes('Driving')`
@@ -101,8 +100,8 @@ export function caregiverGateText(reason: CaregiverGateReason): string {
     case "background":
       return "Background check required — your background check must be cleared before you can take this action.";
     case "transport":
-      // 2026-10-04: the badge = documents approved AND driving record cleared; one line with the site's modal + Jobs button.
-      return "Set Up Transportation — this job includes driving. To apply, offer Transportation on your profile, upload your driver's license, insurance and registration for review, and complete the driving record check. See where you stand under Settings › Membership & verification:";
+      // 2026-10-06: Transportation offered + driving record cleared (no documents); one line with the site's modal + Jobs button.
+      return "Set Up Transportation — this job includes driving. To apply, offer Transportation on your profile and complete the driving record check, included in your membership. See where you stand under Settings › Membership & verification:";
   }
 }
 
@@ -122,13 +121,8 @@ export async function textCaregiverGateBlock(
       if ((await sendOnboardingLink(phone, "caregiver_membership")).success) return;
     } else if (reason === "background") {
       if ((await sendOnboardingLink(phone, "caregiver_background_check")).success) return;
-    } else {
-      // Documents still missing → the upload page; all three in but not yet
-      // approved (or MVR pending) → the settings page, where the site's CTA goes.
-      const docs = (caregiver.documents ?? {}) as Record<string, unknown>;
-      const allUploaded = ["driversLicense", "insurance", "registration"].every((t) => !!docs[t]);
-      if (!allUploaded && (await sendOnboardingLink(phone, "caregiver_transport_docs")).success) return;
     }
+    // transport → the Settings page link below (Membership & verification holds the driving record).
   } catch (err) {
     console.error("caregiverAccessGate: link mint failed, falling back to the site page", err);
   }

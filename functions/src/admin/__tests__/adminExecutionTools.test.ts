@@ -132,14 +132,12 @@ import { logAudit } from "../../observability/auditLog";
 // Callables are typed as Firebase HttpsFunction but the vi.mock replaces onCall
 // with (fn) => fn, so they are direct (data, context) => Promise functions at
 // runtime. Cast to any so TypeScript doesn’t check the Request/Response overload.
-import { admin_review_caregiver_exception as _arc, admin_review_document as _ard } from "../adminCaregiverActions";
+import { admin_review_caregiver_exception as _arc } from "../adminCaregiverActions";
 import { admin_suspend_user as _asu, admin_restore_user as _aru } from "../adminUserActions";
 import { admin_resolve_dispute as _ardp } from "../adminSupportActions";
 import { admin_retry_agent_action as _araa } from "../adminLedgerActions";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const admin_review_caregiver_exception = _arc as any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const admin_review_document = _ard as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const admin_suspend_user = _asu as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -210,20 +208,6 @@ describe("admin_review_caregiver_exception — AE8 bookability gate", () => {
     );
     expect(res.bookable).toBe(true);
     expect(hoisted.docs.get("caregivers/cg-2").status).toBe("active");
-  });
-});
-
-describe("admin_review_document", () => {
-  it("approves a specific document", async () => {
-    hoisted.docs.set("caregivers/cg-1", {
-      documents: { driversLicense: { url: "u", status: "pending" } },
-    });
-    const res: any = await admin_review_document(
-      { caregiverId: "cg-1", documentType: "driversLicense", decision: "approve" },
-      adminCtx,
-    );
-    expect(res.status).toBe("approved");
-    expect(hoisted.docs.get("caregivers/cg-1")["documents.driversLicense.status"]).toBe("approved");
   });
 });
 

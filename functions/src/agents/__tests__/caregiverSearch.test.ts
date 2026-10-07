@@ -17,7 +17,7 @@ function baseCard(overrides: Partial<CaregiverCard> = {}): CaregiverCard {
     backgroundCheckStatus: "clear", experience: 6, city: "San Jose",
     stateCode: "CA", zipCode: "95134", distance: 3, hourlyRate: 25,
     skills: ["Companionship", "Transportation"], languages: ["English"],
-    hasReliableTransportation: false, isFavorite: false,
+    transportationLive: false, isFavorite: false,
     state: "request_interview", actions: ["message", "request_interview"],
     profileUrl: "https://eviacares.com/p/cg1",
     ...overrides,
@@ -26,20 +26,20 @@ function baseCard(overrides: Partial<CaregiverCard> = {}): CaregiverCard {
 
 describe("caregiverCardText — Transportation gated on the badge", () => {
   it("hides Transportation from the skills line until the badge is earned", () => {
-    const text = caregiverCardText(baseCard({ hasReliableTransportation: false }));
+    const text = caregiverCardText(baseCard({ transportationLive: false }));
     expect(text).toContain("Companionship");
     expect(text).not.toContain("Transportation");
   });
 
   it("shows Transportation once the badge is earned", () => {
-    const text = caregiverCardText(baseCard({ hasReliableTransportation: true }));
+    const text = caregiverCardText(baseCard({ transportationLive: true }));
     expect(text).toContain("Companionship, Transportation");
   });
 
   it("never lets Transportation count toward the +N overflow when hidden", () => {
     const text = caregiverCardText(baseCard({
       skills: ["Companionship", "Meal Preparation", "Transportation"],
-      hasReliableTransportation: false,
+      transportationLive: false,
     }));
     // Only 2 REAL skills remain (Transportation dropped) — no "+N" should appear.
     expect(text).toContain("Companionship, Meal Preparation");

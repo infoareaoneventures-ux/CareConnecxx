@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   ChevronLeft, Star, Loader2,
   CheckCircle, MapPin, Car, AlertCircle
@@ -6,10 +6,9 @@ import {
 import { AvatarUpload } from './ui/AvatarUpload';
 import { Badge } from './ui/Badge';
 import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
-import { hasValidTransportDocs } from '../utils/transportDocs';
-import { uploadDocument, DocumentType } from '../services/documentUpload';
 import { dbService, authService } from '../services/api';
 import { useCareConnex } from '../context/CareConnexContext';
+import { useSearchParams } from 'react-router-dom';
 import { db } from '../lib/firebase';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilityService';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
@@ -53,16 +52,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const [editAvailability, setEditAvailability] = useState<Record<string, string[]>>({});
   const [editActiveDays, setEditActiveDays] = useState<string[]>([]);
   const [editActiveTimes, setEditActiveTimes] = useState<string[]>([]);
-
-  const [transportUploading, setTransportUploading] = useState<Record<string, boolean>>({});
-  const licenseRef = useRef<HTMLInputElement>(null);
-  const insuranceRef = useRef<HTMLInputElement>(null);
-  const registrationRef = useRef<HTMLInputElement>(null);
-  const transportFileRefs: Record<string, React.RefObject<HTMLInputElement>> = {
-    driversLicense: licenseRef,
-    insurance: insuranceRef,
-    registration: registrationRef,
-  };
 
   const currentUser = authService.getCurrentUser();
   const [hasEngagement, setHasEngagement] = useState(false);
@@ -150,25 +139,20 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
     }
   }, [currentUser, onShowToast]);
 
-  const handleTransportUpload = useCallback(async (type: DocumentType, file: File) => {
-    if (!currentUser?.uid) return;
-    setTransportUploading(prev => ({ ...prev, [type]: true }));
-    try {
-      const doc = await uploadDocument(currentUser.uid, file, type);
-      setProfile(prev => ({
-        ...prev,
-        documents: { ...(prev as any).documents, [type]: doc },
-      }));
-      onShowToast('Document uploaded — pending admin review', 'success');
-    } catch (err: any) {
-      onShowToast(err?.message || 'Upload failed. Please try again.', 'error');
-    } finally {
-      setTransportUploading(prev => ({ ...prev, [type]: false }));
-    }
-  }, [currentUser?.uid, onShowToast]);
-
   // Derived display values from profile
   const displayServices: string[] = profile.services || profile.skills || editServices;
+
+  // ?edit=services (Set Up Transportation → "Add Transportation to my services", and the Settings
+  // driver card's link, 2026-10-06): open the Care Services editor once the record is loaded.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (loading || searchParams.get('edit') !== 'services') return;
+    setEditServices(displayServices);
+    setEditingSection('services');
+    setSearchParams({}, { replace: true });
+    setTimeout(() => document.getElementById('care-services')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
   // Location is always derived from the city/state saved in Account Settings — never from free-text input
   const displayLocation: string = (profile.city && profile.state)
     ? `${profile.city}, ${profile.state}`
@@ -182,7 +166,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const displayRateTwo: string = String(profile.rateFor2Seniors || profile.rateForTwo || editRateTwo || '');
   const displayRateThree: string = String(profile.rateFor3PlusSeniors || profile.rateForThree || editRateThree || '');
   const displayMaxClients: string = String(profile.maxClients || editMaxClients);
-  const hasTransportation: boolean = hasValidTransportDocs(profile as any);
 
   const SectionActions = ({ section, onEdit, onSave }: { section: string; onEdit: () => void; onSave: () => void }) =>
     editingSection === section ? (
@@ -256,12 +239,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 </span>
               )}
               {displayRate && <span className="font-semibold text-primary-600">${displayRate}/hr</span>}
-              {hasTransportation && (
-                <span className="flex items-center gap-1 text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full font-medium">
-                  <Car className="w-3 h-3" />
-                  Transportation
-                </span>
-              )}
             </div>
           </div>
         </div>
@@ -330,25 +307,13 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
             </div>
 
             {/* Care Services */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-5">
+            <div id="care-services" className="bg-white border border-slate-200 rounded-2xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold text-slate-900">Care Services</h3>
                 <SectionActions
                   section="services"
                   onEdit={() => { setEditServices(displayServices); setEditingSection('services'); }}
                   onSave={() => {
-                    // Adding Transportation requires the three documents up front
-                    // (founder, 2026-09-25) — same rule the signup wizard enforces.
-                    // Uploads land on the record immediately, so the section below
-                    // is live while editing and Save waits on it.
-                    if (editServices.includes('Transportation')) {
-                      const docs = (profile as any).documents || {};
-                      const missing = (['driversLicense', 'insurance', 'registration'] as const).filter(k => !docs[k]?.url);
-                      if (missing.length) {
-                        onShowToast("Upload your driver's license, vehicle insurance, and registration below to offer transportation", 'error');
-                        return;
-                      }
-                    }
                     saveSection({
                       services: editServices,
                       skills: editServices,
@@ -391,99 +356,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
               )}
             </div>
 
-            {/* Transport Documents — only rows that need action; section hidden when badge is active.
-                While the services editor has Transportation checked, the section shows at once
-                so the caregiver can upload before Save (which requires all three). */}
-            {(() => {
-              const servicesForDocs = editingSection === 'services' ? editServices : displayServices;
-              if (!servicesForDocs.includes('Transportation') || hasTransportation) return null;
-              const TRANSPORT_DOCS_LIST = [
-                { type: 'driversLicense' as DocumentType, label: "Driver's License" },
-                { type: 'insurance' as DocumentType, label: 'Vehicle Insurance' },
-                { type: 'registration' as DocumentType, label: 'Vehicle Registration' },
-              ] as { type: DocumentType; label: string }[];
-              const actionableRows = TRANSPORT_DOCS_LIST.map(({ type, label }) => {
-                const doc = (profile as any).documents?.[type];
-                const rawStatus: string = doc?.status || 'missing';
-                const isExpired = rawStatus === 'approved' && doc?.expirationDate
-                  ? (() => { const [y, m, d] = doc.expirationDate.split('-'); const e = new Date(+y, +m - 1, +d); const today = new Date(); today.setHours(0,0,0,0); return e < today; })()
-                  : false;
-                const status = isExpired ? 'expired' : rawStatus;
-                const needsAction = status === 'missing' || status === 'rejected' || status === 'expired';
-                return needsAction ? { type, label, status, doc } : null;
-              }).filter(Boolean) as { type: DocumentType; label: string; status: string; doc: any }[];
-
-              if (actionableRows.length === 0) return null;
-              return (
-                <div className="bg-white border border-slate-200 rounded-2xl p-5">
-                  <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-3">
-                    <Car className="w-4 h-4 text-primary-600" />
-                    Transportation Documents
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">Required</span>
-                  </h3>
-                  {actionableRows.some(r => r.status === 'missing') && (
-                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-3 leading-relaxed">
-                      To offer transportation, upload all three documents. Our team approves them after your background and driving record checks come back — families see your transportation badge only once everything is cleared.
-                    </p>
-                  )}
-                  <div className="space-y-2">
-                    {actionableRows.map(({ type, label, status, doc }) => {
-                      const isUploading = transportUploading[type];
-                      const actionLabel = status === 'expired' ? 'Replace' : status === 'rejected' ? 'Re-upload' : 'Upload';
-                      return (
-                        <div
-                          key={type}
-                          className={`border-2 rounded-xl p-3 flex items-center gap-3 ${
-                            status === 'rejected' || status === 'expired'
-                              ? 'border-red-300 bg-red-50'
-                              : 'border-slate-200 bg-white'
-                          }`}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-slate-800">{label}</p>
-                            {status === 'expired' && (
-                              <p className="text-xs text-red-500 mt-0.5 flex items-center gap-1">
-                                <AlertCircle className="w-3 h-3 shrink-0" /> Expired
-                              </p>
-                            )}
-                            {status === 'rejected' && doc?.rejectionReason && (
-                              <p className="text-xs text-red-600 mt-0.5 flex items-center gap-1">
-                                <AlertCircle className="w-3 h-3 shrink-0" /> {doc.rejectionReason}
-                              </p>
-                            )}
-                          </div>
-                          {isUploading ? (
-                            <Loader2 className="w-4 h-4 animate-spin text-primary-500 shrink-0" />
-                          ) : (
-                            <button
-                              onClick={() => transportFileRefs[type]?.current?.click()}
-                              className={`shrink-0 text-xs font-semibold border px-3 py-1.5 rounded-lg transition-colors ${
-                                status === 'rejected' || status === 'expired'
-                                  ? 'border-red-300 text-red-600 hover:bg-red-50'
-                                  : 'border-primary-200 text-primary-600 hover:bg-primary-50'
-                              }`}
-                            >
-                              {actionLabel}
-                            </button>
-                          )}
-                          <input
-                            ref={transportFileRefs[type]}
-                            type="file"
-                            accept="image/*,application/pdf"
-                            className="hidden"
-                            onChange={e => {
-                              const f = e.target.files?.[0];
-                              if (f) handleTransportUpload(type, f);
-                              e.target.value = '';
-                            }}
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
 
             {/* Rates */}
             <div className="bg-white border border-slate-200 rounded-2xl p-5">

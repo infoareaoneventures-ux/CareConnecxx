@@ -57,8 +57,8 @@ describe("shapeCaregiverProfilePage", () => {
       { label: "2 People", rate: 35, billed: 38.15 },
     ]);
     expect(page.ratesNote).toBe("Billed includes Evia's 9% service fee. The caregiver keeps 100% of their rate.");
-    expect(page.careServices).toEqual(["Companionship", "Transportation"]); // badge earned → Transportation shown
-    expect(page.badges.transportation).toBe(true);
+    expect(page.careServices).toEqual(["Companionship", "Transportation"]); // live → Transportation shown as a service
+    expect((page.badges as Record<string, unknown>).transportation).toBeUndefined(); // not a badge (2026-10-06)
     expect(page.weeklyAvailability).toEqual([{ day: "monday", blocks: ["morning", "afternoon"] }]);
     expect(page.background).toBe("CNA");
     expect(page.experience).toBe("5+ years experience");

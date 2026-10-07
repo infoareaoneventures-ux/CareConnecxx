@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, X } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
 import { submitAccountAction } from '../../services/accountActionQueue';
-import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver, CaregiverDocument, UserProfile } from '../../types';
@@ -12,11 +11,6 @@ import { AccountStandingSection } from './AccountStandingSection';
 
 const DELETE_RECAPTCHA_CONTAINER = 'caregiver-settings-delete-recaptcha';
 
-const TRANSPORT_DOCS: { type: DocumentType; label: string; desc: string }[] = [
-  { type: 'driversLicense', label: "Driver's License", desc: "Front of your valid driver's license" },
-  { type: 'insurance', label: 'Vehicle Insurance', desc: 'Current auto insurance showing active coverage' },
-  { type: 'registration', label: 'Vehicle Registration', desc: 'Current vehicle registration document' },
-];
 
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
@@ -37,7 +31,6 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [profile, setProfile] = useState<Caregiver | null>(null);
   const [prefs, setPrefs] = useState<Partial<UserProfile>>({});
   const [openAccount, setOpenAccount] = useState(true);
-  const [openTransport, setOpenTransport] = useState(false);
   const [openBlocked, setOpenBlocked] = useState(false);
   const [openStanding, setOpenStanding] = useState(true);
   // Pause folds like the other sections (founder, 2026-10-04); it opens by itself while paused.
@@ -98,18 +91,6 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [savingAddress, setSavingAddress] = useState(false);
   const [zipLookingUp, setZipLookingUp] = useState(false);
 
-  // Transport doc upload status
-  const [transportStatus, setTransportStatus] = useState<Record<string, 'idle' | 'uploading' | 'done' | 'approved' | 'expired' | 'rejected' | 'error'>>({
-    driversLicense: 'idle', insurance: 'idle', registration: 'idle',
-  });
-  const [transportExpiry, setTransportExpiry] = useState<Record<string, string | null>>({
-    driversLicense: null, insurance: null, registration: null,
-  });
-  const transportRefs: Record<string, React.RefObject<HTMLInputElement>> = {
-    driversLicense: useRef<HTMLInputElement>(null),
-    insurance: useRef<HTMLInputElement>(null),
-    registration: useRef<HTMLInputElement>(null),
-  };
 
   // The live record (2026-10-04): this page loaded the record once and never
   // listened, so a change made while it was open — the admin approving the
@@ -143,33 +124,6 @@ export const CaregiverAccountSettings: React.FC = () => {
         setState(cp.state || '');
         setPausedUntil(cp.pausedUntil || null);
         setPrefs({});
-        const docs = cp.documents || {};
-        const resolveDocStatus = (doc: any) => {
-          if (!doc?.url) return 'idle';
-          if (doc.status === 'approved') {
-            if (doc.expirationDate) {
-              const [y,m,d] = doc.expirationDate.split('-');
-              const today = new Date(); today.setHours(0,0,0,0);
-              if (new Date(+y, +m-1, +d) < today) return 'expired';
-            }
-            return 'approved';
-          }
-          if (doc.status === 'rejected') return 'rejected';
-          return 'done'; // uploaded, pending review
-        };
-        const newStatus: Record<string, 'idle' | 'uploading' | 'done' | 'approved' | 'expired' | 'rejected' | 'error'> = {
-          driversLicense: resolveDocStatus(docs.driversLicense),
-          insurance: resolveDocStatus(docs.insurance),
-          registration: resolveDocStatus(docs.registration),
-        };
-        setTransportStatus(newStatus);
-        const allApproved = Object.values(newStatus).every(s => s === 'approved');
-        setOpenTransport(!allApproved);
-        setTransportExpiry({
-          driversLicense: docs.driversLicense?.expirationDate || null,
-          insurance: docs.insurance?.expirationDate || null,
-          registration: docs.registration?.expirationDate || null,
-        });
       }
     })();
     return () => { active = false; };
@@ -276,26 +230,6 @@ export const CaregiverAccountSettings: React.FC = () => {
     finally { setSavingAddress(false); }
   };
 
-  const handleTransportUpload = useCallback(async (type: DocumentType, file: File) => {
-    if (!currentUser?.uid) return;
-    setTransportStatus(prev => ({ ...prev, [type]: 'uploading' }));
-    try {
-      const doc = await documentUploadService.uploadDocument(currentUser.uid, file, type);
-      if ((doc as any).asRenewal) {
-        // A renewal beside the live document: the card stays Approved, the renewal line shows.
-        setProfile(prev => prev ? { ...prev, documents: { ...(prev as any).documents, [type]: { ...((prev as any).documents?.[type] ?? {}), renewal: { url: doc.url, path: doc.path, uploadedAt: doc.uploadedAt, status: 'pending' } } } } as any : prev);
-        setTransportStatus(prev => ({ ...prev, [type]: 'approved' }));
-        addToast("Renewal uploaded — you stay on Transportation while we review it", 'success');
-      } else {
-        setProfile(prev => prev ? { ...prev, documents: { ...(prev as any).documents, [type]: doc } } as any : prev);
-        setTransportStatus(prev => ({ ...prev, [type]: 'done' }));
-        addToast('Document uploaded', 'success');
-      }
-    } catch {
-      setTransportStatus(prev => ({ ...prev, [type]: 'error' }));
-      addToast('Upload failed. Please try again.', 'error');
-    }
-  }, [currentUser?.uid, addToast]);
 
   const handleSendDeleteCode = async () => {
     const ok = await deleteReauth.sendCode();
@@ -351,22 +285,6 @@ export const CaregiverAccountSettings: React.FC = () => {
     deleteReauth.reset();
   };
 
-  // Driving record marked Not approved (admin's final decision): the documents section
-  // goes quiet — statuses stay factual, no Action needed, no re-upload ask (founder, 2026-10-05).
-  const drivingRecordNotApproved = (profile as any)?.mvrStatus === 'not_approved';
-  const docNoteOf = (type: string): string => String((profile as any)?.documents?.[type]?.notes ?? '').trim();
-  // Renewal slot (2026-10-05): a new file waiting beside the live approved document.
-  const renewalOf = (type: string): { status: 'pending' | 'rejected'; notes?: string } | null => {
-    const r = (profile as any)?.documents?.[type]?.renewal;
-    return r && (r.status === 'pending' || r.status === 'rejected') ? r : null;
-  };
-  // Days until an approved document's expiry — the Renew button is quiet beyond 30 days, highlighted inside.
-  const daysUntilExpiry = (type: string): number | null => {
-    const exp = transportExpiry[type]; if (!exp) return null;
-    const [y, m, d] = exp.split('-').map(Number);
-    const t = new Date(); t.setHours(0, 0, 0, 0);
-    return Math.round((new Date(y, m - 1, d).getTime() - t.getTime()) / 86400000);
-  };
   // Same rule as Evia's SETTINGS text (caregiverSettings.ts): the account's creation first.
   const memberSinceRaw = (profile as any)?.accountCreatedAt ?? (profile as any)?.createdAt;
   const memberSinceDate = !memberSinceRaw ? null
@@ -596,137 +514,6 @@ export const CaregiverAccountSettings: React.FC = () => {
         <Accordion open={openStanding} onToggle={() => setOpenStanding(o => !o)} title="Membership & verification">
           <AccountStandingSection profile={profile} addToast={addToast} onActivate={() => setMembershipModalOpen(true)} />
         </Accordion>
-
-        {/* ── Transportation Documents ── */}
-        {hasTransportation && (
-          <Accordion
-            open={openTransport}
-            onToggle={() => setOpenTransport(o => !o)}
-            title="Transportation Documents"
-            badge={!drivingRecordNotApproved && Object.values(transportStatus).some(s => s === 'expired' || s === 'rejected')
-              ? <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-semibold rounded-full">Action needed</span>
-              : undefined}
-          >
-            <div className="p-5 space-y-4">
-              <p className="text-sm text-slate-500">Required to offer Transportation. Keep these up to date.</p>
-
-              {drivingRecordNotApproved ? (
-                // The final decision lives on the driving record (Membership & verification above);
-                // the documents keep their real status below, with no action asked (founder, 2026-10-05).
-                <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-                  <p className="text-xs text-red-800">Your driving record check didn't meet the requirement for Transportation jobs, so Transportation is off your profile. Your documents stay on file.</p>
-                </div>
-              ) : (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                  <p className="text-xs text-amber-800">
-                    Our team reviews these before Transportation shows on your profile. Upload all three to avoid delays.
-                  </p>
-                </div>
-              )}
-
-              <div className="space-y-3">
-                {TRANSPORT_DOCS.map(({ type, label, desc }) => (
-                  <div key={type} className={`border-2 rounded-xl p-3 flex items-center gap-3 transition-all ${
-                    transportStatus[type] === 'approved' ? 'border-green-300 bg-green-50'
-                    : transportStatus[type] === 'expired' ? 'border-orange-300 bg-orange-50'
-                    : transportStatus[type] === 'rejected' ? 'border-red-300 bg-red-50'
-                    : transportStatus[type] === 'done' ? 'border-amber-300 bg-amber-50'
-                    : 'border-slate-200'
-                  }`}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-800">{label}</p>
-                      {/* The "what to upload" hint only while a file is wanted (founder, 2026-10-05). */}
-                      {!drivingRecordNotApproved && ['idle', 'rejected', 'expired', 'error'].includes(transportStatus[type]) && (
-                        <p className="text-xs text-slate-500">{desc}</p>
-                      )}
-                      {transportExpiry[type] && (
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          Expires {(() => { const [y,m,d] = transportExpiry[type]!.split('-'); return new Date(+y, +m-1, +d).toLocaleDateString(); })()}
-                        </p>
-                      )}
-                      {transportStatus[type] === 'rejected' && docNoteOf(type) && (
-                        // The admin's rejection reason, the same note Evia's text carries (2026-10-05).
-                        <p className="text-xs text-red-700 mt-0.5">Reason: {docNoteOf(type)}</p>
-                      )}
-                      {transportStatus[type] === 'approved' && renewalOf(type)?.status === 'pending' && (
-                        <p className="text-xs text-amber-700 mt-0.5">Renewal under review — you stay on Transportation meanwhile.</p>
-                      )}
-                      {transportStatus[type] === 'approved' && renewalOf(type)?.status === 'rejected' && (
-                        <p className="text-xs text-red-700 mt-0.5">Renewal rejected{renewalOf(type)?.notes ? `: ${renewalOf(type)?.notes}` : ''}. Your current document stays on file until it expires.</p>
-                      )}
-                    </div>
-                    {transportStatus[type] === 'approved' ? (
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="flex items-center gap-1 text-green-700 text-xs font-medium">
-                          <CheckCircle className="w-3.5 h-3.5" /> Approved
-                        </span>
-                        {/* Renew any time; asked from 30 days out (founder, 2026-10-05). Not while a renewal waits, not while the driving record is Not approved. */}
-                        {!drivingRecordNotApproved && renewalOf(type)?.status !== 'pending' && (
-                          (daysUntilExpiry(type) ?? 999) <= 30 ? (
-                            <button onClick={() => transportRefs[type].current?.click()}
-                              className="flex items-center gap-1 text-amber-800 text-xs font-semibold border border-amber-300 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100">
-                              <AlertCircle className="w-3.5 h-3.5" /> {renewalOf(type)?.status === 'rejected' ? 'Upload a new renewal' : 'Renew'}
-                            </button>
-                          ) : (
-                            <button onClick={() => transportRefs[type].current?.click()}
-                              className="text-xs text-slate-400 hover:text-primary-600 underline">
-                              Renew
-                            </button>
-                          )
-                        )}
-                      </div>
-                    ) : drivingRecordNotApproved && (transportStatus[type] === 'expired' || transportStatus[type] === 'rejected') ? (
-                      // status only while the driving record is Not approved — nothing is asked of her (founder, 2026-10-05)
-                      <span className={`flex items-center gap-1 text-xs font-medium shrink-0 ${transportStatus[type] === 'expired' ? 'text-orange-700' : 'text-red-700'}`}>
-                        <AlertCircle className="w-3.5 h-3.5" /> {transportStatus[type] === 'expired' ? 'Expired' : 'Rejected'}
-                      </span>
-                    ) : transportStatus[type] === 'expired' ? (
-                      <button onClick={() => transportRefs[type].current?.click()}
-                        className="flex items-center gap-1 text-orange-700 text-xs font-semibold border border-orange-300 px-3 py-1.5 rounded-lg hover:bg-orange-100 shrink-0">
-                        <AlertCircle className="w-3.5 h-3.5" /> Expired — Re-upload
-                      </button>
-                    ) : transportStatus[type] === 'rejected' ? (
-                      <button onClick={() => transportRefs[type].current?.click()}
-                        className="flex items-center gap-1 text-red-700 text-xs font-semibold border border-red-300 px-3 py-1.5 rounded-lg hover:bg-red-100 shrink-0">
-                        <AlertCircle className="w-3.5 h-3.5" /> Rejected — Re-upload
-                      </button>
-                    ) : transportStatus[type] === 'done' ? (
-                      <span className="flex items-center gap-1 text-amber-700 text-xs font-medium shrink-0">
-                        <Clock className="w-3.5 h-3.5" /> Under Review
-                      </span>
-                    ) : transportStatus[type] === 'uploading' ? (
-                      <Loader2 className="w-4 h-4 animate-spin text-primary-500 shrink-0" />
-                    ) : (
-                      <button
-                        onClick={() => transportRefs[type].current?.click()}
-                        className={`shrink-0 text-xs font-semibold border px-3 py-1.5 rounded-lg transition-colors ${
-                          transportStatus[type] === 'error'
-                            ? 'border-red-300 text-red-600 hover:bg-red-50'
-                            : 'border-primary-200 text-primary-600 hover:bg-primary-50'
-                        }`}
-                      >
-                        {transportStatus[type] === 'error' ? 'Retry' : 'Upload'}
-                      </button>
-                    )}
-                    <input
-                      ref={transportRefs[type]}
-                      type="file"
-                      accept="image/*,application/pdf"
-                      className="hidden"
-                      onChange={e => { const f = e.target.files?.[0]; if (f) handleTransportUpload(type, f); e.target.value = ''; }}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {!drivingRecordNotApproved && TRANSPORT_DOCS.filter(d => ['done', 'approved'].includes(transportStatus[d.type])).length < 3 && (
-                <p className="text-center text-xs text-amber-600 font-medium">
-                  All three documents are required to offer Transportation.
-                </p>
-              )}
-            </div>
-          </Accordion>
-        )}
 
         {/* ── Blocked Users ── */}
         <Accordion open={openBlocked} onToggle={() => setOpenBlocked(o => !o)} title="Blocked Users">

@@ -64,8 +64,9 @@ service firebase.storage {
     }
 
     // ==========================================
-    // CAREGIVER DOCUMENTS
-    // Driver's License, Insurance, Registration
+    // CAREGIVER FILES
+    // The profile photo (site wizard + Evia's uploadOnboardingFile). Transport
+    // documents were retired 2026-10-06 — comment-only change, same rule.
     // ==========================================
     match /caregivers/{userId}/documents/{documentId} {
       allow read: if isAuthenticated() && (

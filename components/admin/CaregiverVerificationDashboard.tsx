@@ -3,9 +3,9 @@ import { Shield, Check, X, Clock, User, FileText, AlertCircle, Search, ChevronRi
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { dbService, adminService } from '../../services/api';
-import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { Caregiver, CaregiverDocuments } from '../../types';
 import { isCaregiverBookable, UNBOOKABLE_BG_STATUSES } from '../../utils/caregiverEligibility';
+import { adminMvrLineApplies, adminMvrStatusFor, adminMvrTone, adminTransportationLine, adminMvrReportId, checkrReportUrl } from '../../utils/drivingRecordAdmin';
 
 interface VerificationQueueItem extends Omit<Caregiver, 'backgroundCheckData'> {
   submittedAt?: string;
@@ -79,8 +79,6 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
   const [searchTerm, setSearchTerm] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [transportDocExpiry, setTransportDocExpiry] = useState<Record<string, string>>({});
-  const [docActionProcessing, setDocActionProcessing] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     loadVerificationQueue();
@@ -211,32 +209,6 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
       onShowToast('Failed to request information', 'error');
     } finally {
       setIsProcessing(false);
-    }
-  };
-
-  const handleDocAction = async (
-    caregiverId: string,
-    docType: DocumentType,
-    action: 'approved' | 'rejected',
-  ) => {
-    const key = `${caregiverId}_${docType}`;
-    setDocActionProcessing(prev => ({ ...prev, [key]: true }));
-    try {
-      await documentUploadService.updateDocumentStatus(
-        caregiverId,
-        docType,
-        action,
-        undefined,
-        'admin',
-        transportDocExpiry[`${docType}`] || undefined,
-      );
-      onShowToast(`${docType} ${action}`, action === 'approved' ? 'success' : 'info');
-
-      loadVerificationQueue();
-    } catch {
-      onShowToast('Failed to update document status', 'error');
-    } finally {
-      setDocActionProcessing(prev => ({ ...prev, [key]: false }));
     }
   };
 
@@ -609,85 +581,30 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                   </div>
                 )}
 
-                {/* Transportation Documents */}
-                {(
-                  ((selectedCaregiver as any).services || (selectedCaregiver as any).skills || []).includes('Transportation') ||
-                  !!(selectedCaregiver.documents as any)
-                ) && (
-                  <section>
-                    <h3 className="font-bold text-slate-900 mb-3 flex items-center gap-2">
-                      <Car className="w-5 h-5 text-primary-600" /> Transportation Documents
-                    </h3>
-                    <div className="space-y-3">
-                      {([
-                        { key: 'driversLicense' as DocumentType, label: "Driver's License", hasExpiry: true },
-                        { key: 'insurance' as DocumentType, label: 'Vehicle Insurance', hasExpiry: true },
-                        { key: 'registration' as DocumentType, label: 'Vehicle Registration', hasExpiry: true },
-                      ]).map(({ key, label, hasExpiry }) => {
-                        const doc = (selectedCaregiver.documents as any)?.[key];
-                        const processingKey = `${getDocId(selectedCaregiver)}_${key}`;
-                        const isProcessingDoc = docActionProcessing[processingKey];
-                        return (
-                          <div key={key} className="border border-slate-200 rounded-xl p-3 space-y-2">
-                            <div className="flex items-center gap-3">
-                              <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                              <span className="flex-1 text-sm font-medium text-slate-700">{label}</span>
-                              {doc ? (
-                                <>
-                                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                                    doc.status === 'approved' ? 'bg-teal-100 text-teal-700'
-                                    : doc.status === 'rejected' ? 'bg-red-100 text-red-700'
-                                    : 'bg-amber-100 text-amber-700'
-                                  }`}>{doc.status || 'pending'}</span>
-                                  <a href={doc.url} target="_blank" rel="noopener noreferrer"
-                                    className="text-xs text-primary-600 hover:underline flex items-center gap-0.5">
-                                    View <ExternalLink className="w-3 h-3" />
-                                  </a>
-                                </>
-                              ) : (
-                                <span className="text-xs text-slate-400 italic">Not uploaded</span>
-                              )}
-                            </div>
-                            {doc && doc.status !== 'approved' && doc.status !== 'rejected' && (
-                              <div className="flex flex-col gap-2 pl-7">
-                                {hasExpiry && (
-                                  <div className="flex items-center gap-2">
-                                    <label className="text-xs text-slate-500 whitespace-nowrap">Expiry date</label>
-                                    <input
-                                      type="date"
-                                      value={transportDocExpiry[key] || ''}
-                                      onChange={e => setTransportDocExpiry(prev => ({ ...prev, [key]: e.target.value }))}
-                                      className="flex-1 text-xs px-2 py-1 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
-                                    />
-                                  </div>
-                                )}
-                                <div className="flex gap-2">
-                                  <button
-                                    onClick={() => handleDocAction(getDocId(selectedCaregiver), key, 'approved')}
-                                    disabled={isProcessingDoc}
-                                    className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-                                  >
-                                    <Check className="w-3 h-3" /> Approve
-                                  </button>
-                                  <button
-                                    onClick={() => handleDocAction(getDocId(selectedCaregiver), key, 'rejected')}
-                                    disabled={isProcessingDoc}
-                                    className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-                                  >
-                                    <X className="w-3 h-3" /> Reject
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                            {doc?.expirationDate && (
-                              <p className="pl-7 text-xs text-slate-500">Expires: {new Date(doc.expirationDate).toLocaleDateString()}</p>
-                            )}
-                          </div>
-                        );
-                      })}
+                {/* Driving Record (MVR) — its own line, separate from the criminal check whether Checkr
+                    ran them bundled or apart (same rule as Admin › Caregivers, utils/drivingRecordAdmin.ts; 2026-10-06). */}
+                {adminMvrLineApplies(selectedCaregiver) && (() => {
+                  const s = selectedCaregiver as any;
+                  const mvrStatus = adminMvrStatusFor(s);
+                  const mvrReport = adminMvrReportId(s);
+                  return (
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <Car className="w-4 h-4 shrink-0 text-blue-600" />
+                        <span className="font-semibold">Driving record (MVR): </span>
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wide ${adminMvrTone(mvrStatus)}`}>{String(mvrStatus).replace('_', ' ')}</span>
+                        {s.backgroundCheckData?.mvrIncluded && <span className="text-xs text-slate-500">Bundled with the criminal check</span>}
+                        {s.mvrClearedAt && <span className="text-xs text-slate-500">cleared {new Date(s.mvrClearedAt).toLocaleDateString()}</span>}
+                        {mvrReport && (
+                          <a href={checkrReportUrl(mvrReport)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-medium">
+                            View in Checkr <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-2">Transportation: {adminTransportationLine(s)}.</p>
                     </div>
-                  </section>
-                )}
+                  );
+                })()}
 
                 {/* Checkr Report Link */}
                 {selectedCaregiver.backgroundCheckData?.checkrReportId && (

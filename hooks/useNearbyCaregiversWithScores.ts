@@ -219,7 +219,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
             // public doc, exactly as Find Caregivers does: the hard filter below and
             // the card's Transportation chip both read these (live 2026-10-04: with
             // no flag on the item, a plan that needed Transportation matched nobody).
-            hasReliableTransportation: hasValidTransportDocs(data),
+            transportationLive: hasValidTransportDocs(data),
             hasValidTransportDocs: hasValidTransportDocs(data),
             isApprovedDriver: data.isApprovedDriver === true,
             skills: cgSkills,

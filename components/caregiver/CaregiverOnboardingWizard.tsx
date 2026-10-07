@@ -56,7 +56,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [emailOnRecord, setEmailOnRecord] = useState(false);
-  const [existingDocs, setExistingDocs] = useState<Record<string, any>>({});
   const blobUrlsRef = useRef<Set<string>>(new Set());
 
   const [form, setForm] = useState<WizardForm>({
@@ -92,7 +91,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       // one too — so the Email step only exists for a legacy record with none
       // (founder, 2026-09-25: "we will drop the email there").
       setEmailOnRecord(typeof p.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email.trim()));
-      setExistingDocs(p.documents && typeof p.documents === 'object' ? p.documents : {});
       const loadedServices: string[] = Array.isArray(p.skills)
         ? p.skills
         : Array.isArray(p.services) ? p.services : [];
@@ -128,15 +126,13 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       }));
       // Restore saved wizard step
       if (p.wizardStep) {
-        const hasTransport = loadedServices.includes('Transportation');
         const hasEmail = typeof p.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email.trim());
         const restoredSteps = [
           'welcome', 'location', ...(hasEmail ? [] : ['email']), 'photo', 'availability', 'services',
-          ...(hasTransport ? ['transport-docs'] : []),
           'rates', 'bio', 'done',
         ];
         // A record parked on the (now skipped) email step resumes at photo.
-        const savedStep = p.wizardStep === 'email' && hasEmail ? 'photo' : (p.wizardStep as string);
+        const savedStep = p.wizardStep === 'email' && hasEmail ? 'photo' : p.wizardStep === 'transport-docs' ? 'rates' : (p.wizardStep as string);
         const idx = restoredSteps.indexOf(savedStep);
         if (idx > 0) setStep(idx + 1);
       }
@@ -150,10 +146,9 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     if (field === 'profilePhoto' && value.preview) blobUrlsRef.current.add(value.preview);
   };
 
-  const hasTransportation = form.selectedServices.includes('Transportation');
+  // No transport-documents step (founder, 2026-10-06): the driving record through Checkr is the only check behind Transportation.
   const stepsArr = [
     'welcome', 'location', ...(emailOnRecord ? [] : ['email']), 'photo', 'availability', 'services',
-    ...(hasTransportation ? ['transport-docs'] : []),
     'rates', 'bio', 'done',
   ];
   const totalSteps = stepsArr.length;
@@ -238,7 +233,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     }
     setIsLoading(true);
     try {
-      const nextStep = form.selectedServices.includes('Transportation') ? 'transport-docs' : 'rates';
+      const nextStep = 'rates';
       await dbService.updateUser('caregivers', uid, cleanData({
         primaryServices: form.selectedServices.map(name => ({ name, yearsExperience: form.yearsExperience })),
         skills: form.selectedServices,
@@ -250,11 +245,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       next();
     } catch { onShowToast('Failed to save services. Please try again.', 'error'); }
     finally { setIsLoading(false); }
-  };
-
-  const handleTransportDocsNext = async () => {
-    await dbService.updateUser('caregivers', uid, { wizardStep: 'rates' } as any).catch(() => {});
-    next();
   };
 
   const handleSaveRates = async () => {
@@ -377,11 +367,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
           onNext={handleSaveServices} isLoading={isLoading} onShowToast={onShowToast}
         />;
 
-      // ── Transportation Documents (conditional) ───────────────────────────
-      case 'transport-docs':
-        return <TransportDocStep uid={uid} existingDocs={existingDocs} onNext={handleTransportDocsNext} onShowToast={onShowToast} />;
-
-      // ── Rates ────────────────────────────────────────────────────────────
       case 'rates':
         return <RatesStep
           hourlyRate={form.hourlyRate} rateFor2Seniors={form.rateFor2Seniors}
@@ -950,111 +935,6 @@ const RatesStep: React.FC<{
       <button onClick={handleNext} disabled={isLoading}
         className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
         {isLoading ? <><Loader2 size={16} className="animate-spin" />Saving…</> : 'Continue'}
-      </button>
-    </div>
-  );
-};
-
-// ─── Transportation Documents Step ────────────────────────────────────────────
-
-const TRANSPORT_DOCS: { type: DocumentType; label: string; desc: string }[] = [
-  { type: 'driversLicense', label: "Driver's License", desc: "Front of your valid driver's license" },
-  { type: 'insurance', label: 'Vehicle Insurance', desc: 'Current auto insurance showing active coverage' },
-  { type: 'registration', label: 'Vehicle Registration', desc: 'Current vehicle registration document' },
-];
-
-const TransportDocStep: React.FC<{
-  uid: string;
-  existingDocs: Record<string, any>;
-  onNext: () => void;
-  onShowToast: AddToastFunction;
-}> = ({ uid, existingDocs, onNext, onShowToast }) => {
-  // All three uploads are required before Continue (founder, 2026-09-25) —
-  // a document already on the record (from a previous visit or Evia) counts.
-  const [status, setStatus] = useState<Record<string, 'idle' | 'uploading' | 'done' | 'error'>>({
-    driversLicense: existingDocs?.driversLicense?.url ? 'done' : 'idle',
-    insurance:      existingDocs?.insurance?.url      ? 'done' : 'idle',
-    registration:   existingDocs?.registration?.url   ? 'done' : 'idle',
-  });
-  const allUploaded = TRANSPORT_DOCS.every(({ type }) => status[type] === 'done');
-  const handleContinue = () => {
-    if (!allUploaded) { onShowToast('Please upload all three documents to continue', 'error'); return; }
-    onNext();
-  };
-  const fileRefs: Record<string, React.RefObject<HTMLInputElement>> = {
-    driversLicense: useRef<HTMLInputElement>(null),
-    insurance: useRef<HTMLInputElement>(null),
-    registration: useRef<HTMLInputElement>(null),
-  };
-
-  const handleUpload = async (type: DocumentType, file: File) => {
-    if (file.size > 5 * 1024 * 1024) { onShowToast('File must be under 5MB', 'error'); return; }
-    setStatus(prev => ({ ...prev, [type]: 'uploading' }));
-    try {
-      await documentUploadService.uploadDocument(uid, file, type);
-      setStatus(prev => ({ ...prev, [type]: 'done' }));
-    } catch {
-      setStatus(prev => ({ ...prev, [type]: 'error' }));
-      onShowToast('Upload failed. Please try again.', 'error');
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="text-center">
-        <h2 className="text-xl font-bold text-slate-800">Transportation documents</h2>
-        <p className="text-sm text-slate-500 mt-1">Required to offer Transportation</p>
-      </div>
-
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-        <p className="text-xs text-amber-800">
-          Our team reviews these before approving your transportation services. Upload all three to avoid delays.
-        </p>
-      </div>
-
-      <div className="space-y-3">
-        {TRANSPORT_DOCS.map(({ type, label, desc }) => (
-          <div key={type} className={`border-2 rounded-xl p-3 flex items-center gap-3 transition-all ${
-            status[type] === 'done' ? 'border-teal-300 bg-teal-50' : 'border-slate-200'
-          }`}>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-slate-800">{label}</p>
-              <p className="text-xs text-slate-500">{desc}</p>
-            </div>
-            {status[type] === 'done' ? (
-              <span className="flex items-center gap-1 text-teal-600 text-xs font-medium shrink-0">
-                <CheckCircle size={15} /> Uploaded
-              </span>
-            ) : status[type] === 'uploading' ? (
-              <Loader2 size={16} className="animate-spin text-indigo-500 shrink-0" />
-            ) : (
-              <button
-                onClick={() => fileRefs[type].current?.click()}
-                className={`shrink-0 text-xs font-semibold border px-3 py-1.5 rounded-lg transition-colors ${
-                  status[type] === 'error'
-                    ? 'border-red-300 text-red-600 hover:bg-red-50'
-                    : 'border-indigo-200 text-indigo-600 hover:bg-indigo-50'
-                }`}
-              >
-                {status[type] === 'error' ? 'Retry' : 'Upload'}
-              </button>
-            )}
-            <input
-              ref={fileRefs[type]}
-              type="file"
-              accept="image/*,application/pdf"
-              className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(type, f); }}
-            />
-          </div>
-        ))}
-      </div>
-
-      <button onClick={handleContinue}
-        className={`w-full font-semibold py-3 rounded-full transition-colors ${
-          allUploaded ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'
-        }`}>
-        Continue
       </button>
     </div>
   );

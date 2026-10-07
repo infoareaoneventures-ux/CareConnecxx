@@ -1749,18 +1749,6 @@ export const dbService = {
         return result.data as any;
     },
 
-    adminReviewDocument: async (
-        caregiverId: string,
-        documentType: string,
-        decision: 'approve' | 'reject',
-        note?: string
-    ): Promise<{ success: boolean; status: string }> => {
-        if (!isConfigured || !functions) throw new Error('Not connected');
-        const fn = functions.httpsCallable('v1-admin_review_document');
-        const result = await fn({ caregiverId, documentType, decision, note });
-        return result.data as any;
-    },
-
     adminSuspendUser: async (userId: string, reason: string): Promise<{ success: boolean }> => {
         if (!isConfigured || !functions) throw new Error('Not connected');
         const fn = functions.httpsCallable('v1-admin_suspend_user');

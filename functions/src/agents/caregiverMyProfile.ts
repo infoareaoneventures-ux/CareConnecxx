@@ -149,7 +149,8 @@ export function myProfileText(page: MyProfilePage): string {
   const lines: string[] = ["My Profile", ""];
   lines.push(`${page.name || "—"} · ${page.verified ? "Verified" : "Pending"}`);
   lines.push(page.ratingLabel);
-  lines.push([page.location, page.hourlyRate > 0 ? `$${page.hourlyRate}/hr` : "", page.hasTransportation ? "Transportation" : ""].filter(Boolean).join(" · ") || "—");
+  // No Transportation chip in the hero line (2026-10-06): it is a service, listed under Care Services once live.
+  lines.push([page.location, page.hourlyRate > 0 ? `$${page.hourlyRate}/hr` : ""].filter(Boolean).join(" · ") || "—");
   lines.push(page.hasPhoto ? "Photo: on file (reply PHOTO to change it)" : "Photo: none yet (reply PHOTO to add one)");
 
   lines.push("", `About ${first}`);

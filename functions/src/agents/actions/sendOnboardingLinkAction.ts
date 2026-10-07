@@ -10,7 +10,6 @@ export const onboardingLinkTypeSchema = z.enum([
   "client_identity",
   "caregiver_membership",
   "caregiver_photo",
-  "caregiver_transport_docs",
   "caregiver_background_check",
   "caregiver_payouts",
 ]);

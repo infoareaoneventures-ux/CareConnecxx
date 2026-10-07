@@ -2,7 +2,10 @@ import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, ArrowRight, X } from 'lucide-react';
 import { useCareConnex } from '../context/CareConnexContext';
-import { hasValidTransportDocs } from '../utils/transportDocs';
+import { hasValidTransportDocs, offersTransportation } from '../utils/transportDocs';
+
+/** Where "Set Up Transportation" sends a caregiver who has not offered the service yet: the Profile page with the Care Services editor open (2026-10-06). */
+export const ADD_TRANSPORTATION_PATH = '/caregiver/profile?edit=services';
 import { dbService } from '../services/api';
 
 export type BlockReason = 'membership' | 'background' | 'transport' | null;
@@ -16,8 +19,9 @@ export function caregiverMembershipActive(p: any): boolean {
  * The Jobs page gate as a pure function of a caregiver record — the same rule
  * firestore.rules enforces on the application write and Evia's
  * caregiverAccessGate.ts runs before its own write. `transport` = the job
- * includes driving; then the transportation badge (documents approved +
- * driving record cleared) is required from WHOEVER applies (2026-09-27).
+ * includes driving; then Transportation live on the record (offered + driving
+ * record cleared, no documents since 2026-10-06) is required from WHOEVER
+ * applies (2026-09-27).
  */
 export function caregiverBlockReasonFor(p: any, transport: boolean): BlockReason {
   if (!caregiverMembershipActive(p)) return 'membership';
@@ -40,15 +44,14 @@ const REASON_CONFIG = {
     cta: 'Go to dashboard',
     path: '/caregiver/dashboard',
   },
-  // 2026-10-04: the badge is documents approved AND the driving record cleared
-  // (flat membership, 2026-09-25) — the old "documents must be approved" line
-  // told a caregiver with approved documents and a revoked driving record the
-  // wrong thing. Same line on the Jobs buttons and in Evia's text
+  // 2026-10-06: Transportation = offered on the profile AND the driving record
+  // cleared — no documents (founder: only the background check and the MVR).
+  // Same line on the Jobs buttons and in Evia's text
   // (functions/src/agents/caregiverAccessGate.ts caregiverGateText).
   transport: {
     title: 'Set Up Transportation',
     // Founder, 2026-10-04: states the requirement, never an approval — Evia does not vouch for a driver.
-    desc: "This job includes driving. To apply, offer Transportation on your profile, upload your driver's license, insurance and registration for review, and complete the driving record check. See where you stand under Settings › Membership & verification.",
+    desc: "This job includes driving. To apply, offer Transportation on your profile and complete the driving record check, included in your membership. See where you stand under Settings › Membership & verification.",
     cta: 'Go to Settings',
     path: '/caregiver/settings',
   },
@@ -62,9 +65,16 @@ function CaregiverGateModal({
   onClose: () => void;
 }) {
   const navigate = useNavigate();
-  const { setMembershipModalOpen } = useCareConnex();
+  const { setMembershipModalOpen, caregiverProfile } = useCareConnex();
   if (!reason) return null;
-  const { title, desc, cta, path } = REASON_CONFIG[reason];
+  const base = REASON_CONFIG[reason];
+  // Transport: the next step depends on the record (2026-10-06). Not offering Transportation yet →
+  // the only thing to do is add the service, so the button opens the Care Services editor.
+  // Already offered → nothing to do but wait or read the result, so Settings shows where it stands.
+  const needsService = reason === 'transport' && !offersTransportation(caregiverProfile as any);
+  const { title, desc, cta, path } = needsService
+    ? { ...base, cta: 'Add Transportation to my services', path: ADD_TRANSPORTATION_PATH }
+    : base;
 
   const handleCta = () => {
     onClose();

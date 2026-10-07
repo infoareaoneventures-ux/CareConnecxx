@@ -32,13 +32,13 @@ describe("mapCaregiversDocToOnboardingData", () => {
     expect(mapCaregiversDocToOnboardingData({ yearsExperience: "10+ years" }).yearsExperience).toBe("10+ years");
   });
 
-  it("reads the site's documents map back as transportDocs urls, and serviceRadius straight through", () => {
+  it("serviceRadius straight through; a legacy documents map is ignored (transport documents retired 2026-10-06)", () => {
     const out = mapCaregiversDocToOnboardingData({
       serviceRadius: 15,
       documents: { driversLicense: { url: "https://x/dl", status: "pending" }, insurance: { url: "https://x/ins" }, profilePhoto: { url: "https://x/p" } },
     });
     expect(out.serviceRadius).toBe(15);
-    expect(out.transportDocs).toEqual({ driversLicense: "https://x/dl", insurance: "https://x/ins" });
+    expect(out.transportDocs).toBeUndefined();
   });
 
   it("maps the wizard's photo field onto Evia's profilePhoto, preferring an already-Evia-shaped value", () => {

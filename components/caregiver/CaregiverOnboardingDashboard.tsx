@@ -11,7 +11,7 @@ import { BackgroundCheckModal } from '../BackgroundCheckModal';
 import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
 import { CaregiverBookingsCard } from './CaregiverBookingsCard';
 import { jobApplicationService } from '../../hooks/useJobApplications';
-import { hasValidTransportDocs, transportDocsApproved } from '../../utils/transportDocs';
+import { hasValidTransportDocs } from '../../utils/transportDocs';
 import { openCaregiverBillingPortal } from '../../services/stripeService';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -90,24 +90,12 @@ export const CaregiverProgressCard: React.FC<{
 
   if (isApproved) return null;
 
-  const docs = p.documents || {};
-  // Expiry-aware, same rule as Settings' resolveDocStatus (an approved document past its
-  // date read as 'approved' here and fell into "under review" — founder, 2026-10-05).
-  const getDocStatus = (key: string) => {
-    const d = docs[key];
-    if (!d?.url) return 'missing';
-    if (d.status === 'approved' && typeof d.expirationDate === 'string' && d.expirationDate) {
-      const [y, m, dd] = d.expirationDate.split('-').map(Number);
-      const t = new Date(); t.setHours(0, 0, 0, 0);
-      if (new Date(y, m - 1, dd) < t) return 'expired';
-    }
-    return d.status || 'pending';
-  };
-  const transportDocStatuses = needsTransportDocs ? ['driversLicense', 'insurance', 'registration'].map(k => getDocStatus(k)) : [];
-  const transportNeedsAction = needsTransportDocs && (transportDocStatuses.includes('missing') || transportDocStatuses.includes('rejected') || transportDocStatuses.includes('expired'));
+  // Driving record (MVR) is the only thing behind Transportation (founder, 2026-10-06) —
+  // the step is open while it has not cleared and is not finally decided.
+  const transportNeedsAction = needsTransportDocs && !transportDocsValid && !drivingRecordDecided;
 
   // Order: Profile -> Membership -> Background Check -> Payout Setup ->
-  // Transport Docs. Payout Setup sits AFTER background check (matching
+  // Driving Record. Payout Setup sits AFTER background check (matching
   // Evia's own SMS order exactly — she only sends the Stripe Connect link
   // once the background check clears) and BEFORE transport docs (a slow,
   // conditional admin-review step that only applies to some caregivers,
@@ -195,40 +183,17 @@ export const CaregiverProgressCard: React.FC<{
     cardDesc = 'Connect a bank account through Stripe so you can get paid for completed visits — takes about 5 minutes.';
     cardCta = { label: 'Set up payouts', onClick: () => onNavigate('caregiver-payout') };
   } else if (activeStep === 6) {
-    const anyDocRejected = transportDocStatuses.includes('rejected');
-    const anyDocMissing = transportDocStatuses.includes('missing');
-    const docsApproved = transportDocsApproved(profile);
     if (p.mvrStatus === 'not_approved') {
       // The admin's final decision after a review (2026-10-04) — same words as
       // Settings (AccountStandingSection DRIVER_CARD_TEXT.not_approved) and Evia.
       cardTitle = 'Driving record not approved';
       cardDesc = "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.";
       cardVariant = 'warning';
-    } else if (docsApproved && p.isApprovedDriver !== true) {
-      // Documents are in; the badge now waits only on the driving record
-      // (MVR) check the flat membership covers (2026-09-25).
+    } else {
       cardTitle = 'Driving record check in progress';
       cardDesc = p.mvrStatus === 'consider' || p.mvrStatus === 'suspended'
         ? "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected."
-        : 'Your documents are approved. Transportation shows on your profile as soon as your driving record check clears.';
-      cardVariant = 'info';
-    } else if (transportDocStatuses.includes('expired')) {
-      cardTitle = 'A document expired';
-      cardDesc = 'One of your transport documents has expired. Re-upload it to restore Transportation on your profile.';
-      cardVariant = 'warning';
-      cardCta = { label: 'Re-upload documents', onClick: () => onNavigate('caregiver-settings') };
-    } else if (anyDocRejected) {
-      cardTitle = 'Documents rejected';
-      cardDesc = 'Some transport documents were rejected. Please re-upload to continue.';
-      cardVariant = 'warning';
-      cardCta = { label: 'Re-upload documents', onClick: () => onNavigate('caregiver-settings') };
-    } else if (anyDocMissing) {
-      cardTitle = 'Upload transport documents';
-      cardDesc = "Upload your driver's license, vehicle insurance, and registration so families can see Transportation on your profile.";
-      cardCta = { label: 'Upload documents', onClick: () => onNavigate('caregiver-settings') };
-    } else {
-      cardTitle = 'Documents under review';
-      cardDesc = 'Our team will review your transport documents and notify you.';
+        : 'Your driving record check is included in your membership. Transportation shows on your profile as soon as it clears.';
       cardVariant = 'info';
     }
   }
@@ -239,7 +204,7 @@ export const CaregiverProgressCard: React.FC<{
     { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
     { label: 'Background Check', done: bgApprovedFull, inProgress: bgCheckInProgress },
     { label: 'Payout Setup', done: payoutsSetUp, inProgress: bgApprovedFull && !payoutsSetUp },
-    ...(needsTransportDocs ? [{ label: 'Transport Docs', done: transportDocsValid || drivingRecordDecided, inProgress: !transportDocsValid && !drivingRecordDecided && !transportDocStatuses.includes('missing') }] : []),
+    ...(needsTransportDocs ? [{ label: 'Driving Record', done: transportDocsValid || drivingRecordDecided, inProgress: !transportDocsValid && !drivingRecordDecided }] : []),
   ];
 
   return (

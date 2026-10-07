@@ -77,7 +77,7 @@ function refreshFallbackHtml(title: string, body: string): string {
     `<p style="line-height:1.5;color:#444">${body}</p></div></body></html>`;
 }
 
-// Token-authenticated file upload for the /upload/photo and /upload/document
+// Token-authenticated file upload for the /upload/photo
 // pages. The caregiver arriving from an SMS link has NO Firebase Auth session,
 // so a client-side Storage write is always rejected by storage.rules — the
 // signed onboarding JWT is the auth here, and the Admin SDK performs the write.
@@ -149,7 +149,6 @@ export const uploadOnboardingFile = functions
     const token        = (data?.token ?? "").toString().trim();
     const dataBase64   = (data?.dataBase64 ?? "").toString();
     const contentType  = (data?.contentType ?? "").toString().trim().toLowerCase();
-    const documentType = (data?.documentType ?? "").toString().trim();
     const fileName     = (data?.fileName ?? "").toString().trim().slice(0, 120);
 
     if (!token)      throw new functions.https.HttpsError("invalid-argument", "token required");
@@ -159,21 +158,13 @@ export const uploadOnboardingFile = functions
     const payload = verifyToken(token);
     if (!payload) throw new functions.https.HttpsError("unauthenticated", "invalid or expired token");
 
-    const isPhoto = payload.task === "photo_upload";
-    if (!isPhoto && payload.task !== "doc_upload") {
+    // Photo only (2026-10-06): transport documents are no longer collected —
+    // Transportation is the service on the profile plus the driving record
+    // (MVR), which runs with the membership. An old doc_upload token is refused.
+    if (payload.task !== "photo_upload") {
       throw new functions.https.HttpsError("permission-denied", "token not valid for file upload");
     }
-    // Transport documents (2026-09-25): the ONLY documents Evia collects — the
-    // wizard's three (driver's license, vehicle insurance, vehicle registration).
-    const { TRANSPORT_DOC_TYPES } = await import("./onboardingContract");
-    if (!isPhoto && !TRANSPORT_DOC_TYPES.includes(documentType)) {
-      throw new functions.https.HttpsError("invalid-argument", `documentType must be one of: ${TRANSPORT_DOC_TYPES.join(", ")}`);
-    }
-
-    const typeOk = isPhoto
-      ? contentType.startsWith("image/")
-      : contentType.startsWith("image/") || contentType === "application/pdf";
-    if (!typeOk) {
+    if (!contentType.startsWith("image/")) {
       throw new functions.https.HttpsError("invalid-argument", "unsupported file type");
     }
 
@@ -184,15 +175,15 @@ export const uploadOnboardingFile = functions
     }
 
     // Same record the site writes: the file lives under the caregiver's own
-    // folder by type (services/documentUpload.ts) and the metadata lands on
-    // caregivers/{uid}.documents.{type} in the site's shape. The caregiver doc
-    // exists from the first "Hey Evia" (ensureCaregiverDocForOnboarding).
-    const { ensureCaregiverDocForOnboarding, mergeOnboardingData } = await import("./onboardingConversation");
+    // folder (services/documentUpload.ts) and the photo url lands on
+    // caregivers/{uid}.photo in the site's shape. The caregiver doc exists
+    // from the first "Hey Evia" (ensureCaregiverDocForOnboarding).
+    const { ensureCaregiverDocForOnboarding } = await import("./onboardingConversation");
     const uid = await ensureCaregiverDocForOnboarding(payload.phone);
     if (!uid) throw new functions.https.HttpsError("failed-precondition", "caregiver account not ready — text Evia and try the link again");
 
-    const ext    = UPLOAD_EXT[contentType] ?? (isPhoto ? "jpg" : "pdf");
-    const type   = isPhoto ? "profilePhoto" : documentType;
+    const ext    = UPLOAD_EXT[contentType] ?? "jpg";
+    const type   = "profilePhoto";
     const stamp  = Date.now();
     const safeName = (fileName || `${type}.${ext}`).replace(/[^a-zA-Z0-9.-]/g, "_");
     const path   = `caregivers/${uid}/documents/${type}_${stamp}_${safeName}`;
@@ -219,35 +210,13 @@ export const uploadOnboardingFile = functions
       fileName: safeName, fileType: contentType,
     };
     const db = admin.firestore();
-    // Renewal slot (founder, 2026-10-05, same rule as services/documentUpload.ts): a
-    // file uploaded over an approved, unexpired transport document waits beside it
-    // so Transportation stays on; the admin's approval swaps it in.
-    const cgRef = db.collection("caregivers").doc(uid);
-    const currentDoc = !isPhoto ? (((await cgRef.get()).data()?.documents ?? {}) as Record<string, any>)[type] : undefined;
-    const liveApproved = (() => {
-      if (!currentDoc || currentDoc.status !== "approved") return false;
-      const exp = typeof currentDoc.expirationDate === "string" ? currentDoc.expirationDate : "";
-      if (!exp) return true;
-      const [y, m, d] = exp.split("-").map(Number);
-      const t = new Date(); t.setHours(0, 0, 0, 0);
-      return new Date(y, m - 1, d) >= t;
-    })();
-    if (liveApproved) {
-      await cgRef.update({ [`documents.${type}.renewal`]: { ...documentData } });
-    } else {
-      await cgRef.set(
-        { documents: { [type]: documentData }, ...(isPhoto ? { photo: url } : {}) },
-        { merge: true },
-      );
-    }
-    if (!isPhoto) {
-      const sess = (await db.collection("agent_sessions").doc(payload.phone).get()).data() ?? {};
-      const existing = ((sess.onboardingData as Record<string, unknown> | undefined)?.transportDocs ?? {}) as Record<string, string>;
-      await mergeOnboardingData(payload.phone, { transportDocs: { ...existing, [type]: url } });
-    }
+    await db.collection("caregivers").doc(uid).set(
+      { documents: { [type]: documentData }, photo: url },
+      { merge: true },
+    );
 
     const { advanceOnboardingStep } = await import("./onboardingConversation");
-    await advanceOnboardingStep(payload.phone, payload.task, isPhoto ? url : type);
+    await advanceOnboardingStep(payload.phone, payload.task, url);
 
     return { status: "ok", url, type };
   });

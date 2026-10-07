@@ -4,7 +4,6 @@ export type TokenTask =
   | "payment"
   | "identity"
   | "photo_upload"
-  | "doc_upload"
   | "background_check"
   | "bgcheck_consent"
   | "stripe_connect"

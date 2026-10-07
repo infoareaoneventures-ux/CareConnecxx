@@ -40,7 +40,6 @@ describe("onboardingContract", () => {
       "profilePhoto",
       "jobType", "availability",
       "specialties", "yearsExperience",
-      "transportDocuments",
       "hourlyRate", "serviceRadius",
       "email", "bio",
     ]);
@@ -118,7 +117,7 @@ describe("onboardingContract", () => {
       ]);
     });
 
-    it("caregiver transport documents are required only when Transportation is offered, and only until all three are in", () => {
+    it("offering Transportation adds no required field — transport documents were retired 2026-10-06 (MVR only)", () => {
       const base = {
         name: "Maria", street: "1 Main St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "https://x/p.jpg",
         jobType: "part_time", availability: { days: ["Monday"], hours: "mornings" }, specialties: ["Companionship"],
@@ -126,9 +125,7 @@ describe("onboardingContract", () => {
       };
       expect(missingRequiredFields("caregiver", base)).toEqual([]);
       const driver = { ...base, skills: ["Companionship", "Transportation"] };
-      expect(missingRequiredFields("caregiver", driver)).toEqual(["transportDocuments"]);
-      expect(missingRequiredFields("caregiver", { ...driver, transportDocs: { driversLicense: "u", insurance: "u" } })).toEqual(["transportDocuments"]);
-      expect(missingRequiredFields("caregiver", { ...driver, transportDocs: { driversLicense: "u", insurance: "u", registration: "u" } })).toEqual([]);
+      expect(missingRequiredFields("caregiver", driver)).toEqual([]);
     });
   });
 
@@ -360,10 +357,10 @@ describe("onboardingContract", () => {
     });
 
     it("caregiver loop may save the derived fields, and nothing the site's wizard doesn't collect", () => {
-      for (const f of ["skills", "services", "zipCode", "street", "state", "serviceRadius", "transportDocs"]) {
+      for (const f of ["skills", "services", "zipCode", "street", "state", "serviceRadius"]) {
         expect(isAllowedField("caregiver", f)).toBe(true);
       }
-      for (const f of ["certifications", "gender", "languages", "canDrive", "bioSkipped", "jobTypes", "wantsMvr"]) {
+      for (const f of ["certifications", "gender", "languages", "canDrive", "bioSkipped", "jobTypes", "wantsMvr", "transportDocs", "transportDocuments"]) {
         expect(isAllowedField("caregiver", f)).toBe(false);
       }
     });

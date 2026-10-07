@@ -64,7 +64,7 @@ import {
 const db = admin.firestore();
 
 // Shared literal union for structured tool failures (see toolError below).
-type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED" | "BACKGROUND_REQUIRED" | "TRANSPORT_DOCS_REQUIRED" | "RATE_LIMITED";
+type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED" | "BACKGROUND_REQUIRED" | "TRANSPORT_REQUIRED" | "RATE_LIMITED";
 
 // Legacy prod caregiver docs can carry hourlyRate as a STRING ("25", "$25"):
 // the onboarding correction path stored the raw user text whenever Number()
@@ -157,7 +157,7 @@ export const MCP_TOOLS: McpTool[] = [
       "identity or membership (only Message / Request Interview are, and those tools gate themselves). Filters mirror " +
       "the page: query (name, city or zip search box), maxDistanceMiles (slider, default 25), maxHourlyRate (slider, " +
       "default 75; 100 = no cap), minRating (Any/3/4/4.5), minExperienceYears (Any/1/3/5/10), verifiedOnly " +
-      "(Background checked only), transportationOnly (Reliable transportation), specialties (any of), languages " +
+      "(Background checked only), transportationOnly (the Specialties › Transportation box: caregivers whose Transportation is live — offered and driving record clear), specialties (any of), languages " +
       "(any of), sortBy (rating = Highest rated, the default; price-low; price-high), favoritesOnly (the Favorites tab). " +
       "Every caregiver shown is already background-check cleared — never ask the family whether they want that. " +
       "It texts the family the page: a '<N> caregivers found' line, then one card per caregiver (name, rate, rating, " +
@@ -176,7 +176,7 @@ export const MCP_TOOLS: McpTool[] = [
         minRating:          { type: "number", description: "Rating pills: 3, 4 or 4.5 (omit for Any)." },
         minExperienceYears: { type: "number", description: "Experience: 1, 3, 5 or 10 (omit for Any)." },
         verifiedOnly:       { type: "boolean", description: "Background checked only." },
-        transportationOnly: { type: "boolean", description: "Reliable transportation only." },
+        transportationOnly: { type: "boolean", description: "Transportation only — caregivers offering it with a cleared driving record (the page's Specialties › Transportation box)." },
         specialties:        { type: "array", items: { type: "string" }, description: "Senior care specialties — any of (e.g. 'Dementia / Memory Care', 'Mobility Assistance')." },
         languages:          { type: "array", items: { type: "string" }, description: "Languages — any of." },
         sortBy:             { type: "string", enum: ["rating", "price-low", "price-high"], description: "Sort by: Highest rated (default), Price: Low to High, Price: High to Low." },
@@ -1250,15 +1250,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_account_settings",
     description:
-      "The caregiver Account Settings page, TEXTED by the tool itself (agents/caregiverSettings.ts): Account Basics (member since, name, date of birth, gender, recovery email + confirmed or not, phone, address), Transportation Documents (only when Transportation is offered — each document's status and expiry), Blocked Users, the Pause card, the delete line. " +
-      "resendEmailLink:true texts the page's 'Resend confirmation link' result (same server function). documentsLink:true texts the upload page link (the page's Upload buttons). " +
+      "The caregiver Account Settings page, TEXTED by the tool itself (agents/caregiverSettings.ts): Account Basics (member since, name, date of birth, gender, recovery email + confirmed or not, phone, address), Blocked Users, the Pause card, the delete line. " +
+      "resendEmailLink:true texts the page's 'Resend confirmation link' result (same server function)." +
       "Edits go through the other tools: gender / address / phone → update_caregiver_profile; email → request_email_change; pause → pause_account / reactivate_account; unblock → set_block_status; delete → delete_account. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId:     { type: "string",  description: "The caregiver's Firestore document ID" },
         resendEmailLink: { type: "boolean", description: "Re-send the recovery-email confirmation link instead of texting the page" },
-        documentsLink:   { type: "boolean", description: "Text the transport-documents upload link instead of the page" },
       },
       required: ["caregiverId"],
     },
@@ -1855,7 +1854,6 @@ export const MCP_TOOLS: McpTool[] = [
             "client_identity",
             "caregiver_membership",
             "caregiver_photo",
-            "caregiver_transport_docs",
             "caregiver_background_check",
             "caregiver_payouts",
           ],
@@ -2763,16 +2761,16 @@ async function checkCaregiverAccessGate(
   const res = await checkCaregiverAccess(caregiverId, { transport: opts.transport, membershipOnly: opts.membershipOnly });
   if (res.ok) return null;
   const code: ToolErrorCode = res.block === "membership" ? "MEMBERSHIP_REQUIRED"
-    : res.block === "background" ? "BACKGROUND_REQUIRED" : "TRANSPORT_DOCS_REQUIRED";
+    : res.block === "background" ? "BACKGROUND_REQUIRED" : "TRANSPORT_REQUIRED";
   const need = res.block === "membership" ? "needs an active membership"
     : res.block === "background" ? "needs a cleared background check"
-    : "needs approved transportation documents and a cleared driving-record check";
+    : "needs Transportation on their profile and a cleared driving-record check";
   const conv = await findCaregiverSession(caregiverId, opts.phone).catch(() => null);
   if (conv) {
     await textCaregiverGateBlock(conv.phone, conv.chatId, res.block, res.caregiver);
     return toolError(code, `This caregiver ${need} before ${doing} — the website blocks it the same way. Evia has ALREADY texted them the step and its link — send NOTHING else this turn.`);
   }
-  return toolError(code, `This caregiver ${need} before ${doing} — the website blocks it the same way. Tell them that in one line and offer the link (send_onboarding_link ${res.block === "membership" ? "caregiver_membership" : res.block === "background" ? "caregiver_background_check" : "caregiver_transport_docs"}).`);
+  return toolError(code, `This caregiver ${need} before ${doing} — the website blocks it the same way. Tell them that in one line and offer the next step (${res.block === "membership" ? "send_onboarding_link caregiver_membership" : res.block === "background" ? "send_onboarding_link caregiver_background_check" : "show_membership — Settings › Membership & verification shows where the driving record stands"}).`);
 }
 
 // Ownership gate for senior PHI reads. The owning client is recorded on
@@ -5361,7 +5359,7 @@ async function executeToolCall(
     }
 
     if (name === "show_account_settings") {
-      const { caregiverId, resendEmailLink, documentsLink, phone: asPhone } = input as Record<string, unknown>;
+      const { caregiverId, resendEmailLink, phone: asPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, asPhone);
@@ -5370,10 +5368,6 @@ async function executeToolCall(
       if (resendEmailLink === true) {
         const ok = await st.sendResendEmailLink(sess.chatId, caregiverId as string);
         return { success: ok, note: "The resend result was texted — send nothing else this turn." };
-      }
-      if (documentsLink === true) {
-        const ok = await st.sendDocumentsUploadLink(sess.phone, sess.chatId, caregiverId as string);
-        return { success: ok, note: ok ? "The upload link was texted — send nothing else this turn." : "The refusal (or throttle notice) was texted — send nothing else this turn." };
       }
       const r = await st.sendCaregiverSettings(sess.chatId, caregiverId as string);
       return { success: true, ...r, note: "The Account Settings page was texted — send nothing else this turn." };
@@ -6182,8 +6176,8 @@ async function executeToolCall(
           });
         }
         // (No certifications check: the site's wizard never asks for them —
-        // removed 2026-09-27. Transport documents are gated by the badge, not
-        // suggested here.)
+        // removed 2026-09-27. Transportation is the service + the driving record, nothing
+        // to suggest here.)
 
         // Gates
         const membershipActive = cg.membershipPaid === true || user.membershipStatus === "active" || user.subscriptionActive === true;
@@ -6703,7 +6697,7 @@ async function executeToolCall(
       if (!phone) return toolError("INVALID_INPUT", "phone is required");
       const validTypes = [
         "client_payment", "client_identity", "caregiver_membership",
-        "caregiver_photo", "caregiver_transport_docs", "caregiver_background_check", "caregiver_payouts",
+        "caregiver_photo", "caregiver_background_check", "caregiver_payouts",
       ];
       if (!linkType || !validTypes.includes(linkType as string)) {
         return toolError("INVALID_INPUT", `linkType must be one of: ${validTypes.join(", ")}`);
@@ -7033,12 +7027,12 @@ async function executeToolCall(
         }
         onboardingDataPatch = { serviceRadius: radius };
       }
-      if (role === "caregiver" && (fieldName === "profilePhoto" || fieldName === "transportDocuments" || fieldName === "transportDocs")) {
+      if (role === "caregiver" && fieldName === "profilePhoto") {
         return {
           ok: true,
           saved: false,
           invalidValue: true,
-          guidance: `${fieldName} is never typed — it is filled automatically when the caregiver uploads through the link. Call send_onboarding_link (${fieldName === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"}) instead and tell them the link is right below.`,
+          guidance: `${fieldName} is never typed — it is filled automatically when the caregiver uploads through the link. Call send_onboarding_link (caregiver_photo) instead and tell them the link is right below.`,
         };
       }
       // Zip → city/state auto-derivation (2026-08-22) — mirrors the website
@@ -7126,13 +7120,13 @@ async function executeToolCall(
       // system prompt still reflects the pre-save state and never tells it to
       // call send_onboarding_link. Without this, the model was reliably either
       // claiming the tool "isn't available" or hallucinating that a link had
-      // already gone out (live-caught 2026-09-26: caregiver_photo and
-      // caregiver_transport_docs both stalled this exact way). The tool RESULT
+      // already gone out (live-caught 2026-09-26: caregiver_photo
+      // stalled this exact way). The tool RESULT
       // (unlike the system prompt) is always fresh, so give the instruction here.
       const nextField = role === "caregiver" ? missing[0] : undefined;
-      const nextIsUpload = nextField === "profilePhoto" || nextField === "transportDocuments";
+      const nextIsUpload = nextField === "profilePhoto";
       const uploadGuidance = nextIsUpload
-        ? ` The next required item is an UPLOAD (${nextField}). Call send_onboarding_link RIGHT NOW, this same turn, with linkType ${nextField === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs"} — do not ask a question, do not say a link is coming, and do not claim the tool is unavailable; call it, then send one short line saying what to upload.`
+        ? ` The next required item is an UPLOAD (${nextField}). Call send_onboarding_link RIGHT NOW, this same turn, with linkType caregiver_photo — do not ask a question, do not say a link is coming, and do not claim the tool is unavailable; call it, then send one short line saying what to upload.`
         : "";
       // Availability is two pieces (days + parts of the day); a half answer is
       // saved but NOT complete — tell the model exactly which half is still

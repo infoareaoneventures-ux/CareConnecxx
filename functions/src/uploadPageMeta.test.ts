@@ -14,12 +14,11 @@ import { buildUploadMeta } from "./uploadPageMeta";
 import { injectProfileMeta } from "./caregiverProfileMeta";
 
 describe("buildUploadMeta", () => {
-  it("builds the transportation-documents card for /upload/transport (certifications retired 2026-09-25)", () => {
+  it("/upload/transport is retired (2026-10-06): a 'no documents needed' card, nothing to upload", () => {
     const meta = buildUploadMeta("/upload/transport");
-    expect(meta.title).toBe("Add your transportation documents — Evia");
-    expect(meta.description).toContain("driver's license");
-    expect(meta.description).toContain("vehicle registration");
-    expect(meta.description).not.toMatch(/certif/i);
+    expect(meta.title).toBe("No documents needed — Evia");
+    expect(meta.description).toContain("no longer collected");
+    expect(meta.description).not.toMatch(/driver's license|certif/i);
     expect(meta.image).toMatch(/icon-512\.png$/);
     expect(meta.url).toMatch(/\/upload\/transport$/);
   });
@@ -53,7 +52,7 @@ describe("buildUploadMeta", () => {
       <meta property="og:url" content="https://www.eviacares.com/" />
       </head><body><div id="root"></div></body></html>`;
     const out = injectProfileMeta(html, buildUploadMeta("/upload/transport"));
-    expect(out).toContain("<title>Add your transportation documents — Evia</title>");
-    expect(out).toMatch(/og:title" content="Add your transportation documents — Evia"/);
+    expect(out).toContain("<title>No documents needed — Evia</title>");
+    expect(out).toMatch(/og:title" content="No documents needed — Evia"/);
   });
 });

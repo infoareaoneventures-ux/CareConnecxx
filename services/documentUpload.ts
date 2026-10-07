@@ -1,18 +1,19 @@
 import firebase from 'firebase/compat/app';
 import { storage as firebaseStorage } from '../lib/firebase';
 import { dbService } from './api';
-import type { CaregiverDocument, CaregiverDocuments, CaregiverDocumentRenewal } from '../types';
+import type { CaregiverDocument, CaregiverDocuments } from '../types';
 
 /**
- * Caregiver Document Upload Service
- * Handles driver's license and vehicle registration uploads
- * with verification status tracking
+ * Caregiver file upload service — the profile photo only.
+ * Transport documents (driver's license, insurance, registration) were retired
+ * 2026-10-06: Transportation = the service on the profile + the cleared
+ * driving record (MVR), no uploads.
  */
 
 const MAX_FILE_SIZE_MB = 5;
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/gif', 'image/bmp', 'image/tiff', 'application/pdf'];
 
-export type DocumentType = 'driversLicense' | 'driversLicenseBack' | 'registration' | 'insurance' | 'profilePhoto';
+export type DocumentType = 'profilePhoto';
 
 interface UploadProgressCallback {
   (progress: number): void;
@@ -37,13 +38,7 @@ function validateFile(file: File): void {
  * Get document type display name
  */
 export function getDocumentTypeName(type: DocumentType): string {
-  const names: Record<DocumentType, string> = {
-    driversLicense: "Driver's License (Front)",
-    driversLicenseBack: "Driver's License (Back)",
-    registration: "Vehicle Registration",
-    insurance: "Vehicle Insurance",
-    profilePhoto: "Profile Photo"
-  };
+  const names: Record<DocumentType, string> = { profilePhoto: "Profile Photo" };
   return names[type];
 }
 
@@ -56,7 +51,7 @@ export async function uploadDocument(
   file: File,
   type: DocumentType,
   onProgress?: UploadProgressCallback
-): Promise<CaregiverDocument & { asRenewal?: boolean }> {
+): Promise<CaregiverDocument> {
   // Validate file
   validateFile(file);
 
@@ -114,12 +109,11 @@ export async function uploadDocument(
       fileType: file.type
     };
 
-    // Update Firestore with document metadata — as a RENEWAL beside an approved,
-    // unexpired document (Transportation stays on), else as the document itself.
-    const { asRenewal } = await updateDocumentMetadata(caregiverId, type, documentData);
+    // Update Firestore with the file metadata.
+    await updateDocumentMetadata(caregiverId, type, documentData);
 
-    console.log('📄 Document uploaded:', path, 'Type:', type, asRenewal ? '(renewal)' : '');
-    return { ...documentData, asRenewal };
+    console.log('📄 Document uploaded:', path, 'Type:', type);
+    return documentData;
   } catch (error: any) {
     console.error('Failed to upload document:', error);
     const code = error?.code || '';
@@ -133,38 +127,13 @@ export async function uploadDocument(
 /**
  * Update document metadata in Firestore
  */
-/** An approved document whose expiry date has not passed (or has none) is still live — a new upload is a renewal, not a replacement. */
-export function isLiveApproved(doc: CaregiverDocument | undefined | null, today = new Date()): boolean {
-  if (!doc || doc.status !== 'approved') return false;
-  if (!doc.expirationDate) return true;
-  const [y, m, d] = doc.expirationDate.split('-').map(Number);
-  const t = new Date(today); t.setHours(0, 0, 0, 0);
-  return new Date(y, m - 1, d) >= t;
-}
-
 export async function updateDocumentMetadata(
   caregiverId: string,
   type: DocumentType,
   documentData: CaregiverDocument
-): Promise<{ asRenewal: boolean }> {
+): Promise<void> {
   const db = firebase.firestore();
   const ref = db.collection('caregivers').doc(caregiverId);
-  // Renewal slot (founder, 2026-10-05): uploading over a live approved transport
-  // document must not knock the caregiver off Transportation while the new file
-  // waits for review — it goes beside the live one; the admin's approval swaps it in.
-  if (type !== 'profilePhoto') {
-    const snap = await ref.get().catch(() => null);
-    const current = (snap?.data() as any)?.documents?.[type] as CaregiverDocument | undefined;
-    if (isLiveApproved(current)) {
-      const renewal: CaregiverDocumentRenewal = {
-        url: documentData.url, path: documentData.path, uploadedAt: documentData.uploadedAt, status: 'pending',
-        ...(documentData.fileName ? { fileName: documentData.fileName } : {}),
-        ...(documentData.fileType ? { fileType: documentData.fileType } : {}),
-      };
-      await ref.update({ [`documents.${type}.renewal`]: renewal });
-      return { asRenewal: true };
-    }
-  }
   try {
     await ref.update({ [`documents.${type}`]: documentData });
   } catch (error: any) {
@@ -175,7 +144,7 @@ export async function updateDocumentMetadata(
           { documents: { [type]: documentData } },
           { mergeFields: [new firebase.firestore.FieldPath('documents', type)] }
         );
-        return { asRenewal: false };
+        return;
       } catch (setError: any) {
         console.error('Failed to create document metadata:', setError);
         const code = setError?.code || '';
@@ -188,7 +157,6 @@ export async function updateDocumentMetadata(
     if (code === 'permission-denied') throw new Error('Permission denied saving photo. Please log out and back in.');
     throw new Error(error?.message || 'Failed to save document information');
   }
-  return { asRenewal: false };
 }
 
 /**
@@ -235,89 +203,6 @@ export async function deleteDocument(
 }
 
 /**
- * Review a pending renewal (Admin only). Approved: the renewal becomes the live
- * document with its new expiry (the old one is gone). Rejected: the live document
- * stays until its own expiry; the reason is shown to the caregiver (2026-10-05).
- */
-export async function reviewDocumentRenewal(
-  caregiverId: string,
-  type: DocumentType,
-  decision: 'approved' | 'rejected',
-  notes?: string,
-  adminId?: string,
-  expirationDate?: string
-): Promise<void> {
-  const db = firebase.firestore();
-  const ref = db.collection('caregivers').doc(caregiverId);
-  const snap = await ref.get();
-  const current = (snap.data() as any)?.documents?.[type] as CaregiverDocument | undefined;
-  const renewal = current?.renewal;
-  if (!renewal) throw new Error('No renewal to review');
-  const now = new Date().toISOString();
-  if (decision === 'approved') {
-    const live: CaregiverDocument = {
-      url: renewal.url, path: renewal.path, uploadedAt: renewal.uploadedAt, status: 'approved',
-      reviewedAt: now,
-      ...(adminId !== undefined ? { reviewedBy: adminId } : {}),
-      ...(renewal.fileName ? { fileName: renewal.fileName } : {}),
-      ...(renewal.fileType ? { fileType: renewal.fileType } : {}),
-      ...(expirationDate ? { expirationDate } : current?.expirationDate ? { expirationDate: current.expirationDate } : {}),
-    };
-    await ref.update({ [`documents.${type}`]: live }); // whole field: the renewal slot goes with it
-    return;
-  }
-  const update: Record<string, any> = {
-    [`documents.${type}.renewal.status`]: 'rejected',
-    [`documents.${type}.renewal.reviewedAt`]: now,
-  };
-  if (adminId !== undefined) update[`documents.${type}.renewal.reviewedBy`] = adminId;
-  if (notes !== undefined) update[`documents.${type}.renewal.notes`] = notes;
-  await ref.update(update);
-}
-
-/**
- * Update document verification status (Admin only)
- */
-export async function updateDocumentStatus(
-  caregiverId: string,
-  type: DocumentType,
-  status: 'pending' | 'approved' | 'rejected',
-  notes?: string,
-  adminId?: string,
-  expirationDate?: string
-): Promise<void> {
-  try {
-    const db = firebase.firestore();
-    const caregiverRef = db.collection('caregivers').doc(caregiverId);
-
-    const update: Record<string, any> = {
-      [`documents.${type}.status`]: status,
-      [`documents.${type}.reviewedAt`]: new Date().toISOString(),
-    };
-    if (adminId !== undefined) update[`documents.${type}.reviewedBy`] = adminId;
-    if (notes !== undefined) update[`documents.${type}.notes`] = notes;
-    if (expirationDate) update[`documents.${type}.expirationDate`] = expirationDate;
-
-    // When profile photo is approved, promote its URL to the top-level photo field
-    // so the profile page displays it immediately
-    if (type === 'profilePhoto' && status === 'approved') {
-      const snap = await caregiverRef.get();
-      const photoUrl = (snap.data() as any)?.documents?.profilePhoto?.url;
-      if (photoUrl) update['photo'] = photoUrl;
-    }
-
-    await caregiverRef.update(update);
-
-    console.log('✓ Document status updated:', caregiverId, type, status);
-  } catch (error: any) {
-    console.error('Failed to update document status:', error);
-    const code = error?.code || '';
-    if (code === 'permission-denied') throw new Error('Permission denied. Make sure your admin account has userType: admin or isAdmin: true in Firestore.');
-    throw new Error(error?.message || 'Failed to update document status');
-  }
-}
-
-/**
  * Get all documents for a caregiver
  */
 export async function getCaregiverDocuments(
@@ -332,63 +217,11 @@ export async function getCaregiverDocuments(
   }
 }
 
-/**
- * Check if all required documents are uploaded
- */
-export function hasAllRequiredDocuments(
-  documents?: CaregiverDocuments | null
-): boolean {
-  if (!documents) return false;
-
-  return !!(
-    documents.driversLicense &&
-    documents.insurance &&
-    documents.registration
-  );
-}
-
-/**
- * Get document upload status summary
- */
-export function getDocumentStatusSummary(
-  documents?: CaregiverDocuments | null
-): {
-  total: number;
-  uploaded: number;
-  approved: number;
-  pending: number;
-  rejected: number;
-} {
-  if (!documents) {
-    return { total: 3, uploaded: 0, approved: 0, pending: 0, rejected: 0 };
-  }
-
-  const docs = [
-    documents.driversLicense,
-    documents.driversLicenseBack,
-    documents.insurance,
-    documents.registration,
-  ].filter(Boolean);
-
-  return {
-    total: docs.length,
-    uploaded: docs.length,
-    approved: docs.filter(d => d?.status === 'approved').length,
-    pending: docs.filter(d => d?.status === 'pending').length,
-    rejected: docs.filter(d => d?.status === 'rejected').length
-  };
-}
-
 export const documentUploadService = {
   uploadDocument,
   updateDocumentMetadata,
   getDocumentUrl,
   deleteDocument,
-  updateDocumentStatus,
-  reviewDocumentRenewal,
-  isLiveApproved,
   getCaregiverDocuments,
-  hasAllRequiredDocuments,
-  getDocumentStatusSummary,
   getDocumentTypeName
 };

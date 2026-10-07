@@ -296,7 +296,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (mp === "handled") return "handled";
     }
 
-    // ── SETTINGS · RESEND EMAIL LINK · DOCUMENTS · PAUSE [date] · REACTIVATE — the Account Settings page (agents/caregiverSettings.ts) ──
+    // ── SETTINGS · RESEND EMAIL LINK · PAUSE [date] · REACTIVATE — the Account Settings page (agents/caregiverSettings.ts) ──
     if (session.caregiverId) {
       const { handleSettingsKeyword } = await import("../agents/caregiverSettings");
       const st = await handleSettingsKeyword(phone, chatId, session.caregiverId, text);

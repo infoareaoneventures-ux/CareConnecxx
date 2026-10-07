@@ -53,7 +53,7 @@ import {
 import { coerceClientRate } from "./onboardingContract";
 import { businessTodayStr, formatDateForDisplay } from "../utils/scheduledTime";
 import { canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "./careNeedsTaxonomy";
-import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, toExperienceBucket, offersTransportation, transportDocumentsComplete, availabilityComplete } from "./onboardingContract";
+import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, toExperienceBucket, offersTransportation, availabilityComplete } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { describeSharedProfile } from "./profileBriefing";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
@@ -337,9 +337,9 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
     out.photoURL     = d.profilePhoto;
     out.photo        = d.profilePhoto;
   }
-  // Transport documents are written straight onto the site's documents.{type}
-  // map by the upload callable — never mirrored from the draft (the old
-  // certifications URL array is gone; the site never had it).
+  // No documents are mirrored: transport documents were retired 2026-10-06
+  // (Transportation = the service + the driving record); the old
+  // certifications URL array is gone too — the site never had it.
   // Experience is the wizard's bucket string on BOTH fields the site writes.
   const expBucket = toExperienceBucket(d.yearsExperience);
   if (expBucket) {
@@ -402,7 +402,6 @@ export function wizardStepForDraft(d: Record<string, unknown>): string | null {
   if (!has("profilePhoto")) return "photo";
   if (!(has("jobType") && availabilityComplete(d.availability))) return "availability";
   if (!(has("specialties") && has("yearsExperience"))) return "services";
-  if (offersTransportation(d) && !transportDocumentsComplete(d)) return "transport-docs";
   if (!(has("hourlyRate") && has("serviceRadius"))) return "rates";
   if (!has("bio")) return "bio";
   return "done";
@@ -1880,13 +1879,13 @@ async function dispatchGateTurnToQaAgent(
       `membership → background check → payouts. Exactly like the website, they can browse and ask about anything right now — ` +
       `nearby jobs, their applications, their profile, how things work — so use your tools. The actions the website blocks until ` +
       `setup is done (applying, accepting an interview or booking, starting or logging a shift, messaging a family) are blocked ` +
-      `by the tools themselves: when a tool returns MEMBERSHIP_REQUIRED / BACKGROUND_REQUIRED / TRANSPORT_DOCS_REQUIRED, ` +
+      `by the tools themselves: when a tool returns MEMBERSHIP_REQUIRED / BACKGROUND_REQUIRED / TRANSPORT_REQUIRED, ` +
       `Evia has ALREADY texted them that step and its link — add nothing about it.`,
     liveFact    ? `LIVE STATUS RIGHT NOW: ${liveFact}` : "",
     staticFacts ? `HOW THIS STEP WORKS: ${staticFacts}` : "",
     shared,
     `Never say a link is coming or that you'll send one — if they want their setup link, call send_onboarding_link ` +
-      `(caregiver_membership / caregiver_background_check / caregiver_payouts / caregiver_transport_docs) and then confirm. ` +
+      `(caregiver_membership / caregiver_background_check / caregiver_payouts) and then confirm. ` +
       `Don't nag about the pending step unless they ask about it or try something it blocks.`,
   ].filter(Boolean).join("\n");
   const { runQaAgent } = await import("./qaAgent");
@@ -1926,7 +1925,7 @@ async function dispatchGateTurnToQaAgent(
 // Idempotent and non-fatal: a no-op unless collection is (now) complete, and any
 // handoff failure is logged, never thrown.
 
-// An upload (photo / transport documents) landed while the caregiver is
+// The profile photo landed while the caregiver is
 // mid-collection: pick the conversation back up with the next question.
 //
 // 2026-09-26: this used to re-enter the scripted runner with the "__RESUME__"
@@ -1939,14 +1938,11 @@ async function dispatchGateTurnToQaAgent(
 export async function resumeCaregiverCollection(
   phone: string,
   chatId: string,
-  uploaded: "photo" | "documents" = "photo",
 ): Promise<void> {
   try {
     const fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as AgentSession | undefined;
     if (!fresh) return;
-    const note = uploaded === "photo"
-      ? "[System note — this is NOT a message from the caregiver: they just uploaded their profile photo through the secure link and it is saved. In ONE short warm line say the photo is in, then ask the next STILL NEEDED item. Never ask them to resend or repeat anything.]"
-      : "[System note — this is NOT a message from the caregiver: they just uploaded all three transportation documents through the secure link and they are saved. In ONE short warm line say the documents are in, then ask the next STILL NEEDED item. Never ask them to resend or repeat anything.]";
+    const note = "[System note — this is NOT a message from the caregiver: they just uploaded their profile photo through the secure link and it is saved. In ONE short warm line say the photo is in, then ask the next STILL NEEDED item. Never ask them to resend or repeat anything.]";
     await dispatchOnboardingToLoop(phone, chatId, note, { ...fresh, chatId } as AgentSession, "caregiver", { absorb: false });
   } catch (err) {
     console.error("resumeCaregiverCollection failed:", err instanceof Error ? err.message : err);
@@ -1954,9 +1950,9 @@ export async function resumeCaregiverCollection(
 }
 
 /**
- * Deterministic upload-link backstop. profilePhoto and transportDocuments are
- * "never typed" — while one is the next missing item, the ONLY correct action
- * is to (re)send its upload link. The agent-tier model was live-caught (2026-09-26)
+ * Deterministic upload-link backstop. profilePhoto is "never typed" — while it
+ * is the next missing item, the ONLY correct action is to (re)send its upload
+ * link. The agent-tier model was live-caught (2026-09-26)
  * declaring the tool "unavailable in this chat" or narrating "using the secure
  * link" without ever calling send_onboarding_link, so the link is sent here
  * whenever the model didn't send it this turn. Reuses the gate-link cooldown:
@@ -1969,9 +1965,9 @@ export async function sendUploadLinkIfBlocked(
   opts: { toolCallsThisTurn?: string[] } = {},
 ): Promise<boolean> {
   const next = missingRequiredFields("caregiver", data)[0];
-  if (next !== "profilePhoto" && next !== "transportDocuments") return false;
+  if (next !== "profilePhoto") return false;
   if (opts.toolCallsThisTurn?.includes("send_onboarding_link")) return false;
-  const linkType = next === "profilePhoto" ? "caregiver_photo" : "caregiver_transport_docs";
+  const linkType = "caregiver_photo" as const;
   const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
   const result = await runSendOnboardingLinkAction(
     { phone, linkType },
@@ -1985,9 +1981,7 @@ export async function sendUploadLinkIfBlocked(
     const mins = result.minutesSinceLastSend ?? 1;
     await sendMessage(chatId, `That link already went out about ${mins} minute${mins === 1 ? "" : "s"} ago — give it a moment to arrive. Still nothing? Just say so and I'll resend it.`);
   } else if (result.sent) {
-    await sendMessage(chatId, next === "profilePhoto"
-      ? "Here's your secure upload link — tap it to add a photo, that helps families choose you."
-      : "Here's your secure upload link — please add your driver's license, vehicle insurance, and vehicle registration there.");
+    await sendMessage(chatId, "Here's your secure upload link — tap it to add a photo, that helps families choose you.");
   }
   return true;
 }
@@ -3387,13 +3381,11 @@ async function handleInboundMedia(
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",
       language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "The caregiver texted a picture during signup. Warmly explain that photos and documents are saved through the secure upload link (so they land on their profile correctly), and that you're sending the link again right below. Do NOT include any URL.",
+      context: "The caregiver texted a picture during signup. Warmly explain that photos are saved through the secure upload link (so they land on their profile correctly), and that you're sending the link again right below. Do NOT include any URL.",
       fallback: "Thanks for sending that! Photos are saved through the secure upload link so they land on your profile — here it is again:",
       maxTokens: 70,
     }));
-    await sendOnboardingLink(phone, isFieldFilled((session.onboardingData ?? {}).profilePhoto) && offersTransportation((session.onboardingData ?? {}) as Record<string, unknown>) && !transportDocumentsComplete((session.onboardingData ?? {}) as Record<string, unknown>)
-      ? "caregiver_transport_docs"
-      : "caregiver_photo");
+    await sendOnboardingLink(phone, "caregiver_photo");
     return;
   }
   if (collectionStepsForRole("client").includes(step)) {
@@ -3859,7 +3851,6 @@ export type OnboardingLinkType =
   | "client_identity"
   | "caregiver_membership"
   | "caregiver_photo"
-  | "caregiver_transport_docs"
   | "caregiver_background_check"
   | "caregiver_payouts";
 
@@ -3934,13 +3925,6 @@ export async function sendOnboardingLink(
 
     case "caregiver_photo": {
       url = `${APP_URL}/upload/photo?t=${generateToken({ phone, task: "photo_upload" })}`;
-      break;
-    }
-
-    case "caregiver_transport_docs": {
-      // One page, three slots (driver's license, insurance, registration) —
-      // the same documents.{type} the site's settings page writes.
-      url = `${APP_URL}/upload/transport?t=${generateToken({ phone, task: "doc_upload" })}`;
       break;
     }
 
@@ -4224,7 +4208,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       if (taskData) await mergeOnboardingData(phone, { profilePhoto: taskData });
       const photoStep = session.onboardingStep ?? "";
       if (collectionStepsForRole("caregiver").includes(photoStep)) {
-        await resumeCaregiverCollection(phone, chatId, "photo");
+        await resumeCaregiverCollection(phone, chatId);
       } else {
         // Post-onboarding photo UPDATE (caregiverProfileHandler's UPDATE_PHOTO
         // flow reuses this token task) — confirm, never re-enter onboarding.
@@ -4235,21 +4219,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           fallback: "Got it — your new profile photo is saved on your profile.",
           maxTokens: 40,
         }));
-      }
-      break;
-    }
-
-    case "doc_upload": {
-      // Transport documents (driver's license / insurance / registration). The
-      // upload callable already wrote the site's documents.{type} map on
-      // caregivers/{uid} and merged onboardingData.transportDocs; taskData is the
-      // document type. The loop resumes only once all three are in — the upload
-      // page holds all three slots, so a partial set means they're still on it.
-      const fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as AgentSession | undefined;
-      const data = (fresh?.onboardingData ?? {}) as Record<string, unknown>;
-      const step = fresh?.onboardingStep ?? "";
-      if (collectionStepsForRole("caregiver").includes(step) && transportDocumentsComplete(data)) {
-        await resumeCaregiverCollection(phone, chatId, "documents");
       }
       break;
     }

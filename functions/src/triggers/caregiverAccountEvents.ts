@@ -8,29 +8,14 @@
 // (a payment-failed attempt, a renewal invoice, a scheduled cancel) are sent
 // by their Stripe handlers through the same module.
 import * as functions from "firebase-functions/v1";
-import { notifyCaregiverAccountEvent, TRANSPORT_DOC_LABELS, CaregiverAccountEventKind, CaregiverAccountEventContext } from "../notifications/caregiverAccountEvents";
+import { notifyCaregiverAccountEvent, CaregiverAccountEventKind, CaregiverAccountEventContext } from "../notifications/caregiverAccountEvents";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
-import { hasValidTransportDocs as transportDocsApprovedForMatching } from "../agents/caregiverMatchScoring";
 
 type Doc = Record<string, any>;
-const TRANSPORT_DOCS = ["driversLicense", "insurance", "registration"] as const;
 
 function bg(d: Doc | undefined): Doc { return (d?.backgroundCheckData ?? {}) as Doc; }
-function badge(d: Doc | undefined): boolean { return !!d && transportDocsApprovedForMatching(d) && d.isApprovedDriver === true; }
-function allDocsApproved(d: Doc | undefined): boolean {
-  const docs = (d?.documents ?? {}) as Doc;
-  return TRANSPORT_DOCS.every((t) => docs[t]?.status === "approved");
-}
-function anyDocExpired(d: Doc | undefined): boolean {
-  const docs = (d?.documents ?? {}) as Doc;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  return TRANSPORT_DOCS.some((t) => {
-    const exp = docs[t]?.expirationDate as string | undefined;
-    if (!exp) return false;
-    const [y, m, dd] = exp.split("-").map(Number);
-    return new Date(y, m - 1, dd) < today;
-  });
-}
+// Transportation live = offered + driving record cleared (no documents, 2026-10-06).
+function badge(d: Doc | undefined): boolean { return !!d && offersTransportation(d) && d.isApprovedDriver === true; }
 function offersTransportation(d: Doc | undefined): boolean {
   const services = [...((d?.skills as string[]) ?? []), ...((d?.services as string[]) ?? [])];
   return services.includes("Transportation");
@@ -73,24 +58,8 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
   if (bgB.invitationStatus !== "expired" && bgA.invitationStatus === "expired") out.push({ kind: "bgcheck_link_expired" });
   if (bgB.invitationStatus !== "awaiting_documents" && bgA.invitationStatus === "awaiting_documents") out.push({ kind: "bgcheck_document_required" });
 
-  // ── Transport documents / driving record / badge ──────────────────────────
-  const docsB = (b.documents ?? {}) as Doc; const docsA = (a.documents ?? {}) as Doc;
-  for (const t of TRANSPORT_DOCS) {
-    // Renewal slot (2026-10-05): a new file beside the live approved document.
-    const rb = docsB[t]?.renewal?.status; const ra = docsA[t]?.renewal?.status;
-    if (ra === "pending" && rb !== "pending") out.push({ kind: "transport_renewal_received", ctx: { docLabel: TRANSPORT_DOC_LABELS[t] } });
-    if (ra === "rejected" && rb !== "rejected") out.push({ kind: "transport_renewal_rejected", ctx: { docLabel: TRANSPORT_DOC_LABELS[t], docNotes: docsA[t]?.renewal?.notes ? String(docsA[t].renewal.notes) : undefined } });
-    if (rb && !ra && docsA[t]?.status === "approved" && docsB[t]?.status === "approved" && docsA[t]?.url !== docsB[t]?.url) {
-      out.push({ kind: "transport_renewal_approved", ctx: { docLabel: TRANSPORT_DOC_LABELS[t], newExpiry: docsA[t]?.expirationDate ? String(docsA[t].expirationDate) : undefined } });
-      continue; // the live document swapped — not a fresh "document approved"
-    }
-    const sb = docsB[t]?.status; const sa = docsA[t]?.status;
-    if (sb === sa) continue;
-    if (sa === "approved") out.push({ kind: "transport_doc_approved", ctx: { docLabel: TRANSPORT_DOC_LABELS[t] } });
-    if (sa === "rejected") out.push({ kind: "transport_doc_rejected", ctx: { docLabel: TRANSPORT_DOC_LABELS[t], docNotes: docsA[t]?.notes ? String(docsA[t].notes) : undefined } });
-  }
+  // ── Driving record / Transportation ──────────────────────────────────────
   const badgeB = badge(b); const badgeA = badge(a);
-  if (!allDocsApproved(b) && allDocsApproved(a) && !badgeA) out.push({ kind: "transport_docs_all_approved" });
   if (b.mvrStatus !== a.mvrStatus) {
     // The bundled criminal+MVR clear is announced by bgcheck_clear; the standalone MVR by its own line.
     if (a.mvrStatus === "clear" && !clearedNow) out.push({ kind: "mvr_clear" });
@@ -99,18 +68,8 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
   }
   if (!badgeB && badgeA) out.push({ kind: "transport_badge_earned" });
   if (badgeB && !badgeA) {
-    const reason: CaregiverAccountEventContext["reason"] =
-      anyDocExpired(a) ? "expired" : !allDocsApproved(a) ? "documents" : a.isApprovedDriver !== true ? "mvr" : !offersTransportation(a) ? "services" : undefined;
-    // Expired: name the documents; if a renewal is already waiting for review the
-    // text must not ask for an upload, and the team is alerted instead (2026-10-05).
-    const docsNow = (a.documents ?? {}) as Doc;
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const expiredTypes = TRANSPORT_DOCS.filter((t) => {
-      const exp = docsNow[t]?.expirationDate as string | undefined; if (!exp) return false;
-      const [y, m, dd] = exp.split("-").map(Number); return new Date(y, m - 1, dd) < today;
-    });
-    const renewalPending = expiredTypes.some((t) => docsNow[t]?.renewal?.status === "pending");
-    out.push({ kind: "transport_badge_lost", ctx: { reason, ...(reason === "expired" ? { docs: expiredTypes.map((t) => TRANSPORT_DOC_LABELS[t]), renewalPending } : {}) } });
+    const reason: CaregiverAccountEventContext["reason"] = a.isApprovedDriver !== true ? "mvr" : !offersTransportation(a) ? "services" : undefined;
+    out.push({ kind: "transport_badge_lost", ctx: { reason } });
   }
 
   // ── Payouts ───────────────────────────────────────────────────────────────

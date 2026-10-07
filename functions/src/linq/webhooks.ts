@@ -1762,9 +1762,9 @@ const handleInboundInner = traceable(
         console.info("webhooks: pre-turn absorber captured fields before loop", { phone, fields: Object.keys(preAbsorbed) });
       }
 
-      // Deterministic upload-gate backstop (2026-09-26): profilePhoto and
-      // transportDocuments are "never typed" fields — the ONLY valid action
-      // while one is next-missing is to (re)send its upload link, per the
+      // Deterministic upload-gate backstop (2026-09-26): profilePhoto is a
+      // "never typed" field — the ONLY valid action while it is next-missing
+      // is to (re)send its upload link, per the
       // directive. Live-caught: the agent-tier model was NOT reliably calling
       // send_onboarding_link here — it repeatedly claimed the tool "isn't
       // available in this chat" or hallucinated having already sent a link,

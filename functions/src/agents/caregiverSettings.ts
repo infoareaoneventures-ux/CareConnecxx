@@ -1,14 +1,14 @@
 // The caregiver Account Settings page, texted
 // (components/caregiver/CaregiverAccountSettings.tsx — Account Basics,
-// Membership & verification, Transportation Documents, Blocked Users, Pause, Delete).
+// Membership & verification, Blocked Users, Pause, Delete).
 //
 // Same reads as the page: the merged profile (users + caregivers, the caregiver
-// doc wins — dbService.getUser), the `documents.{type}` map with the page's own
-// status rule (approved / expired by expirationDate / rejected / under review /
-// not uploaded), users.blockedUsers + blockedUserProfiles, pausedUntil.
+// doc wins — dbService.getUser), users.blockedUsers + blockedUserProfiles,
+// pausedUntil. (The Transportation Documents section was retired 2026-10-06:
+// Transportation = the service + the driving record, shown under Membership &
+// verification.)
 // Same buttons through the same server paths: Resend confirmation link =
-// accountRecovery.resendEmailConfirmation (the page's queue action), Upload =
-// the tokened /upload/transport page (writes the same documents map), Pause /
+// accountRecovery.resendEmailConfirmation (the page's queue action), Pause /
 // Reactivate = pauseAccount.pauseCaregiver / reactivateCaregiver (the page's
 // queue action), phone change / email change / gender / address / unblock /
 // delete = the existing caregiver tools (update_caregiver_profile,
@@ -21,12 +21,6 @@ import { membershipSectionLines } from "./caregiverMembership";
 const db = admin.firestore();
 
 export const GENDER_OPTIONS = ["Male", "Female", "Non-binary", "Prefer not to say"];
-export const TRANSPORT_DOCS: Array<{ type: "driversLicense" | "insurance" | "registration"; label: string }> = [
-  { type: "driversLicense", label: "Driver's License" },
-  { type: "insurance", label: "Vehicle Insurance" },
-  { type: "registration", label: "Vehicle Registration" },
-];
-export type DocStatus = "idle" | "done" | "approved" | "expired" | "rejected";
 
 export interface SettingsPage {
   memberSince: string | null;
@@ -37,7 +31,6 @@ export interface SettingsPage {
   phone: string | null;
   address: { street: string; zip: string; city: string; state: string } | null;
   hasTransportation: boolean;
-  documents: Array<{ type: string; label: string; status: DocStatus; expires: string | null; notes: string | null; renewal: "pending" | "rejected" | null; renewalNotes: string | null }>;
   blocked: string[];
   pausedUntil: string | null; isPaused: boolean;
   /** Membership & verification (AccountStandingSection) — the same loader the MEMBERSHIP keyword uses. */
@@ -46,11 +39,6 @@ export interface SettingsPage {
 
 /** The page's toLocaleDateString() (en-US numeric). */
 const numericDate = (d: Date) => new Intl.DateTimeFormat("en-US", { month: "numeric", day: "numeric", year: "numeric", timeZone: DEFAULT_TZ }).format(d);
-const ymdToLocal = (ymd: string): string => {
-  const [y, m, d] = ymd.split("-").map(Number);
-  if (!y || !m || !d) return ymd;
-  return `${m}/${d}/${y}`;
-};
 const toDate = (v: unknown): Date | null => {
   if (!v) return null;
   if (v instanceof Date) return v;
@@ -60,22 +48,6 @@ const toDate = (v: unknown): Date | null => {
   const ms = Date.parse(String(v)); return Number.isFinite(ms) ? new Date(ms) : null;
 };
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
-
-/** The page's resolveDocStatus, verbatim. */
-export function resolveDocStatus(doc: Record<string, unknown> | undefined | null, today = new Date()): DocStatus {
-  if (!doc?.url) return "idle";
-  if (doc.status === "approved") {
-    const exp = str(doc.expirationDate);
-    if (exp) {
-      const [y, m, d] = exp.split("-").map(Number);
-      const t = new Date(today); t.setHours(0, 0, 0, 0);
-      if (new Date(y, m - 1, d) < t) return "expired";
-    }
-    return "approved";
-  }
-  if (doc.status === "rejected") return "rejected";
-  return "done"; // uploaded, pending review
-}
 
 export async function loadSettingsPage(caregiverId: string): Promise<SettingsPage> {
   const [cgSnap, userSnap] = await Promise.all([
@@ -90,7 +62,6 @@ export async function loadSettingsPage(caregiverId: string): Promise<SettingsPag
   // caregiver record's — the site's Settings reads the same (dbService.getUser accountCreatedAt). 2026-10-04.
   const created = toDate(user.createdAt) ?? toDate(cg.createdAt);
   const { isEmailVerified } = await import("../accountRecovery");
-  const docs = (p.documents ?? {}) as Record<string, Record<string, unknown> | undefined>;
   const services = (Array.isArray(p.skills) ? p.skills : Array.isArray(p.services) ? p.services : []) as string[];
   const blockedIds: string[] = Array.isArray(user.blockedUsers) ? (user.blockedUsers as string[]) : [];
   const blockedProfiles = (user.blockedUserProfiles ?? {}) as Record<string, { name?: string }>;
@@ -111,23 +82,12 @@ export async function loadSettingsPage(caregiverId: string): Promise<SettingsPag
     phone: str(p.phone) || null,
     address: street || zip || city || state ? { street, zip, city, state } : null,
     hasTransportation: services.includes("Transportation"),
-    documents: TRANSPORT_DOCS.map(({ type, label }) => ({
-      type, label, status: resolveDocStatus(docs[type]), expires: str(docs[type]?.expirationDate) || null, notes: str(docs[type]?.notes) || null,
-      // Renewal slot (2026-10-05): a new file waiting beside the live approved document.
-      renewal: ((docs[type]?.renewal as Record<string, unknown> | undefined)?.status === "pending" || (docs[type]?.renewal as Record<string, unknown> | undefined)?.status === "rejected")
-        ? ((docs[type]?.renewal as Record<string, unknown>).status as "pending" | "rejected") : null,
-      renewalNotes: str((docs[type]?.renewal as Record<string, unknown> | undefined)?.notes) || null,
-    })),
     blocked: blockedIds.map((id) => blockedProfiles[id]?.name || "Blocked User"),
     pausedUntil,
     isPaused: !!pausedUntil && pausedUntil > new Date().toISOString(),
     standing,
   };
 }
-
-export const DOC_STATUS_TEXT: Record<DocStatus, string> = {
-  approved: "Approved", expired: "Expired (re-upload)", rejected: "Rejected (re-upload)", done: "Under Review", idle: "Not uploaded",
-};
 
 export function settingsPageText(page: SettingsPage): string {
   // "not set", never "—": the send filter rewrites every em dash to a comma (safety/linter.ts), which turned "Last name: —" into "Last name:," (founder, 2026-10-04).
@@ -145,26 +105,6 @@ export function settingsPageText(page: SettingsPage): string {
   lines.push(`Address: ${dash(addr)} (tell me a new address to update it)`);
   // Membership & verification — moved here from Payments › Membership (2026-10-04).
   lines.push("", "Membership & verification", ...membershipSectionLines(page.standing));
-  if (page.hasTransportation) {
-    lines.push("", "Transportation Documents: required to offer Transportation. Keep these up to date.");
-    const recordNotApproved = page.standing.driver === "not_approved";
-    // The page's why-line when the driving record is Not approved (documents stay on file, no action asked).
-    if (recordNotApproved) lines.push("Your driving record check didn't meet the requirement for Transportation jobs, so Transportation is off your profile. Your documents stay on file.");
-    for (const d of page.documents) {
-      const reason = d.status === "rejected" && d.notes ? ` (reason: ${d.notes})` : "";
-      // Status only while the record is Not approved — no "(re-upload)" ask, same as the page.
-      const statusText = (s: DocStatus, quiet: boolean) => (quiet ? DOC_STATUS_TEXT[s].replace(" (re-upload)", "") : DOC_STATUS_TEXT[s]);
-      const renewalNote = d.status === "approved" && d.renewal === "pending" ? " · renewal under review, you stay on Transportation meanwhile"
-        : d.status === "approved" && d.renewal === "rejected" ? ` · renewal rejected${d.renewalNotes ? ` (reason: ${d.renewalNotes})` : ""}, your current document stays on file until it expires` : "";
-      lines.push(`${d.label}: ${statusText(d.status, recordNotApproved)}${reason}${d.expires && (d.status === "approved" || d.status === "expired") ? ` · Expires ${ymdToLocal(d.expires)}` : ""}${renewalNote}`);
-    }
-    if (!recordNotApproved) {
-      if (page.documents.filter((d) => d.status === "done" || d.status === "approved").length < 3) {
-        lines.push("All three documents are required to offer Transportation.");
-      }
-      lines.push("Reply DOCUMENTS for your upload link — a renewal uploaded over an approved document waits beside it, so you stay on Transportation while we review it.");
-    }
-  }
   lines.push("", page.blocked.length ? `Blocked Users: ${page.blocked.join(", ")} (tell me to unblock someone)` : "Blocked Users: You haven't blocked anyone.");
   lines.push("");
   if (page.isPaused) {
@@ -200,23 +140,6 @@ export async function sendResendEmailLink(chatId: string, caregiverId: string): 
   }
 }
 
-/** The page's Upload buttons — the tokened upload page that writes the same documents map. Shown only when Transportation is offered, like the section. */
-export async function sendDocumentsUploadLink(phone: string, chatId: string, caregiverId: string): Promise<boolean> {
-  const page = await loadSettingsPage(caregiverId);
-  if (!page.hasTransportation) {
-    await sendMessage(chatId, "Transportation documents only apply when Transportation is one of your services — add it to your services first and I'll send the upload link.");
-    return false;
-  }
-  try {
-    const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
-    const r = await runSendOnboardingLinkAction({ phone, linkType: "caregiver_transport_docs" }, { caller: "sms_agent", role: "caregiver", phone });
-    if (r.sent) return true;
-    if (r.throttled) { await sendMessage(chatId, `Your upload link went out about ${r.minutesSinceLastSend ?? "a few"} minutes ago — tap that one, or reply LINK and I'll resend it.`); return false; }
-  } catch (err) { console.error("[caregiverSettings] documents link failed:", err); }
-  await sendMessage(chatId, "I couldn't generate your upload link right now — reply DOCUMENTS again in a moment.");
-  return false;
-}
-
 /** The page's Pause account / Reactivate buttons — the same shared writes its queue action calls, the page's toasts. */
 export async function pauseFromSettings(chatId: string, caregiverId: string, until?: string): Promise<boolean> {
   const { pauseCaregiver } = await import("./pauseAccount");
@@ -233,12 +156,11 @@ export async function reactivateFromSettings(chatId: string, caregiverId: string
   return true;
 }
 
-// ── Keywords (routeCaregiver): SETTINGS · RESEND EMAIL LINK · DOCUMENTS · PAUSE [date] · REACTIVATE ──
+// ── Keywords (routeCaregiver): SETTINGS · RESEND EMAIL LINK · PAUSE [date] · REACTIVATE ──
 export async function handleSettingsKeyword(phone: string, chatId: string, caregiverId: string, text: string): Promise<"handled" | "passthrough"> {
   const upper = text.trim().toUpperCase().replace(/\s+/g, " ");
   if (["SETTINGS", "MY SETTINGS", "ACCOUNT", "MY ACCOUNT", "ACCOUNT SETTINGS"].includes(upper)) { await sendCaregiverSettings(chatId, caregiverId); return "handled"; }
   if (["RESEND EMAIL LINK", "RESEND EMAIL", "RESEND CONFIRMATION"].includes(upper)) { await sendResendEmailLink(chatId, caregiverId); return "handled"; }
-  if (["DOCUMENTS", "MY DOCUMENTS", "UPLOAD DOCUMENTS", "UPLOAD"].includes(upper)) { await sendDocumentsUploadLink(phone, chatId, caregiverId); return "handled"; }
   const pause = /^PAUSE(?: ACCOUNT)?(?: (\d{4}-\d{2}-\d{2}))?$/.exec(upper);
   if (pause) {
     const until = pause[1];

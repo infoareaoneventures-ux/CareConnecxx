@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // The caregiver Account Settings page, texted (caregiverSettings.ts): the page's
-// reads (merged profile, documents map with the page's status rule, blocked
-// users, pause), its sections word for word, and the keywords = its buttons.
+// reads (merged profile, blocked users, pause), its sections word for word, and
+// the keywords = its buttons. Documents section retired 2026-10-06 (MVR only).
 
 const hoisted = vi.hoisted(() => ({
   docs: new Map<string, any>(),
   sent: [] as string[],
   resend: vi.fn(async () => ({ sentTo: "hamse143@gmail.com" })),
-  linkResult: { success: true, linkType: "caregiver_transport_docs", sent: true } as any,
+  linkResult: { success: true, linkType: "caregiver_photo", sent: true } as any,
   pause: vi.fn(async () => {}),
   reactivate: vi.fn(async () => {}),
 }));
@@ -28,12 +28,12 @@ vi.mock("../../accountRecovery", () => ({
 vi.mock("../actions/sendOnboardingLinkAction", () => ({ runSendOnboardingLinkAction: vi.fn(async () => hoisted.linkResult) }));
 vi.mock("../pauseAccount", () => ({ pauseCaregiver: (...a: any[]) => (hoisted.pause as any)(...a), reactivateCaregiver: (...a: any[]) => (hoisted.reactivate as any)(...a) }));
 
-import { loadSettingsPage, settingsPageText, resolveDocStatus, handleSettingsKeyword, GENDER_OPTIONS } from "../caregiverSettings";
+import { loadSettingsPage, settingsPageText, handleSettingsKeyword, GENDER_OPTIONS } from "../caregiverSettings";
 import { DRIVER_CARD_TEXT } from "../caregiverMembership";
 
 beforeEach(() => {
   hoisted.docs.clear(); hoisted.sent.length = 0; hoisted.resend.mockClear(); hoisted.pause.mockClear(); hoisted.reactivate.mockClear();
-  hoisted.linkResult = { success: true, linkType: "caregiver_transport_docs", sent: true };
+  hoisted.linkResult = { success: true, linkType: "caregiver_photo", sent: true };
   hoisted.docs.set("users/cg1", { email: "old@x.com", blockedUsers: ["u9"], blockedUserProfiles: { u9: { name: "Pat Lee" } } });
   hoisted.docs.set("caregivers/cg1", {
     name: "Mahad", createdAt: "2026-09-26T18:00:00.000Z", email: "hamse143@gmail.com", emailVerified: false, phone: "+14088745451",
@@ -52,14 +52,6 @@ describe("loadSettingsPage — the page's reads", () => {
     expect(p.hasTransportation).toBe(false);
     expect(p.blocked).toEqual(["Pat Lee"]);
     expect(p.isPaused).toBe(false);
-  });
-  it("resolveDocStatus = the page's rule: no url → idle; approved past expiry → expired; rejected; else under review", () => {
-    expect(resolveDocStatus(undefined)).toBe("idle");
-    expect(resolveDocStatus({ url: "u", status: "approved", expirationDate: "2020-01-01" })).toBe("expired");
-    expect(resolveDocStatus({ url: "u", status: "approved", expirationDate: "2099-01-01" })).toBe("approved");
-    expect(resolveDocStatus({ url: "u", status: "approved" })).toBe("approved");
-    expect(resolveDocStatus({ url: "u", status: "rejected" })).toBe("rejected");
-    expect(resolveDocStatus({ url: "u", status: "pending" })).toBe("done");
   });
 });
 
@@ -92,7 +84,7 @@ describe("settingsPageText — the sections word for word", () => {
       "Deleting your account is permanent and cannot be undone. To delete it, tell me and I'll confirm with you first.",
     ].join("\n"));
   });
-  it("Transportation offered → the documents section with the page's statuses, Expires, the all-three note and the DOCUMENTS line; confirmed email; paused states", async () => {
+  it("Transportation offered → NO documents section (MVR only, 2026-10-06); legacy documents data is ignored; confirmed email; paused states", async () => {
     hoisted.docs.set("caregivers/cg1", {
       name: "Mahad Ali", createdAt: "2026-09-26T18:00:00.000Z", email: "a@b.com", emailVerified: true, emailVerifiedFor: "A@B.com", skills: ["Transportation"],
       documents: { driversLicense: { url: "u", status: "approved", expirationDate: "2027-03-03" }, insurance: { url: "u", status: "pending" } },
@@ -102,12 +94,8 @@ describe("settingsPageText — the sections word for word", () => {
     const t = settingsPageText(await loadSettingsPage("cg1"));
     expect(t).toContain("First name: Mahad\nLast name: Ali");
     expect(t).toContain("Recovery email: a@b.com (Confirmed)");
-    expect(t).toContain("Transportation Documents: required to offer Transportation. Keep these up to date.\nDriver's License: Approved · Expires 3/3/2027\nVehicle Insurance: Under Review\nVehicle Registration: Not uploaded\nAll three documents are required to offer Transportation.\nReply DOCUMENTS for your upload link — a renewal uploaded over an approved document waits beside it, so you stay on Transportation while we review it.");
-    // Renewal slot (2026-10-05): the twin prints the renewal state beside the live document.
-    hoisted.docs.set("caregivers/cg1", { ...hoisted.docs.get("caregivers/cg1"), documents: { driversLicense: { url: "u", status: "approved", expirationDate: "2027-03-03", renewal: { url: "n", status: "pending" } }, insurance: { url: "u", status: "approved", expirationDate: "2027-03-03", renewal: { url: "n", status: "rejected", notes: "blurry" } } } });
-    const t2 = settingsPageText(await loadSettingsPage("cg1"));
-    expect(t2).toContain("Driver's License: Approved · Expires 3/3/2027 · renewal under review, you stay on Transportation meanwhile");
-    expect(t2).toContain("Vehicle Insurance: Approved · Expires 3/3/2027 · renewal rejected (reason: blurry), your current document stays on file until it expires");
+    expect(t).toContain("Membership & verification");
+    expect(t).not.toMatch(/document|DOCUMENTS|upload|Expires/i);
     expect(t).toContain("Blocked Users: You haven't blocked anyone.");
     expect(t).toContain("Your account is paused. You'll automatically become active again on 2026-11-01. Reactivate sooner anytime. Reply REACTIVATE.");
     hoisted.docs.set("caregivers/cg1", { pausedUntil: "2099-12-31" });
@@ -125,14 +113,6 @@ describe("keywords — the page's buttons through the same server paths", () => 
     hoisted.resend.mockResolvedValueOnce({ sentTo: null } as any);
     await handleSettingsKeyword("+1", "chat", "cg1", "resend email");
     expect(hoisted.sent[2]).toBe("Your recovery email is already confirmed — nothing to resend.");
-  });
-  it("DOCUMENTS sends the upload link only when Transportation is offered (the section's own rule)", async () => {
-    expect(await handleSettingsKeyword("+1", "chat", "cg1", "DOCUMENTS")).toBe("handled");
-    expect(hoisted.sent[0]).toContain("only apply when Transportation is one of your services");
-    hoisted.docs.set("caregivers/cg1", { skills: ["Transportation"] });
-    const { runSendOnboardingLinkAction } = await import("../actions/sendOnboardingLinkAction");
-    await handleSettingsKeyword("+1", "chat", "cg1", "upload documents");
-    expect(runSendOnboardingLinkAction).toHaveBeenCalledWith({ phone: "+1", linkType: "caregiver_transport_docs" }, { caller: "sms_agent", role: "caregiver", phone: "+1" });
   });
   it("PAUSE / PAUSE <date> / REACTIVATE = the page's buttons, the page's toasts; a past date is refused; other words pass through", async () => {
     expect(await handleSettingsKeyword("+1", "chat", "cg1", "pause")).toBe("handled");

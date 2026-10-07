@@ -41,9 +41,11 @@ export function buildUploadMeta(pathname: string): ProfileMeta {
       url:         `${appUrl}/upload/photo`,
     };
   }
+  // /upload/transport retired (2026-10-06): transport documents are no longer
+  // collected — Transportation is the service plus the driving record (MVR).
   return {
-    title:       "Add your transportation documents — Evia",
-    description: "Upload your driver's license, vehicle insurance, and vehicle registration. Our team reviews them after your background and driving-record checks.",
+    title:       "No documents needed — Evia",
+    description: "Transportation documents are no longer collected. Offer Transportation on your profile and the driving record check runs with your membership.",
     image:       `${appUrl}/icon-512.png`,
     url:         `${appUrl}/upload/transport`,
   };

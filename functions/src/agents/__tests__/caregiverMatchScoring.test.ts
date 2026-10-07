@@ -57,51 +57,32 @@ describe("availabilityOverlap", () => {
 });
 
 describe("hasValidTransportDocs", () => {
-  const approvedDocs = {
-    driversLicense: { status: "approved" },
-    insurance: { status: "approved" },
-    registration: { status: "approved" },
-  };
-
+  // Twin of utils/transportDocs.ts. MVR only (founder, 2026-10-06): Transportation
+  // is live when it is offered AND the driving record cleared — no documents.
   it("false when Transportation isn't an offered service", () => {
-    expect(hasValidTransportDocs({ skills: ["Companionship"], documents: approvedDocs })).toBe(false);
+    expect(hasValidTransportDocs({ skills: ["Companionship"], isApprovedDriver: true })).toBe(false);
   });
 
-  it("false when a document is missing or not approved", () => {
-    expect(hasValidTransportDocs({
-      skills: ["Transportation"],
-      documents: { ...approvedDocs, insurance: { status: "pending" } },
-    })).toBe(false);
+  it("false when the driving record hasn't cleared", () => {
+    expect(hasValidTransportDocs({ skills: ["Transportation"] })).toBe(false);
+    expect(hasValidTransportDocs({ skills: ["Transportation"], isApprovedDriver: false })).toBe(false);
   });
 
-  it("true when Transportation is offered, all docs are approved and unexpired, AND the driving record cleared", () => {
-    expect(hasValidTransportDocs({ skills: ["Transportation"], documents: approvedDocs, isApprovedDriver: true })).toBe(true);
-  });
-
-  // Founder 2026-09-25: the documents alone never earn the badge — the site's
-  // utils/transportDocs.ts has required the MVR since then; this twin lagged
-  // behind until 2026-09-30 (Evia and the public projection called caregivers
-  // "Transportation" whom the site would not).
-  it("false with approved documents but no cleared driving record (MVR)", () => {
-    expect(hasValidTransportDocs({ skills: ["Transportation"], documents: approvedDocs })).toBe(false);
-    expect(hasValidTransportDocs({ skills: ["Transportation"], documents: approvedDocs, isApprovedDriver: false })).toBe(false);
-  });
-
-  it("false when a document is expired", () => {
+  it("true when Transportation is offered AND the driving record cleared — legacy document data is ignored", () => {
+    expect(hasValidTransportDocs({ skills: ["Transportation"], isApprovedDriver: true })).toBe(true);
+    expect(hasValidTransportDocs({ services: ["Transportation"], isApprovedDriver: true })).toBe(true);
     expect(hasValidTransportDocs({
       skills: ["Transportation"], isApprovedDriver: true,
-      documents: { ...approvedDocs, registration: { status: "approved", expirationDate: "2000-01-01" } },
-    })).toBe(false);
+      documents: { registration: { status: "approved", expirationDate: "2000-01-01" } },
+    })).toBe(true);
   });
 
   // 2026-08-24: publicCaregiverProfiles precomputes this at projection-write
-  // time instead of exposing raw document data — a reader of that collection
-  // has no `documents` field at all, so the precomputed flag must be trusted
-  // directly rather than falling through to a `documents`-based computation
-  // that would always resolve false.
+  // time instead of exposing raw record data — the precomputed flag is trusted
+  // directly when present.
   it("trusts a precomputed hasValidTransportDocs flag when present (publicCaregiverProfiles shape)", () => {
     expect(hasValidTransportDocs({ hasValidTransportDocs: true })).toBe(true);
-    expect(hasValidTransportDocs({ hasValidTransportDocs: false, skills: ["Transportation"], documents: approvedDocs, isApprovedDriver: true })).toBe(false);
+    expect(hasValidTransportDocs({ hasValidTransportDocs: false, skills: ["Transportation"], isApprovedDriver: true })).toBe(false);
   });
 });
 

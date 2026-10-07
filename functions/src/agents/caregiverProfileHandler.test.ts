@@ -256,14 +256,14 @@ describe("caregiverProfileHandler", () => {
       expect(text).toContain("Mobility Assistance\nDementia / Memory Care\nMedication Reminders Only");
     });
 
-    it("adding Transportation without the three documents does not save — the page's rule", async () => {
+    it("adding Transportation saves like any other service — no documents gate (MVR only, 2026-10-06)", async () => {
       parseWithClaude
         .mockResolvedValueOnce("NO")
         .mockResolvedValueOnce('{"action":"add","skills":["transportation"]}');
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "add transportation", {}, CHAT, "skills");
-      expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ profileUpdateStep: "confirm" }));
+      expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ profileUpdateStep: "confirm" }));
       const text = sendMessage.mock.calls.at(-1)?.[1] as string;
-      expect(text).toContain("Upload your driver's license, vehicle insurance, and registration to offer transportation");
+      expect(text).not.toMatch(/driver's license|upload|document/i);
     });
 
     it("collect step — remove action", async () => {

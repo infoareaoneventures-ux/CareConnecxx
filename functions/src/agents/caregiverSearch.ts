@@ -13,7 +13,8 @@
 //            caregiver's own serviceRadius), name/city/state/zip search, max
 //            rate (default $75, 100 = no cap), rating (Any/3+/4+/4.5+),
 //            experience (Any/1+/3+/5+/10+), Background checked only,
-//            Transportation (2026-10-04: was "Reliable transportation" — the word judged the person), specialties (any), languages (any)
+//            Transportation (2026-10-04: was "Reliable transportation" — the word judged the person; 2026-10-06: the site's Trust & Safety box is gone,
+//            this is the Specialties › Transportation box = caregivers whose Transportation is live), specialties (any), languages (any)
 //   sort     Highest rated (default) · Price: Low to High · Price: High to Low
 //   card     photo, name, stars + review count, verification badge, experience,
 //            city/state/zip, $rate/hr, 2 skills + "+N", Message, and
@@ -76,7 +77,7 @@ export interface CaregiverCard {
   hourlyRate:    number;
   skills:        string[];
   languages:     string[];
-  hasReliableTransportation: boolean;
+  transportationLive: boolean;
   isFavorite:    boolean;
   /** Which primary button the card shows. */
   state:         CaregiverCardState;
@@ -203,7 +204,7 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
       distance,
       hourlyRate: Number(data.hourlyRate) || 25,
       skills, languages,
-      hasReliableTransportation: hasValidTransportDocs(data),
+      transportationLive: hasValidTransportDocs(data),
       isFavorite: favorites.has(doc.id),
       state,
       actions: ["message", ...(state === "request_interview" ? ["request_interview" as const] : state === "rebook" ? ["rebook" as const] : [])],
@@ -233,7 +234,7 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
     if (cg.rating < filters.minRating) return false;
     if ((Number(cg.experience) || 0) < filters.minExperienceYears) return false;
     if (filters.verifiedOnly && !cg.verified) return false;
-    if (filters.transportationOnly && !cg.hasReliableTransportation) return false;
+    if (filters.transportationOnly && !cg.transportationLive) return false;
     if (wantedSpecialties.length > 0) {
       const have = new Set(cg.skills.map((s) => s.toLowerCase()));
       if (!wantedSpecialties.some((s) => have.has(s))) return false;
@@ -258,10 +259,10 @@ export function caregiverCardText(c: CaregiverCard): string {
   const ratingLabel = c.reviewCount > 0 ? `★ ${c.rating.toFixed(1)} (${c.reviewCount} review${c.reviewCount === 1 ? "" : "s"})` : "No reviews yet";
   const exp = typeof c.experience === "number" ? `${c.experience} yrs experience` : `${c.experience} experience`;
   const where = [c.city, c.stateCode].filter(Boolean).join(", ") + (c.zipCode ? ` ${c.zipCode}` : "");
-  // Transportation only counts as a service once the badge is earned — same gate
-  // as the profile page (ClientCaregiverProfile.tsx / caregiverProfilePage.ts)
-  // and the site's Find Caregivers card (parity fix, 2026-09-22).
-  const visibleSkills = c.skills.filter((s) => s !== "Transportation" || c.hasReliableTransportation);
+  // Transportation only counts as a service once it is live (offered + driving record
+  // clear) — same gate as the profile page (ClientCaregiverProfile.tsx /
+  // caregiverProfilePage.ts) and the site's Find Caregivers card (parity fix, 2026-09-22).
+  const visibleSkills = c.skills.filter((s) => s !== "Transportation" || c.transportationLive);
   const skills = visibleSkills.length > 0 ? `${visibleSkills.slice(0, 2).map(serviceLabel).join(", ")}${visibleSkills.length > 2 ? ` +${visibleSkills.length - 2}` : ""}` : "";
   const stateLabel = c.state === "active_booking" ? "Active booking with you"
     : c.state === "interview_requested" ? "Interview requested — waiting on their reply"

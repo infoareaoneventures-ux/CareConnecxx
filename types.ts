@@ -98,27 +98,11 @@ export interface TimeSlot {
 }
 
 // Caregiver Document Types
-/** A new file uploaded over an approved, unexpired document — reviewed beside it,
- *  so Transportation stays on while it waits (founder, 2026-10-05). Approving it
- *  replaces the live document; rejecting it leaves the live one until its own expiry. */
-export interface CaregiverDocumentRenewal {
-  url: string;
-  path: string;
-  uploadedAt: string;
-  status: 'pending' | 'rejected';
-  fileName?: string;
-  fileType?: string;
-  notes?: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-}
-
 export interface CaregiverDocument {
   url: string;
   path: string;
   uploadedAt: string;
   status: 'pending' | 'approved' | 'rejected';
-  renewal?: CaregiverDocumentRenewal;
   reviewedAt?: string;
   reviewedBy?: string;
   notes?: string;
@@ -129,11 +113,8 @@ export interface CaregiverDocument {
   _pendingFile?: File;
 }
 
+// The profile photo only — transport documents were retired 2026-10-06 (Transportation = the service + the cleared driving record).
 export interface CaregiverDocuments {
-  driversLicense?: CaregiverDocument;
-  driversLicenseBack?: CaregiverDocument;
-  registration?: CaregiverDocument;
-  insurance?: CaregiverDocument;
   profilePhoto?: CaregiverDocument;
 }
 

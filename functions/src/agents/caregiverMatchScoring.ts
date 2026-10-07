@@ -65,37 +65,22 @@ export function skillsOverlap(cgSkills: string[], clientNeeds: string[]): number
 }
 
 // Twin of utils/transportDocs.ts (repo root, frontend-only) — keep both in sync.
-// The badge families see = Transportation offered + all three documents approved and
-// unexpired + the driving record (MVR) cleared (`isApprovedDriver`, written only by the
-// Checkr webhook). Founder 2026-09-25: neither half alone earns it. This helper also
+// Transportation shows to families = offered on the profile + the driving record (MVR)
+// cleared (`isApprovedDriver`, written only by the Checkr webhook). No documents since
+// 2026-10-06 (founder: only the background check and the MVR). This helper also
 // computes the precomputed flag written to publicCaregiverProfiles (the documents
 // themselves are never copied there), so the family side inherits the same rule.
-const TRANSPORT_DOC_TYPES = ["driversLicense", "insurance", "registration"] as const;
-
-function parseLocalDate(s: string): Date {
-  const [y, m, d] = s.split("-");
-  return new Date(+y, +m - 1, +d);
-}
-
 export function hasValidTransportDocs(profile: Record<string, unknown> | null | undefined): boolean {
   if (!profile) return false;
-  // publicCaregiverProfiles precomputes this at projection-write time
-  // (publicCaregiverProfile.ts) instead of exposing raw document data — when
-  // reading that collection, trust the precomputed flag directly rather than
-  // looking for a `documents` field that was deliberately never copied there.
+  // publicCaregiverProfiles precomputes this at projection-write time — trust it there.
   if (typeof profile.hasValidTransportDocs === "boolean") return profile.hasValidTransportDocs;
+  // Transportation live = offered on the profile + driving record cleared (founder,
+  // 2026-10-06: the MVR through Checkr is the only check — no documents).
   const services: string[] = [
     ...((profile.skills as string[]) || []),
     ...((profile.services as string[]) || []),
   ];
   if (!services.includes("Transportation")) return false;
-  const docs = profile.documents as Record<string, { status?: string; expirationDate?: string }> | undefined;
-  if (!docs) return false;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const isValid = (doc: { status?: string; expirationDate?: string } | undefined) =>
-    doc?.status === "approved" && (!doc.expirationDate || parseLocalDate(doc.expirationDate) >= today);
-  if (!TRANSPORT_DOC_TYPES.every((t) => isValid(docs[t]))) return false;
   return profile.isApprovedDriver === true;
 }
 

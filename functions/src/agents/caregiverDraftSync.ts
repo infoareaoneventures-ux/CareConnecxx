@@ -12,7 +12,7 @@
 // weeklyAvailability, city, zipCode). This file only needs to translate the
 // handful of fields that genuinely differ in name or shape.
 import { describeWeeklyAvailability, type WeeklyAvailabilityMap } from "./caregiverAvailability";
-import { toExperienceBucket, TRANSPORT_DOC_TYPES } from "./onboardingContract";
+import { toExperienceBucket } from "./onboardingContract";
 
 // The webapp's hyphenated jobTypes id → Evia's underscored jobType enum — the
 // exact reverse of onboardingContract.ts's JOB_TYPE_TO_WEB_ID.
@@ -53,20 +53,6 @@ export function mapCaregiversDocToOnboardingData(
   // `profilePhoto` (buildCaregiverProfileMirror's forward direction mirrors
   // profilePhoto onto photo/photoURL — this is the reverse of that same alias).
   copy("profilePhoto", d.photo ?? d.profilePhoto);
-
-  // Transport documents live on the site's `documents.{type}` map; Evia's
-  // draft keeps just the urls under transportDocs so the "still needed" check
-  // sees what the site (or the upload page) already stored.
-  const docsMap = (d.documents && typeof d.documents === "object" && !Array.isArray(d.documents))
-    ? (d.documents as Record<string, { url?: string } | undefined>) : undefined;
-  if (docsMap) {
-    const transportDocs: Record<string, string> = {};
-    for (const t of TRANSPORT_DOC_TYPES) {
-      const url = docsMap[t]?.url;
-      if (typeof url === "string" && url) transportDocs[t] = url;
-    }
-    if (Object.keys(transportDocs).length) out.transportDocs = transportDocs;
-  }
 
   // skills/services (canonical, post-canonicalization) is the specialties list
   // both channels already share — Evia's own field for this is `specialties`.

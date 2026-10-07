@@ -55,7 +55,7 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d.toLowerCase()).toContain("do not send or mention any link");
   });
 
-  it("when the next item is an upload (photo / transport documents) it instructs send_onboarding_link, not a question", () => {
+  it("when the next item is the photo upload it instructs send_onboarding_link, not a question; offering Transportation adds no upload (2026-10-06)", () => {
     const afterAddress = buildCaregiverOnboardingDirective({ name: "Maria", street: "12 Oak St", zipCode: "95134", city: "San Jose", state: "CA" });
     expect(afterAddress).toContain("send_onboarding_link this turn with linkType caregiver_photo");
     const driver = buildCaregiverOnboardingDirective({
@@ -63,7 +63,9 @@ describe("buildCaregiverOnboardingDirective", () => {
       jobType: "part_time", availability: { days: ["Monday"], hours: "9am-5pm" },
       specialties: ["transportation"], skills: ["Transportation"], yearsExperience: "5-10 years",
     });
-    expect(driver).toContain("send_onboarding_link this turn with linkType caregiver_transport_docs");
+    expect(driver).not.toContain("caregiver_transport_docs");
+    expect(driver).not.toMatch(/transportation documents|vehicle registration/i);
+    expect(driver).toContain("minimum hourly rate");
   });
 
   it("hands off the deterministic gates in the scripted order and forbids running them", () => {

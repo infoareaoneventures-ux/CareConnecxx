@@ -3,14 +3,15 @@ import { CheckCircle2, AlertCircle, ShieldCheck, XCircle, RefreshCw, ExternalLin
 import { BackgroundCheckModal } from '../BackgroundCheckModal';
 import { getSubscriptionStatus, getCaregiverBillingPortalUrl } from '../../services/stripeService';
 import { hasValidTransportDocs } from '../../utils/transportDocs';
-import { caregiverMembershipActive } from '../../hooks/useCaregiverGate';
+import { caregiverMembershipActive, ADD_TRANSPORTATION_PATH } from '../../hooks/useCaregiverGate';
+import { useNavigate } from 'react-router-dom';
 import type { Caregiver } from '../../types';
 
 // ── Membership & verification (Account Settings) ─────────────────────────────
 // Founder decision 2026-10-04: a caregiver's standing lives in ONE place with its
 // dates — membership (next charge), background check (last clear + next check,
 // which is the renewal: paying the membership re-runs it), driving record, and
-// the Transportation Documents section that follows on the page. Moved here from
+// (no document section — the MVR is the only check behind Transportation, 2026-10-06). Moved here from
 // the Payments › Membership tab; Payments keeps the money she earns (Timesheets,
 // Payouts). Every button keeps its server path: Manage = the Billing Portal,
 // Activate = the membership checkout, Authorize = the FCRA consent modal.
@@ -75,11 +76,12 @@ export function backgroundCheckState(p: any, membershipActive = false): Backgrou
 // Wording states what happened (Checkr's result term "cleared", "under review"),
 // never an approval — "Approved Driver" / "verified-driver badge" are gone
 // (founder, 2026-10-04). Families see "Transportation" on the profile, not a badge.
-export type DriverCard = 'approved' | 'cleared_docs_pending' | 'not_approved' | 'review' | 'pending' | 'included' | 'offer';
+export type DriverCard = 'approved' | 'not_approved' | 'review' | 'pending' | 'included' | 'offer';
 
 export function driverCardFor(p: any, badgeLive: boolean): DriverCard {
   const isApprovedDriver = p?.isApprovedDriver === true;
-  if (isApprovedDriver) return badgeLive ? 'approved' : 'cleared_docs_pending';
+  if (isApprovedDriver) return 'approved'; // Transportation live — no documents behind it (2026-10-06)
+  void badgeLive;
   if (p?.mvrStatus === 'not_approved') return 'not_approved'; // the admin's final decision after a review (2026-10-04)
   if (p?.mvrStatus === 'consider' || p?.mvrStatus === 'suspended') return 'review';
   const mvrPending = p?.mvrStatus === 'pending' || (p?.mvrPaid === true && !isApprovedDriver);
@@ -91,12 +93,11 @@ export function driverCardFor(p: any, badgeLive: boolean): DriverCard {
 
 export const DRIVER_CARD_TEXT: Record<DriverCard, { title: string; body: string }> = {
   approved: { title: 'Driving record check cleared', body: 'Families who need a driver can see Transportation on your profile.' },
-  cleared_docs_pending: { title: 'Driving record check cleared', body: "Transportation shows on your profile once your driver's license, insurance and registration are approved." },
   not_approved: { title: 'Driving record not approved', body: "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected." },
   review: { title: 'Driving record under review', body: "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected." },
-  pending: { title: 'Driving record check in progress', body: 'Your Motor Vehicle Report is in progress. Transportation shows on your profile once it clears and your documents are approved.' },
+  pending: { title: 'Driving record check in progress', body: 'Your Motor Vehicle Report is in progress. Transportation shows on your profile once it clears.' },
   included: { title: 'Driving record check included', body: 'Your membership covers the Motor Vehicle Report. It starts automatically once your background check clears — no extra charge.' },
-  offer: { title: 'Offer transportation?', body: "Add Transportation to your services and upload your driver's license, insurance, and registration. Your membership already covers the driving record check." },
+  offer: { title: 'Offer transportation?', body: 'Add Transportation to your services — your membership already covers the driving record check.' },
 };
 
 export const AccountStandingSection: React.FC<{
@@ -150,10 +151,11 @@ export const AccountStandingSection: React.FC<{
   const bg = backgroundCheckState(p, caregiverMembershipActive(p));
   const driver = driverCardFor(p, hasValidTransportDocs(p));
   const driverText = DRIVER_CARD_TEXT[driver];
+  const navigate = useNavigate();
   const mvrClearedOn = shortDate(p?.mvrClearedAt);
-  const driverDate = mvrClearedOn && (driver === 'approved' || driver === 'cleared_docs_pending') ? `Cleared ${mvrClearedOn} · ` : '';
+  const driverDate = mvrClearedOn && driver === 'approved' ? `Cleared ${mvrClearedOn} · ` : '';
   const driverTone = driver === 'approved' ? { card: 'border-blue-200', icon: 'bg-blue-500', glyph: 'text-white' }
-    : driver === 'cleared_docs_pending' || driver === 'included' ? { card: 'border-slate-200', icon: 'bg-blue-50', glyph: 'text-blue-600' }
+    : driver === 'included' ? { card: 'border-slate-200', icon: 'bg-blue-50', glyph: 'text-blue-600' }
     : driver === 'review' ? { card: 'border-amber-200 bg-amber-50/40', icon: 'bg-amber-100', glyph: 'text-amber-600' }
     : driver === 'not_approved' ? { card: 'border-red-200 bg-red-50/40', icon: 'bg-red-100', glyph: 'text-red-600' }
     : { card: 'border-slate-200', icon: 'bg-slate-100', glyph: 'text-slate-400' };
@@ -324,6 +326,11 @@ export const AccountStandingSection: React.FC<{
                 {driver === 'approved' && <CheckCircle className="w-4 h-4 text-blue-600" />}
               </p>
               <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{driverDate}{driverText.body}</p>
+              {driver === 'offer' && (
+                <button type="button" onClick={() => navigate(ADD_TRANSPORTATION_PATH)} className="mt-2 text-xs font-semibold text-blue-700 hover:text-blue-800 underline underline-offset-2">
+                  Add Transportation to my services
+                </button>
+              )}
             </div>
           </div>
       </div>

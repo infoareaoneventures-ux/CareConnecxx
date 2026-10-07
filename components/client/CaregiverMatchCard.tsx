@@ -125,8 +125,8 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
           )}
         </div>
 
-        {/* Skills pills — Transportation only once the badge is earned (documents approved +
-            driving record clear), the same gate as Find Caregivers and the profile page. */}
+        {/* Skills pills — Transportation only once it is live (offered + driving record
+            clear), the same gate as Find Caregivers and the profile page. */}
         {!hideSkills && caregiver.skills && caregiver.skills.length > 0 ? (
           <div className="flex flex-wrap gap-2 mb-6 mt-1">
             {(caregiver.skills ?? []).filter((s: string) => s !== 'Transportation' || hasValidTransportDocs(caregiver as any)).slice(0, 3).map((skill: string) => (

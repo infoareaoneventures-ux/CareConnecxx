@@ -162,14 +162,14 @@ export interface CaregiverProfilePage {
   rating: number | null;
   reviewCount: number;
   ratingLabel: string;
-  badges: { verified: boolean; backgroundCheckStatus: string | null; transportation: boolean };
+  badges: { verified: boolean; backgroundCheckStatus: string | null };
   city: string;
   /** The header's rate line ("$25/hr · $27.25/hr billed"): caregiver rate + what the family is billed per hour (rate + 9%, no minimum per hour). */
   hourlyRate: number;
   billedHourlyRate: number;
   rateLine: string;
   about: { bio: string | null; languages: string[] };
-  /** Care Services chips — Transportation only once the badge is earned, as on the page. */
+  /** Care Services chips — Transportation only once it is live (offered + driving record clear), as on the page. */
   careServices: string[];
   rates: Array<{ label: "1 Person" | "2 People" | "3+ People"; rate: number; billed: number }>;
   ratesNote: string;
@@ -254,7 +254,8 @@ export function shapeCaregiverProfilePage(
 
   const parts: string[] = [];
   parts.push(`${name} — ${ratingLabel}.`);
-  const badgeBits = [rec.verified ? "verified" : null, rec.backgroundCheckStatus ? `background check ${rec.backgroundCheckStatus}` : null, rec.hasTransportation ? "Transportation badge" : null].filter(Boolean);
+  // Transportation is a service (Care services below), not a badge — the page dropped its chip from the badges row (2026-10-06).
+  const badgeBits = [rec.verified ? "verified" : null, rec.backgroundCheckStatus ? `background check ${rec.backgroundCheckStatus}` : null].filter(Boolean);
   if (badgeBits.length) parts.push(`Badges: ${badgeBits.join(", ")}.`);
   parts.push(`${rec.city}. ${rec.hourlyRate > 0 ? `$${rec.hourlyRate}/hr (${money(billed)}/hr billed).` : "No hourly rate on file."}`);
   parts.push(`About: ${rec.bio || "No bio yet."} Languages: ${rec.languages.join(", ")}.`);
@@ -278,7 +279,7 @@ export function shapeCaregiverProfilePage(
     rating: rec.reviewCount > 0 ? rec.rating : null,
     reviewCount: rec.reviewCount,
     ratingLabel,
-    badges: { verified: rec.verified, backgroundCheckStatus: rec.backgroundCheckStatus, transportation: rec.hasTransportation },
+    badges: { verified: rec.verified, backgroundCheckStatus: rec.backgroundCheckStatus },
     city: rec.city,
     hourlyRate: rec.hourlyRate,
     billedHourlyRate: billed,

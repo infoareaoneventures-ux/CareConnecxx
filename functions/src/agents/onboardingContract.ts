@@ -120,10 +120,11 @@ export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
 // = the site's CaregiverOnboardingWizard, step for step (founder, 2026-09-25:
 // Evia asks the same questions in the same order and writes the same fields):
 //   location (street, zip → city/state, state) → photo → availability (job
-//   type, days, parts of day) → services + years of experience → transport
-//   documents when Transportation is offered → rate + travel distance → bio.
-// `profilePhoto` and `transportDocuments` are collected through the tokened
-// upload links (send_onboarding_link), not typed — the loop still owns them.
+//   type, days, parts of day) → services + years of experience → rate +
+//   travel distance → bio. (Transport documents were retired 2026-10-06:
+//   Transportation = the service on the profile + the driving record (MVR).)
+// `profilePhoto` is collected through the tokened upload link
+// (send_onboarding_link), not typed — the loop still owns it.
 // Email is collected on /start (the wizard skips it when on file).
 export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
   "name",
@@ -131,7 +132,6 @@ export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
   "profilePhoto",
   "jobType", "availability",
   "specialties", "yearsExperience",
-  "transportDocuments",
   "hourlyRate", "serviceRadius",
   "email", "bio",
 ];
@@ -143,8 +143,6 @@ export const TRAVEL_RADIUS_OPTIONS: readonly number[] = [5, 10, 15, 25, 50];
 export const DEFAULT_TRAVEL_RADIUS = 10;
 /** The wizard's bio minimum (BioStep minChars). */
 export const BIO_MIN_CHARS = 150;
-/** The three transportation documents the wizard requires when Transportation is offered. */
-export const TRANSPORT_DOC_TYPES: readonly string[] = ["driversLicense", "insurance", "registration"];
 
 /** Does the collected data say the caregiver offers Transportation? (canonical skills/services, or raw specialties) */
 export function offersTransportation(d: Record<string, unknown> | undefined): boolean {
@@ -183,12 +181,6 @@ export function toServiceRadius(value: unknown): number | null {
   }
   if (n === null || !Number.isFinite(n) || n <= 0) return null;
   return TRAVEL_RADIUS_OPTIONS.reduce((best, opt) => (Math.abs(opt - (n as number)) < Math.abs(best - (n as number)) ? opt : best), TRAVEL_RADIUS_OPTIONS[0]);
-}
-
-/** All three transport documents on file? (onboardingData.transportDocs = { type: url }) */
-export function transportDocumentsComplete(d: Record<string, unknown> | undefined): boolean {
-  const docs = (d?.transportDocs ?? {}) as Record<string, unknown>;
-  return TRANSPORT_DOC_TYPES.every((t) => typeof docs[t] === "string" && (docs[t] as string).length > 0);
 }
 
 // Fields the loop is allowed to write via save_onboarding_field — the required
@@ -240,11 +232,10 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CAREGIVER_REQUIRED_FIELDS,
   // Derived fields the save handler / absorber write alongside a required one:
   //   skills / services — the canonical care-services enum (from specialties)
-  //   transportDocs — { driversLicense|insurance|registration: url }, written by
-  //     the upload callable, never by the model
   // Nothing the wizard doesn't collect is allowed here (no certifications,
-  // gender, languages, canDrive, bioSkipped, jobTypes — removed 2026-09-25).
-  "skills", "services", "transportDocs",
+  // gender, languages, canDrive, bioSkipped, jobTypes — removed 2026-09-25;
+  // transportDocs — removed 2026-10-06 with the documents step).
+  "skills", "services",
 ]);
 
 // The step the flow advances to once conversational collection completes and the
@@ -314,7 +305,6 @@ const CAREGIVER_FIELD_ALIASES: Record<string, string> = {
   experience: "yearsExperience", yearsofexperience: "yearsExperience",
   rate: "hourlyRate", hourly: "hourlyRate", payrate: "hourlyRate",
   radius: "serviceRadius", traveldistance: "serviceRadius", travelradius: "serviceRadius", distance: "serviceRadius",
-  documents: "transportDocuments", transportdocs: "transportDocuments", drivingdocuments: "transportDocuments",
   emailaddress: "email", about: "bio", aboutme: "bio", description: "bio",
 };
 
@@ -515,11 +505,6 @@ export function missingRequiredFields(
 ): string[] {
   const d = data ?? {};
   return requiredFieldsForRole(role).filter((f) => {
-    // Transport documents are required only when the caregiver offers
-    // Transportation (wizard: the transport-docs step exists only then).
-    if (role === "caregiver" && f === "transportDocuments") {
-      return offersTransportation(d) && !transportDocumentsComplete(d);
-    }
     // Availability needs BOTH days and parts of the day (the wizard's two pickers).
     if (role === "caregiver" && f === "availability") return !availabilityComplete(d.availability);
     // Wizard canAdvanceAt(6): `selectedDays.length > 0 || daysFlexible` — a

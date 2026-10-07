@@ -458,7 +458,7 @@ service cloud.firestore {
     // Before this, a stale tab (badge revoked, form already open) or a hand-rolled
     // write could apply without membership, a clear background check, or — for a
     // job that includes driving — the transportation badge (Transportation offered,
-    // three documents approved and unexpired, driving record clear).
+    // driving record clear).
     function applicant() {
       return get(/databases/$(database)/documents/caregivers/$(request.auth.uid)).data;
     }
@@ -479,27 +479,10 @@ service cloud.firestore {
       return (cg.get('skills', []) is list && cg.get('skills', []).hasAny(['Transportation']))
         || (cg.get('services', []) is list && cg.get('services', []).hasAny(['Transportation']));
     }
-    // 'YYYY-MM-DD' (the documents' expirationDate shape) for today, so the
-    // unexpired check is a plain string comparison.
-    function todayYmd() {
-      return string(request.time.year()) + '-'
-        + (request.time.month() < 10 ? '0' : '') + string(request.time.month()) + '-'
-        + (request.time.day() < 10 ? '0' : '') + string(request.time.day());
-    }
-    function transportDocValid(docs, type) {
-      return docs.get(type, null) is map
-        && docs[type].get('status', null) == 'approved'
-        && (docs[type].get('expirationDate', '') == ''
-            || !(docs[type].expirationDate is string)
-            || docs[type].expirationDate >= todayYmd());
-    }
+    // Transportation live = offered + driving record cleared (founder, 2026-10-06: the
+    // MVR through Checkr is the only check — no documents).
     function caregiverTransportBadge(cg) {
-      return caregiverOffersTransportation(cg)
-        && cg.get('documents', null) is map
-        && transportDocValid(cg.documents, 'driversLicense')
-        && transportDocValid(cg.documents, 'insurance')
-        && transportDocValid(cg.documents, 'registration')
-        && cg.get('isApprovedDriver', false) == true;
+      return caregiverOffersTransportation(cg) && cg.get('isApprovedDriver', false) == true;
     }
     function applyGatePasses(jobId) {
       return caregiverMembershipActive(applicant())

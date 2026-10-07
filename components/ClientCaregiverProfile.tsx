@@ -353,11 +353,6 @@ export default function ClientCaregiverProfile({
                     verified={caregiver.verified}
                     backgroundCheckStatus={caregiver.backgroundCheckStatus}
                   />
-                  {caregiver.hasTransportation && (
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-full">
-                      <Car className="w-3.5 h-3.5" /> Transportation
-                    </span>
-                  )}
                 </div>
 
                 {/* Location / rate */}
@@ -429,7 +424,7 @@ export default function ClientCaregiverProfile({
               )}
             </Section>
 
-            {/* Care Services — Transportation only shown when badge is earned */}
+            {/* Care Services — Transportation only shown once it is live (offered + driving record clear) */}
             {caregiver.skills.length > 0 && (
               <Section title="Care Services">
                 <div className="flex flex-wrap gap-2">

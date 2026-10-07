@@ -120,9 +120,9 @@ describe("bgCardFor / bgCardText — the dashboard card's rules", () => {
 });
 
 describe("driverCardFor — the driver card's branches", () => {
-  it("approved only when the badge is live; cleared-but-docs-pending; pending; included; offer", () => {
+  it("approved whenever the driving record cleared (no documents behind it, 2026-10-06); pending; included; offer", () => {
     expect(driverCardFor({ isApprovedDriver: true }, true)).toBe("approved");
-    expect(driverCardFor({ isApprovedDriver: true }, false)).toBe("cleared_docs_pending");
+    expect(driverCardFor({ isApprovedDriver: true }, false)).toBe("approved");
     expect(driverCardFor({ mvrStatus: "pending" }, false)).toBe("pending");
     expect(driverCardFor({ mvrPaid: true }, false)).toBe("pending");
     expect(driverCardFor({ services: ["Transportation"] }, false)).toBe("included");

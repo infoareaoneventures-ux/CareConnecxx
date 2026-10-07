@@ -183,7 +183,7 @@ export { runTriggerEngine } from './triggers/triggerEngine';
 export { listAdminAlerts, resolveAdminAlert, getAlertStats } from './adminAlerts';
 
 // Admin execution callables (U3) — admin-gated exception handling
-export { admin_review_caregiver_exception, admin_review_document } from './admin/adminCaregiverActions';
+export { admin_review_caregiver_exception } from './admin/adminCaregiverActions';
 export { admin_suspend_user, admin_restore_user } from './admin/adminUserActions';
 export { admin_resolve_dispute, admin_review_invoice_exception } from './admin/adminSupportActions';
 export { admin_retry_agent_action } from './admin/adminLedgerActions';

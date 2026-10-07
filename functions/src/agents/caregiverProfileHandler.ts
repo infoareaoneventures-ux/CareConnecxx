@@ -329,26 +329,6 @@ async function handleSkillsUpdate(
     else if (action === "remove") proposed = current.filter((s) => !mapping.matched.includes(s));
     else proposed = mapping.matched;
 
-    // The page's rule: Transportation can't be saved until the three documents are on the record.
-    if (proposed.includes("Transportation") && !current.includes("Transportation")) {
-      const docs = (cg.documents ?? {}) as Record<string, { url?: unknown } | undefined>;
-      const missing = ["driversLicense", "insurance", "registration"].filter((k) => !docs[k]?.url);
-      if (missing.length) {
-        await clearProfileFlow(phone);
-        let linkSent = false;
-        try {
-          const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
-          const r = await runSendOnboardingLinkAction({ phone, linkType: "caregiver_transport_docs" }, { caller: "sms_agent", role: "caregiver", phone });
-          linkSent = !!r.sent;
-        } catch (err) { console.error("[caregiverProfileHandler] transport docs link failed:", err); }
-        await sendMessage(chatId,
-          "Upload your driver's license, vehicle insurance, and registration to offer transportation" +
-          (linkSent ? " — the upload link is right below." : " — reply DOCUMENTS for the upload link.") +
-          " Once all three are in, tell me to add Transportation again and I'll save it.");
-        return;
-      }
-    }
-
     if (proposed.join("|") === current.join("|")) {
       await clearProfileFlow(phone);
       await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Your services already read: ${serviceLabels(current).join(", ") || "(none)"} — nothing to change.`);

@@ -15,9 +15,6 @@ import {
 
 const PAID = { membershipStatus: "active" };
 const CLEAR = { ...PAID, backgroundCheckStatus: "clear" };
-const APPROVED_DOCS = {
-  driversLicense: { status: "approved" }, insurance: { status: "approved" }, registration: { status: "approved" },
-};
 
 describe("caregiverBlockReason — useCaregiverGate.tsx:95-96", () => {
   it("membership comes first, exactly as the site computes it", () => {
@@ -36,11 +33,10 @@ describe("caregiverBlockReason — useCaregiverGate.tsx:95-96", () => {
     expect(caregiverBlockReason(PAID, { membershipOnly: true })).toBeNull();
     expect(caregiverBlockReason({}, { membershipOnly: true })).toBe("membership");
   });
-  it("transport jobs also need approved documents AND a cleared driving record", () => {
+  it("transport jobs need Transportation offered AND a cleared driving record — no documents (2026-10-06)", () => {
     const offers = { ...CLEAR, services: ["Transportation"] };
-    expect(caregiverBlockReason(offers, { transport: true })).toBe("transport");
-    expect(caregiverBlockReason({ ...offers, documents: APPROVED_DOCS }, { transport: true })).toBe("transport"); // MVR not cleared
-    expect(caregiverBlockReason({ ...offers, documents: APPROVED_DOCS, isApprovedDriver: true }, { transport: true })).toBeNull();
+    expect(caregiverBlockReason(offers, { transport: true })).toBe("transport"); // MVR not cleared
+    expect(caregiverBlockReason({ ...offers, isApprovedDriver: true }, { transport: true })).toBeNull();
     // A caregiver who doesn't offer transportation can't take a transport job either.
     expect(caregiverBlockReason(CLEAR, { transport: true })).toBe("transport");
     // …but a non-transport action on the same caregiver is fine.

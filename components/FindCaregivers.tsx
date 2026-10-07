@@ -41,7 +41,7 @@ interface Caregiver {
   lat?: number;
   lng?: number;
   photoURL?: string;
-  hasReliableTransportation: boolean;
+  transportationLive: boolean;
   skills?: string[];
   languages?: string[];
   experience?: number;
@@ -126,7 +126,6 @@ export default function FindCaregivers() {
   const [minRating, setMinRating] = useState(0);
   const [minExperience, setMinExperience] = useState(0);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [transportationOnly, setTransportationOnly] = useState(false);
   const [selectedSpecialties, setSelectedSpecialties] = useState<Set<string>>(new Set());
   const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set());
 
@@ -376,7 +375,7 @@ export default function FindCaregivers() {
           lat: cgLat,
           lng: cgLng,
           photoURL: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
-          hasReliableTransportation: hasValidTransportDocs(data),
+          transportationLive: hasValidTransportDocs(data),
           skills: data.skills || data.specializations || data.specialties || [],
           languages: data.languages || ['English'],
           experience: data.experience || data.yearsExperience || 0,
@@ -488,7 +487,6 @@ export default function FindCaregivers() {
     setMinRating(0);
     setMinExperience(0);
     setVerifiedOnly(false);
-    setTransportationOnly(false);
     setSelectedSpecialties(new Set());
     setSelectedLanguages(new Set());
     setShowFavoritesOnly(false);
@@ -502,11 +500,10 @@ export default function FindCaregivers() {
     if (minRating > 0) n++;
     if (minExperience > 0) n++;
     if (verifiedOnly) n++;
-    if (transportationOnly) n++;
     n += selectedSpecialties.size;
     n += selectedLanguages.size;
     return n;
-  }, [nameQuery, maxRate, maxDistance, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages]);
+  }, [nameQuery, maxRate, maxDistance, minRating, minExperience, verifiedOnly, selectedSpecialties, selectedLanguages]);
 
   const filteredCaregivers = useMemo(() => {
     let list = caregivers.filter(cg => {
@@ -530,9 +527,10 @@ export default function FindCaregivers() {
       if (cg.rating < minRating) return false;
       if ((cg.experience || 0) < minExperience) return false;
       if (verifiedOnly && !cg.verified) return false;
-      if (transportationOnly && !cg.hasReliableTransportation) return false;
       if (selectedSpecialties.size > 0) {
-        const skillSet = new Set((cg.skills || []).map(s => s.toLowerCase()));
+        // Transportation counts only while it is live on the record (offered + driving record
+        // clear) — the same rule that shows the pill, so the filter and the card agree (2026-10-06).
+        const skillSet = new Set((cg.skills || []).filter(s => s !== 'Transportation' || cg.transportationLive).map(s => s.toLowerCase()));
         let hasAny = false;
         selectedSpecialties.forEach(s => {
           if (skillSet.has(s.toLowerCase())) hasAny = true;
@@ -564,7 +562,7 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, verifiedOnly, transportationOnly, selectedSpecialties, selectedLanguages, sortBy]);
+  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, verifiedOnly, selectedSpecialties, selectedLanguages, sortBy]);
 
   if (loading) {
     return (
@@ -676,16 +674,6 @@ export default function FindCaregivers() {
             />
             <Shield className="w-4 h-4 text-primary-600" />
             Background checked only
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={transportationOnly}
-              onChange={(e) => setTransportationOnly(e.target.checked)}
-              className="accent-teal-600 rounded"
-            />
-            <Car className="w-4 h-4 text-primary-600" />
-            Transportation
           </label>
         </div>
       </div>
@@ -1045,12 +1033,12 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
           </div>
         </div>
 
-        {/* Skills pill tags — Transportation only counts once the badge is earned,
+        {/* Skills pill tags — Transportation only counts once it is live (offered + driving record clear),
             same gate as the profile page (ClientCaregiverProfile.tsx) and Evia's
             mirror (caregiverProfilePage.ts); this card used to show it from the
             raw skills list regardless of the badge (2026-09-22 parity fix). */}
         {(() => {
-          const visibleSkills = (caregiver.skills ?? []).filter(s => s !== 'Transportation' || caregiver.hasReliableTransportation);
+          const visibleSkills = (caregiver.skills ?? []).filter(s => s !== 'Transportation' || caregiver.transportationLive);
           return visibleSkills.length > 0 ? (
           <div className="flex gap-2 mb-6 mt-1">
             {visibleSkills.slice(0, 2).map(skill => (

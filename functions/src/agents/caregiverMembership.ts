@@ -67,8 +67,8 @@ export const DRIVER_CARD_TEXT: Record<DriverCard, string> = {
   approved: "Driving record check cleared. Families who need a driver can see Transportation on your profile.",
   not_approved: "Driving record not approved. Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.",
   review: "Driving record under review. Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
-  pending: "Driving record check in progress. Your Motor Vehicle Report is in progress, finish the short form in the email you received. Transportation shows on your profile once it clears.",
-  included: "Driving record check included. Your membership covers the Motor Vehicle Report. It starts by itself once your background check is clear and Transportation is on your profile, and you get an email with a short form to complete. No extra charge.",
+  pending: "Driving record check in progress. Finish the short form in the email you received. Transportation shows on your profile once it clears.",
+  included: "Driving record check included. Watch your email for a short form to complete.",
   offer: "Offer transportation? Add Transportation to your services. Your membership already covers the driving record check. Reply SERVICES to add it.",
 };
 

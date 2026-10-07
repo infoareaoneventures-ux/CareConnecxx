@@ -114,6 +114,7 @@ export const CaregiverProgressCard: React.FC<{
   let cardDesc = '';
   let cardCta: { label: string; onClick: () => void } | undefined;
   let cardVariant: 'default' | 'info' | 'warning' = 'default';
+  let cardFooter = 'In progress'; // the info card's footer line (2026-10-06: "Not started" / "Under review" where that is the truth)
 
   if (rejected) {
     cardTitle = 'Application not approved';
@@ -193,17 +194,19 @@ export const CaregiverProgressCard: React.FC<{
       cardTitle = 'Driving record under review';
       cardDesc = "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.";
       cardVariant = 'info';
+      cardFooter = 'Under review';
     } else if (p.mvrStatus === 'pending' || (p.mvrPaid === true && p.isApprovedDriver !== true)) {
       // Running (same state rule as the Settings card, AccountStandingSection.driverCardFor).
       cardTitle = 'Driving record check in progress';
-      cardDesc = 'Your Motor Vehicle Report is in progress — finish the short form in the email you received. Transportation shows on your profile once it clears.';
+      cardDesc = 'Finish the short form in the email you received. Transportation shows on your profile once it clears.';
       cardVariant = 'info';
     } else {
       // Not started yet (founder, 2026-10-06: "in progress" here while nothing ran was wrong). It starts by
       // itself; the caregiver clicks nothing on Evia — only the emailed form for the record itself.
       cardTitle = 'Driving record check included';
-      cardDesc = 'Your membership covers the Motor Vehicle Report. It starts by itself once your background check is clear and Transportation is on your profile — you’ll get an email with a short form to complete. Transportation shows on your profile once it clears.';
+      cardDesc = 'Watch your email for a short form to complete.'; // founder's words, 2026-10-06
       cardVariant = 'info';
+      cardFooter = 'Not started';
     }
   }
 
@@ -283,7 +286,7 @@ export const CaregiverProgressCard: React.FC<{
         )}
         {cardVariant === 'info' && !cardCta && (
           <div className="flex items-center gap-1.5 text-xs font-medium text-blue-600 mt-1">
-            <Clock className="w-3 h-3" /> In progress
+            <Clock className="w-3 h-3" /> {cardFooter}
           </div>
         )}
       </div>

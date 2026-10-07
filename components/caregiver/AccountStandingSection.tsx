@@ -95,8 +95,8 @@ export const DRIVER_CARD_TEXT: Record<DriverCard, { title: string; body: string 
   approved: { title: 'Driving record check cleared', body: 'Families who need a driver can see Transportation on your profile.' },
   not_approved: { title: 'Driving record not approved', body: "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected." },
   review: { title: 'Driving record under review', body: "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected." },
-  pending: { title: 'Driving record check in progress', body: 'Your Motor Vehicle Report is in progress — finish the short form in the email you received. Transportation shows on your profile once it clears.' },
-  included: { title: 'Driving record check included', body: 'Your membership covers the Motor Vehicle Report. It starts by itself once your background check is clear and Transportation is on your profile — you’ll get an email with a short form to complete. No extra charge.' },
+  pending: { title: 'Driving record check in progress', body: 'Finish the short form in the email you received. Transportation shows on your profile once it clears.' },
+  included: { title: 'Driving record check included', body: 'Watch your email for a short form to complete.' },
   offer: { title: 'Offer transportation?', body: 'Add Transportation to your services — your membership already covers the driving record check.' },
 };
 

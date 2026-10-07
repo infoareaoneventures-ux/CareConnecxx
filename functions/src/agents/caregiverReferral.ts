@@ -26,6 +26,8 @@ export interface CreateCaregiverReferralInviteResult {
   eligibilityRequired: {
     onboardingStatus: "profile_complete";
     verificationStatus: "approved";
+    /** 2026-10-06: families meet only caregivers whose membership is active. */
+    membershipStatus: "active";
     checkrResult: "clear";
   };
   errorReason?: string;
@@ -58,6 +60,7 @@ export async function createCaregiverReferralInvite(
   const eligibilityRequired = {
     onboardingStatus: "profile_complete" as const,
     verificationStatus: "approved" as const,
+    membershipStatus: "active" as const,
     checkrResult: "clear" as const,
   };
 

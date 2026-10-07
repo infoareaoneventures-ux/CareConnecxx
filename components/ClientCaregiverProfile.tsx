@@ -12,6 +12,7 @@ import { useAccessGates } from '../hooks/useAccessGates';
 import { useCareConnex } from '../context/CareConnexContext';
 import { dbService } from '../services/api';
 import { hasValidTransportDocs } from '../utils/transportDocs';
+import { isCaregiverClearedForFamilies, CAREGIVER_NOT_AVAILABLE_TEXT } from '../utils/caregiverEligibility';
 import { ClientNavigation } from './client/ClientNavigation';
 import { LeaveReviewModal } from './client/LeaveReviewModal';
 import { TIME_BLOCKS, DAYS } from './caregiver/signup/constants';
@@ -43,6 +44,8 @@ interface CaregiverProfile {
   verified: boolean;
   backgroundCheckStatus?: string;
   hasTransportation: boolean;
+  /** Founder, 2026-10-06: profile_complete + approved — otherwise no Message / Request Interview, just "not available yet". */
+  available: boolean;
   serviceRadius: number;
   weeklyAvailability: Record<string, string[]>;
   jobTypes: string[];
@@ -79,6 +82,9 @@ function mapRawToProfile(id: string, data: any): CaregiverProfile {
     verified: data.verified || false,
     backgroundCheckStatus: data.backgroundCheckStatus,
     hasTransportation: hasValidTransportDocs(data),
+    // A list item handed to the popup carries no status fields (the lists already show only cleared
+    // caregivers); a record read from Firestore does, and must pass the rule.
+    available: data.onboardingStatus === undefined && data.verificationStatus === undefined ? true : isCaregiverClearedForFamilies(data),
     serviceRadius: data.serviceRadius ?? 25,
     weeklyAvailability: weeklySlotsToBl(data.weeklyAvailability || {}),
     jobTypes: data.jobTypes || [],
@@ -369,9 +375,13 @@ export default function ClientCaregiverProfile({
                 </div>
               </div>
 
-              {/* Right: action buttons */}
+              {/* Right: action buttons — none for a caregiver who isn't cleared for families yet (2026-10-06) */}
               <div className="flex flex-col gap-2 mt-2 ml-4 flex-shrink-0 w-44">
-                {isBooked ? (
+                {!caregiver.available ? (
+                  <div className="w-full py-2.5 bg-slate-50 border border-slate-200 text-slate-500 text-xs font-medium rounded-2xl text-center px-3">
+                    {CAREGIVER_NOT_AVAILABLE_TEXT}
+                  </div>
+                ) : isBooked ? (
                   <div className="w-full py-2.5 bg-green-50 border border-green-200 text-green-700 font-semibold rounded-full flex items-center justify-center gap-2 text-sm">
                     <CheckCircle className="w-4 h-4" /> Active Booking
                   </div>
@@ -394,12 +404,14 @@ export default function ClientCaregiverProfile({
                     <Video className="w-4 h-4" /> Request Interview
                   </button>
                 )}
-                <button
-                  onClick={handleMessage}
-                  className="w-full py-2.5 border border-slate-200 text-slate-700 font-semibold rounded-full hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-sm"
-                >
-                  <MessageSquare className="w-4 h-4" /> Message
-                </button>
+                {caregiver.available && (
+                  <button
+                    onClick={handleMessage}
+                    className="w-full py-2.5 border border-slate-200 text-slate-700 font-semibold rounded-full hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-sm"
+                  >
+                    <MessageSquare className="w-4 h-4" /> Message
+                  </button>
+                )}
               </div>
             </div>
           </div>

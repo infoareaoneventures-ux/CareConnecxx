@@ -125,7 +125,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         [caregiverProfile],
     );
     const hiddenKey = Array.from(hiddenJobIds).sort().join('|');
-    const { blockReason, transportBlockReason, gateFresh, GateModal } = useCaregiverGate();
+    const { blockReason, transportBlockReason, gateFresh, GateModal, setUpTransportationPath } = useCaregiverGate();
     const navigate = useNavigate();
     const [jobs, setJobs] = useState<JobPost[]>([]);
     const [jobsLoading, setJobsLoading] = useState(false);
@@ -862,7 +862,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                         </button>
                                                     );
                                                     if (reason === 'transport') return (
-                                                        <button onClick={() => navigate('/caregiver/settings')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold transition-colors">
+                                                        <button onClick={() => navigate(setUpTransportationPath)} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold transition-colors">
                                                             <Car className="w-3 h-3" /> Set Up Transportation
                                                         </button>
                                                     );
@@ -1478,7 +1478,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                         </button>
                                     );
                                     if (reason === 'transport') return (
-                                        <button onClick={() => navigate('/caregiver/settings')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold transition-colors">
+                                        <button onClick={() => navigate(setUpTransportationPath)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold transition-colors">
                                             <Car className="w-3.5 h-3.5" /> Set Up Transportation
                                         </button>
                                     );

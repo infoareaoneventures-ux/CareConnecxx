@@ -241,7 +241,7 @@ describe("characterization — caregiver referral coded flow", () => {
       source: "cara_sms", status: "invited", bookable: false, checkrRequired: true, deliveryStatus: "sent",
     });
     expect(referral.data.eligibilityRequired).toMatchObject({
-      onboardingStatus: "profile_complete", verificationStatus: "approved", checkrResult: "clear",
+      onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", checkrResult: "clear",
     });
     expect(sendToPhone).toHaveBeenCalledOnce();
   });

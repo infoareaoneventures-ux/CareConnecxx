@@ -93,7 +93,7 @@ export async function checkCaregiverAccess(
 }
 
 // useCaregiverGate.tsx REASON_CONFIG — the modal's title + description, verbatim.
-export function caregiverGateText(reason: CaregiverGateReason): string {
+export function caregiverGateText(reason: CaregiverGateReason, caregiver: Record<string, unknown> = {}): string {
   switch (reason) {
     case "membership":
       return "Membership required — you need an active membership to take this action. Activate your membership to continue:";
@@ -101,7 +101,13 @@ export function caregiverGateText(reason: CaregiverGateReason): string {
       return "Background check required — your background check must be cleared before you can take this action.";
     case "transport":
       // 2026-10-06: Transportation offered + driving record cleared (no documents); one line with the site's modal + Jobs button.
-      return "Set Up Transportation — this job includes driving. To apply, offer Transportation on your profile and complete the driving record check, included in your membership. See where you stand under Settings › Membership & verification:";
+      // Not offering yet → the site's button opens the Care Services editor; by text that is SERVICES (no Settings link).
+      if (!caregiverOffersTransportation(caregiver)) {
+        return "Set Up Transportation — this job includes driving. To apply, add Transportation to your services (reply SERVICES) and complete the driving record check, included in your membership.";
+      }
+      // Offering already → the site's button opens Settings › Membership & verification; Evia TEXTS that card
+      // (textCaregiverGateBlock appends the driving record line) — never a link to the site (founder, 2026-10-06).
+      return "Set Up Transportation — this job includes driving. To apply, offer Transportation on your profile and complete the driving record check, included in your membership.";
   }
 }
 
@@ -114,7 +120,27 @@ export async function textCaregiverGateBlock(
   reason: CaregiverGateReason,
   caregiver: Record<string, unknown> = {},
 ): Promise<void> {
-  await sendMessage(chatId, caregiverGateText(reason));
+  await sendMessage(chatId, caregiverGateText(reason, caregiver));
+  if (reason === "transport") {
+    // Not offering yet: the text already said "reply SERVICES" — nothing more to send.
+    if (!caregiverOffersTransportation(caregiver)) return;
+    // Offering: the site's button opens Settings › Membership & verification — Evia texts that
+    // card itself (the same words the page prints), not a link to the site (founder, 2026-10-06:
+    // "people do the same thing they could've done on the site, through Evia").
+    try {
+      const { driverCardFor, DRIVER_CARD_TEXT, shortDate } = await import("./caregiverMembership");
+      const card = driverCardFor(caregiver, caregiverTransportDocsValid(caregiver));
+      const clearedOn = shortDate(caregiver.mvrClearedAt);
+      const line = clearedOn && card === "approved"
+        ? DRIVER_CARD_TEXT[card].replace("Driving record check cleared. ", `Driving record check cleared on ${clearedOn}. `)
+        : DRIVER_CARD_TEXT[card];
+      await sendMessage(chatId, `Where it stands: ${line} Reply MEMBERSHIP for your whole Membership & verification section.`);
+    } catch (err) {
+      console.error("caregiverAccessGate: driving record line failed", err);
+      await sendMessage(chatId, "Reply MEMBERSHIP to see where your driving record stands.");
+    }
+    return;
+  }
   try {
     const { sendOnboardingLink } = await import("./onboardingConversation");
     if (reason === "membership") {
@@ -122,14 +148,12 @@ export async function textCaregiverGateBlock(
     } else if (reason === "background") {
       if ((await sendOnboardingLink(phone, "caregiver_background_check")).success) return;
     }
-    // transport → the Settings page link below (Membership & verification holds the driving record).
   } catch (err) {
     console.error("caregiverAccessGate: link mint failed, falling back to the site page", err);
   }
-  // Membership & verification lives on Account Settings (2026-10-04): Activate,
-  // Authorize and the documents all have their card there.
+  // Membership & verification lives on Account Settings (2026-10-04): Activate and
+  // Authorize have their card there (external steps = a link is the twin).
   const fallback = "/caregiver/settings";
-  void reason;
   await sendMessage(chatId, { parts: [{ type: "link", value: appLink(fallback) }] });
 }
 

@@ -6,13 +6,18 @@ import {
 } from "../caregiverEligibility";
 
 describe("isCaregiverBookable", () => {
-  it("returns true ONLY for profile_complete + approved", () => {
+  it("returns true ONLY for profile_complete + approved + an active membership (2026-10-06)", () => {
     expect(
       isCaregiverBookable({
         onboardingStatus: "profile_complete",
         verificationStatus: "approved",
+        membershipStatus: "active",
       })
     ).toBe(true);
+    // Lapsed membership → not bookable, not listed, no new contact (founder, 2026-10-06).
+    expect(isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "canceled" })).toBe(false);
+    expect(isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved" })).toBe(false);
+    expect(isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", membershipPaid: true })).toBe(true); // legacy paid flag, no status
   });
 
   it("returns false for undefined / null / empty caregiver", () => {
@@ -44,7 +49,7 @@ describe("isCaregiverBookable", () => {
           onboardingStatus === "profile_complete" &&
           verificationStatus === "approved";
         expect(
-          isCaregiverBookable({ onboardingStatus, verificationStatus }),
+          isCaregiverBookable({ onboardingStatus, verificationStatus, membershipStatus: "active" }),
           `onboardingStatus=${onboardingStatus} verificationStatus=${verificationStatus}`
         ).toBe(expected);
       }
@@ -102,7 +107,7 @@ describe("isCaregiverBookable", () => {
   it("returns false while pausedUntil is in the future, even if otherwise bookable", () => {
     expect(
       isCaregiverBookable(
-        { onboardingStatus: "profile_complete", verificationStatus: "approved", pausedUntil: "2026-10-01" },
+        { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", pausedUntil: "2026-10-01" },
         "2026-09-06T00:00:00.000Z",
       )
     ).toBe(false);
@@ -111,7 +116,7 @@ describe("isCaregiverBookable", () => {
   it("returns true again once pausedUntil is in the past", () => {
     expect(
       isCaregiverBookable(
-        { onboardingStatus: "profile_complete", verificationStatus: "approved", pausedUntil: "2026-08-01" },
+        { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", pausedUntil: "2026-08-01" },
         "2026-09-06T00:00:00.000Z",
       )
     ).toBe(true);
@@ -119,7 +124,7 @@ describe("isCaregiverBookable", () => {
 
   it("is unaffected by an absent pausedUntil", () => {
     expect(
-      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved" })
+      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" })
     ).toBe(true);
   });
 
@@ -130,13 +135,13 @@ describe("isCaregiverBookable", () => {
   // suggested as a match.
   it("returns false when optedOut is mirrored true, even if otherwise bookable", () => {
     expect(
-      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", optedOut: true })
+      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", optedOut: true })
     ).toBe(false);
   });
 
   it("is unaffected by optedOut explicitly false or absent", () => {
     expect(
-      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", optedOut: false })
+      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", optedOut: false })
     ).toBe(true);
   });
 
@@ -158,7 +163,7 @@ describe("isCaregiverBookable", () => {
 describe("bookableFilter", () => {
   it("mirrors isCaregiverBookable for use with Array#filter", () => {
     const docs = [
-      { onboardingStatus: "profile_complete", verificationStatus: "approved" },
+      { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" },
       { onboardingStatus: "profile_complete", verificationStatus: "submitted" },
       { onboardingStatus: "incomplete", verificationStatus: "approved" },
       null,

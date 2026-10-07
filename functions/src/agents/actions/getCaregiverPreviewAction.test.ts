@@ -43,7 +43,11 @@ function toDoc(data: Record<string, unknown>) {
   return { data: () => data };
 }
 
+// Cleared for families (2026-10-06): the preview post-filters with the shared bookability gate.
+const CLEARED = { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" };
+
 const REAL_CAREGIVER = {
+  ...CLEARED,
   name: "Maria Santos",
   city: "San Jose",
   yearsExperience: 8,
@@ -51,6 +55,7 @@ const REAL_CAREGIVER = {
 };
 
 const SEEDED_CAREGIVER = {
+  ...CLEARED,
   __seedTag: "cara-test",
   name: "Fake Test Caregiver",
   city: "San Jose",

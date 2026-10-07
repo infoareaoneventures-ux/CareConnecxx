@@ -60,5 +60,10 @@ describe("caregiverGateText — the modal's own copy", () => {
     expect(caregiverGateText("transport")).toContain("Set Up Transportation");
     expect(caregiverGateText("transport")).toContain("complete the driving record check");
     expect(caregiverGateText("transport")).not.toMatch(/approved|cleared|badge/i);
+    // 2026-10-06: not offering Transportation yet → the text says reply SERVICES (the site's button opens the Care Services editor); offering → Settings.
+    expect(caregiverGateText("transport", { services: ["Companionship"] })).toContain("reply SERVICES");
+    expect(caregiverGateText("transport", { services: ["Companionship"] })).not.toContain("Settings");
+    // Offering → no site link in the text either: the block texts the driving record card itself (founder, 2026-10-06).
+    expect(caregiverGateText("transport", { services: ["Transportation"] })).not.toMatch(/Settings|http/);
   });
 });

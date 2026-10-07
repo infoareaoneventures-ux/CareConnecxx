@@ -104,7 +104,7 @@ describe("discovery tools", () => {
         { rating: 4, comment: "Punctual and kind",  createdAt: "2026-04-15" },
       ]);
       // The page reads users/{id} over publicCaregiverProfiles/{id} — never the raw caregivers doc.
-      hoisted.docState.set("publicCaregiverProfiles/cg1", { name: "Alice", rating: 4.7, reviewCount: 12, hourlyRate: 30 });
+      hoisted.docState.set("publicCaregiverProfiles/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", rating: 4.7, reviewCount: 12, hourlyRate: 30 });
       const r = await handleToolCall("get_caregiver_info", { caregiverId: "cg1" }) as any;
       expect(r.success).toBe(true);
       expect(r.results.name).toBe("Alice");

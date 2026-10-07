@@ -138,6 +138,14 @@ export async function resolveCaregiverForInterview(
   if (!caregiverSnap.exists) {
     throw new VideoInterviewRequestError("failed-precondition", "Caregiver is not available for interviews");
   }
+  // Founder, 2026-10-06: no interview with a caregiver whose background check isn't
+  // clear / approved — the same rule the site's profile page and the chat rules use.
+  {
+    const { isCaregiverClearedForFamilies, CAREGIVER_NOT_AVAILABLE_TEXT } = await import("../utils/caregiverEligibility");
+    if (!isCaregiverClearedForFamilies(caregiverSnap.data() as Record<string, unknown>)) {
+      throw new VideoInterviewRequestError("failed-precondition", CAREGIVER_NOT_AVAILABLE_TEXT);
+    }
+  }
   // The real doc id, whichever lookup found it — every downstream write and
   // the returned result must use this, never the original `caregiverId` param
   // (which, on the name-fallback path above, is a name, not a real id).

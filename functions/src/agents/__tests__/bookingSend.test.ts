@@ -70,7 +70,7 @@ import { sendBookingRequest, findBlockingBookingRequest } from "../bookingSend";
 
 const BOOKABLE_CG = {
   name: "Basra Yousuf", photo: "https://cdn/basra.jpg",
-  status: "active", onboardingStatus: "profile_complete", verificationStatus: "approved",
+  status: "active", onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active",
   backgroundCheckStatus: "clear",
 };
 

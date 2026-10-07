@@ -7,7 +7,9 @@ const db = admin.firestore();
 // (caregiverMatchScoring.ts). v3 (2026-10-06): documents dropped from the rule —
 // Transportation = offered + cleared driving record. Bump so the backfill counts
 // every older copy as stale.
-const PROJECTION_VERSION = "2026-10-06-v3";
+// v4 (2026-10-06): + clearedForFamilies (approval + active membership) — families meet only
+// caregivers who can act on what they send.
+const PROJECTION_VERSION = "2026-10-06-v4";
 
 function projectionData(id: string, source: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -27,6 +29,42 @@ export const projectPublicCaregiverProfile = functions.firestore
     }
     await target.set(projectionData(context.params.caregiverId, change.after.data() as Record<string, unknown>));
   });
+
+/**
+ * Re-project every caregiver whose public copy is missing or on an older PROJECTION_VERSION
+ * (and delete hidden ones). The daily badge job calls this so a rule change reaches every
+ * existing caregiver within a day even if nothing else writes their record (2026-10-06).
+ */
+export async function healStaleProjections(): Promise<{ scanned: number; reprojected: number }> {
+  const result = { scanned: 0, reprojected: 0 };
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+  do {
+    let query = db.collection("caregivers").orderBy(admin.firestore.FieldPath.documentId()).limit(400);
+    if (cursor) query = query.startAfter(cursor);
+    const page = await query.get();
+    if (page.empty) break;
+    const batch = db.batch();
+    let writes = 0;
+    for (const sourceDoc of page.docs) {
+      result.scanned++;
+      const source = sourceDoc.data() as Record<string, unknown>;
+      const target = db.collection("publicCaregiverProfiles").doc(sourceDoc.id);
+      const existing = await target.get();
+      if (source.profileVisibility === "hidden") {
+        if (existing.exists) { batch.delete(target); writes++; }
+        continue;
+      }
+      if (!existing.exists || existing.data()?.projectionVersion !== PROJECTION_VERSION) {
+        batch.set(target, projectionData(sourceDoc.id, source));
+        writes++; result.reprojected++;
+      }
+    }
+    if (writes > 0) await batch.commit();
+    cursor = page.docs.at(-1);
+    if (page.size < 400) break;
+  } while (cursor);
+  return result;
+}
 
 export const backfillPublicCaregiverProfiles = functions.https.onRequest(async (req, res) => {
   const adminSecret = req.headers["x-admin-secret"];

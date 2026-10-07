@@ -189,11 +189,20 @@ export const CaregiverProgressCard: React.FC<{
       cardTitle = 'Driving record not approved';
       cardDesc = "Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.";
       cardVariant = 'warning';
-    } else {
+    } else if (p.mvrStatus === 'consider' || p.mvrStatus === 'suspended') {
+      cardTitle = 'Driving record under review';
+      cardDesc = "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.";
+      cardVariant = 'info';
+    } else if (p.mvrStatus === 'pending' || (p.mvrPaid === true && p.isApprovedDriver !== true)) {
+      // Running (same state rule as the Settings card, AccountStandingSection.driverCardFor).
       cardTitle = 'Driving record check in progress';
-      cardDesc = p.mvrStatus === 'consider' || p.mvrStatus === 'suspended'
-        ? "Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected."
-        : 'Your driving record check is included in your membership. Transportation shows on your profile as soon as it clears.';
+      cardDesc = 'Your Motor Vehicle Report is in progress — finish the short form in the email you received. Transportation shows on your profile once it clears.';
+      cardVariant = 'info';
+    } else {
+      // Not started yet (founder, 2026-10-06: "in progress" here while nothing ran was wrong). It starts by
+      // itself; the caregiver clicks nothing on Evia — only the emailed form for the record itself.
+      cardTitle = 'Driving record check included';
+      cardDesc = 'Your membership covers the Motor Vehicle Report. It starts by itself once your background check is clear and Transportation is on your profile — you’ll get an email with a short form to complete. Transportation shows on your profile once it clears.';
       cardVariant = 'info';
     }
   }

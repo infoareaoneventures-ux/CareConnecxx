@@ -142,6 +142,8 @@ export interface Caregiver {
   reviewNotes?: string;
   onboardingStatus?: 'incomplete' | 'complete' | 'profile_complete';
   documents?: CaregiverDocuments;
+  /** Precomputed on publicCaregiverProfiles (and carried on mapped list items): Transportation offered + driving record clear. */
+  hasValidTransportDocs?: boolean;
   backgroundCheckData?: {
     // SECURITY: We NEVER store full SSN in our database
     // SSN is handled by Checkr's embedded flow and tokenized

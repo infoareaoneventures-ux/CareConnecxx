@@ -46,7 +46,6 @@ export interface CaregiverSearchFilters {
   /** Experience radios: 0, 1, 3, 5, 10. */
   minExperienceYears?: number;
   /** Trust & Safety checkboxes. */
-  verifiedOnly?: boolean;
   transportationOnly?: boolean;
   /** Senior care specialties — a caregiver matches if they have ANY selected one. */
   specialties?: string[];
@@ -233,7 +232,6 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
     if (filters.maxHourlyRate < 100 && cg.hourlyRate > filters.maxHourlyRate) return false;
     if (cg.rating < filters.minRating) return false;
     if ((Number(cg.experience) || 0) < filters.minExperienceYears) return false;
-    if (filters.verifiedOnly && !cg.verified) return false;
     if (filters.transportationOnly && !cg.transportationLive) return false;
     if (wantedSpecialties.length > 0) {
       const have = new Set(cg.skills.map((s) => s.toLowerCase()));
@@ -280,7 +278,6 @@ export function describeActiveFilters(f: CaregiverSearchFilters): string[] {
   if (f.maxHourlyRate && f.maxHourlyRate !== 75 && f.maxHourlyRate < 100) out.push(`up to $${f.maxHourlyRate}/hr`);
   if (f.minRating) out.push(`${f.minRating}+ stars`);
   if (f.minExperienceYears) out.push(`${f.minExperienceYears}+ years`);
-  if (f.verifiedOnly) out.push("background checked");
   if (f.transportationOnly) out.push("transportation");
   if (f.specialties?.length) out.push(f.specialties.join(", "));
   if (f.languages?.length) out.push(f.languages.join(", "));

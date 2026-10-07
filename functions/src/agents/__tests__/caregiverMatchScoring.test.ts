@@ -87,7 +87,7 @@ describe("hasValidTransportDocs", () => {
 });
 
 describe("scoreAndRankCaregivers", () => {
-  const bookable = { onboardingStatus: "profile_complete", verificationStatus: "approved" };
+  const bookable = { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" };
   const clientLocations = [{ lat: 37.3382, lng: -121.8863 }]; // San Jose
 
   it("excludes non-bookable caregivers", () => {

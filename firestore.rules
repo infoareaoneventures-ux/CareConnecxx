@@ -35,6 +35,21 @@ service cloud.firestore {
       );
     }
     
+    // The other party of a two-person room, when it is a caregiver, must be cleared for families
+    // (utils/caregiverEligibility.ts isCaregiverClearedForFamilies: profile_complete + approved).
+    // A participant with no caregivers doc (a family) passes; a caregiver opening a room passes.
+    function caregiverClearedForFamilies(participants) {
+      let other = participants[0] == request.auth.uid ? participants[1] : participants[0];
+      // 2026-10-06: the caregiver's membership must be active too (active / trialing, or the legacy
+      // paid flag with no status) — a lapsed caregiver can't act on the message anyway.
+      return !exists(/databases/$(database)/documents/caregivers/$(other))
+        || (get(/databases/$(database)/documents/caregivers/$(other)).data.get('onboardingStatus', '') == 'profile_complete'
+            && get(/databases/$(database)/documents/caregivers/$(other)).data.get('verificationStatus', '') == 'approved'
+            && (get(/databases/$(database)/documents/caregivers/$(other)).data.get('membershipStatus', null) in ['active', 'trialing']
+                || (get(/databases/$(database)/documents/caregivers/$(other)).data.get('membershipStatus', null) == null
+                    && get(/databases/$(database)/documents/caregivers/$(other)).data.get('membershipPaid', false) == true)));
+    }
+
     // Only admins can delete documents
     function canDelete() {
       return isAdmin();
@@ -372,9 +387,14 @@ service cloud.firestore {
         request.auth.uid in resource.data.participants || isAdmin()
       );
 
-      // Any authenticated user can create a room they're part of; admin can create any room
+      // Any authenticated user can create a room they're part of; admin can create any room.
+      // Founder, 2026-10-06: a family can do nothing with a caregiver whose background check
+      // isn't clear — a NEW room with such a caregiver is refused here (the site hides the
+      // Message button and Evia's tool refuses too; same rule: profile_complete + approved).
       allow create: if isAuthenticated() && (
-        request.auth.uid in request.resource.data.participants || isAdmin()
+        (request.auth.uid in request.resource.data.participants
+          && caregiverClearedForFamilies(request.resource.data.participants))
+        || isAdmin()
       );
 
       allow delete: if isAdmin();

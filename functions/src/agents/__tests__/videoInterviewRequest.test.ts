@@ -100,7 +100,7 @@ const PAST_ISO = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
 beforeEach(() => {
   hoisted.reset();
-  hoisted.docState.set(`publicCaregiverProfiles/${CAREGIVER}`, { name: "Alice Rivera", photoURL: "https://x/alice.jpg" });
+  hoisted.docState.set(`publicCaregiverProfiles/${CAREGIVER}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice Rivera", photoURL: "https://x/alice.jpg" });
   hoisted.docState.set(`users/${CLIENT}`, { name: "A Family", photoURL: "https://x/family.jpg" });
 });
 
@@ -180,10 +180,10 @@ describe("requestVideoInterview", () => {
 
   it("enforces the same 5-per-day cap the site's callable enforces, across 5 DIFFERENT caregivers", async () => {
     for (let i = 0; i < 5; i++) {
-      hoisted.docState.set(`publicCaregiverProfiles/cg_new_${i}`, { name: `New Caregiver ${i}` });
+      hoisted.docState.set(`publicCaregiverProfiles/cg_new_${i}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: `New Caregiver ${i}` });
       await requestVideoInterview({ clientId: CLIENT, caregiverId: `cg_new_${i}`, scheduledTime: FUTURE_ISO, source: "test" });
     }
-    hoisted.docState.set("publicCaregiverProfiles/cg_new_6", { name: "One Too Many" });
+    hoisted.docState.set("publicCaregiverProfiles/cg_new_6", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "One Too Many" });
     await expect(requestVideoInterview({
       clientId: CLIENT, caregiverId: "cg_new_6", scheduledTime: FUTURE_ISO, source: "test",
     })).rejects.toMatchObject({ code: "resource-exhausted" });
@@ -211,10 +211,10 @@ describe("requestVideoInterview", () => {
       await requestVideoInterview({ clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO, source: "test" });
     }
     for (let i = 0; i < 4; i++) {
-      hoisted.docState.set(`publicCaregiverProfiles/cg_extra_${i}`, { name: `Extra ${i}` });
+      hoisted.docState.set(`publicCaregiverProfiles/cg_extra_${i}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: `Extra ${i}` });
       await requestVideoInterview({ clientId: CLIENT, caregiverId: `cg_extra_${i}`, scheduledTime: FUTURE_ISO, source: "test" });
     }
-    hoisted.docState.set("publicCaregiverProfiles/cg_extra_5", { name: "Sixth Distinct" });
+    hoisted.docState.set("publicCaregiverProfiles/cg_extra_5", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Sixth Distinct" });
     await expect(requestVideoInterview({
       clientId: CLIENT, caregiverId: "cg_extra_5", scheduledTime: FUTURE_ISO, source: "test",
     })).rejects.toMatchObject({ code: "resource-exhausted" });
@@ -223,7 +223,7 @@ describe("requestVideoInterview", () => {
   it("does not cap a DIFFERENT client's requests", async () => {
     hoisted.docState.set("users/client_2", { name: "Another Family" });
     for (let i = 0; i < 5; i++) {
-      hoisted.docState.set(`publicCaregiverProfiles/cg_c1_${i}`, { name: `Caregiver ${i}` });
+      hoisted.docState.set(`publicCaregiverProfiles/cg_c1_${i}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: `Caregiver ${i}` });
       await requestVideoInterview({ clientId: CLIENT, caregiverId: `cg_c1_${i}`, scheduledTime: FUTURE_ISO, source: "test" });
     }
     await expect(requestVideoInterview({
@@ -280,7 +280,7 @@ describe("requestVideoInterview", () => {
     it("SAFETY: never matches a same-named caregiver this family was never shown (a stranger), even though a global name search would find them", async () => {
       // A second, unrelated caregiver with the identical name, never shown to
       // this family — only reachable via a global (unscoped) name search.
-      hoisted.docState.set("publicCaregiverProfiles/cg_stranger", { name: "Alice Rivera" });
+      hoisted.docState.set("publicCaregiverProfiles/cg_stranger", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice Rivera" });
       hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [] }); // never shown Alice at all
       await expect(requestVideoInterview({
         clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
@@ -293,7 +293,7 @@ describe("requestVideoInterview", () => {
     // the tied candidates so the agent can ask which one, then retry with
     // the correct id.
     it("SAFETY: fails closed (does not guess) when two caregivers this family has BOTH been shown share the same name, but surfaces both as candidates", async () => {
-      hoisted.docState.set("publicCaregiverProfiles/cg_alice2", { name: "Alice Rivera", hourlyRate: 25 });
+      hoisted.docState.set("publicCaregiverProfiles/cg_alice2", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice Rivera", hourlyRate: 25 });
       hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER, "cg_alice2"] });
       await expect(requestVideoInterview({
         clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,

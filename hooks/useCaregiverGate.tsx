@@ -6,6 +6,17 @@ import { hasValidTransportDocs, offersTransportation } from '../utils/transportD
 
 /** Where "Set Up Transportation" sends a caregiver who has not offered the service yet: the Profile page with the Care Services editor open (2026-10-06). */
 export const ADD_TRANSPORTATION_PATH = '/caregiver/profile?edit=services';
+
+/**
+ * Where "Set Up Transportation" goes — the job-card button, the Apply popup's button and
+ * Evia's texted twin agree (founder, 2026-10-06: the button went to Settings even when
+ * Transportation wasn't on the profile). Not offering → the Care Services editor (the only
+ * thing to do is add the service); offering → Settings, where the driving record card says
+ * where it stands (nothing left to do but wait or read the result).
+ */
+export function transportSetupPath(profile: any): string {
+  return offersTransportation(profile) ? '/caregiver/settings' : ADD_TRANSPORTATION_PATH;
+}
 import { dbService } from '../services/api';
 
 export type BlockReason = 'membership' | 'background' | 'transport' | null;
@@ -73,7 +84,7 @@ function CaregiverGateModal({
   // Already offered → nothing to do but wait or read the result, so Settings shows where it stands.
   const needsService = reason === 'transport' && !offersTransportation(caregiverProfile as any);
   const { title, desc, cta, path } = needsService
-    ? { ...base, cta: 'Add Transportation to my services', path: ADD_TRANSPORTATION_PATH }
+    ? { ...base, cta: 'Add Transportation to my services', path: transportSetupPath(caregiverProfile) }
     : base;
 
   const handleCta = () => {
@@ -130,6 +141,8 @@ export function useCaregiverGate() {
 
   const canAct = blockReason === null;
   const canActTransport = transportBlockReason === null;
+  /** The job-card "Set Up Transportation" button's destination (same rule as the popup). */
+  const setUpTransportationPath = transportSetupPath(p);
 
   const gate = useCallback((onPass?: () => void): boolean => {
     if (canAct) { onPass?.(); return true; }
@@ -185,5 +198,6 @@ export function useCaregiverGate() {
     />
   ) : null;
 
-  return { gate, gateTransport, gateFresh, gateMembership, membershipActive, canAct, canActTransport, blockReason, transportBlockReason, GateModal };
+  return {
+    setUpTransportationPath, gate, gateTransport, gateFresh, gateMembership, membershipActive, canAct, canActTransport, blockReason, transportBlockReason, GateModal };
 }

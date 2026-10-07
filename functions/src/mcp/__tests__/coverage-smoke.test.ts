@@ -506,7 +506,7 @@ describe("MCP tool smoke coverage", () => {
     it("refactored tools always return a notification field with sent boolean", async () => {
       // send_caregiver_message
       hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101", onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" });
       const sendCg = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(typeof sendCg.notification.sent).toBe("boolean");
     });

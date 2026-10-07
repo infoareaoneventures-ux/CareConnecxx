@@ -386,7 +386,7 @@ describe("respond_to_job_application", () => {
     hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", subscriptionActive: true, name: "A Family" });
     // Caregiver eligibility (requestVideoInterview) reads publicCaregiverProfiles
     // — the same bookability-gated projection the site's own interview request checks.
-    hoisted.docState.set("publicCaregiverProfiles/cg1", { name: "Alice" });
+    hoisted.docState.set("publicCaregiverProfiles/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice" });
 
     const r = await handleToolCall("respond_to_job_application", {
       applicationId: "app_1", clientId: CLIENT, decision: "accept",

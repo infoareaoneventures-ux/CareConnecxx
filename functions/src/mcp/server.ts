@@ -156,8 +156,7 @@ export const MCP_TOOLS: McpTool[] = [
       "the same sort. Call it ANY time a family asks to see, browse or find caregivers — browsing is not gated on " +
       "identity or membership (only Message / Request Interview are, and those tools gate themselves). Filters mirror " +
       "the page: query (name, city or zip search box), maxDistanceMiles (slider, default 25), maxHourlyRate (slider, " +
-      "default 75; 100 = no cap), minRating (Any/3/4/4.5), minExperienceYears (Any/1/3/5/10), verifiedOnly " +
-      "(Background checked only), transportationOnly (the Specialties › Transportation box: caregivers whose Transportation is live — offered and driving record clear), specialties (any of), languages " +
+      "default 75; 100 = no cap), minRating (Any/3/4/4.5), minExperienceYears (Any/1/3/5/10), transportationOnly (the Specialties › Transportation box: caregivers whose Transportation is live — offered and driving record clear), specialties (any of), languages " +
       "(any of), sortBy (rating = Highest rated, the default; price-low; price-high), favoritesOnly (the Favorites tab). " +
       "Every caregiver shown is already background-check cleared — never ask the family whether they want that. " +
       "It texts the family the page: a '<N> caregivers found' line, then one card per caregiver (name, rate, rating, " +
@@ -175,7 +174,6 @@ export const MCP_TOOLS: McpTool[] = [
         maxHourlyRate:      { type: "number", description: "Max rate slider (default 75; 100 or more = no cap)." },
         minRating:          { type: "number", description: "Rating pills: 3, 4 or 4.5 (omit for Any)." },
         minExperienceYears: { type: "number", description: "Experience: 1, 3, 5 or 10 (omit for Any)." },
-        verifiedOnly:       { type: "boolean", description: "Background checked only." },
         transportationOnly: { type: "boolean", description: "Transportation only — caregivers offering it with a cleared driving record (the page's Specialties › Transportation box)." },
         specialties:        { type: "array", items: { type: "string" }, description: "Senior care specialties — any of (e.g. 'Dementia / Memory Care', 'Mobility Assistance')." },
         languages:          { type: "array", items: { type: "string" }, description: "Languages — any of." },
@@ -3341,7 +3339,6 @@ async function executeToolCall(
           maxHourlyRate:      num(input.maxHourlyRate),
           minRating:          num(input.minRating),
           minExperienceYears: num(input.minExperienceYears),
-          verifiedOnly:       input.verifiedOnly === true,
           transportationOnly: input.transportationOnly === true,
           specialties:        arr(input.specialties),
           languages:          arr(input.languages),
@@ -4287,6 +4284,14 @@ async function executeToolCall(
         // browse/message on the website, so Evia shouldn't relay to one either.
         if (cgSnap.data()?.profileVisibility === "hidden") {
           return toolError("NOT_FOUND", "Caregiver not found");
+        }
+        // Founder, 2026-10-06: a family can do nothing with a caregiver whose background check
+        // isn't clear / approved — the site hides Message and the chat rules refuse the room.
+        {
+          const { isCaregiverClearedForFamilies, CAREGIVER_NOT_AVAILABLE_TEXT } = await import("../utils/caregiverEligibility");
+          if (!isCaregiverClearedForFamilies(cgSnap.data() as Record<string, unknown>)) {
+            return toolError("UNAVAILABLE", `${CAREGIVER_NOT_AVAILABLE_TEXT} Messaging them is off, exactly as on the website. Tell the family that in one line — never say why.`);
+          }
         }
         const caregiverName = (cgSnap.data()?.name as string | undefined) ?? "";
         // The Inbox composer (InboxView.tsx handleSend → chatService.sendMessage):

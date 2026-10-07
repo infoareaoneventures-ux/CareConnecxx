@@ -17,6 +17,7 @@ describe("booking eligibility contract (isCaregiverBookable)", () => {
     const caregiver = {
       onboardingStatus: "profile_complete",
       verificationStatus: "approved",
+      membershipStatus: "active", // 2026-10-06: bookable also needs an active membership
       verified: true,
       status: "active",
       backgroundCheckData: { status: "clear" },

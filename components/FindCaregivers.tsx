@@ -4,7 +4,7 @@ import { billedHourlyRate } from '../utils/pricing';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Heart, MapPin, Star, CheckCircle, Sparkles, TrendingUp,
-  MessageSquare, Shield, Search, SlidersHorizontal, X,
+  MessageSquare, Search, SlidersHorizontal, X,
   ChevronDown, Briefcase,
   Pill, Car, Brain, Activity, Users, Video, RefreshCw,
 } from 'lucide-react';
@@ -42,6 +42,7 @@ interface Caregiver {
   lng?: number;
   photoURL?: string;
   transportationLive: boolean;
+  hasValidTransportDocs?: boolean;
   skills?: string[];
   languages?: string[];
   experience?: number;
@@ -125,7 +126,6 @@ export default function FindCaregivers() {
   const [maxDistance, setMaxDistance] = useState(25);
   const [minRating, setMinRating] = useState(0);
   const [minExperience, setMinExperience] = useState(0);
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [selectedSpecialties, setSelectedSpecialties] = useState<Set<string>>(new Set());
   const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set());
 
@@ -376,6 +376,10 @@ export default function FindCaregivers() {
           lng: cgLng,
           photoURL: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
           transportationLive: hasValidTransportDocs(data),
+          // Carry the stored flag too: the Find Caregivers popup is handed THIS item (not a re-read of the
+          // record), and it recomputes Transportation from it — without the flag it hid Transportation
+          // while the full profile page showed it (founder, 2026-10-06). Same as useNearbyCaregiversWithScores.
+          hasValidTransportDocs: hasValidTransportDocs(data),
           skills: data.skills || data.specializations || data.specialties || [],
           languages: data.languages || ['English'],
           experience: data.experience || data.yearsExperience || 0,
@@ -486,7 +490,6 @@ export default function FindCaregivers() {
     setMaxDistance(25);
     setMinRating(0);
     setMinExperience(0);
-    setVerifiedOnly(false);
     setSelectedSpecialties(new Set());
     setSelectedLanguages(new Set());
     setShowFavoritesOnly(false);
@@ -499,11 +502,10 @@ export default function FindCaregivers() {
     if (maxDistance !== 25) n++;
     if (minRating > 0) n++;
     if (minExperience > 0) n++;
-    if (verifiedOnly) n++;
     n += selectedSpecialties.size;
     n += selectedLanguages.size;
     return n;
-  }, [nameQuery, maxRate, maxDistance, minRating, minExperience, verifiedOnly, selectedSpecialties, selectedLanguages]);
+  }, [nameQuery, maxRate, maxDistance, minRating, minExperience, selectedSpecialties, selectedLanguages]);
 
   const filteredCaregivers = useMemo(() => {
     let list = caregivers.filter(cg => {
@@ -526,7 +528,6 @@ export default function FindCaregivers() {
       if (maxRate < 100 && cg.hourlyRate > maxRate) return false;
       if (cg.rating < minRating) return false;
       if ((cg.experience || 0) < minExperience) return false;
-      if (verifiedOnly && !cg.verified) return false;
       if (selectedSpecialties.size > 0) {
         // Transportation counts only while it is live on the record (offered + driving record
         // clear) — the same rule that shows the pill, so the filter and the card agree (2026-10-06).
@@ -562,7 +563,7 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, verifiedOnly, selectedSpecialties, selectedLanguages, sortBy]);
+  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, selectedLanguages, sortBy]);
 
   if (loading) {
     return (
@@ -658,23 +659,6 @@ export default function FindCaregivers() {
               {tier.label}
             </label>
           ))}
-        </div>
-      </div>
-
-      {/* Trust & Safety */}
-      <div>
-        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Trust & Safety</label>
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={verifiedOnly}
-              onChange={(e) => setVerifiedOnly(e.target.checked)}
-              className="accent-teal-600 rounded"
-            />
-            <Shield className="w-4 h-4 text-primary-600" />
-            Background checked only
-          </label>
         </div>
       </div>
 

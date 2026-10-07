@@ -9,6 +9,7 @@
 import { serviceLabel } from "./caregiverServiceLabels";
 import * as admin from "firebase-admin";
 import { hasValidTransportDocs } from "./caregiverMatchScoring";
+import { isCaregiverClearedForFamilies, CAREGIVER_NOT_AVAILABLE_TEXT } from "../utils/caregiverEligibility";
 import { SHIFT_PLATFORM_FEE_RATE } from "../billing/config";
 import { getAppUrl } from "../config/appUrl";
 
@@ -83,6 +84,8 @@ export interface CaregiverProfileRecord {
   education: string | null;
   verified: boolean;
   backgroundCheckStatus: string | null;
+  /** Founder, 2026-10-06: profile_complete + approved — otherwise the page shows "not available" and no buttons (site + Evia). */
+  clearedForFamilies: boolean;
   hasTransportation: boolean;
   serviceRadius: number;
   weeklyAvailability: Record<string, AvailabilityBlock[]>;
@@ -120,6 +123,7 @@ export function mapRawToProfileRecord(id: string, data: Record<string, unknown>)
     education: str(data.education),
     verified: data.verified === true,
     backgroundCheckStatus: str(data.backgroundCheckStatus),
+    clearedForFamilies: isCaregiverClearedForFamilies(data as { onboardingStatus?: string; verificationStatus?: string }),
     hasTransportation: hasValidTransportDocs(data),
     serviceRadius: num(data.serviceRadius) ?? 25,
     weeklyAvailability: weeklySlotsToBlocks(data.weeklyAvailability || {}),
@@ -183,7 +187,9 @@ export interface CaregiverProfilePage {
   hasMoreReviews: boolean;
   relationship: CaregiverRelationship;
   /** The page's buttons in this state: one primary (or a status pill), Message, and the review action. */
-  actions: { primary: ProfilePrimaryAction; message: true; review: ProfileReviewAction };
+  actions: { primary: ProfilePrimaryAction; message: boolean; review: ProfileReviewAction };
+  /** False → the page shows "This caregiver isn't available yet." with no buttons (2026-10-06). */
+  available: boolean;
   /** publicCaregiverProfiles/{id} exists — i.e. the caregiver is listed on the site. false = only a users record (never quote rate/skills as facts). */
   published: boolean;
   /** One paragraph in the page's order, for Evia to quote from. */
@@ -249,7 +255,8 @@ export function shapeCaregiverProfilePage(
   const weeklyAvailability = DAY_ORDER
     .map((day) => ({ day, blocks: rec.weeklyAvailability[day] ?? [] }))
     .filter((d) => d.blocks.length > 0);
-  const actions = deriveProfileActions(rel);
+  const available = rec.clearedForFamilies;
+  const actions = available ? deriveProfileActions(rel) : { primary: "request_interview" as const, message: false, review: null };
   const ratesNote = `Billed includes Evia's ${pct} service fee. The caregiver keeps 100% of their rate.`;
 
   const parts: string[] = [];
@@ -268,7 +275,12 @@ export function shapeCaregiverProfilePage(
   parts.push(reviews.length
     ? `Reviews (${rec.reviewCount}): ${reviews.slice(0, 3).map((r) => `${r.reviewerName} ${r.rating}★${r.comment ? ` "${r.comment}"` : ""}`).join(" · ")}`
     : "Reviews: none yet.");
-  parts.push(`Buttons on the page for this family: ${PRIMARY_LABEL[actions.primary]}; Message${actions.review === "leave_review" ? "; Leave a Review" : actions.review === "reviewed" ? "; Reviewed ✓" : ""}.`);
+  if (available) {
+    parts.push(`Buttons on the page for this family: ${PRIMARY_LABEL[actions.primary]}; Message${actions.review === "leave_review" ? "; Leave a Review" : actions.review === "reviewed" ? "; Reviewed ✓" : ""}.`);
+  } else {
+    // Founder, 2026-10-06: nothing a family can do with this caregiver yet — no buttons, and never the reason.
+    parts.push(`${CAREGIVER_NOT_AVAILABLE_TEXT} The page shows no Request Interview or Message button — tell the family that in one line, never why.`);
+  }
 
   return {
     id: rec.id,
@@ -297,6 +309,7 @@ export function shapeCaregiverProfilePage(
     published: opts.published ?? true,
     relationship: rel,
     actions,
+    available,
     summary: parts.join(" "),
   };
 }

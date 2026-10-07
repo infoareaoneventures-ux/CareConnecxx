@@ -104,7 +104,7 @@ describe("communication tools", () => {
 
     it("blocks caregivers with no active or recent engagement", async () => {
       // No shifts — caregiver should be blocked
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "active" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("FORBIDDEN");
@@ -115,7 +115,7 @@ describe("communication tools", () => {
         { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
       ]);
       hoisted.docState.set("users/c1", { phone: "+15555550100" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "active" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.sent).toBe(true);
@@ -125,7 +125,7 @@ describe("communication tools", () => {
     });
 
     it("no clientId: ONE related family resolves by the visit's clientId; several → the families come back and nothing is sent", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "active" });
       hoisted.docState.set("users/c1", { name: "Sarah" });
       hoisted.collState.set("shifts", [{ caregiverId: "cg1", clientId: "c1", clientName: "Sarah", status: "scheduled", date: "2099-06-01" }]);
       const one = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi" }) as any;
@@ -143,7 +143,7 @@ describe("communication tools", () => {
 
     it("a PAST family (a finished booking, no visit in 30 days) can still be messaged — the My Families page's Message button", async () => {
       hoisted.docState.set("users/c7", { name: "Old Family" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "active" });
       hoisted.collState.set("booking_requests", [{ id: "br7", caregiverId: "cg1", clientId: "c7", clientName: "Old Family", status: "completed" }]);
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hello again", clientId: "c7" }) as any;
       expect(r).toMatchObject({ success: true, sentTo: "c7" });
@@ -152,7 +152,7 @@ describe("communication tools", () => {
     it("blocks an explicit clientId when no relationship exists", async () => {
       // collState is empty for shifts — no relationship
       hoisted.docState.set("users/c1", { phone: "+15555550100" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "active" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("FORBIDDEN");
@@ -161,7 +161,7 @@ describe("communication tools", () => {
     it("posts into the shared thread and does not text the family directly (the trigger does, like a website message)", async () => {
       hoisted.collState.set("shifts", [{ caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" }]);
       hoisted.docState.set("users/c1", { phone: "+15555550100", name: "Sarah" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "active" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "on my way", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.sent).toBe(true);
@@ -174,7 +174,7 @@ describe("communication tools", () => {
           { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
         ]);
         hoisted.docState.set("users/c1", { phone: "+15555550100" });
-        hoisted.docState.set("caregivers/cg1", { name: "Alice" });
+        hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice" });
         const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
         expect(r._toolError).toBe(true);
         expect(r.code).toBe("MEMBERSHIP_REQUIRED");
@@ -182,7 +182,7 @@ describe("communication tools", () => {
       });
 
       it("blocks when membershipStatus is 'inactive'/'canceled'", async () => {
-        hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "canceled" });
+        hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "canceled" });
         const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
         expect(r._toolError).toBe(true);
         expect(r.code).toBe("MEMBERSHIP_REQUIRED");
@@ -193,7 +193,7 @@ describe("communication tools", () => {
           { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
         ]);
         hoisted.docState.set("users/c1", { phone: "+15555550100" });
-        hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipPaid: true });
+        hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipPaid: true });
         const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
         expect(r.success).toBe(true);
       });
@@ -203,7 +203,7 @@ describe("communication tools", () => {
           { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
         ]);
         hoisted.docState.set("users/c1", { phone: "+15555550100" });
-        hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "trialing" });
+        hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "trialing" });
         const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
         expect(r.success).toBe(true);
       });
@@ -229,7 +229,7 @@ describe("communication tools", () => {
 
     it("blocks when identity is not verified", async () => {
       hoisted.docState.set("users/c1", { membershipStatus: "active" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("IDENTITY_REQUIRED");
@@ -238,7 +238,7 @@ describe("communication tools", () => {
 
     it("blocks when membership is not active", async () => {
       hoisted.docState.set("users/c1", { identityCheckStatus: "verified" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("MEMBERSHIP_REQUIRED");
@@ -246,7 +246,7 @@ describe("communication tools", () => {
     });
 
     it("blocks when clientId is missing entirely", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
@@ -262,16 +262,26 @@ describe("communication tools", () => {
     // hidden profile to browse/message; Evia shouldn't relay to one either.
     it("returns NOT_FOUND for a caregiver with profileVisibility:'hidden'", async () => {
       seedVerifiedClient();
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101", profileVisibility: "hidden" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101", profileVisibility: "hidden" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");
       expect(trySend).not.toHaveBeenCalled();
     });
 
+    it("refuses a caregiver who isn't cleared for families (background check not approved) — never says why (2026-10-06)", async () => {
+      hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active", onboardingStatus: "profile_complete", verificationStatus: "submitted" });
+      const r = await handleToolCall("send_caregiver_message", { clientId: "c1", caregiverId: "cg1", message: "hi" }) as any;
+      expect(r.success).toBe(false);
+      expect(r.error?.code ?? r.code).toBe("UNAVAILABLE");
+      expect(JSON.stringify(r)).toContain("This caregiver isn't available yet.");
+      expect(JSON.stringify(r)).not.toMatch(/background|approved|cleared/i);
+    });
+
     it("posts the message and reports it sent — with no phone on file at all (the Inbox needs none)", async () => {
       seedVerifiedClient();
-      hoisted.docState.set("caregivers/cg1", { name: "Alice" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "she napped well", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.notification.sent).toBe(true);
@@ -280,7 +290,7 @@ describe("communication tools", () => {
 
     it("does not text the caregiver itself — the chatRooms trigger notifies them exactly like a website message", async () => {
       seedVerifiedClient();
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(trySend).not.toHaveBeenCalled();
@@ -294,7 +304,7 @@ describe("communication tools", () => {
   // in the real, two-way website Inbox thread, not just this SMS conversation.
   describe("shared chatRooms thread relay", () => {
     it("send_caregiver_message posts into chatRooms/{sortedIds}/messages", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101" });
       hoisted.docState.set("users/c1", { name: "Sarah", phone: "+15555550100", identityCheckStatus: "verified", membershipStatus: "active" });
       const roomId = ["c1", "cg1"].sort().join("_");
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "she napped well", clientId: "c1" }) as any;
@@ -313,7 +323,7 @@ describe("communication tools", () => {
         { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
       ]);
       hoisted.docState.set("users/c1", { phone: "+15555550100", name: "Sarah" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "active" });
       const roomId = ["c1", "cg1"].sort().join("_");
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "on my way", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
@@ -329,7 +339,7 @@ describe("communication tools", () => {
       // not fail or skip the SMS relay over it. (identity/membership fields
       // are still required to pass the gate above.)
       hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active" });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.sent).toBe(true);

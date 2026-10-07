@@ -13,6 +13,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { hasValidTransportDocs } from "./agents/caregiverMatchScoring";
+import { isCaregiverClearedForFamilies } from "./utils/caregiverEligibility";
 
 const db = admin.firestore();
 
@@ -58,6 +59,9 @@ export function toPublicProfile(id: string, cg: Record<string, unknown>): Record
     // check files, license scans) — this doc is meant to be publicly
     // readable, so the underlying documents themselves must never land here.
     hasValidTransportDocs: hasValidTransportDocs(cg),
+    // 2026-10-06: approval + active membership, precomputed so the family-facing lists,
+    // pages and Evia read one yes/no (the raw membership fields never land here).
+    clearedForFamilies: isCaregiverClearedForFamilies(cg as { onboardingStatus?: string; verificationStatus?: string; membershipStatus?: string; membershipPaid?: boolean }),
   };
 }
 
@@ -66,13 +70,20 @@ export const publicCaregiverProfile = functions.https.onCall(async (data) => {
   if (!id || id.length > 128) {
     throw new functions.https.HttpsError("invalid-argument", "id is required");
   }
+  // Founder, 2026-10-06: the share page shows nothing for a caregiver whose background
+  // check isn't clear / approved — same rule as the family-facing profile page.
   const projection = await db.collection("publicCaregiverProfiles").doc(id).get();
-  if (projection.exists) return { found: true, profile: projection.data() };
+  if (projection.exists) {
+    const pub = projection.data() as Record<string, unknown>;
+    if (!isCaregiverClearedForFamilies(pub as { onboardingStatus?: string; verificationStatus?: string })) return { found: false, unavailable: true };
+    return { found: true, profile: pub };
+  }
 
   const source = await db.collection("caregivers").doc(id).get();
   if (!source.exists) return { found: false };
   const cg = source.data() as Record<string, unknown>;
   if (cg.profileVisibility === "hidden") return { found: false, hidden: true };
+  if (!isCaregiverClearedForFamilies(cg as { onboardingStatus?: string; verificationStatus?: string })) return { found: false, unavailable: true };
   console.warn(`publicCaregiverProfile: projection missing for ${id}`);
   return { found: true, profile: toPublicProfile(id, cg) };
 });

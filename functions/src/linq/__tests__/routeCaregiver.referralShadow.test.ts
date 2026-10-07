@@ -136,6 +136,7 @@ function expectedAgentComposedProjection() {
     eligibilityRequired: {
       onboardingStatus: "profile_complete",
       verificationStatus: "approved",
+      membershipStatus: "active", // 2026-10-06: families meet only caregivers whose membership is active
       checkrResult: "clear",
     },
     invitedPhoneTexted: true,

@@ -73,11 +73,13 @@ describe("caregiverAccountTransitions — one event per progress-bar change", ()
 
   it("bookable fires once, when the profile is complete AND approved — whatever wrote it", () => {
     expect(kinds({ onboardingStatus: "profile_complete", verificationStatus: "submitted", backgroundCheckStatus: "pending" },
-                 { onboardingStatus: "profile_complete", verificationStatus: "approved", backgroundCheckStatus: "clear" }))
+                 { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", backgroundCheckStatus: "clear" }))
       .toEqual(["bgcheck_clear", "now_bookable"]);
     // Approved before the questionnaire finished: bookable only when the profile completes.
-    expect(kinds({ onboardingStatus: "in_progress", verificationStatus: "approved" }, { onboardingStatus: "profile_complete", verificationStatus: "approved" })).toEqual(["now_bookable"]);
-    expect(kinds({ onboardingStatus: "profile_complete", verificationStatus: "approved" }, { onboardingStatus: "profile_complete", verificationStatus: "approved", bio: "x" })).toEqual([]);
+    expect(kinds({ onboardingStatus: "in_progress", verificationStatus: "approved", membershipStatus: "active" }, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" })).toEqual(["now_bookable"]);
+    expect(kinds({ onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" }, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", bio: "x" })).toEqual([]);
+    // 2026-10-06: a lapsed membership makes them not bookable; reactivating fires bookable again.
+    expect(kinds({ onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "canceled" }, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" })).toContain("now_bookable");
   });
 
   it("transport (MVR only, 2026-10-06): driving record decisions, badge earned / lost", () => {
@@ -132,7 +134,7 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
 
   it("the trigger tells the caregiver each event of a change, keyed on the Firestore event id", async () => {
     hoisted.docState.set("users/cg1", { phone: "+15551112222" });
-    const change = { before: { data: () => ({ backgroundCheckStatus: "pending", onboardingStatus: "profile_complete", verificationStatus: "submitted" }) }, after: { data: () => ({ backgroundCheckStatus: "clear", onboardingStatus: "profile_complete", verificationStatus: "approved" }) } };
+    const change = { before: { data: () => ({ backgroundCheckStatus: "pending", onboardingStatus: "profile_complete", verificationStatus: "submitted" }) }, after: { data: () => ({ backgroundCheckStatus: "clear", onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" }) } };
     await (onCaregiverAccountChange as any)(change, { params: { uid: "cg1" }, eventId: "fs-evt-1" });
     expect(hoisted.bells.map((b) => b.transitionType)).toEqual(["bgcheck_clear", "now_bookable"]);
     expect(hoisted.sent.map((s) => s.content)).toEqual(["Great news — your background check came back clear.", "You're approved — families can now find and book you."]);

@@ -23,7 +23,7 @@ function toDoc(id: string, data: Record<string, unknown>) {
   return { id, data: () => data };
 }
 
-const BOOKABLE = { onboardingStatus: "profile_complete", verificationStatus: "approved" };
+const BOOKABLE = { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" };
 const ctx = { caller: "sms_agent" as const, role: "client" as const };
 // San Jose
 const SAN_JOSE = { lat: 37.3382, lng: -121.8863 };

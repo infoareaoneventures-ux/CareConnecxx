@@ -22,6 +22,9 @@ export const evaluateTransportBadges = functions.pubsub
     // Daily heartbeat for config/public (Evia's number from the functions env) — see publicConfig.ts.
     await import('../publicConfig').then((m) => m.publishPublicConfig()).catch((err) => console.warn('publishPublicConfig failed:', err));
 
+    // Public copies: re-project any caregiver still on an older projection version (2026-10-06).
+    await import('../caregiverPublicProjection').then((m) => m.healStaleProjections()).catch((err) => console.warn('healStaleProjections failed:', err));
+
     const snap = await db.collection('caregivers').where('verified', '==', true).get();
     if (snap.empty) return;
     const batch = db.batch();

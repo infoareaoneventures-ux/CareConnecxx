@@ -40,6 +40,7 @@ describe("mapRawToProfileRecord (the page's mapRawToProfile)", () => {
 describe("shapeCaregiverProfilePage", () => {
   const rec = mapRawToProfileRecord("cg1", {
     firstName: "Alice", lastName: "Ng", rating: 4.7, reviewCount: 12, hourlyRate: 25, rateFor2Seniors: 35, city: "Seattle",
+    onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", // cleared for families (2026-10-06)
     bio: "Kind and patient", languages: ["English", "Somali"], skills: ["Companionship", "Transportation"], hasValidTransportDocs: true,
     yearsExperience: "5+ years", education: "CNA", serviceRadius: 15, weeklyAvailability: { monday: ["morning", "afternoon"], sunday: [] },
   });
@@ -59,6 +60,7 @@ describe("shapeCaregiverProfilePage", () => {
     expect(page.ratesNote).toBe("Billed includes Evia's 9% service fee. The caregiver keeps 100% of their rate.");
     expect(page.careServices).toEqual(["Companionship", "Transportation"]); // live → Transportation shown as a service
     expect((page.badges as Record<string, unknown>).transportation).toBeUndefined(); // not a badge (2026-10-06)
+    expect(page.available).toBe(true);
     expect(page.weeklyAvailability).toEqual([{ day: "monday", blocks: ["morning", "afternoon"] }]);
     expect(page.background).toBe("CNA");
     expect(page.experience).toBe("5+ years experience");
@@ -117,5 +119,18 @@ describe("billedHourly matches the site's billedHourlyRate", () => {
     expect(billedHourly(25)).toBe(27.25);
     expect(billedHourly(22.5)).toBe(24.53);
     expect(billedHourly(0)).toBe(0);
+  });
+});
+
+describe("not cleared for families (founder, 2026-10-06)", () => {
+  it("a caregiver whose background check isn't approved → not available, no buttons, no reason given", async () => {
+    const { mapRawToProfileRecord, shapeCaregiverProfilePage } = await import("../caregiverProfilePage");
+    const rec = mapRawToProfileRecord("cg9", { firstName: "Pat", lastName: "Lee", onboardingStatus: "profile_complete", verificationStatus: "submitted", skills: ["Companionship"], hourlyRate: 25 });
+    expect(rec.clearedForFamilies).toBe(false);
+    const page = shapeCaregiverProfilePage(rec, [], { isBooked: false, isRequested: false, hasPastBooking: false, hasCompletedInterview: false, hasCompletedShift: false, hasReviewed: false } as any, { appUrl: "https://eviacares.com" });
+    expect(page.available).toBe(false);
+    expect(page.actions.message).toBe(false);
+    expect(page.summary).toContain("This caregiver isn't available yet.");
+    expect(page.summary).not.toMatch(/background|approved|cleared/i);
   });
 });

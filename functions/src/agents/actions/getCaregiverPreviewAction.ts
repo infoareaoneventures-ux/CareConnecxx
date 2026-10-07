@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { z } from "zod";
+import { isCaregiverBookable, type CaregiverEligibilityFields } from "../../utils/caregiverEligibility";
 import { defineCaraAction } from "../actionNative/defineCaraAction";
 import { runCaraAction } from "../actionNative/runCaraAction";
 import type { CaraActionContext } from "../actionNative/caraActionTypes";
@@ -123,6 +124,8 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
     const localCaregivers = localSnap.docs
       .map(doc => ({ ...doc.data(), id: doc.id }))
       .filter(c => !isSeededCaregiver(c))
+      // Query contract: the where() pre-filters one field; the shared gate post-filters (membership, pause, opt-out) — 2026-10-06.
+      .filter(c => isCaregiverBookable(c as CaregiverEligibilityFields))
       .slice(0, 5);
 
     if (localCaregivers.length > 0) {
@@ -146,6 +149,8 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
     const widerCaregivers = widerSnap.docs
       .map(doc => ({ ...doc.data(), id: doc.id }))
       .filter(c => !isSeededCaregiver(c))
+      // Query contract: the where() pre-filters one field; the shared gate post-filters (membership, pause, opt-out) — 2026-10-06.
+      .filter(c => isCaregiverBookable(c as CaregiverEligibilityFields))
       .slice(0, 5);
     return buildCaregiverPreviewResult({
       caregivers: widerCaregivers,

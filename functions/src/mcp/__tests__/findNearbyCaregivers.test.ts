@@ -82,6 +82,7 @@ function caregiver(id: string, overrides: Record<string, unknown> = {}) {
     id,
     onboardingStatus: "profile_complete",
     verificationStatus: "approved",
+    membershipStatus: "active", // 2026-10-06: the page lists only caregivers whose membership is active
     firstName: `Care`, lastName: id,
     lat: 37.34, lng: -121.89, // Santa Clara
     rating: 4.5, reviewCount: 3,
@@ -145,7 +146,7 @@ describe("find_nearby_caregivers — the Find Caregivers page", () => {
     expect(await ids({ maxDistanceMiles: 200 })).toEqual(["dementia", "far", "junior", "lowrated", "near", "unchecked"]); // radius still excluded by its own 1-mile radius
     expect(await ids({ minRating: 4 })).toEqual(["dementia", "junior", "near", "unchecked"]);
     expect(await ids({ minExperienceYears: 3 })).toEqual(["dementia", "lowrated", "near", "unchecked"]);
-    expect(await ids({ verifiedOnly: true })).toEqual(["dementia", "junior", "lowrated", "near"]);
+    // "Background checked only" retired 2026-10-06: every listed caregiver is approved, so the box filtered the list against itself.
     expect(await ids({ transportationOnly: true })).toEqual([]);
     expect(await ids({ specialties: ["Dementia / Memory Care"] })).toEqual(["dementia"]);
     expect(await ids({ languages: ["spanish"] })).toEqual(["dementia"]);

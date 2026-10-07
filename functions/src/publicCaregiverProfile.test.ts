@@ -59,13 +59,15 @@ describe("toPublicProfile", () => {
 
   it("still carries the fields the eligibility/scoring/preview pipeline needs", () => {
     const out = toPublicProfile("cg1", {
-      name: "Alice", onboardingStatus: "profile_complete", verificationStatus: "approved",
+      name: "Alice", onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active",
       city: "San Jose", state: "CA", lat: 37.3, lng: -121.9, skills: ["Dementia Care"],
     });
     expect(out).toMatchObject({
       onboardingStatus: "profile_complete", verificationStatus: "approved",
       city: "San Jose", lat: 37.3, lng: -121.9,
+      clearedForFamilies: true, // 2026-10-06: approval + active membership, precomputed
     });
+    expect(out.membershipStatus).toBeUndefined(); // the raw membership fields never land on the public copy
   });
 
   // 2026-09-06: isCaregiverBookable() now checks pausedUntil — without this

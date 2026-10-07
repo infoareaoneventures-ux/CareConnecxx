@@ -13,6 +13,8 @@ export const PublicCaregiverProfile: React.FC = () => {
   const [profile, setProfile] = useState<Caregiver | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  // Founder, 2026-10-06: not cleared for families yet — the server says so, the page shows nothing else.
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -27,6 +29,7 @@ export const PublicCaregiverProfile: React.FC = () => {
         const res: any = await getProfile({ id });
         if (!active) return;
         if (res?.data?.found && res.data.profile) setProfile(res.data.profile as Caregiver);
+        else if (res?.data?.unavailable) setUnavailable(true);
         else setNotFound(true);
       } catch {
         if (active) setNotFound(true);
@@ -41,6 +44,16 @@ export const PublicCaregiverProfile: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Loader2 className="w-8 h-8 text-primary-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (unavailable) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 text-center">
+        <p className="text-2xl font-bold text-slate-900 mb-2">Profile unavailable</p>
+        <p className="text-sm text-slate-500 mb-6">This caregiver isn't available yet.</p>
+        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to Evia</Link>
       </div>
     );
   }

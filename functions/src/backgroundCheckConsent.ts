@@ -95,7 +95,8 @@ export async function authorizeBackgroundCheck(args: {
     await writeCaregiverBackgroundPII(uid, { legalFirstName: form.legalFirstName, legalLastName: form.legalLastName, zip: form.zipCode });
     await ref.update({ mvrConsentGivenAt: consentAtMvr, "backgroundCheckData.mvrConsentGivenAt": consentAtMvr });
     const { initiateMvrOnlyCheck } = await import("./checkr");
-    await initiateMvrOnlyCheck(uid); // sets mvrPaid / mvrCheckInitiated / mvrStatus 'pending'; admin alert if no candidate
+    // The consent form's state is the work location Checkr requires (the record may have none).
+    await initiateMvrOnlyCheck(uid, { workState: form.state || (cg.state as string | undefined), workCity: cg.city as string | undefined }); // sets mvrPaid / mvrCheckInitiated / mvrStatus 'pending'; admin alert if no candidate
     return { status: "ok", candidateId: existingCandidateId ?? "", invitationUrl: null };
   }
 

@@ -133,7 +133,13 @@ async function findCaregiverUidByCandidateId(candidateId: string): Promise<strin
  *
  * Called from the Stripe payment-success webhook (web add-on and Evia SMS).
  */
-export async function initiateMvrOnlyCheck(caregiverUid: string): Promise<void> {
+/** Work location: Checkr requires one on every US invitation. The consent form always carries the
+ *  state (and ZIP); the record may not (live-caught 2026-10-07: Imran's record had no `state`, Checkr
+ *  answered 400 "work_locations is invalid"). Form first, record second, the default state last. */
+export interface MvrWorkLocation { workState?: string; workCity?: string }
+const DEFAULT_WORK_STATE = "CA";
+
+export async function initiateMvrOnlyCheck(caregiverUid: string, loc: MvrWorkLocation = {}): Promise<void> {
   const snap = await db.collection("caregivers").doc(caregiverUid).get();
   if (!snap.exists) {
     console.error(`initiateMvrOnlyCheck: caregiver ${caregiverUid} not found`);
@@ -163,8 +169,9 @@ export async function initiateMvrOnlyCheck(caregiverUid: string): Promise<void> 
   // base package (would run a non-MVR check after charging).
   const pkg = assertMvrCheckConfig("mvr_only");
   const dateKey = new Date().toISOString().slice(0, 10);
-  const workState: string = (cg.state || "").trim();
-  const workLocations = workState ? [{ country: "US", state: workState.toUpperCase() }] : [];
+  const workState: string = ((loc.workState || cg.state || DEFAULT_WORK_STATE) as string).trim().toUpperCase();
+  const workCity: string = ((loc.workCity || cg.city || "") as string).trim();
+  const workLocations = [{ country: "US", state: workState, ...(workCity ? { city: workCity } : {}) }];
   const invBody: Record<string, unknown> = { candidate_id: candidateId, package: pkg };
   if (workLocations.length) invBody.work_locations = workLocations;
 

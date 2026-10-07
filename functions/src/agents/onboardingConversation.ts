@@ -3649,7 +3649,12 @@ export async function confirmBgcheckConsent(
     // must know, and the SMS failure note covers them closing the tab.
     console.error("confirmBgcheckConsent Checkr invitation error:", err);
     await alertOnboardingLinkFailure(phone, "bgcheck_consent_confirm", err);
-    if (chatId) await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check");
+    // The LINK was fine — the SUBMISSION failed (live 2026-10-07: Checkr 400 on the MVR invitation).
+    // sendOnboardingLinkFailureMessage promised "I'll text the link once it's ready" and queued a link
+    // resend, which was wrong here; say what happened and what to do, nothing more.
+    if (chatId) {
+      await sendMessage(chatId, "Your authorization didn't go through on our side just now. Please tap Submit again on that page, or reply AUTHORIZE for a fresh link, and I'll get it sorted.").catch(() => {});
+    }
     throw err;
   }
   if (result.status === "already") return { status: "already" };

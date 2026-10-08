@@ -1,3 +1,5 @@
+> **STATUS (2026-10-07): DRAFT — NOT IN FORCE, NOT TO BE PUBLISHED AS WRITTEN.** This document describes a HIPAA posture (Business Associate status, signed BAAs with every vendor, field-level AES-256 encryption, HIPAA officers) that does NOT exist today: no BAAs are signed, there is no HIPAA program, and the field-level encryption it describes was removed. The live site's Privacy Policy and Terms pages were corrected on 2026-10-07 to state only what is true. Counsel must decide whether HIPAA binds a non-medical care marketplace at all and rewrite this draft accordingly. See SECURITY_CHECKLIST.md for the current state.
+
 # PRIVACY POLICY
 
 **Evia**  

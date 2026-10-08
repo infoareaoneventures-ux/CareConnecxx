@@ -408,6 +408,22 @@ describe("MCP tool smoke coverage", () => {
     expect(r.bookings[0].upcomingShifts.map((x: any) => x.id)).toEqual(["s1", "s2"]);
   });
 
+  it("get_active_bookings: a CAREGIVER's own tab when caregiverId is given — also when the injected clientId is their own uid (live 2026-10-07: Mahad was told his tab was empty)", async () => {
+    hoisted.collState.set("shifts", [
+      { id: "s1", clientId: "fam1", clientName: "Basra Yousuf", bookingRequestId: "br1", caregiverId: "cg1", status: "scheduled", date: "2099-09-22", startTime: "14:00", endTime: "15:00" },
+    ]);
+    for (const input of [{ caregiverId: "cg1" }, { caregiverId: "cg1", clientId: "cg1" }]) {
+      const r = await handleToolCall("get_active_bookings", input) as any;
+      expect(r.success).toBe(true);
+      expect(r.total).toBe(1);
+      expect(r.bookings[0]).toMatchObject({ bookingRequestId: "br1", clientName: "Basra Yousuf" });
+      expect(r.bookings[0].visits.map((v: any) => v.shiftId)).toEqual(["s1"]);
+    }
+    // A family's call that names a caregiver still reads the FAMILY's tab.
+    const fam = await handleToolCall("get_active_bookings", { clientId: "fam1", caregiverId: "cg1" }) as any;
+    expect(fam.bookings[0]).toMatchObject({ bookingRequestId: "br1", caregiverId: "cg1" });
+  });
+
   // ── Memory ────────────────────────────────────────────────────────────────
   it("read_memory_file happy path", async () => {
     const r = await handleToolCall("read_memory_file", { userId: "u1", file: "profile" }) as any;

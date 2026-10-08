@@ -175,13 +175,17 @@ export async function initiateMvrOnlyCheck(caregiverUid: string, loc: MvrWorkLoc
   const invBody: Record<string, unknown> = { candidate_id: candidateId, package: pkg };
   if (workLocations.length) invBody.work_locations = workLocations;
 
-  await checkrPost("/invitations", invBody, `${caregiverUid}-mvr-invitation-${dateKey}`);
+  const inv = await checkrPost("/invitations", invBody, `${caregiverUid}-mvr-invitation-${dateKey}`);
+  // Keep the completion link so the caregiver is texted it (onCaregiverAccountChange → mvr_check_started),
+  // exactly as the bundled path texts its Checkr link — Checkr emails it too (2026-10-07).
+  const invitationUrl: string | null = typeof inv?.invitation_url === "string" ? inv.invitation_url : null;
 
   await db.collection("caregivers").doc(caregiverUid).set({
     mvrPaid:           true,
     mvrCheckInitiated: true,
     mvrStatus:         "pending",
     mvrInitiatedAt:    new Date().toISOString(),
+    ...(invitationUrl ? { mvrInvitationUrl: invitationUrl } : {}),
   }, { merge: true });
 
   console.log(`initiateMvrOnlyCheck: MVR-only invitation sent for ${caregiverUid}`);

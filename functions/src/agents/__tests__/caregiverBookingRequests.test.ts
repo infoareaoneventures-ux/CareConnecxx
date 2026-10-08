@@ -250,6 +250,24 @@ describe("schedule-change cards — the page's card and its Accept/Decline, verb
     expect(hoisted.sets).toHaveLength(0);
   });
 
+  it("Accept at 6 PM Pacific on a Wednesday (01:00Z Thursday) still generates from the family's Wednesday — live 2026-10-07 today's extra shifts landed a week late", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-08T01:02:00Z"));
+    try {
+      hoisted.docs.set("booking_amendments/am1", amendment({ startDate: "2026-10-07", ongoing: true, endDate: null, newDays: { Wed: [{ start: "18:15", end: "18:30" }] } }));
+      hoisted.docs.set("booking_requests/br1", { clientId: "fam1", clientName: "Basra Yousuf", caregiverName: "Mahad", schedule: { ongoing: true, startDate: "2026-10-07", dayShiftTimes: { Wed: [{ start: "17:45", end: "18:00" }] } } });
+      const r = await acceptAmendment("cg1", "am1");
+      expect(r).toMatchObject({ ok: true, status: "accepted", shiftsCreated: 4 });
+      const dates = hoisted.sets.filter((x) => x.path.startsWith("shifts/")).map((x) => x.data.date).sort();
+      expect(dates[0]).toBe("2026-10-07");
+      // A one-day request for today is not emptied either (it used to create nothing and still say "new visits added").
+      hoisted.sets.length = 0; hoisted.updates.length = 0;
+      hoisted.docs.set("booking_amendments/am2", amendment({ startDate: "2026-10-07", ongoing: false, endDate: "2026-10-07", newDays: { Wed: [{ start: "19:00", end: "19:15" }] } }));
+      expect(await acceptAmendment("cg1", "am2")).toMatchObject({ ok: true, shiftsCreated: 1 });
+      expect(hoisted.sets.find((x) => x.path.startsWith("shifts/"))!.data.date).toBe("2026-10-07");
+    } finally { vi.useRealTimers(); }
+  });
+
   it("Accept (ongoing): merges the new days into the booking's schedule, creates weekly visits for the next 4 weeks with the page's shift shape, marks accepted", async () => {
     hoisted.docs.set("booking_amendments/am1", amendment({ newDays: { Fri: [{ start: "09:00", end: "11:00" }] } }));
     hoisted.docs.set("booking_requests/br1", { clientId: "fam1", clientName: "The Nguyen Family", caregiverName: "Maria", caregiverPhotoURL: "https://p/1.jpg", address: "20 Descanso Dr",

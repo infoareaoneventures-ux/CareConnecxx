@@ -102,7 +102,7 @@ export function driverCardFor(cg: Record<string, unknown>, badgeLive: boolean): 
   if (cg.mvrStatus === "not_approved") return "not_approved";
   if (cg.mvrStatus === "consider" || cg.mvrStatus === "suspended") return "review";
   if (cg.mvrStatus === "awaiting_consent") return "consent";
-  const mvrPending = cg.mvrStatus === "pending" || (cg.mvrPaid === true && !isApprovedDriver);
+  const mvrPending = cg.mvrStatus === "pending" || (cg.mvrPaid === true && !isApprovedDriver && (cg.backgroundCheckData as Record<string, unknown> | undefined)?.mvrIncluded === true); // running only once consent stamped mvrIncluded (2026-10-07)
   if (mvrPending) return "pending";
   const services = (Array.isArray(cg.services) ? cg.services : Array.isArray(cg.skills) ? cg.skills : []) as string[];
   if (services.includes("Transportation")) return "included";

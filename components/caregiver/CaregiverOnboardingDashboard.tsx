@@ -203,7 +203,7 @@ export const CaregiverProgressCard: React.FC<{
       cardTitle = 'Authorize your driving record check';
       cardDesc = 'Transportation is on your profile. Authorize the driving record check to start it — included in your membership.';
       cardCta = { label: 'Authorize driving record check', onClick: () => setShowBgModal(true) };
-    } else if (p.mvrStatus === 'pending' || (p.mvrPaid === true && p.isApprovedDriver !== true)) {
+    } else if (p.mvrStatus === 'pending' || (p.mvrPaid === true && p.isApprovedDriver !== true && p.backgroundCheckData?.mvrIncluded === true)) {
       // Running (same state rule as the Settings card, AccountStandingSection.driverCardFor).
       cardTitle = 'Driving record check in progress';
       cardDesc = 'Finish the short form in the email you received. Transportation shows on your profile once it clears.';
@@ -312,7 +312,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
   jobs: prefetchedJobs,
   jobsLoaded: prefetchedJobsLoaded,
 }) => {
-  const { blockReason, transportBlockReason, gateFresh, GateModal } = useCaregiverGate();
+  const { blockReason, transportBlockReason, gateFresh, GateModal, setUpTransportationPath } = useCaregiverGate();
   const { setMembershipModalOpen } = useCareConnex();
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<JobPost[]>(prefetchedJobs ?? []);
@@ -499,7 +499,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                             </button>
                           );
                           if (reason === 'transport') return (
-                            <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                            <button onClick={() => navigate(setUpTransportationPath)} className="flex-1 py-2 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
                               <Car className="w-3 h-3" /> Set Up Transportation
                             </button>
                           );
@@ -620,7 +620,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                   </button>
                 );
                 if (reason === 'transport') return (
-                  <button onClick={() => navigate('/caregiver/settings')} className="flex-1 py-2.5 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                  <button onClick={() => navigate(setUpTransportationPath)} className="flex-1 py-2.5 bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-100 text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5">
                     <Car className="w-3.5 h-3.5" /> Set Up Transportation
                   </button>
                 );

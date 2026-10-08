@@ -791,6 +791,12 @@ export const onShiftStatusChanged = functions.firestore
         // (shiftGenerator writes cancelled + supersededByBookingId). The family
         // already got "X accepted your booking request" — a second "cancelled
         // the visit" text here read as a new cancellation (live, 2026-09-28).
+      } else if (after.status === 'cancelled' && before?.status === 'needs_replacement' && after.cancelledBy !== 'caregiver') {
+        // The family SKIPPED a visit the caregiver had already dropped (Skip on the
+        // site / Evia's skip both write cancelled + cancelledBy:'client' over the
+        // caregiver's own cancellation). Nobody is told: the caregiver cancelled it
+        // and the family closed it — live 2026-10-07 Mahad was texted "Basra cancelled
+        // the visit. Sorry for the inconvenience." for a visit he had cancelled.
       } else if (after.status === 'cancelled' && !after.bulkCancelled) {
         // Cancelled — direction depends on who cancelled. (fmtDate is hoisted
         // above and already includes the " on <date>" prefix, or '' if no date.)

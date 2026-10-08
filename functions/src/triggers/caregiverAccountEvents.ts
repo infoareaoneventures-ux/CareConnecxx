@@ -18,7 +18,7 @@ function bg(d: Doc | undefined): Doc { return (d?.backgroundCheckData ?? {}) as 
 // Transportation live = offered + driving record cleared (no documents, 2026-10-06).
 function badge(d: Doc | undefined): boolean { return !!d && offersTransportation(d) && d.isApprovedDriver === true; }
 function offersTransportation(d: Doc | undefined): boolean {
-  const services = [...((d?.skills as string[]) ?? []), ...((d?.services as string[]) ?? [])];
+  const services = (Array.isArray(d?.services) && (d!.services as unknown[]).length ? d!.services : (d?.skills ?? [])) as string[]; // services first, else skills (2026-10-07)
   return services.includes("Transportation");
 }
 
@@ -68,6 +68,8 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
     if (a.mvrStatus === "not_approved") out.push({ kind: "mvr_not_approved" });
     // Later MVR, consent-first (2026-10-06): the record parked on "authorize your driving record check".
     if (a.mvrStatus === "awaiting_consent") out.push({ kind: "mvr_consent_requested" });
+    // MVR-only check started (2026-10-07): text the completion link, as the bundled path texts its Checkr link.
+    if (a.mvrStatus === "pending" && a.mvrCheckInitiated === true && typeof a.mvrInvitationUrl === "string") out.push({ kind: "mvr_check_started", ctx: { url: String(a.mvrInvitationUrl) } });
   }
   if (!badgeB && badgeA) out.push({ kind: "transport_badge_earned" });
   if (badgeB && !badgeA) {

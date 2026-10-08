@@ -128,7 +128,8 @@ describe("driverCardFor — the driver card's branches", () => {
     expect(driverCardFor({ isApprovedDriver: true }, false)).toBe("approved");
     expect(driverCardFor({ mvrStatus: "pending" }, false)).toBe("pending");
     expect(driverCardFor({ mvrStatus: "awaiting_consent", services: ["Transportation"] }, false)).toBe("consent"); // later MVR, consent-first (2026-10-06)
-    expect(driverCardFor({ mvrPaid: true }, false)).toBe("pending");
+    expect(driverCardFor({ mvrPaid: true, backgroundCheckData: { mvrIncluded: true } }, false)).toBe("pending"); // bundled report under way
+    expect(driverCardFor({ mvrPaid: true, services: ["Transportation"] }, false)).toBe("included"); // paid, consent not given yet (2026-10-07)
     expect(driverCardFor({ services: ["Transportation"] }, false)).toBe("included");
     expect(driverCardFor({ services: ["Companionship"] }, false)).toBe("offer");
   });

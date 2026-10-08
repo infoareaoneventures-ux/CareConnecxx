@@ -28,7 +28,8 @@ describe('driverCardFor', () => {
   });
   it('pending, included, offer', () => {
     expect(driverCardFor({ ...docsOk, mvrStatus: 'pending' }, false)).toBe('pending');
-    expect(driverCardFor({ ...docsOk, mvrPaid: true }, false)).toBe('pending');
+    expect(driverCardFor({ ...docsOk, mvrPaid: true, backgroundCheckData: { mvrIncluded: true } }, false)).toBe('pending'); // bundled report under way
+    expect(driverCardFor({ ...docsOk, mvrPaid: true }, false)).toBe('included'); // paid, consent not given yet (2026-10-07)
     expect(driverCardFor({ services: ['Transportation'] }, false)).toBe('included');
     expect(driverCardFor({ services: ['Companionship'] }, false)).toBe('offer');
   });

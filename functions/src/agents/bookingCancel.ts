@@ -145,7 +145,7 @@ export async function listCancellables(clientId: string): Promise<CancelOption[]
 }
 
 export type CancelResult =
-  | { ok: true; kind: CancelKind; id: string; detail: string }
+  | { ok: true; kind: CancelKind; id: string; detail: string; /** The visit was Needs Replacement — the family skipped it (the caregiver had already dropped it; nobody is texted). */ skipped?: boolean }
   | { ok: false; code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT"; message: string };
 
 // handleCancelShift / handleSkipReplacement: one visit, in place. Clears any
@@ -182,7 +182,7 @@ export async function cancelVisit(clientId: string, shiftId: string, source: str
     return { ok: false, code: "INVALID_INPUT", message: `Only a scheduled or needs-replacement visit can be cancelled this way (status: ${shift.status})` };
   }
   logAudit({ eventType: "shift_cancelled", userId: clientId, data: { source, shiftId } }).catch(() => {});
-  return { ok: true, kind: "visit", id: shiftId, detail: visitWindow(shift) };
+  return { ok: true, kind: "visit", skipped: shift.status === "needs_replacement", id: shiftId, detail: visitWindow(shift) };
 }
 
 // handleCancelBooking: every still-scheduled (or needs-replacement) visit

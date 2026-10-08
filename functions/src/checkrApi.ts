@@ -43,7 +43,7 @@ export async function checkrPost(
   }
   const baseUrl = process.env.CHECKR_API_URL || "https://api.checkr.com/v1";
   const keySource = process.env.CHECKR_KEY ? "CHECKR_KEY" : "CHECKR_API_KEY";
-  console.log(`Checkr POST ${baseUrl}${path} key=${apiKey.slice(0, 8)}... (from ${keySource})`);
+  console.log(`Checkr POST ${baseUrl}${path} (key from ${keySource})`); // never any part of the key (2026-10-07)
   const res = await fetchWithTimeout(`${baseUrl}${path}`, {
     method: "POST",
     headers,

@@ -21,19 +21,19 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">1. Introduction</h2>
-          <p>Evia ("we," "us," or "our") is committed to protecting your privacy. This Policy explains how we collect, use, and safeguard your information. We are designed to comply with HIPAA, HITECH, CCPA, CPRA, and other applicable privacy laws.</p>
+          <p>Evia ("we," "us," or "our") is committed to protecting your privacy. This Policy explains how we collect, use, and safeguard your information. We follow applicable privacy laws, including the California Consumer Privacy Act (CCPA) and the California Privacy Rights Act (CPRA).</p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">2. Information We Collect</h2>
           <p><strong>From Clients/Families:</strong> Name, address, phone, email, date of birth, emergency contacts, health information, care needs, and payment information.</p>
-          <p className="mt-2"><strong>From Caregivers:</strong> Name, address, phone, email, date of birth, Social Security Number (encrypted), professional licenses, background check data, bank account information (encrypted), vehicle and insurance details, and references.</p>
+          <p className="mt-2"><strong>From Caregivers:</strong> Name, address, phone, email, date of birth, services offered, rates, availability, a profile photo and bio, and the result of the background check (and driving record check, when Transportation is offered). Your Social Security Number and date of birth for the background check are entered on our background-check provider's own secure site and are not stored by Evia. Bank account details for payouts are held by Stripe, not by Evia.</p>
           <p className="mt-2"><strong>Automatically:</strong> IP address, device information, browser type, usage data, and cookies.</p>
         </section>
 
         <section>
-          <h2 className="text-lg font-semibold text-ink-900 mb-2">3. Protected Health Information (PHI)</h2>
-          <p>As a healthcare-related service and HIPAA Business Associate, we collect and maintain PHI including medical conditions, medications, care plans, and daily routines. We use AES-256 encryption for PHI at rest and TLS 1.3 for data in transit. We will not use PHI for marketing without your authorization. We maintain Business Associate Agreements with all vendors who handle PHI.</p>
+          <h2 className="text-lg font-semibold text-ink-900 mb-2">3. Health-Related Information</h2>
+          <p>Care plans you create may include health-related details: the type of care needed, daily routines, and notes you choose to add. We do not ask for medical records, medication lists, dosages or diagnoses, and our forms decline them. This information is encrypted in transit and at rest on Google Cloud, access to it is limited by role, and each view of it is logged. We do not use it for marketing. Evia is a non-medical care marketplace and does not claim certification under HIPAA.</p>
         </section>
 
         <section>
@@ -60,11 +60,14 @@ export const PrivacyPolicyPage: React.FC = () => (
             <li><strong>Stripe</strong> — Payment processing and identity verification</li>
             <li><strong>Checkr</strong> — Caregiver background checks</li>
             <li><strong>Google Cloud / Firebase</strong> — Data storage and infrastructure</li>
-            <li><strong>Sentry</strong> — Anonymous error monitoring (no PHI transmitted)</li>
+            <li><strong>OpenAI, Google (Gemini) and Anthropic</strong> — the AI models behind Evia process the content of your conversations and the care details you share with her</li>
             <li><strong>Zep AI</strong> — Conversational memory for our AI care assistant</li>
-            <li><strong>Linq / Apple Messages for Business</strong> — iMessage delivery</li>
+            <li><strong>Linq / Apple Messages for Business</strong> — text and iMessage delivery</li>
+            <li><strong>Resend</strong> — transactional email</li>
+            <li><strong>Google Maps</strong> — geocoding of addresses for distance and matching</li>
+            <li><strong>Sentry</strong> — error monitoring (page text is masked; your account id is attached to error reports)</li>
           </ul>
-          <p className="mt-2">All third-party vendors are contractually required to protect your information in accordance with HIPAA and applicable law.</p>
+          <p className="mt-2">Our vendors are bound by contracts that require them to protect your information under applicable law.</p>
         </section>
 
         <section>
@@ -74,7 +77,7 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">8. Data Retention</h2>
-          <p>We retain personal information for as long as your account is active or as needed to provide services. SMS consent records are retained for a minimum of 5 years. PHI is retained per HIPAA requirements (minimum 6 years). You may request deletion of your account data by contacting us at support@eviacares.com.</p>
+          <p>We retain personal information for as long as your account is active or as needed to provide services. SMS consent records are retained for a minimum of 5 years, and access-audit records for 6 years. You may request deletion of your account data by contacting us at support@eviacares.com.</p>
         </section>
 
         <section>

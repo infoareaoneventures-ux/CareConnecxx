@@ -18,6 +18,8 @@ import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
 import { CaregiverBookingsCard } from './CaregiverBookingsCard';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { CaregiverOnboardingDashboard, CaregiverProgressCard } from './CaregiverOnboardingDashboard';
+import { useInProgressVisits } from '../../hooks/useInProgressVisits';
+import { otherVisitInProgress, finishFirstText, FINISH_FIRST_LABEL } from '../../utils/shiftStart';
 
 interface CaregiverHomeDashboardProps {
   profile: Caregiver;
@@ -75,6 +77,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   const { blockReason } = useCaregiverGate();
   const currentUser = authService.getCurrentUser();
   const uid = profile.uid || profile.id || currentUser?.uid || '';
+  // One visit at a time (2026-10-07): Start Shift is replaced while another visit is in progress.
+  const inProgressVisits = useInProgressVisits(uid || undefined);
 
   // Data
   const [bookingRequests, setBookingRequests] = useState<any[]>([]);
@@ -449,6 +453,12 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                         if (ds === 'overdue') return null;
                         const minsUntil = (new Date(`${s.date}T${s.startTime}`).getTime() - Date.now()) / 60000;
                         if (minsUntil > 15) return null;
+                        const otherOpen = otherVisitInProgress(inProgressVisits, s.id);
+                        if (otherOpen) return (
+                          <span title={finishFirstText(otherOpen)} className="mt-2 w-full py-1.5 bg-slate-100 border border-slate-200 text-slate-500 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5">
+                            <Lock className="w-3 h-3" /> {FINISH_FIRST_LABEL}
+                          </span>
+                        );
                         return blockReason === 'membership' ? (
                           <button onClick={() => setMembershipModalOpen(true)} className="mt-2 w-full py-1.5 bg-slate-100 border border-slate-200 text-slate-500 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
                             <Lock className="w-3 h-3" /> Activate Membership

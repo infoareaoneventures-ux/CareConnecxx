@@ -29,7 +29,23 @@ export interface LastJobList {
 }
 
 export const PAGE_SIZE = 2;
-export const LIST_FOOTER = `Reply with a number for the details, "apply to 2" to apply, or "hide 2".`;
+/**
+ * The footer follows the list it closes (founder, 2026-10-07: a one-job list that said "apply to 2"
+ * / "hide 2", and offered "apply" on a Set Up Transportation job, was confusing). The examples use
+ * the numbers actually shown; "apply" is offered only when a shown job can be applied to, and a
+ * gated job gets the Details modal's own line ("To apply you'll need to: …").
+ */
+export function listFooter(shown: ReadonlyArray<{ action: string }>, from = 0): string {
+  const numbered = shown.map((card, i) => ({ n: from + i + 1, action: card.action }));
+  const first = numbered[0]?.n ?? 1;
+  const applicable = numbered.find((j) => j.action === "Apply Now");
+  const gated = numbered.find((j) => j.action !== "Apply Now");
+  const parts = [`Reply with a number for the details${applicable ? `, "apply to ${applicable.n}" to apply` : ""}, or "hide ${first}".`];
+  if (gated) parts.push(`To apply to job ${gated.n} you'll need to: ${gated.action}.`);
+  return parts.join(" ");
+}
+/** @deprecated kept for callers that only need the default shape — prefer listFooter(shown, from). */
+export const LIST_FOOTER = listFooter([{ action: "Apply Now" }]);
 
 /**
  * JobBoard.tsx: "N jobs found", one card per line, the empty states verbatim.
@@ -50,7 +66,8 @@ export function jobListText(
   const header = from === 0 ? (opts.limited ? "Jobs near you:" : "Jobs found:") : "More jobs:";
   const lines = shown.map((card, i) =>
     `${from + i + 1}. ${jobCardLine(card)}${card.action !== "Apply Now" ? ` — ${card.action}` : ""}`);
-  const footer = remaining > 0 ? `${LIST_FOOTER} Reply MORE to see more.` : LIST_FOOTER;
+  const footerBase = listFooter(shown, from);
+  const footer = remaining > 0 ? `${footerBase} Reply MORE to see more.` : footerBase;
   return { text: [header, ...lines, "", footer].join("\n"), shown, remaining };
 }
 

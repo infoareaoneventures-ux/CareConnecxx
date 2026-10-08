@@ -14,6 +14,8 @@ import { db } from '../../lib/firebase';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
 import firebase from '../../lib/firebase';
 import { dbService } from '../../services/api';
+import { useInProgressVisits } from '../../hooks/useInProgressVisits';
+import { otherVisitInProgress, finishFirstText, FINISH_FIRST_LABEL } from '../../utils/shiftStart';
 
 type Tab = 'requests' | 'active' | 'past';
 
@@ -687,6 +689,8 @@ const RequestCard: React.FC<{
 
 const BookingGroupCard: React.FC<{
   shifts: Shift[];
+  /** One visit at a time (2026-10-07): the caregiver's visits in progress, any booking — Start Shift is replaced while one is open. */
+  inProgressVisits: Array<{ id: string; status?: string; clientName?: string }>;
   amendments: BookingAmendment[];
   onCancel: (id: string) => void;
   onAcceptAmendment: (amendment: BookingAmendment) => Promise<void>;
@@ -696,7 +700,7 @@ const BookingGroupCard: React.FC<{
   bookingNote?: string | null;
   /** ?visit=<shiftId> from an Evia text — open this visit's tasks and scroll to it (2026-09-29). */
   focusShiftId?: string | null;
-}> = ({ shifts, amendments, onCancel, onAcceptAmendment, schedulePaused, bookingNote, focusShiftId }) => {
+}> = ({ shifts, inProgressVisits, amendments, onCancel, onAcceptAmendment, schedulePaused, bookingNote, focusShiftId }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
   const { setMembershipModalOpen } = useCareConnex();
@@ -1291,6 +1295,12 @@ const BookingGroupCard: React.FC<{
                     if (ds === 'overdue') return null;
                     const minsUntilStart = (new Date(`${shift.date}T${shift.startTime}`).getTime() - Date.now()) / 60000;
                     if (minsUntilStart > 15) return null;
+                    const otherOpen = otherVisitInProgress(inProgressVisits, shift.id);
+                    if (otherOpen) return (
+                      <span title={finishFirstText(otherOpen)} className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-100 border border-slate-200 text-slate-500 rounded-xl text-xs font-semibold">
+                        <Lock className="w-3 h-3" /> {FINISH_FIRST_LABEL}
+                      </span>
+                    );
                     return blockReason === 'membership' ? (
                       <button onClick={() => setMembershipModalOpen(true)} className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-100 border border-slate-200 text-slate-500 rounded-xl text-xs font-semibold transition-colors hover:bg-slate-200">
                         <Lock className="w-3 h-3" /> Activate Membership
@@ -1937,6 +1947,8 @@ export const CaregiverBookingsPage: React.FC = () => {
   const [amendments, setAmendments] = useState<BookingAmendment[]>([]);
 
   const uid = currentUser?.uid;
+  // One visit at a time (2026-10-07): Start Shift is replaced while another visit is in progress.
+  const inProgressVisits = useInProgressVisits(uid);
 
   // Fetch booking requests
   useEffect(() => {
@@ -2377,6 +2389,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                 // Amendments are shown in the Requests tab — pass empty array here
                 return Array.from(groups.entries()).map(([key, groupShifts]) => (
                   <BookingGroupCard
+                    inProgressVisits={inProgressVisits}
                     key={key}
                     shifts={groupShifts}
                     amendments={[]}

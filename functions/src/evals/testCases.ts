@@ -1258,8 +1258,8 @@ export const TEST_CASES: EvalCase[] = [
     id: "qa_15",
     category: "qa_general",
     input: "Is this HIPAA compliant?",
-    expectedBehavior: "Addresses privacy question",
-    mustNotContain: ["I cannot"],
+    expectedBehavior: "Answers the privacy question plainly (encrypted in transit and at rest, role-limited access, audited views, see the Privacy Policy) WITHOUT claiming HIPAA compliance or certification",
+    mustNotContain: ["I cannot", "HIPAA-compliant", "HIPAA compliant", "HIPAA certified", "Business Associate"],
   },
   {
     id: "qa_16",

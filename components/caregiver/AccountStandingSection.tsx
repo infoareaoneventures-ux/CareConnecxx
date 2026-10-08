@@ -85,7 +85,9 @@ export function driverCardFor(p: any, badgeLive: boolean): DriverCard {
   if (p?.mvrStatus === 'not_approved') return 'not_approved'; // the admin's final decision after a review (2026-10-04)
   if (p?.mvrStatus === 'consider' || p?.mvrStatus === 'suspended') return 'review';
   if (p?.mvrStatus === 'awaiting_consent') return 'consent'; // Transportation added after the clear — authorize the MVR (2026-10-06)
-  const mvrPending = p?.mvrStatus === 'pending' || (p?.mvrPaid === true && !isApprovedDriver);
+  // Running = the MVR-only check started, or the bundled report is under way (consent given → mvrIncluded stamped). The
+  // payment's mvrPaid stamp alone is not "in progress" (2026-10-07) — before consent the card says "included".
+  const mvrPending = p?.mvrStatus === 'pending' || (p?.mvrPaid === true && !isApprovedDriver && p?.backgroundCheckData?.mvrIncluded === true);
   if (mvrPending) return 'pending';
   const services = ((p?.services || p?.skills || []) as string[]);
   if (services.includes('Transportation')) return 'included';

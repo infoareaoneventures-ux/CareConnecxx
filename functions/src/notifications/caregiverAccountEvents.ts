@@ -25,7 +25,7 @@ export type CaregiverAccountEventKind =
   | "bgcheck_consent_received" | "bgcheck_clear" | "bgcheck_review" | "bgcheck_on_hold" | "bgcheck_disputed"
   | "bgcheck_canceled" | "bgcheck_action_required" | "bgcheck_not_approved" | "bgcheck_document_required"
   | "bgcheck_link_expired" | "bgcheck_revoked"
-  | "mvr_clear" | "mvr_review" | "mvr_not_approved" | "mvr_consent_requested" | "transport_badge_earned" | "transport_badge_lost"
+  | "mvr_clear" | "mvr_review" | "mvr_not_approved" | "mvr_consent_requested" | "mvr_check_started" | "transport_badge_earned" | "transport_badge_lost"
   | "membership_renewal_upcoming" | "renewal_refresh_reminder" | "renewal_refresh_locked"
   | "payouts_enabled" | "payouts_disabled"
   | "now_bookable";
@@ -213,6 +213,14 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
         title: "Authorize your driving record check",
         body: `Transportation is on your profile. Authorize the driving record check to start it — included in your membership. ${membership}`,
         text: `Transportation is on your profile. Authorize the driving record check to start it — included in your membership. It takes about 2 minutes: ${ctx.consentUrl ?? membership}`,
+      };
+
+    case "mvr_check_started":
+      // The MVR-only check is created on the caregiver's authorization; this texts the completion link (2026-10-07).
+      return {
+        title: "Your driving record check is ready",
+        body: `Complete the short form to run your driving record check. ${membership}`,
+        text: `Your driving record check is ready. Complete the short form here (about 5 minutes): ${ctx.url ?? membership}`,
       };
 
     case "mvr_review":

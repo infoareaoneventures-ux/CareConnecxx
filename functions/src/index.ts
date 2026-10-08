@@ -1,3 +1,6 @@
+// Log hygiene (2026-10-07): phone numbers and emails never reach the function logs in clear text.
+import { installLogRedaction } from './observability/logRedaction';
+installLogRedaction();
 import * as admin from "firebase-admin";
 import * as functions from "firebase-functions/v1";
 import {

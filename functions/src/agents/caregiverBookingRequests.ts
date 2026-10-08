@@ -16,6 +16,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parkedDecision } from "./decisionNotices";
+import { businessTodayStr, DEFAULT_TZ } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -350,7 +351,11 @@ function nextOccurrence(startDate: string, dayName: string): string {
   return base.toISOString().split("T")[0];
 }
 function addDaysLocal(dateStr: string, days: number): string { const d = new Date(dateStr + "T12:00:00"); d.setDate(d.getDate() + days); return d.toISOString().split("T")[0]; }
-function todayStr(): string { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; }
+// "Today" is the family's business day (Pacific), never the server's UTC date: live 2026-10-07, Mahad accepted
+// Wednesday extra shifts at 6 PM Pacific = 01:00Z Thursday, so generation started "tomorrow" and every Wednesday
+// visit for that day landed a week late (a one-day request for today would have created nothing). The site's
+// Accept button uses the browser's date — this is its twin.
+function todayStr(now: Date = new Date()): string { return businessTodayStr(DEFAULT_TZ, now); }
 
 export type AmendmentResult =
   | { ok: true; status: "accepted"; shiftsCreated: number; toast: string }

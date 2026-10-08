@@ -168,6 +168,9 @@ describe("cx_pick → cx_confirm → YES", () => {
     expect(lastSent()).toContain("Skip the Tuesday, September 15, 2026, 11:00 AM–1:00 PM visit? No replacement caregiver will be arranged");
     await handleCancelFlowStep(PHONE, CHAT, "yes", session({ cancelFlowStep: "cx_confirm" }));
     expect(hoisted.docState.get("shifts/sh-tue")).toMatchObject({ status: "cancelled", cancelledBy: "client" });
+    // The caregiver dropped this visit — the confirmation must not claim they were notified (2026-10-07).
+    expect(lastSent()).toContain("visit is skipped and marked cancelled. No replacement will be arranged");
+    expect(lastSent()).not.toContain("has been notified");
   });
 
   it("cancelling the whole booking bulk-cancels every scheduled + needs-replacement visit and the booking, like handleCancelBooking", async () => {

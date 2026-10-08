@@ -11,7 +11,9 @@
 export type TransportProfile = { services?: string[]; skills?: string[]; isApprovedDriver?: boolean; hasValidTransportDocs?: boolean; mvrStatus?: unknown };
 
 export function offersTransportation(p: TransportProfile | null | undefined): boolean {
-  const services: string[] = [...((p?.skills as string[]) || []), ...((p?.services as string[]) || [])];
+  // services when it has entries, else skills — the field the profile page shows (2026-10-07: a stale
+  // skills array still carrying Transportation sent a caregiver who had removed it to Settings).
+  const services: string[] = (Array.isArray(p?.services) && p!.services!.length ? p!.services! : (p?.skills as string[]) || []) as string[];
   return services.includes('Transportation');
 }
 

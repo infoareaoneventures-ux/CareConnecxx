@@ -250,7 +250,9 @@ async function commit(phone: string, chatId: string, session: AgentSession, opt:
     return;
   }
   const done: Record<string, string> = {
-    visit:               `Done — the ${result.detail} visit is cancelled. The rest of your booking is unchanged, and ${opt.caregiverName} has been notified.`,
+    visit:               result.skipped
+      ? `Done — the ${result.detail} visit is skipped and marked cancelled. No replacement will be arranged, and the rest of your booking is unchanged.`
+      : `Done — the ${result.detail} visit is cancelled. The rest of your booking is unchanged, and ${opt.caregiverName} has been notified.`,
     booking:             `Done — the whole booking with ${result.detail} is cancelled, including every upcoming visit. ${result.detail} has been notified.`,
     pending_request:     `Done — the booking request to ${result.detail} is withdrawn. They've been told.`,
     replacement_request: `Done — the replacement request to ${result.detail} is cancelled. The visit still shows Needs Replacement, so you can pick someone else anytime.`,

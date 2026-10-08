@@ -126,6 +126,9 @@ describe("detail panels", () => {
     const la = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(soon).reduce((o: any, p) => ({ ...o, [p.type]: p.value }), {});
     const startable = { ...base, status: "scheduled", date: `${la.year}-${la.month}-${la.day}`, startTime: `${la.hour === "24" ? "00" : la.hour}:${la.minute}`, endTime: "23:59" };
     expect(shiftDetailText(startable, null)).toContain("Reply START to start this shift.");
+    // One visit at a time (2026-10-07): with another visit open the panel says finish first instead.
+    expect(shiftDetailText(startable, null, { anotherInProgress: true })).toContain("Finish your current visit first (text FINISH), then START this one.");
+    expect(shiftDetailText(startable, null, { anotherInProgress: true })).not.toContain("Reply START to start this shift.");
     expect(shiftDetailText(startable, null, { gate: "membership" })).toContain("Membership required");
   });
   it("an interview: status, time, type, job details, the Jobs-tab actions as reply words", () => {

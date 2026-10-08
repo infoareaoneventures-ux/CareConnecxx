@@ -24,7 +24,7 @@ import { shiftDisplayStatus } from "./shiftReschedule";
 import { fmtDate, fmtTime } from "./caregiverBookingRequests";
 import { shiftStatusLabel } from "./caregiverActiveBookings";
 import { fmtStamp, fmtDuration } from "./caregiverPastBookings";
-import { taskItems, recipientBlocks, noteLines, startsInMinutes, START_WINDOW_MINUTES } from "./inShift";
+import { taskItems, recipientBlocks, noteLines, startsInMinutes, START_WINDOW_MINUTES, FINISH_FIRST_LINE } from "./inShift";
 import { listCaregiverInterviews, type CaregiverInterviewRow } from "./caregiverInterviewsTab";
 import { gridFromWeekly, dayBlocksLabel, DAY_KEYS, type Grid } from "./caregiverAvailabilityGrid";
 import { caregiverBlockReason, caregiverGateText } from "./caregiverAccessGate";
@@ -198,7 +198,7 @@ export function listText(filter: ListFilter, shifts: CalShift[], interviews: Cal
 
 // ── Detail panels ─────────────────────────────────────────────────────────────
 /** The page's ShiftDetail panel. `booking` = booking_requests/{bookingRequestId} (recipients' tasks, the booking note, emergency contact). */
-export function shiftDetailText(shift: CalShift, booking: Doc | null, opts: { gate?: "membership" | "background" | "transport" | null; nowMs?: number } = {}): string {
+export function shiftDetailText(shift: CalShift, booking: Doc | null, opts: { gate?: "membership" | "background" | "transport" | null; nowMs?: number; /** Another visit of theirs is in progress — Start is replaced by "finish first" (2026-10-07). */ anotherInProgress?: boolean } = {}): string {
   const nowMs = opts.nowMs ?? Date.now();
   const status = shiftDisplayStatus(shift);
   const lines = [`${shift.status === "in-progress" ? "In Progress" : shiftStatusLabel(status)} · ${shift.clientName || "Client"}`, `${fmtDate(shift.date)} · ${times(shift)}`];
@@ -222,7 +222,7 @@ export function shiftDetailText(shift: CalShift, booking: Doc | null, opts: { ga
     const mins = startsInMinutes(shift, nowMs);
     const canStart = mins !== null && mins <= START_WINDOW_MINUTES && status !== "overdue";
     if (status === "overdue") lines.push("This visit was missed — reply LOG to log the hours.");
-    else if (canStart) lines.push(opts.gate && opts.gate !== "transport" ? caregiverGateText(opts.gate) : "Reply START to start this shift.");
+    else if (canStart) lines.push(opts.anotherInProgress ? FINISH_FIRST_LINE : opts.gate && opts.gate !== "transport" ? caregiverGateText(opts.gate) : "Reply START to start this shift.");
     else lines.push(`Start available ${START_WINDOW_MINUTES} min before the shift.`);
     if (status !== "overdue") lines.push("Reply CANCEL SHIFT to cancel it.");
   } else if (shift.status === "in-progress") {
@@ -330,12 +330,15 @@ export async function sendCalendarShiftDetail(chatId: string, caregiverId: strin
   const snap = await db.collection("shifts").doc(shiftId).get();
   const s = snap.data() as Doc | undefined;
   if (!snap.exists || !s || s.caregiverId !== caregiverId) { await sendMessage(chatId, "That visit isn't on your calendar."); return false; }
-  const [bookingSnap, cgSnap] = await Promise.all([
+  const [bookingSnap, cgSnap, openSnap] = await Promise.all([
     s.bookingRequestId ? db.collection("booking_requests").doc(String(s.bookingRequestId)).get().catch(() => null) : Promise.resolve(null),
     db.collection("caregivers").doc(caregiverId).get().catch(() => null),
+    // One visit at a time (2026-10-07): another visit of theirs in progress replaces the START line.
+    db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "==", "in-progress").get().catch(() => null),
   ]);
   const gate = caregiverBlockReason((cgSnap?.data() ?? {}) as Record<string, unknown>);
-  await sendMessage(chatId, shiftDetailText({ ...s, id: snap.id, date: String(s.date ?? ""), startTime: String(s.startTime ?? ""), status: String(s.status ?? "") }, (bookingSnap?.data() as Doc | undefined) ?? null, { gate }));
+  const anotherInProgress = !!openSnap && openSnap.docs.some((d) => d.id !== snap.id);
+  await sendMessage(chatId, shiftDetailText({ ...s, id: snap.id, date: String(s.date ?? ""), startTime: String(s.startTime ?? ""), status: String(s.status ?? "") }, (bookingSnap?.data() as Doc | undefined) ?? null, { gate, anotherInProgress }));
   return true;
 }
 export async function sendCalendarInterviewDetail(chatId: string, caregiverId: string, interviewId: string): Promise<boolean> {

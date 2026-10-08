@@ -28,6 +28,14 @@ import { getAppUrl } from "../config/appUrl";
 const db = admin.firestore();
 export const START_WINDOW_MINUTES = 15;
 
+// One visit at a time (founder, 2026-10-07: "they shouldn't start two shifts at the same time") — the twin of
+// utils/shiftStart.ts on the site's three Start Shift buttons. Same words.
+export const FINISH_FIRST_LINE = "Finish your current visit first (text FINISH), then START this one.";
+export function finishFirstText(other: { clientName?: unknown } | null): string {
+  const who = typeof other?.clientName === "string" ? other.clientName.trim() : "";
+  return who ? `Finish your visit with ${who} first.` : "Finish your current visit first.";
+}
+
 /** The real Bookings page opened at this visit (login required — the link carries no secret). */
 export const visitPageLink = (shiftId: string) => `${getAppUrl()}/caregiver/bookings?tab=active&visit=${encodeURIComponent(shiftId)}`;
 
@@ -155,6 +163,13 @@ export async function startVisit(caregiverId: string, shiftId: unknown, nowMs = 
     return { ok: true, shiftId: v.id, alreadyStarted: true, startedAt: String(shift.startedAt ?? ""), tasks, text: `This visit is already in progress — ${visitLine(shift)}.` };
   }
   if (shift.status !== "scheduled") return { ok: false, reason: "not_scheduled", message: `That visit is ${String(shift.status)}, so it can't be started.` };
+  // One visit at a time (2026-10-07): any other visit of this caregiver still in progress — any date — blocks the start.
+  const openSnap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "==", "in-progress").get();
+  const otherOpen = openSnap.docs.find((d) => d.id !== v.id);
+  if (otherOpen) {
+    const o = otherOpen.data() as Doc;
+    return { ok: false, reason: "another_in_progress", message: `${finishFirstText(o)} (${visitLine(o)}) — text FINISH when it's over, then START this one.` };
+  }
   // The page's Start Shift button: never once the visit is overdue, and only from 15 minutes before the start.
   if (isShiftOverdue(shift)) return { ok: false, reason: "overdue", message: `That visit's time has passed (${visitLine(shift)}) — it can't be started now.` };
   const mins = startsInMinutes(shift, nowMs);

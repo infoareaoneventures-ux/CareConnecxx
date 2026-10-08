@@ -108,6 +108,8 @@ posture before or shortly after launch; if counsel requires conversational
 disclosure, restore the sentence in `webhooks.ts` coldIntro and `language.ts`
 `otp_greeting` (git history 2026-07-02 has both wordings).
 
+**What the prompt actually carries (re-verified 2026-10-07):** per care recipient, `careNeeds` (the eight services by name — "Dementia / Memory Care" and "Medication Reminders Only" are themselves health-adjacent), free-text `notes`, `locations` (home address) and `lifestyle` (routines, activities). Emergency contacts and access codes are fetched on demand, never pre-injected. Since 2026-10-04 medication names, dosages, diagnoses and conditions are REFUSED at every free-text save on both channels (`utils/medicationInstruction.ts` + the shared rule in Evia), so the "diagnoses, medications, doctor contacts" wording above describes the pre-10/04 product; older notes written before the rule may still contain them. The agent-tier fallback chain is OpenAI → Gemini → Anthropic (`agentModelTurn.ts`), so a PHI-bearing prompt can reach three providers.
+
 **Provider addendum (decided 2026-07-01, founder):** the agent tier runs on **OpenAI**
 (`CARA_AGENT_PROVIDER=openai`, `CARA_AGENT_MODEL=gpt-5.4`) with Anthropic Sonnet as
 runtime fallback — so the PHI-bearing prompt flows to OpenAI by default and to

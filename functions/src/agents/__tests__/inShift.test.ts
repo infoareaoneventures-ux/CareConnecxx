@@ -81,6 +81,18 @@ describe("startVisit — the Start Shift button", () => {
     expect(hoisted.updates[0]).toEqual({ path: "shifts/s1", data: { status: "in-progress", startedAt: "__ts__", updatedAt: "__ts__" } });
     expect(r.text).toMatch(/^Started \d{1,2}:\d{2} [AP]M — .+ with Basra Yousuf\.\nBooking note: This is an additional shift\nVisit note: testing as additional shift\n\nMai \(Mother\)\nNote: Likes her tea at 3\.\nTasks:\n1\. Companionship\n2\. Mobility Assistance — Transfer Assist\n3\. Mobility Assistance — Walking\n\nReply DONE 1 \(or DONE 1, 3\) as you finish, NOTE followed by anything the family should see, and FINISH when the visit is over\.\nPrefer the page\? Open this visit: https?:\/\/\S+\/caregiver\/bookings\?tab=active&visit=s1$/);
   });
+  it("one visit at a time (2026-10-07): another visit in progress → refused by name, nothing written", async () => {
+    shift("open", { status: "in-progress", clientName: "Basra Yousuf", date: "2099-09-28", startTime: "09:00", endTime: "10:00" });
+    shift("s2", { clientName: "Ali Hassan" });
+    const r = await startVisit("cg1", "s2");
+    expect(r.ok).toBe(false);
+    if (!r.ok) { expect(r.reason).toBe("another_in_progress"); expect(r.message).toContain("Finish your visit with Basra Yousuf first"); expect(r.message).toContain("text FINISH"); }
+    expect(hoisted.updates.filter((u) => u.path === "shifts/s2")).toEqual([]);
+    // Starting the open visit itself still reads "already in progress" (it is not "another" visit).
+    const same = await startVisit("cg1", "open");
+    expect(same.ok && same.alreadyStarted).toBe(true);
+  });
+
   it("too early → told when Start opens; nothing written", async () => {
     const soon = la(new Date(Date.now() + 90 * 60 * 1000));
     shift("s1", { date: soon.date, startTime: soon.time, endTime: "23:59" });

@@ -224,6 +224,13 @@ describe("onShiftStatusChanged — SMS parity", () => {
     expect(sendViaInteractionAgent).not.toHaveBeenCalled();
   });
 
+  it("the family SKIPS a Needs Replacement visit (the caregiver had cancelled it) → nobody is texted (live 2026-10-07: the caregiver was told the family cancelled his own cancellation)", async () => {
+    const before = { status: "needs_replacement", clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", cancelledBy: "caregiver" };
+    const after  = { ...before, status: "cancelled", cancelledBy: "client" };
+    await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+  });
+
   it("a bulk-cancelled shift (whole-booking cancel) sends no per-shift text — onBookingRequestWrite already sent one consolidated text", async () => {
     const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER };
     const after  = { ...before, status: "cancelled", bulkCancelled: true };

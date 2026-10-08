@@ -214,7 +214,7 @@ export function buildVisitRequestRecap(d: VisitRequestFlowData): string {
 // ── Entry ─────────────────────────────────────────────────────────────────────
 
 export async function startVisitRequestFlow(
-  phone: string, chatId: string, session: AgentSession, args: { caregiverId?: string; initialText?: string } = {},
+  phone: string, chatId: string, session: AgentSession, args: { caregiverId?: string; bookingRequestId?: string; initialText?: string } = {},
 ): Promise<{ started: boolean; reason?: string }> {
   const clientId = session.userId as string | undefined;
   if (!clientId) {
@@ -237,7 +237,11 @@ export async function startVisitRequestFlow(
     stateExpiresAt:       new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   });
 
-  let cg = args.caregiverId ? caregivers.find((c) => c.id === args.caregiverId) : undefined;
+  // My Bookings card button (2026-10-07): the booking is already chosen, so its caregiver is too.
+  const preBooking = args.bookingRequestId
+    ? caregivers.flatMap((c) => c.bookings.map((b) => ({ cg: c, b }))).find((x) => x.b.bookingId === args.bookingRequestId)
+    : undefined;
+  let cg = preBooking?.cg ?? (args.caregiverId ? caregivers.find((c) => c.id === args.caregiverId) : undefined);
   if (!cg && caregivers.length === 1) cg = caregivers[0];
   if (!cg && args.initialText?.trim()) {
     const raw = await parseWithClaude(
@@ -250,6 +254,11 @@ export async function startVisitRequestFlow(
   }
   if (!cg) {
     await sendMessage(chatId, CAREGIVER_QUESTION(data));
+    return { started: true };
+  }
+  if (preBooking && preBooking.cg.id === cg.id) {
+    await mergeFlowData(phone, { caregiverId: cg.id, caregiverName: cg.name });
+    await selectBooking(phone, chatId, preBooking.b, args.initialText);
     return { started: true };
   }
   await selectCaregiver(phone, chatId, cg, args.initialText);

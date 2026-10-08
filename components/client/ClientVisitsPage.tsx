@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarCheck, History, MapPin, Clock, MessageSquare,
   XCircle, CalendarDays, Loader2, Repeat, CreditCard, Banknote,
-  CheckCircle, ChevronDown, ChevronUp, AlertCircle, Phone, User, CalendarClock,
+  CheckCircle, ChevronDown, ChevronUp, AlertCircle, Phone, User, CalendarClock, Plus,
 } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
@@ -15,6 +15,7 @@ import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../
 import { isCaregiverBookable } from '../../utils/caregiverEligibility';
 import { paymentMethodLabel } from '../../types';
 import { VisitProgressPanel } from './VisitProgressPanel';
+import { RequestVisitModal, fetchRequestVisitTargets, type RequestVisitTargets } from './RequestVisitModal';
 import { billedHourlyRate } from '../../utils/pricing';
 
 interface Shift {
@@ -846,6 +847,8 @@ interface ActiveVisitGroupCardProps {
   onCancelBooking: (shiftId: string) => Promise<void>;
   navigate: ReturnType<typeof useNavigate>;
   onMessage: () => void;
+  /** The Calendar's "+ Request Visit" for THIS booking (preselected); undefined when the booking has no scheduled visit left (2026-10-07). */
+  onRequestVisit?: () => void;
   onSkipReplacement: (shiftId: string) => Promise<void>;
   onFindReplacement: (shift: Shift) => void;
   onWithdrawReplacement: (replacementRequestId: string) => Promise<void>;
@@ -855,7 +858,7 @@ interface ActiveVisitGroupCardProps {
   bookingNote?: string | null;
 }
 
-const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onSkipReplacement, onFindReplacement, onWithdrawReplacement, schedulePaused, bookingNote }) => {
+const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onRequestVisit, onSkipReplacement, onFindReplacement, onWithdrawReplacement, schedulePaused, bookingNote }) => {
   const base = shifts[0];
   // The header note is the note the family typed when SENDING the booking
   // (booking_requests.notes) — not whichever note the newest visit carries.
@@ -1058,12 +1061,22 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
             </div>
           </div>
         </div>
-        <button
-          onClick={onMessage}
-          className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
-        >
-          <MessageSquare className="w-4 h-4" /> Message
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={onMessage}
+            className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
+          >
+            <MessageSquare className="w-4 h-4" /> Message
+          </button>
+          {onRequestVisit && (
+            <button
+              onClick={onRequestVisit}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors shrink-0"
+            >
+              <Plus className="w-4 h-4" /> Request Visit
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Shared booking details */}
@@ -1682,8 +1695,19 @@ export const ClientVisitsPage: React.FC = () => {
   const [bookingNotes, setBookingNotes] = useState<Map<string, string | null>>(new Map());
   const [loading, setLoading] = useState(true);
   const { gate, Modals: GateModals } = useAccessGates();
+  // "+ Request Visit" — the Calendar's modal, shared (RequestVisitModal.tsx). Header button when any booking can take a
+  // day; each Active card gets its own button, preselecting that booking, when the booking is in the modal's list.
+  const [visitTargets, setVisitTargets] = useState<RequestVisitTargets>({ caregivers: [], caregiverBookings: {} });
+  const [requestVisitFor, setRequestVisitFor] = useState<{ caregiverId?: string; bookingId?: string } | null>(null);
 
   const user = useAuthUser();
+
+  useEffect(() => {
+    if (!user) return;
+    let live = true;
+    fetchRequestVisitTargets(user.uid).then(t => { if (live) setVisitTargets(t); });
+    return () => { live = false; };
+  }, [user?.uid, shifts.length]);
 
   // Accepted bookings — the membership-pause flag the shift generator writes,
   // and each booking's own note for the card header.
@@ -1901,9 +1925,16 @@ export const ClientVisitsPage: React.FC = () => {
       <ClientNavigation />
 
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto px-4 py-4">
-          <h1 className="text-xl font-bold text-slate-900">My Bookings</h1>
-          <p className="text-sm text-slate-500">Scheduled and past care bookings</p>
+        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">My Bookings</h1>
+            <p className="text-sm text-slate-500">Scheduled and past care bookings</p>
+          </div>
+          {visitTargets.caregivers.length > 0 && (
+            <button onClick={() => gate('booking', undefined, () => setRequestVisitFor({}))} className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
+              <Plus className="w-4 h-4" />Request Visit
+            </button>
+          )}
         </div>
       </header>
 
@@ -2016,6 +2047,12 @@ export const ClientVisitsPage: React.FC = () => {
                 onCancelBooking={handleCancelBooking}
                 navigate={navigate}
                 onMessage={() => gate('message', groupShifts[0]?.caregiverName, () => navigate(`/client/inbox?caregiver=${groupShifts[0]?.caregiverId}`))}
+                onRequestVisit={(() => {
+                  const cgId = String(groupShifts[0]?.caregiverId ?? '');
+                  const bookingId = String(groupShifts[0]?.bookingRequestId ?? '');
+                  const inList = !!bookingId && (visitTargets.caregiverBookings[cgId] || []).some(b => b.bookingId === bookingId);
+                  return inList ? () => gate('booking', groupShifts[0]?.caregiverName, () => setRequestVisitFor({ caregiverId: cgId, bookingId })) : undefined;
+                })()}
                 onSkipReplacement={handleSkipReplacement}
                 onFindReplacement={setReplacementShift}
                 onWithdrawReplacement={handleWithdrawReplacement}
@@ -2040,6 +2077,14 @@ export const ClientVisitsPage: React.FC = () => {
           clientUid={user.uid}
           onClose={() => setReplacementShift(null)}
           onConfirm={(candidate, when) => handleConfirmReplacement(replacementShift, candidate, when)}
+        />
+      )}
+      {requestVisitFor && (
+        <RequestVisitModal
+          targets={visitTargets}
+          preselect={requestVisitFor.caregiverId ? { caregiverId: requestVisitFor.caregiverId, bookingId: requestVisitFor.bookingId } : undefined}
+          gate={gate}
+          onClose={() => setRequestVisitFor(null)}
         />
       )}
       <GateModals />

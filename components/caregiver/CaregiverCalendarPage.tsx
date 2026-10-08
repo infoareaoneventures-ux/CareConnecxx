@@ -15,6 +15,8 @@ import { useAuthUser } from '../../hooks/useAuthUser';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
 import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../../utils/shiftUtils';
+import { useInProgressVisits } from '../../hooks/useInProgressVisits';
+import { otherVisitInProgress, finishFirstText, FINISH_FIRST_LABEL } from '../../utils/shiftStart';
 
 const TIME_BLOCKS = [
   { id: 'morning',   label: 'Morning',   hours: '6am – 12pm' },
@@ -168,6 +170,8 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   const [expandedDates,     setExpandedDates]     = useState<Record<string, boolean>>({});
 
   const user = useAuthUser();
+  // One visit at a time (2026-10-07): Start Shift is replaced while another visit is in progress.
+  const inProgressVisits = useInProgressVisits(user?.uid);
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
   useEffect(() => { fetchInterviews(); fetchAvailability(); }, []);
@@ -412,6 +416,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     // Which actions are available
     // canStart: within 15 min of start OR late (started but not ended yet) — not overdue
     const canStart  = shift.status === 'scheduled' && minUntilStart <= 15 && !shiftEnded;
+    const otherOpen = otherVisitInProgress(inProgressVisits, shift.id);
     const canEnd    = shift.status === 'in-progress';
     const canCancel = shift.status === 'scheduled';
 
@@ -736,7 +741,11 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
 
           {/* Scheduled + within 15 min of start (or past start but not ended): Start Shift */}
           {canStart && (
-            blockReason === 'membership' ? (
+            otherOpen ? (
+              <div title={finishFirstText(otherOpen)} className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5">
+                <Lock className="w-4 h-4" /> {FINISH_FIRST_LABEL}
+              </div>
+            ) : blockReason === 'membership' ? (
               <button onClick={() => setMembershipModalOpen(true)} className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
                 <Lock className="w-4 h-4" /> Activate Membership
               </button>

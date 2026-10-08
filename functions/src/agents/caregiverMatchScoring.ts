@@ -76,10 +76,8 @@ export function hasValidTransportDocs(profile: Record<string, unknown> | null | 
   if (typeof profile.hasValidTransportDocs === "boolean") return profile.hasValidTransportDocs;
   // Transportation live = offered on the profile + driving record cleared (founder,
   // 2026-10-06: the MVR through Checkr is the only check — no documents).
-  const services: string[] = [
-    ...((profile.skills as string[]) || []),
-    ...((profile.services as string[]) || []),
-  ];
+  // services when it has entries, else skills — one rule with utils/transportDocs.ts (2026-10-07).
+  const services: string[] = (Array.isArray(profile.services) && (profile.services as unknown[]).length ? profile.services : (profile.skills as string[]) || []) as string[];
   if (!services.includes("Transportation")) return false;
   return profile.isApprovedDriver === true;
 }

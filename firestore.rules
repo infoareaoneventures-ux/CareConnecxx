@@ -496,9 +496,11 @@ service cloud.firestore {
       return (job.get('careTypes', []) is list && job.get('careTypes', []).hasAny(['Transportation']))
         || (job.get('requirements', []) is list && job.get('requirements', []).hasAny(['Driving']));
     }
+    // services when it has entries, else skills — one rule with utils/transportDocs.ts (2026-10-07).
     function caregiverOffersTransportation(cg) {
-      return (cg.get('skills', []) is list && cg.get('skills', []).hasAny(['Transportation']))
-        || (cg.get('services', []) is list && cg.get('services', []).hasAny(['Transportation']));
+      return (cg.get('services', []) is list && cg.get('services', []).size() > 0)
+        ? cg.get('services', []).hasAny(['Transportation'])
+        : (cg.get('skills', []) is list && cg.get('skills', []).hasAny(['Transportation']));
     }
     // Transportation live = offered + driving record cleared (founder, 2026-10-06: the
     // MVR through Checkr is the only check — no documents).

@@ -157,3 +157,20 @@ describe("listActiveBookings", () => {
     expect(b2.schedulePausedNote).toBeNull();
   });
 });
+
+describe("Request Visit (the card's button, 2026-10-07)", () => {
+  it("request_visit appears when the booking is accepted and still has a scheduled visit — the modal's own list rule", async () => {
+    shift("s1", { date: "2099-09-22" });
+    hoisted.docState.set("booking_requests/br1", { clientId: "c1", status: "accepted" });
+    const [b] = await listActiveBookings("c1");
+    expect(b.actions).toEqual(["message", "request_visit", "cancel_booking"]);
+  });
+  it("no request_visit when nothing is scheduled any more (in-progress only) or the booking doc is gone", async () => {
+    shift("s1", { date: "2099-09-22", status: "in-progress" });
+    hoisted.docState.set("booking_requests/br1", { clientId: "c1", status: "accepted" });
+    expect((await listActiveBookings("c1"))[0].actions).toEqual(["message", "cancel_booking"]);
+    hoisted.reset();
+    shift("s2", { date: "2099-09-22" });
+    expect((await listActiveBookings("c1"))[0].actions).toEqual(["message", "cancel_booking"]);
+  });
+});

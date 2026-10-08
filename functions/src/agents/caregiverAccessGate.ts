@@ -47,10 +47,8 @@ export function isCaregiverBackgroundApproved(cg: Cg): boolean {
 
 export function caregiverOffersTransportation(cg: Cg): boolean {
   if (!cg) return false;
-  const services = [
-    ...((Array.isArray(cg.services) ? cg.services : []) as string[]),
-    ...((Array.isArray(cg.skills)   ? cg.skills   : []) as string[]),
-  ];
+  // services when it has entries, else skills — one rule with utils/transportDocs.ts (2026-10-07).
+  const services = (Array.isArray(cg.services) && (cg.services as unknown[]).length ? cg.services : (Array.isArray(cg.skills) ? cg.skills : [])) as string[];
   return services.includes("Transportation");
 }
 

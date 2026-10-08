@@ -32,7 +32,7 @@ vi.mock("../jobBoardPage", async (importOriginal) => {
   };
 });
 
-import { jobListText, jobDetailsText, resolveJobRef, sendJobList, sendJobDetails, LIST_FOOTER } from "../jobBoardText";
+import { jobListText, jobDetailsText, resolveJobRef, sendJobList, sendJobDetails, LIST_FOOTER, listFooter } from "../jobBoardText";
 import type { JobCard } from "../jobBoardPage";
 
 const card = (over: Partial<JobCard> = {}): JobCard => ({
@@ -48,7 +48,8 @@ describe("jobListText — the Available Jobs tab as one text, 2 at a time", () =
     const { text: t } = jobListText({ jobs: [card(), card({ jobId: "job2", title: "Care for Rosy", rate: "$26/hr", action: "Activate Membership" })], total: 2, hiddenCount: 0, radiusMiles: 25, hasCoords: true });
     expect(t.startsWith("Jobs found:\n1. Senior care in San Jose · San Jose, CA, 95134 (5.7 mi away) · $10/hr · Part-time · Daytime · Sep 27, 2026 · Morning\n2. Care for Rosy")).toBe(true);
     expect(t).toContain("— Activate Membership"); // the gate button the card shows instead of Apply Now
-    expect(t.endsWith(LIST_FOOTER)).toBe(true);
+    // The footer follows the list (2026-10-07): the apply example is job 1 (the applicable one), hide = the first shown, and the gated job gets the modal's line.
+    expect(t.endsWith(`Reply with a number for the details, "apply to 1" to apply, or "hide 1". To apply to job 2 you'll need to: Activate Membership.`)).toBe(true);
   });
   it("uses the page's two empty states", () => {
     const empty = { jobs: [], total: 0, hiddenCount: 0, radiusMiles: 0, hasCoords: false };
@@ -63,15 +64,18 @@ describe("jobListText — the Available Jobs tab as one text, 2 at a time", () =
     expect(p1.text.startsWith("Jobs found:\n1. Job 1")).toBe(true);
     expect(p1.text).toContain("\n2. Job 2");
     expect(p1.text).not.toContain("3. Job 3");
-    expect(p1.text.endsWith(`${LIST_FOOTER} Reply MORE to see more.`)).toBe(true);
+    expect(p1.text.endsWith(`Reply with a number for the details, "apply to 1" to apply, or "hide 1". Reply MORE to see more.`)).toBe(true);
     expect(p1.remaining).toBe(3);
     const p2 = jobListText(page, { from: 2 });
     expect(p2.text.startsWith("More jobs:\n3. Job 3 ·")).toBe(true);
     expect(p2.text).toContain("\n4. Job 4 ·");
-    expect(p2.text.endsWith(`${LIST_FOOTER} Reply MORE to see more.`)).toBe(true);
+    expect(p2.text.endsWith(`Reply with a number for the details, "apply to 3" to apply, or "hide 3". Reply MORE to see more.`)).toBe(true); // numbering continues across pages
     const p3 = jobListText(page, { from: 4 });
     expect(p3.text.startsWith("More jobs:\n5. Job 5 ·")).toBe(true);
-    expect(p3.text.endsWith(LIST_FOOTER)).toBe(true);
+    expect(p3.text.endsWith(`Reply with a number for the details, "apply to 5" to apply, or "hide 5".`)).toBe(true);
+    // A one-job list whose only job is gated offers no "apply" (the founder's live screenshot, 2026-10-07).
+    expect(listFooter([{ action: "Set Up Transportation" }])).toBe(`Reply with a number for the details, or "hide 1". To apply to job 1 you'll need to: Set Up Transportation.`);
+    expect(LIST_FOOTER).toBe(`Reply with a number for the details, "apply to 1" to apply, or "hide 1".`);
     expect(jobListText(page, { from: 5 }).text).toBe("That's all the open jobs right now — reply with a number for the details.");
   });
   it("the dashboard's nearest-4 (an explicit limit) is not paged", () => {

@@ -333,7 +333,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "start_visit_request_flow",
     description:
       "Add an extra visit (a new day, or new days, and times) to a booking the caregiver has already accepted — the " +
-      "website's Calendar '+ Request Visit' button, step for step. Starts Evia's scripted flow: which caregiver (only " +
+      "website's 'Request Visit' button (My Calendar header, My Bookings header and each Active Bookings card), step for step. Starts Evia's scripted flow: which caregiver (only " +
       "those with an active booking), which booking if they have more than one, the day(s), the time(s) per day " +
       "(refusing anything that overlaps an existing visit with that caregiver or a time they're booked elsewhere, and " +
       "flagging times outside their usual availability), start date, ongoing or end date, an optional note, then a " +
@@ -345,6 +345,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         initialText: { type: "string", description: "The family's own message asking for the visit, verbatim." },
         caregiverId: { type: "string", description: "Optional — the caregiver the family named." },
+        bookingRequestId: { type: "string", description: "Optional — the booking the family means (from get_active_bookings), e.g. when they point at one booking; the flow then skips the caregiver and booking questions like the card's own Request Visit button." },
       },
     },
   },
@@ -3568,7 +3569,7 @@ async function executeToolCall(
         return { success: true, instruction: "This tool already texted the family the first step of the correction — do not send anything else this turn." };
       }
       case "start_visit_request_flow": {
-        const { clientId, phone, caregiverId, initialText } = input as Record<string, unknown>;
+        const { clientId, phone, caregiverId, bookingRequestId, initialText } = input as Record<string, unknown>;
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
         if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
         const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
@@ -3578,6 +3579,7 @@ async function executeToolCall(
         const { startVisitRequestFlow } = await import("../agents/visitRequestFlow");
         const result = await startVisitRequestFlow(phone as string, chatId, sessionData as any, {
           ...(typeof caregiverId === "string" && caregiverId ? { caregiverId } : {}),
+          ...(typeof bookingRequestId === "string" && bookingRequestId ? { bookingRequestId } : {}),
           ...(typeof initialText === "string" && initialText ? { initialText } : {}),
         });
         if (!result.started) {
@@ -4377,7 +4379,9 @@ async function executeToolCall(
       }
 
       case "get_active_bookings": {
-        if (input.caregiverId && !input.clientId) {
+        // Caregiver's own tab when caregiverId is given and no DIFFERENT clientId is (a clientId equal to the
+        // caregiverId is the speaker's own uid, injected by an older turn shape — 2026-10-07).
+        if (input.caregiverId && (!input.clientId || input.clientId === input.caregiverId)) {
           // The caregiver's tab as data (2026-09-28): "do I have another shift
           // today?" deserves a sentence, not the whole card texted twice.
           const cab = await import("../agents/caregiverActiveBookings");

@@ -148,6 +148,20 @@ describe("startVisitRequestFlow", () => {
     expect(amendmentSets()).toHaveLength(0);
   });
 
+  it("started from a booking (the My Bookings card button, 2026-10-07): skips the caregiver and booking questions even with two caregivers", async () => {
+    seed();
+    hoisted.docState.set("booking_requests/br-ali", {
+      clientId: UID, caregiverId: "cg-ali", caregiverName: "Ali Hassan", status: "accepted", jobTitle: "Weekend help",
+      address: "1 Main St", schedule: { dayShiftTimes: { Sat: [{ start: "09:00", end: "12:00" }] } },
+    });
+    hoisted.docState.set("shifts/sh-2", { clientId: UID, caregiverId: "cg-ali", bookingRequestId: "br-ali", status: "scheduled", date: "2026-09-20", startTime: "09:00", endTime: "12:00" });
+    const r = await startVisitRequestFlow(PHONE, CHAT, session(), { bookingRequestId: "br-ali" });
+    expect(r.started).toBe(true);
+    expect(sess().visitRequestFlowStep).toBe("vr_ask_days");
+    expect(sess().visitRequestFlowData).toMatchObject({ caregiverId: "cg-ali", caregiverName: "Ali Hassan", bookingId: "br-ali", jobTitle: "Weekend help" });
+    expect(lastSent()).toContain("Adding a visit for Ali Hassan.");
+  });
+
   it("with no day given, asks which days and shows the caregiver's current schedule like the modal", async () => {
     seed();
     const r = await startVisitRequestFlow(PHONE, CHAT, session(), {});

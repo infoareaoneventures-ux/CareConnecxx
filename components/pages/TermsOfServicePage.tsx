@@ -52,8 +52,8 @@ export const TermsOfServicePage: React.FC = () => (
         </section>
 
         <section>
-          <h2 className="text-lg font-semibold text-ink-900 mb-2">6. HIPAA Compliance &amp; Privacy</h2>
-          <p>Evia complies with HIPAA and maintains appropriate safeguards for Protected Health Information (PHI). We maintain Business Associate Agreements with all vendors who handle PHI. By using our Services, you authorize Evia to share necessary information with matched caregivers and process information for payment and operations.</p>
+          <h2 className="text-lg font-semibold text-ink-900 mb-2">6. Privacy &amp; Health-Related Information</h2>
+          <p>Evia safeguards the information families and caregivers share as described in our Privacy Policy. Evia is a non-medical care marketplace; it does not provide medical care and does not claim certification under HIPAA. By using our Services, you authorize Evia to share necessary information with matched caregivers and to process information for payment and operations.</p>
         </section>
 
         <section>

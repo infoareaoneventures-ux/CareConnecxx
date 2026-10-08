@@ -30,7 +30,7 @@ export function initSentry() {
 export function setSentryUser(user: { uid: string; email?: string | null } | null) {
   if (!DSN) return;
   if (user) {
-    Sentry.setUser({ id: user.uid, email: user.email || undefined });
+    Sentry.setUser({ id: user.uid }); // account id only — no email in error reports (2026-10-07, minimum necessary)
   } else {
     Sentry.setUser(null);
   }

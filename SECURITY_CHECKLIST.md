@@ -1,321 +1,36 @@
-# 🔒 Evia HIPAA Compliance & Security Checklist
-
-## CRITICAL: DO NOT LAUNCH WITHOUT THESE ITEMS
-
----
-
-## ✅ 1. Business Associate Agreements (BAAs)
-
-Before handling ANY PHI, you MUST have signed BAAs with:
-
-- [ ] **Google Cloud / Firebase** → Request BAA: https://cloud.google.com/terms/hipaa
-- [ ] **Twilio** (Video calls) → Request BAA: https://www.twilio.com/legal/hipaa
-- [ ] **Stripe** (Payments) → Request BAA: https://stripe.com/guides/hipaa
-- [ ] **Background Check Provider** (Checkr, Sterling, etc.) → Must sign BAA
-- [ ] **Insurance Provider** (Bunker, etc.) → Verify BAA status
-
-**Timeline:** 2-4 weeks to process
-
----
-
-## ✅ 2. Environment Variables (NEVER commit to Git)
-
-Create `.env.production` file (add to `.gitignore`!):
-
-```bash
-# Firebase Config
-VITE_FIREBASE_API_KEY=your_key
-VITE_FIREBASE_AUTH_DOMAIN=your_domain
-VITE_FIREBASE_PROJECT_ID=your_project
-VITE_FIREBASE_STORAGE_BUCKET=your_bucket
-VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender
-VITE_FIREBASE_APP_ID=your_app_id
-
-# Encryption (CRITICAL - Generate strong key!)
-VITE_ENCRYPTION_KEY=your_256_bit_encryption_key_here_min_32_chars
-VITE_SSN_PEPPER=another_secret_for_ssn_hashing
-
-# Stripe
-VITE_STRIPE_PUBLISHABLE_KEY=pk_live_...
-STRIPE_SECRET_KEY=sk_live_... # Server-side only
-
-# Twilio
-VITE_TWILIO_ACCOUNT_SID=...
-TWILIO_AUTH_TOKEN=... # Server-side only
-
-# AI
-VITE_GEMINI_API_KEY=...
-```
-
-**Generate encryption key:**
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
----
-
-## ✅ 3. Code Changes Required
-
-### Install Dependencies
-```bash
-npm install crypto-js
-npm install --save-dev @types/crypto-js
-```
-
-### Update Data Layer
-
-Everywhere you write caregiver data to Firestore, use:
-
-```typescript
-import { prepareCaregiverForWrite, logPIIAccess } from '../utils/encryption';
-
-// BEFORE (INSECURE):
-await setDoc(doc(db, 'caregivers', uid), caregiverData);
-
-// AFTER (SECURE):
-const securedData = prepareCaregiverForWrite(caregiverData);
-await setDoc(doc(db, 'caregivers', uid), securedData);
-logPIIAccess(auth.currentUser.uid, 'write', 'caregiver_profile', uid);
-```
-
-### Update Data Reads
-
-```typescript
-import { sanitizeCaregiverPublic } from '../utils/encryption';
-
-// For public profiles:
-const caregiverDoc = await getDoc(doc(db, 'caregivers', id));
-const publicData = sanitizeCaregiverPublic(caregiverDoc.data());
-```
-
----
-
-## ✅ 4. Firebase Configuration
-
-### Enable Firebase Authentication
-- [ ] Email/Password provider enabled
-- [ ] Email verification required
-- [ ] Strong password policy (min 8 chars, complexity)
-
-### Enable Firebase Security Rules
-```bash
-firebase deploy --only firestore:rules
-```
-
-### Enable Firebase App Check
-Prevents abuse:
-```bash
-firebase appcheck:initialize
-```
-
-### Enable Firebase Audit Logging
-Go to: Firebase Console → Project Settings → Usage & Billing → Enable audit logs
-
----
-
-## ✅ 5. Data Structure Changes
-
-### Caregiver Collection
-Split into TWO collections:
-
-1. **`caregivers/{id}`** - Public profile (name, bio, skills, rating)
-2. **`caregivers/{id}/private/pii`** - Encrypted PII (SSN, DOB, background check)
-
-### Migration Script Needed
-```typescript
-// Run ONCE before launch to migrate existing data
-const migrateToSecureSchema = async () => {
-  const caregivers = await getDocs(collection(db, 'caregivers'));
-  
-  for (const doc of caregivers.docs) {
-    const data = doc.data();
-    
-    // Move PII to subcollection
-    await setDoc(
-      doc(db, 'caregivers', doc.id, 'private', 'pii'),
-      {
-        ssnEncrypted: encryptPII(data.backgroundCheckData?.ssn),
-        ssnHash: hashSSN(data.backgroundCheckData?.ssn),
-        dobEncrypted: encryptPII(data.backgroundCheckData?.dob),
-        _migratedAt: new Date().toISOString(),
-      }
-    );
-    
-    // Remove PII from main doc
-    await updateDoc(doc.ref, {
-      'backgroundCheckData.ssn': deleteField(),
-      'backgroundCheckData.dob': deleteField(),
-      _security: { encrypted: true, version: '1.0' }
-    });
-  }
-};
-```
-
----
-
-## ✅ 6. HIPAA Required Policies
-
-You MUST create these documents (legal review required):
-
-1. **Privacy Policy**
-   - How PHI is collected, used, stored
-   - Patient rights (access, amendment, accounting of disclosures)
-   - Breach notification procedures
-
-2. **Terms of Service**
-   - User responsibilities
-   - Acceptable use
-   - Liability limitations
-
-3. **Business Associate Agreement Template**
-   - For any vendors handling PHI
-
-4. **Data Retention Policy**
-   - How long to keep records
-   - Secure deletion procedures
-
-5. **Incident Response Plan**
-   - Breach detection
-   - Notification timeline (60 days max per HIPAA)
-   - Mitigation steps
-
-6. **Security Risk Assessment**
-   - Document all potential risks
-   - Mitigation strategies
-   - Review annually
-
----
-
-## ✅ 7. Technical Safeguards (HIPAA Requirements)
-
-### Access Control
-- [ ] Unique user IDs for all users
-- [ ] Role-based access (admin, caregiver, client)
-- [ ] Automatic session timeout (15 min inactivity)
-- [ ] Emergency access procedure
-
-### Audit Controls
-- [ ] Log all PHI access (who, what, when)
-- [ ] Log all admin actions
-- [ ] Logins and failed logins
-- [ ] Data exports
-
-### Integrity Controls
-- [ ] Data validation on input
-- [ ] Checksums or digital signatures
-- [ ] Backup and recovery procedures
-
-### Transmission Security
-- [ ] TLS 1.3 for all connections
-- [ ] End-to-end encryption for video calls (Twilio)
-- [ ] Encrypted data at rest
-
----
-
-## ✅ 8. Pre-Launch Security Checklist
-
-### Penetration Testing
-- [ ] Hire third-party security auditor
-- [ ] OWASP Top 10 review
-- [ ] Firebase security rules audit
-
-### Data Backup
-- [ ] Automated daily backups
-- [ ] Encrypted backup storage
-- [ ] Quarterly recovery testing
-
-### Monitoring
-- [ ] Firebase Crashlytics enabled
-- [ ] Firebase Performance Monitoring
-- [ ] Custom security event alerts
-
-### Documentation
-- [ ] API documentation
-- [ ] Security architecture diagram
-- [ ] Incident response runbook
-
----
-
-## ✅ 9. Legal Requirements
-
-### Entity Formation
-- [ ] LLC or Corporation formed
-- [ ] Professional liability insurance
-- [ ] Cyber liability insurance ($1M+ recommended)
-- [ ] Workers compensation (if hiring W2 caregivers)
-
-### Licensing
-- [ ] Home care agency license (state-specific)
-- [ ] Business license
-- [ ] Tax ID (EIN)
-
-### Background Check Compliance
-- [ ] FCRA compliance for background checks
-- [ ] State-specific background check laws
-- [ ] Ongoing monitoring (not just initial check)
-
----
-
-## ✅ 10. Launch Day Checklist
-
-- [ ] All BAAs signed and filed
-- [ ] Encryption keys generated and secured
-- [ ] Firestore rules deployed and tested
-- [ ] Environment variables configured
-- [ ] Privacy policy and terms live
-- [ ] Support email/phone active
-- [ ] Incident response team on standby
-- [ ] Monitoring dashboards active
-- [ ] Backup systems tested
-- [ ] Rollback plan documented
-
----
-
-## 🚨 Post-Launch (Ongoing)
-
-### Monthly
-- [ ] Review audit logs
-- [ ] Check for unauthorized access attempts
-- [ ] Update dependencies (security patches)
-
-### Quarterly
-- [ ] Security risk assessment review
-- [ ] Access review (remove terminated employees)
-- [ ] Backup recovery test
-- [ ] Policy updates
-
-### Annually
-- [ ] Full security audit
-- [ ] HIPAA compliance review
-- [ ] Penetration test
-- [ ] Staff security training
-
----
-
-## 📞 Emergency Contacts
-
-| Issue | Contact |
-|-------|---------|
-| Data Breach | [Your Incident Response Team] |
-| Firebase Issues | Firebase Support + your dev team |
-| Legal Questions | [Your Healthcare Attorney] |
-| Insurance Claims | [Your Cyber Liability Carrier] |
-
----
-
-## 🎯 Priority: DO NOT SKIP
-
-**Blocks Launch:**
-1. BAAs signed
-2. Encryption implemented
-3. Firestore rules hardened
-4. Privacy policy live
-
-**Can Fix Post-Launch:**
-- Advanced audit logging
-- Automated backup testing
-- Performance optimizations
-
----
-
-**Questions? Review with healthcare compliance attorney before launch.**
+# Evia — Security & Privacy Posture (current state)
+
+> Rewritten 2026-10-07 from an aspirational HIPAA checklist (every box unchecked, and it documented
+> field-level PII encryption that had been removed) into a statement of what IS and IS NOT in place.
+> Update this file when a line changes. Nothing here is a compliance claim.
+
+## The open question (counsel)
+HIPAA binds covered entities and their business associates. Evia is a **non-medical** care
+marketplace: it does not provide medical care and does not collect medical records, medication
+lists or diagnoses (forms decline them since 2026-10-04). Whether HIPAA applies at all is a legal
+determination that has not been made. Until it is, the product makes **no** HIPAA claim anywhere
+(site pages, Evia's answers, marketing) — see the 2026-10-07 claim removal in the progress tracker.
+
+## In place (verified in code, 2026-10-07)
+- **Access control:** Firestore rules scope care plans and senior profiles to the owning family + admins; caregiver identity PII sits in a private subcollection no client can write; admin is a server-checked role (`users.userType == 'admin'`).
+- **Audit trail:** health-data reads, profile changes, messages and bookings are written to `agent_audit_log` with a 6-year TTL (`functions/src/observability/auditLog.ts`).
+- **Minimum necessary:** medications / dosages / diagnoses / conditions are refused at every free-text save on both channels (`utils/medicationInstruction.ts` + the shared Evia rule); emergency contacts and door codes are fetched on demand, never pre-loaded into Evia's prompt; a caregiver never sees a family's address or phone before a confirmed booking.
+- **Encryption:** Google Cloud default encryption at rest and TLS in transit for Firestore, Functions, Storage. (No application-level / field-level encryption — the former CryptoJS helpers were removed; `utils/encryption.ts` only masks for display.)
+- **Deletion:** a full account-deletion path (`deleteAccountForUser`) and TTLs on operational collections.
+- **Error reporting:** Sentry masks all replay text and strips tokens from URLs.
+- **Log hygiene (2026-10-07):** function logs redact phone numbers and emails at the console layer (`functions/src/observability/logRedaction.ts`); the Checkr client no longer prints any part of the API key.
+- **Background checks:** SSN / DOB are entered on Checkr's hosted site, never stored by Evia; consent (FCRA disclosure + authorization) precedes every Checkr call.
+
+## NOT in place
+- **Business Associate Agreements: none signed.** Vendors in the data path: Google Cloud / Firebase, OpenAI (agent tier), Gemini and Anthropic (fallbacks), Zep (Evia memory), Linq (SMS), Resend (email), Sentry, Stripe (payments — no health data), Checkr (background checks — no health data). OpenAI's API BAA covers zero-data-retention endpoints only; our calls are not configured for ZDR.
+- **SMS is an unencrypted channel.** Care details travel by text; under HIPAA that requires documented consent and minimum-necessary content.
+- **No HIPAA program:** no risk assessment, no written policies, no breach-notification procedure (60-day rule), no training records, no access reviews, no named privacy/security officer.
+- **Admin MFA:** built 2026-10-07 behind `VITE_REQUIRE_ADMIN_MFA` — requires Identity Platform + the TOTP provider enabled in the Firebase console before it can be turned on.
+- **Field-level encryption:** none (platform encryption only). A risk assessment would say whether care plans warrant more.
+
+## Vendor BAA requests
+Templates: `BAA_REQUEST_TEMPLATES.md` (Google Cloud, Twilio, Stripe, Checkr). Add OpenAI (baa@openai.com — ZDR endpoints), Anthropic, Google (Gemini), Zep, Linq, Resend, Sentry if counsel decides HIPAA applies.
+
+## Related records
+- `AGENT_NATIVE_EXCLUSIONS.md` — what Evia's prompt carries and the provider decision record.
+- `PRIVACY_POLICY.md`, `TERMS_OF_SERVICE.md` — DRAFTS carrying a STATUS banner; the live pages are `components/pages/PrivacyPolicyPage.tsx` and `TermsOfServicePage.tsx`.

@@ -277,7 +277,7 @@ export default function Membership() {
                 </div>
                 <div className="flex items-center gap-2">
                   <CreditCard className="w-5 h-5 text-primary-600" />
-                  <span>PCI Compliant</span>
+                  <span>Payments by Stripe</span>
                 </div>
               </div>
             </div>

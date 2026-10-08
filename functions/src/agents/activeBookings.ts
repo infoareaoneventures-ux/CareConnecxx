@@ -86,8 +86,9 @@ export interface ActiveBooking {
   careRecipients:    Array<Record<string, unknown>>;
   emergencyContact:  Record<string, unknown> | null;
   upcomingShifts:    ActiveBookingShift[];
-  /** Card-level buttons: Message, Cancel Booking. */
-  actions:           Array<"message" | "cancel_booking">;
+  /** Card-level buttons: Message, Request Visit (2026-10-07 — the Calendar's modal preselected on this booking; shown when
+   *  the booking is accepted and still has a scheduled visit, the modal's own list rule), Cancel Booking. */
+  actions:           Array<"message" | "request_visit" | "cancel_booking">;
   /** The family's membership lapsed: no new visits are generated until it's reactivated (already-scheduled ones still happen). */
   schedulePaused:    boolean;
   schedulePausedNote: string | null;
@@ -186,6 +187,9 @@ export async function listActiveBookings(clientId: string): Promise<ActiveBookin
     const ongoing = Boolean(schedule.ongoing ?? base.recurringWeekly ?? false);
     const singleVisit = !ongoing && !!schedule.startDate && schedule.startDate === schedule.endDate;
     const paymentMethod = (base.paymentMethod as string | undefined) ?? null;
+    // ClientVisitsPage.tsx onRequestVisit: the booking is in fetchRequestVisitTargets' list — an accepted booking_requests
+    // doc with at least one scheduled shift (visitRequest.ts listVisitRequestCaregivers is the same rule).
+    const requestVisit = !!bookingDoc && bookingDoc.status === "accepted" && list.some((s) => s.status === "scheduled");
     out.push({
       bookingRequestId:  (base.bookingRequestId as string | undefined) ?? null,
       caregiverId:       (base.caregiverId as string | undefined) ?? null,
@@ -205,7 +209,7 @@ export async function listActiveBookings(clientId: string): Promise<ActiveBookin
       careRecipients:    Array.isArray(base.careRecipients) ? (base.careRecipients as Array<Record<string, unknown>>) : [],
       emergencyContact:  (base.emergencyContact as Record<string, unknown> | undefined) ?? null,
       upcomingShifts:    sorted.map((s) => shiftRow(s, bookingNote)),
-      actions:           ["message", "cancel_booking"],
+      actions:           requestVisit ? ["message", "request_visit", "cancel_booking"] : ["message", "cancel_booking"],
       schedulePaused,
       schedulePausedNote: schedulePaused ? "Schedule paused — the family's membership is inactive. Visits already on the calendar still happen; reactivating the membership resumes new visits." : null,
     });

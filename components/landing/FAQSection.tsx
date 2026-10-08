@@ -19,7 +19,7 @@ export const faqs = [
     },
     {
         question: "Is my parent's personal information secure?",
-        answer: "Absolutely. We're HIPAA-compliant and use bank-level encryption (AES-256) for all data. Caregivers only receive the specific information they need for care. Full medical history and sensitive documents stay private and are managed securely by Evia.",
+        answer: "Your information is encrypted in transit and at rest, access is limited by role, and every view of care details is logged. Caregivers see only what they need for a confirmed visit — never your address or phone until a booking is confirmed. We don't collect medical records: care plans hold the type of care needed and daily routines, not diagnoses or medication lists.",
         category: "Privacy"
     },
     {

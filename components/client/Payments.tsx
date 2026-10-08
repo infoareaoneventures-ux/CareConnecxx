@@ -349,7 +349,8 @@ const ShiftRow: React.FC<{
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
       {/* Main row — flex with dividers matching caregiver side */}
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        // flex-wrap: every cell is fixed-width, so on a narrow card the status block wraps onto its own right-aligned line instead of being clipped by the card's overflow-hidden (founder screenshot, 2026-10-07: "Correction Sent" cut off).
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
         onClick={() => setExpanded(e => !e)}
       >
         <div className="shrink-0 w-[58px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-primary-600 mt-0.5">{new Date(row.submittedStartTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p></div>
@@ -369,8 +370,8 @@ const ShiftRow: React.FC<{
             <span>Card</span>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1 ml-auto shrink-0">
-          <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>{cfg.label}</span>
+        <div className="flex flex-col items-end gap-1 ml-auto shrink-0 max-w-full">
+          <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${cfg.color} ${cfg.bg} ${cfg.border}`}>{cfg.label}</span>
           {livePending && (
             <span className="text-[10px] text-slate-400 text-right max-w-[14rem]">
               Submitted {fmtTime(startTs)}–{fmtTime(endTs)} · ${totalPay.toFixed(2)}

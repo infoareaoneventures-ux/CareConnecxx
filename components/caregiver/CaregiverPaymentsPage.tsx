@@ -459,7 +459,7 @@ const PendingShiftRow: React.FC<{
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         {/* Collapsed data strip */}
         <div
-          className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+          className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
           onClick={() => setPendingOpen(o => !o)}
         >
           <Col label="Date"     value={ctrStart ? fmtDate(ctrStart) : '—'}  className="shrink-0 w-[58px]" />
@@ -578,7 +578,7 @@ const PendingShiftRow: React.FC<{
         <div className="bg-white rounded-2xl border border-orange-200 overflow-hidden">
           {/* Collapsed data strip */}
           <div
-            className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-orange-50 transition-colors select-none"
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 cursor-pointer hover:bg-orange-50 transition-colors select-none"
             onClick={() => setPendingOpen(o => !o)}
           >
             <Col label="Date"     value={stripStart ? fmtDate(stripStart) : '—'} className="shrink-0 w-[58px]" />
@@ -706,7 +706,7 @@ const PendingShiftRow: React.FC<{
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
         onClick={() => setPendingOpen(o => !o)}
       >
         <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'}  className="shrink-0 w-[58px]" />
@@ -839,7 +839,7 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       {/* one-line data strip */}
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
         onClick={() => setOpen(o => !o)}
       >
         <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'}  className="shrink-0 w-[58px]" />
@@ -1191,7 +1191,7 @@ const SubmittableShiftCard: React.FC<{
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       {/* ── single-line header (pure data strip) ── */}
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
         onClick={() => setOpen(o => !o)}
       >
         <Col label="Date"     value={fmtDate(dispStart)}                              className="shrink-0 w-[58px]" />

@@ -747,6 +747,14 @@ export const onReviewWritten = functions.firestore
           body: `${after.clientName || 'A client'} left you a ${stars}review.`,
           data: { reviewId: context.params.reviewId },
         });
+        // The same event over text (founder, 2026-10-07: "Basra left me a review but it didn't come thru Evia") —
+        // the bell's fact plus the review's words and the page it lives on, like every other caregiver notice.
+        const { notifyCaregiverByText } = await import('./triggers/notificationTriggers');
+        const { getAppUrl } = await import('./config/appUrl');
+        const comment = typeof after.comment === 'string' ? after.comment.trim() : '';
+        const quoted = comment ? `: "${comment.length > 240 ? `${comment.slice(0, 237)}…` : comment}"` : '.';
+        await notifyCaregiverByText(after.caregiverId,
+          `${after.clientName || 'A client'} left you a ${stars}review${quoted} It's on your profile: ${getAppUrl()}/caregiver/profile?section=reviews`);
       } catch (err) {
         console.error('[onReviewWritten] notification error:', (err as Error)?.name ?? 'Error');
       }

@@ -4,7 +4,7 @@ import {
   Search, Calendar, MessageSquare, Heart,
   ChevronDown, LogOut, Settings, CreditCard, Crown,
   Users, FileText, CalendarCheck,
-  Briefcase, X, MoreHorizontal, HelpCircle, Mail,
+  Briefcase, X, MoreHorizontal, HelpCircle,
 } from 'lucide-react';
 import { NotificationDropdown } from '../ui/NotificationDropdown';
 import { BloomMark } from '../ui/BloomMark';
@@ -40,6 +40,16 @@ export const ClientNavigation: React.FC = () => {
 
   const avatarRef = React.useRef<HTMLDivElement>(null);
   const helpRef = React.useRef<HTMLDivElement>(null);
+  // The one support door (desktop ? popover and the mobile More sheet): the support chat room in the Inbox. No mailto: support@eviacares.com is suppressed.
+  const openSupportRoom = async () => {
+    const user = authService.getCurrentUser();
+    if (!user) { navigate('/client/inbox'); return; }
+    try {
+      const { chatService } = await import('../../services/chatService');
+      const roomId = await chatService.createOrGetSupportRoom(user.uid, user.displayName || user.email?.split('@')[0] || 'Client');
+      navigate(`/client/inbox?room=${roomId}`);
+    } catch { navigate('/client/inbox'); }
+  };
   const findCareRef = React.useRef<HTMLDivElement>(null);
   const myCareRef = React.useRef<HTMLDivElement>(null);
 
@@ -179,22 +189,8 @@ export const ClientNavigation: React.FC = () => {
               {helpOpen && (
                 <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 p-4 z-50">
                   <p className="text-xs font-semibold text-slate-700 mb-3">Need Help?</p>
-                  <a href="mailto:support@eviacares.com"
-                    className="flex items-center gap-2 text-xs text-slate-600 hover:text-primary-600 mb-3">
-                    <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    support@eviacares.com
-                  </a>
                   <button
-                    onClick={async () => {
-                      setHelpOpen(false);
-                      const user = authService.getCurrentUser();
-                      if (!user) { navigate('/client/inbox'); return; }
-                      try {
-                        const { chatService } = await import('../../services/chatService');
-                        const roomId = await chatService.createOrGetSupportRoom(user.uid, user.displayName || user.email?.split('@')[0] || 'Client');
-                        navigate(`/client/inbox?room=${roomId}`);
-                      } catch { navigate('/client/inbox'); }
-                    }}
+                    onClick={() => { setHelpOpen(false); void openSupportRoom(); }}
                     className="w-full flex items-center justify-center gap-1.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors">
                     <MessageSquare className="w-3.5 h-3.5" />Message our team
                   </button>
@@ -363,10 +359,11 @@ export const ClientNavigation: React.FC = () => {
                   { icon: <Settings className="w-4 h-4" />, label: 'Account Settings', path: '/client/account' },
                   { icon: <CreditCard className="w-4 h-4" />, label: 'Payments', path: '/client/payments' },
                   { icon: <Crown className="w-4 h-4" />, label: 'Membership', path: '/client/membership' },
-                  { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@eviacares.com' },
+                  // Was a mailto to support@eviacares.com (suppressed inbox — dead end). The one support door is the support chat room (2026-10-07).
+                  { icon: <HelpCircle className="w-4 h-4" />, label: 'Message our team', path: 'support' },
                 ].map(item => (
                   <button key={item.path}
-                    onClick={() => { setMoreOpen(false); item.path.startsWith('mailto:') ? (window.location.href = item.path) : navigate(item.path); }}
+                    onClick={() => { setMoreOpen(false); if (item.path === 'support') { void openSupportRoom(); return; } navigate(item.path); }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                       isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'
                     }`}>

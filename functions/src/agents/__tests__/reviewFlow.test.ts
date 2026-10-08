@@ -82,4 +82,28 @@ describe("first-visit prompt", () => {
     expect(await handleReviewPromptReply({ phone: "+1", chatId: "ch", text: "what time tomorrow", session }, deps)).toBe(false);
     expect(await handleReviewPromptReply({ phone: "+1", chatId: "ch", text: "5", session: {} }, deps)).toBe(false);
   });
+  it("a NEWER decision notice owns the reply (live 2026-10-07: 'Decline' to an applicant notice was taken as declining the review)", async () => {
+    const setAt = new Date(Date.now() - 60 * 60_000).toISOString();
+    const session = { userId: "c1", pendingReviewPromptCaregiverId: "cg1", pendingReviewPromptCaregiverName: "Basra Ali", pendingReviewPromptSetAt: setAt, pendingDecision: { kind: "job_application", recordId: "app1", parkedAt: new Date().toISOString() } };
+    const deps = { startReviewFlow: vi.fn(), sendMessage: vi.fn(), clearAnchor: vi.fn(), classify: vi.fn() };
+    expect(await handleReviewPromptReply({ phone: "+1", chatId: "ch", text: "Decline", session }, deps)).toBe(false);
+    expect(deps.classify).not.toHaveBeenCalled();
+    // An OLDER parked decision does not block the prompt.
+    const older = { ...session, pendingDecision: { ...session.pendingDecision, parkedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString() } };
+    deps.classify.mockResolvedValueOnce({ kind: "other" });
+    await handleReviewPromptReply({ phone: "+1", chatId: "ch", text: "Decline", session: older }, deps);
+    expect(deps.classify).toHaveBeenCalled();
+  });
+  it("declining by text is the dashboard card's Not now (users.dismissedReviewPrompts); Not now on the site ends the prompt here too", async () => {
+    const session = { userId: "c1", pendingReviewPromptCaregiverId: "cg1", pendingReviewPromptCaregiverName: "Basra Ali", pendingReviewPromptSetAt: new Date().toISOString() };
+    const deps = { startReviewFlow: vi.fn(), sendMessage: vi.fn(async () => undefined), clearAnchor: vi.fn(async () => undefined), classify: vi.fn(), dismissOnSite: vi.fn(async () => undefined), isDismissedOnSite: vi.fn(async () => false) };
+    deps.classify.mockResolvedValueOnce({ kind: "decline" });
+    expect(await handleReviewPromptReply({ phone: "+1", chatId: "ch", text: "no thanks", session }, deps)).toBe(true);
+    expect(deps.dismissOnSite).toHaveBeenCalledWith("c1", "cg1");
+    deps.isDismissedOnSite.mockResolvedValueOnce(true);
+    deps.classify.mockClear();
+    expect(await handleReviewPromptReply({ phone: "+1", chatId: "ch", text: "5", session }, deps)).toBe(false);
+    expect(deps.clearAnchor).toHaveBeenCalledTimes(2);
+    expect(deps.classify).not.toHaveBeenCalled();
+  });
 });

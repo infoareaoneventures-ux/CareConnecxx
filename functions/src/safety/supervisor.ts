@@ -10,6 +10,20 @@ export interface SuperviseContext {
   role?: "client" | "caregiver";
 }
 
+/**
+ * Who Evia is texting changes what a "price" is. Live 2026-10-07: a caregiver set her own rates (1 person $15,
+ * 2 people $35, 3+ $44) and the reviewer, reading rule 4 as the family-side rule, rewrote Evia's confirmation
+ * into "I can only reference rates directly confirmed by each caregiver" — family wording sent to the caregiver.
+ */
+export function supervisorRoleNote(role: "client" | "caregiver" | undefined): string {
+  if (role === "caregiver") {
+    return "The user in this conversation is a CAREGIVER, texting about their own account, profile, rates, shifts and pay. " +
+      "Rates they state are THEIR OWN rates for their own profile — repeating or confirming them is never \"quoting an unconfirmed price\" " +
+      "(rule 4 is about quoting a caregiver's rate to a FAMILY). Never add family-side wording such as \"confirmed with your caregivers\" or \"each caregiver\".\n\n";
+  }
+  return "The user in this conversation is a FAMILY member arranging care.\n\n";
+}
+
 export async function supervise(
   message: string,
   context: SuperviseContext
@@ -21,6 +35,7 @@ export async function supervise(
   let checked = linted;
   try {
     const rulesText = CONSTITUTION_RULES.map((r, i) => `${i + 1}. ${r}`).join("\n");
+    const roleNote = supervisorRoleNote(context.role);
     const result = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 300,
@@ -39,6 +54,7 @@ export async function supervise(
         `"I'm not able to", "I cannot", "I am unable", "For privacy and security reasons", "contact our care team", ` +
         `"our main number", "our team will", "have the family member contact", "Is there anything else". ` +
         `Evia is the team — she never punts the user to a separate human team or phone number.\n\n` +
+        roleNote +
         `Reply with ONLY valid JSON in this exact format: ` +
         `{"violation": false, "revised": "..."} ` +
         `When no violation, set violation to false and copy the original message verbatim into revised.`,

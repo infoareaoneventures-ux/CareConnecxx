@@ -341,8 +341,12 @@ export const onJobApplicationCreate = functions.firestore
       // The ONE text for this event (same words as the bell). The Apply flow
       // (agents/caregiverJobFlows.ts) deliberately does not send its own, and the second
       // LLM-worded trigger that used to fire on the same create was removed.
+      // The applicant row's buttons as the reply words, parked so a one-word reply runs the page's own action
+      // (decisionNotices.ts) — never the agent's guess, and never another prompt's interceptor (2026-10-07).
+      const applicantName = String(data.caregiverName || 'A caregiver');
       await notifyClientByText(data.clientId,
-        `${data.caregiverName || 'A caregiver'} applied to your post: "${data.jobTitle || 'your care request'}". Want me to pull up their profile?`);
+        `${applicantName} applied to your post: "${data.jobTitle || 'your care request'}". Reply VIEW for their profile, INTERVIEW to request an interview, or DECLINE.`,
+        parkDecision(parkedDecision("job_application", context.params.applicationId, `${applicantName}'s application to "${data.jobTitle || 'your post'}"`, "client", Date.now(), applicantName)));
     } catch (err) {
       console.error('[onJobApplicationCreate] error:', err);
     }

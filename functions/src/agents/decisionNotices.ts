@@ -24,7 +24,9 @@ export type DecisionKind =
   | "booking_request"            // caregiver: ACCEPT / DECLINE / DETAILS
   | "booking_request_decline"    // caregiver: the page's confirm — YES / NO
   | "amendment"                  // caregiver: ACCEPT / DECLINE
-  | "new_job";                   // caregiver: APPLY / DETAILS
+  | "new_job"                    // caregiver: APPLY / DETAILS
+  | "job_application"            // client: VIEW / INTERVIEW / DECLINE — the post's applicant row (2026-10-07)
+  | "job_application_decline";   // client: YES / NO — the decline confirm (no card in view)
 
 export interface PendingDecision {
   kind: DecisionKind;
@@ -47,6 +49,8 @@ export const OPTIONS: Record<DecisionKind, string[]> = {
   booking_request_decline: ["YES", "NO"],
   amendment:               ["ACCEPT", "DECLINE"],
   new_job:                 ["APPLY", "DETAILS"],
+  job_application:         ["VIEW", "INTERVIEW", "DECLINE"],
+  job_application_decline: ["YES", "NO"],
 };
 
 export function parkedDecision(kind: DecisionKind, recordId: string, label: string, role: "caregiver" | "client", now = Date.now(), party?: string): PendingDecision {
@@ -208,6 +212,46 @@ export async function runDecision(
       if (choice === "ACCEPT" && !(await caregiverGate(phone, chatId, caregiverId))) break;
       const r = choice === "ACCEPT" ? await br.acceptAmendment(caregiverId, pd.recordId) : await br.declineAmendment(caregiverId, pd.recordId);
       await say(r.ok ? r.toast : r.reason === "not_pending" ? `That schedule change is already ${r.status}.` : "That request isn't on your Requests tab anymore.");
+      break;
+    }
+    case "job_application": {
+      // PostsPage.tsx's applicant row: the profile (tap-through), Request Interview, Decline. Live 2026-10-07 the
+      // notice asked "Want me to pull up their profile?" and a "Decline" reply was taken by the first-visit review
+      // prompt instead ("the Leave a Review button stays…").
+      const appSnap = await db.collection("job_applications").doc(pd.recordId).get().catch(() => null);
+      const app = appSnap?.exists ? (appSnap.data() ?? {}) : null;
+      if (!app) { await say("That application isn't on your post anymore."); break; }
+      const name = String(app.caregiverName ?? pd.party ?? "the caregiver");
+      const firstName = name.split(/\s+/)[0];
+      if (String(app.status ?? "pending") !== "pending") { await say(`${firstName}'s application is already ${String(app.status)}.`); break; }
+      if (choice === "VIEW") {
+        const { getAppUrl } = await import("../config/appUrl");
+        await say(`Tap to view ${firstName}'s profile: ${getAppUrl()}/p/${String(app.caregiverId ?? "")}\n\nReply INTERVIEW to request an interview, or DECLINE.`);
+        keepParked = true;
+        break;
+      }
+      if (choice === "DECLINE") {
+        // The row's Decline button writes at once on the page (the card is in view); over text, name it and confirm.
+        await say(`Decline ${firstName}'s application to "${String(app.jobTitle ?? "your post")}"? Reply YES or NO.`);
+        await db.collection("agent_sessions").doc(phone).set({ pendingDecision: parkedDecision("job_application_decline", pd.recordId, `declining ${pd.label}`, "client", Date.now(), name) }, { merge: true }).catch(() => {});
+        return;
+      }
+      // INTERVIEW — the row's Request Interview button: the site's interview flow for this caregiver, linked to the application.
+      const { startInterviewFlow } = await import("./interviewFlow");
+      await startInterviewFlow(phone, chatId, session as AgentSession, { caregiverId: String(app.caregiverId ?? ""), applicationId: pd.recordId });
+      break;
+    }
+    case "job_application_decline": {
+      const firstName = String(pd.party ?? "the caregiver").split(/\s+/)[0];
+      if (choice === "NO") { await say(`Okay — ${firstName}'s application stays as it is.`); break; }
+      const ref = db.collection("job_applications").doc(pd.recordId);
+      const snap = await ref.get().catch(() => null);
+      const app = snap?.exists ? (snap.data() ?? {}) : null;
+      if (!app) { await say("That application isn't on your post anymore."); break; }
+      if (String(app.status ?? "pending") !== "pending") { await say(`${firstName}'s application is already ${String(app.status)}.`); break; }
+      // PostsPage.tsx handleDeclineApplicant, exactly: status 'rejected' + declinedAt; nothing is sent to the caregiver.
+      await ref.update({ status: "rejected", declinedAt: admin.firestore.FieldValue.serverTimestamp() });
+      await say("Applicant declined"); // the page's toast
       break;
     }
     case "new_job": {

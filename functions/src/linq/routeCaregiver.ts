@@ -268,6 +268,18 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (inShift === "handled") return "handled";
     }
 
+    // ── Visit mode — free text while a visit is IN PROGRESS (agents/visitMode.ts, 2026-10-07) ──
+    // Read against the open visit before any other page's keywords, flow or the
+    // intent classifier can claim it ("I'm done with the visit" used to become
+    // CANCEL_SHIFT). Tasks / notes / finish / a question about the visit are
+    // handled here; anything outside the visit falls through as before. With
+    // no visit open, an arrival inside the Start window starts the visit.
+    if (session.caregiverId) {
+      const { handleVisitModeMessage } = await import("../agents/visitMode");
+      const vm = await handleVisitModeMessage(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (vm === "handled") return "handled";
+    }
+
     // ── FAMILIES · PAST FAMILIES · FAMILY n — the My Families page (agents/caregiverFamilies.ts) ──
     if (session.caregiverId) {
       const { handleFamiliesKeyword } = await import("../agents/caregiverFamilies");

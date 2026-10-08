@@ -215,6 +215,26 @@ describe("Submit hours worked — the modal as a flow", () => {
     expect(hoisted.sent.at(-1)).toBe("Hours submitted — awaiting client approval");
     expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("__delete__");
   });
+  it("SUBMIT failure: the callable's own message is texted (the page's toast); a raw server error is NOT — a plain line instead (live 2026-10-07: '6 ALREADY_EXISTS: Document already exists: projects/…' reached the phone)", async () => {
+    shift("s1");
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    await handleSubmitHoursFlowStep("+1", "chat", "none", session() as never);
+    const raw: any = new Error("6 ALREADY_EXISTS: Document already exists: projects/x/databases/(default)/documents/billingApprovalOutbox/s1:approval-request:v1");
+    raw.code = 6;
+    hoisted.submit.mockRejectedValueOnce(raw);
+    await handleSubmitHoursFlowStep("+1", "chat", "SUBMIT", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("I couldn't submit those hours just now. Please try again in a minute, or submit them from your Timesheets page.");
+    expect(hoisted.sent.at(-1)).not.toContain("ALREADY_EXISTS");
+
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    await handleSubmitHoursFlowStep("+1", "chat", "none", session() as never);
+    const https: any = new Error("Different hours were already submitted for this shift");
+    https.code = "already-exists";
+    hoisted.submit.mockRejectedValueOnce(https);
+    await handleSubmitHoursFlowStep("+1", "chat", "SUBMIT", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("Different hours were already submitted for this shift");
+  });
+
   it("a charge is parsed, confirmed, and listed with base + total and the extra-charges note; validation uses the modal's words", async () => {
     shift("s1");
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });

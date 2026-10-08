@@ -92,6 +92,10 @@ export interface ReviewPromptDeps {
   sendMessage: (chatId: string, text: string) => Promise<unknown>;
   clearAnchor: (phone: string) => Promise<void>;
   classify: (text: string) => Promise<ReviewPromptReply>;
+  /** The dashboard card's Not now (users.dismissedReviewPrompts) — a text decline must end the card too (founder, 2026-10-07). */
+  dismissOnSite?: (clientId: string, caregiverId: string) => Promise<void>;
+  /** Not now already pressed on the site → the prompt is over here as well. */
+  isDismissedOnSite?: (clientId: string, caregiverId: string) => Promise<boolean>;
 }
 
 async function defaultDeps(): Promise<ReviewPromptDeps> {
@@ -108,6 +112,15 @@ async function defaultDeps(): Promise<ReviewPromptDeps> {
       }).catch(() => {});
     },
     classify: (text) => classifyReviewPromptReply(text),
+    dismissOnSite: async (clientId, caregiverId) => {
+      // ClientDashboard.tsx dismissReviewPrompt, the same write.
+      await admin.firestore().collection("users").doc(clientId).set({ dismissedReviewPrompts: admin.firestore.FieldValue.arrayUnion(caregiverId) }, { merge: true }).catch(() => {});
+    },
+    isDismissedOnSite: async (clientId, caregiverId) => {
+      const snap = await admin.firestore().collection("users").doc(clientId).get().catch(() => null);
+      const list = snap?.exists ? (snap.data()?.dismissedReviewPrompts as unknown) : null;
+      return Array.isArray(list) && list.includes(caregiverId);
+    },
   };
 }
 
@@ -122,11 +135,22 @@ export async function handleReviewPromptReply(
 ): Promise<boolean> {
   const anchor = freshReviewPromptCaregiver(params.session, params.nowMs);
   if (!anchor) return false;
+  // A newer decision notice (an applicant, a proposed time…) owns the reply: live 2026-10-07 "Decline" to an
+  // applicant notice was read as declining the review prompt sent an hour earlier.
+  const pd = params.session?.pendingDecision as { parkedAt?: string } | undefined;
+  const anchorAt = Date.parse(String(params.session?.pendingReviewPromptSetAt ?? ""));
+  if (pd?.parkedAt && Number.isFinite(anchorAt) && Date.parse(pd.parkedAt) > anchorAt) return false;
   const d = deps ?? await defaultDeps();
+  const clientId = String(params.session?.userId ?? "");
+  if (clientId && d.isDismissedOnSite && await d.isDismissedOnSite(clientId, anchor.caregiverId)) {
+    await d.clearAnchor(params.phone); // Not now was pressed on the site — the prompt is over on both channels
+    return false;
+  }
   const verdict = await d.classify(params.text);
   if (verdict.kind === "other") return false;
   if (verdict.kind === "decline") {
     await d.clearAnchor(params.phone);
+    if (clientId && d.dismissOnSite) await d.dismissOnSite(clientId, anchor.caregiverId); // the card's Not now
     await d.sendMessage(params.chatId, `No problem — the Leave a Review button stays on ${first(anchor.caregiverName)}'s profile whenever you'd like.`);
     return true;
   }

@@ -48,7 +48,7 @@ describe("routeForNotification — every family type lands on the page that show
   it("caregiver routes are unchanged", () => {
     expect(routeForNotification({ type: "booking_request" }, "caregiver")).toBe("/caregiver/bookings");
     expect(routeForNotification({ type: "interview_request" }, "caregiver")).toBe("/caregiver/jobs?tab=interviews");
-    expect(routeForNotification({ type: "review_received" }, "caregiver")).toBe("/caregiver/dashboard");
+    expect(routeForNotification({ type: "review_received" }, "caregiver")).toBe("/caregiver/profile?section=reviews"); // the Reviews card, not the dashboard (2026-10-07)
   });
 });
 

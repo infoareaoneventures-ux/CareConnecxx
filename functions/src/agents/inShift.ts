@@ -106,7 +106,7 @@ export function noteLines(shift: Doc, bookingNote?: string | null): string[] {
 export function clock(ms: number): string {
   return new Date(ms).toLocaleTimeString("en-US", { timeZone: DEFAULT_TZ, hour: "numeric", minute: "2-digit" });
 }
-function visitLine(shift: Doc): string {
+export function visitLine(shift: Doc): string {
   return `${fmtDate(String(shift.date ?? ""))}, ${fmtTime(shift.startTime as string | undefined)}${shift.endTime ? ` – ${fmtTime(shift.endTime as string)}` : ""} with ${shift.clientName || "the family"}`;
 }
 export function startsInMinutes(shift: Doc, nowMs = Date.now()): number | null {
@@ -174,7 +174,7 @@ export async function startVisit(caregiverId: string, shiftId: unknown, nowMs = 
   if (isShiftOverdue(shift)) return { ok: false, reason: "overdue", message: `That visit's time has passed (${visitLine(shift)}) — it can't be started now.` };
   const mins = startsInMinutes(shift, nowMs);
   if (mins !== null && mins > START_WINDOW_MINUTES) {
-    return { ok: false, reason: "too_early", message: `Not yet — Start opens ${START_WINDOW_MINUTES} minutes before the visit (${fmtTime(shift.startTime as string | undefined)} on ${fmtDate(String(shift.date ?? ""))}). Text START when you're there.` };
+    return { ok: false, reason: "too_early", message: `Not yet — Start opens ${START_WINDOW_MINUTES} minutes before the visit (${fmtTime(shift.startTime as string | undefined)} on ${fmtDate(String(shift.date ?? ""))}). Text START then.` };
   }
   await v.ref.update({ status: "in-progress", startedAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
   const started = clock(nowMs);

@@ -75,7 +75,7 @@ const FIELD_KEYED_COLLECTIONS = [
   "caregiver_booked_slots", "appointment_care_plans", "carePlanVersions",
   "health_alerts_pending", "care_journal", "adminAdvanceQueue",
 ];
-const KEY_FIELDS = ["clientId", "userId", "uid", "recipientId", "ownerId", "requesterId", "caregiverId"];
+const KEY_FIELDS = ["clientId", "userId", "uid", "recipientId", "recipientUid", "ownerId", "requesterId", "caregiverId"]; // recipientUid = billingApprovalOutbox (2026-10-07)
 const PHONE_FIELDS = ["phone", "clientPhone", "caregiverPhone", "toPhone"];
 
 async function deleteQueryResults(q: admin.firestore.Query, errors: string[], label: string): Promise<number> {

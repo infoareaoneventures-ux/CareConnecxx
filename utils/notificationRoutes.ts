@@ -43,5 +43,7 @@ export function routeForNotification(n: RoutableNotification, role: Notification
   if (t.startsWith('shift_hours')) return '/caregiver/payments?tab=timesheets'; // Timesheets events (approved / correction / paid) live on Payments
   if (t.startsWith('booking') || t.startsWith('amendment') || t.startsWith('shift')) return '/caregiver/bookings';
   if (t.includes('payment') || t.includes('payout') || t.includes('membership')) return '/caregiver/payments';
+  // A new review lives on the caregiver's own profile page (Reviews card) — it used to fall through to the dashboard (2026-10-07).
+  if (t === 'review_received') return '/caregiver/profile?section=reviews';
   return '/caregiver/dashboard';
 }

@@ -179,7 +179,10 @@ export async function createValidatedShiftHours(input: {
       updatedAt: submittedAt,
     });
 
-    transaction.create(outboxRef, {
+    // set, not create (2026-10-07): an approval-request doc can outlive its timesheet (Reset Account deleted
+    // shiftHours but not this outbox doc — its key field is recipientUid), and a caregiver re-submitting then hit
+    // "6 ALREADY_EXISTS" texted raw. A fresh submission is a fresh request: overwrite, state back to pending.
+    transaction.set(outboxRef, {
       operationKey: `${input.appointmentId}:approval-request:v1`,
       appointmentId: input.appointmentId,
       recipientUid: appointment.clientId,
@@ -364,7 +367,10 @@ export async function createValidatedShiftHoursFromShift(input: {
       updatedAt: submittedAt,
     });
 
-    transaction.create(outboxRef, {
+    // set, not create (2026-10-07): an approval-request doc can outlive its timesheet (Reset Account deleted
+    // shiftHours but not this outbox doc — its key field is recipientUid), and a caregiver re-submitting then hit
+    // "6 ALREADY_EXISTS" texted raw. A fresh submission is a fresh request: overwrite, state back to pending.
+    transaction.set(outboxRef, {
       operationKey: `${input.shiftId}:approval-request:v1`,
       appointmentId: input.shiftId,
       recipientUid: shift.clientId,

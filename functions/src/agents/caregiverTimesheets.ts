@@ -529,8 +529,15 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     try {
       await submitShiftHoursAs(caregiverId, { shiftId: data.shiftId, startTime: data.startIso, endTime: data.endIso, lineItems: data.items.filter((li) => li.amount > 0) });
     } catch (err) {
-      const msg = err instanceof Error && err.message ? err.message : "Failed to submit hours";
-      await sendMessage(chatId, msg); // the page's error toast
+      // The page's error toast shows the callable's own message (an HttpsError, string code like "invalid-argument").
+      // Anything else is a raw server error and never reaches the phone (live 2026-10-07: "6 ALREADY_EXISTS:
+      // Document already exists: projects/…" was texted verbatim).
+      const code = (err as { code?: unknown } | null)?.code;
+      const message = err instanceof Error ? err.message : "";
+      // Raw = a gRPC/Firestore error (numeric code, or a document path in the text) or no message at all.
+      const isRaw = typeof code === "number" || !message || /projects\/\S+\/databases\//.test(message) || /^\d+ [A-Z_]+:/.test(message);
+      if (isRaw) console.error("submitHoursFlow: submit failed", err);
+      await sendMessage(chatId, isRaw ? "I couldn't submit those hours just now. Please try again in a minute, or submit them from your Timesheets page." : message);
       return;
     }
     await sendMessage(chatId, "Hours submitted — awaiting client approval"); // the page's toast

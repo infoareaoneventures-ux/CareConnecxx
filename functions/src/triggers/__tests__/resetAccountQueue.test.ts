@@ -90,6 +90,8 @@ describe("processResetAccountQueue", () => {
     expect(hoisted.deleted).toContain("waitlist/cg1");
     expect(hoisted.queried).toContain("shifts.caregiverId=cg1");
     expect(hoisted.queried).toContain("shifts.phone=+15550009999");
+    // The billing approval outbox is keyed by recipientUid — it used to survive a reset and block the next submission (2026-10-07).
+    expect(hoisted.queried).toContain("billingApprovalOutbox.recipientUid=cg1");
   });
 
   it("still wipes the uid-keyed data when no phone exists anywhere, and says so", async () => {

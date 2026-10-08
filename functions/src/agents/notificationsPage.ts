@@ -43,13 +43,16 @@ export function routeForNotification(n: RoutableNotification, role: Notification
   if (t.startsWith("shift_hours")) return "/caregiver/payments?tab=timesheets"; // Timesheets events (approved / correction / paid) live on Payments
   if (t.startsWith("booking") || t.startsWith("amendment") || t.startsWith("shift")) return "/caregiver/bookings";
   if (t.includes("payment") || t.includes("payout") || t.includes("membership")) return "/caregiver/payments";
+  if (t === "review_received") return "/caregiver/profile?section=reviews"; // the profile's Reviews card (2026-10-07)
   return "/caregiver/dashboard";
 }
 
 /** The page's name as the nav shows it, for the text. */
 export function pageLabelFor(path: string): string {
   const base = path.split("?")[0];
-  const tab = new URLSearchParams(path.split("?")[1] ?? "").get("tab");
+  const qs = new URLSearchParams(path.split("?")[1] ?? "");
+  const tab = qs.get("tab");
+  const section = qs.get("section");
   if (base.startsWith("/client/caregiver/")) return path.includes("review=1") ? "the caregiver's profile (Leave a Review)" : "the caregiver's profile";
   const labels: Record<string, string> = {
     "/client/posts": tab === "interviews" ? "Care Requests › Interviews" : "Care Requests › Posts",
@@ -63,6 +66,7 @@ export function pageLabelFor(path: string): string {
     "/caregiver/jobs": "Jobs › Interviews",
     "/caregiver/bookings": "My Bookings",
     "/caregiver/payments": tab === "timesheets" ? "Payments › Timesheets" : "Payments",
+    "/caregiver/profile": section === "reviews" ? "My Profile › Reviews" : "My Profile",
     "/caregiver/dashboard": "Dashboard",
   };
   return labels[base] ?? base;

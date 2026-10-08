@@ -153,6 +153,13 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
     setTimeout(() => document.getElementById('care-services')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
+  // ?section=reviews (the bell's New Review and Evia's review text, 2026-10-07): scroll to the Reviews card.
+  useEffect(() => {
+    if (loading || searchParams.get('section') !== 'reviews') return;
+    setSearchParams({}, { replace: true });
+    setTimeout(() => document.getElementById('reviews')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
   // Location is always derived from the city/state saved in Account Settings — never from free-text input
   const displayLocation: string = (profile.city && profile.state)
     ? `${profile.city}, ${profile.state}`
@@ -691,7 +698,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
             </div>
 
             {/* Reviews */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-5">
+            <div id="reviews" className="bg-white border border-slate-200 rounded-2xl p-5">
               <div className="flex items-center gap-2 mb-4">
                 <h3 className="font-bold text-slate-900">Reviews</h3>
                 {reviews.length > 0 && (

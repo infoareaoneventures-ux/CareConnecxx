@@ -207,6 +207,23 @@ describe("createValidatedShiftHoursFromShift", () => {
     expect(doc.autoApproveAt).toBeNull();
   });
 
+  it("an approval-request outbox doc left behind (Reset Account deleted the timesheet, not the outbox) does not block a fresh submission — live 2026-10-07 '6 ALREADY_EXISTS'", async () => {
+    seedCompletedShift();
+    hoisted.docState.set(`billingApprovalOutbox/${SHIFT_ID}:approval-request:v1`, { operationKey: `${SHIFT_ID}:approval-request:v1`, state: "sent", attemptCount: 1, providerMessageId: "old" });
+    const result = await createValidatedShiftHoursFromShift({
+      shiftId: SHIFT_ID,
+      actorUid: CAREGIVER,
+      submittedStartTime: "2026-08-24T23:30:00.000Z",
+      submittedEndTime: "2026-08-25T01:00:00.000Z",
+      source: "web",
+    });
+    expect(result.alreadyExisted).toBe(false);
+    expect(result.status).toBe("pending_client_review");
+    // The stale request is replaced by a fresh pending one — the family gets this submission's approval text.
+    const outbox = hoisted.docState.get(`billingApprovalOutbox/${SHIFT_ID}:approval-request:v1`);
+    expect(outbox).toMatchObject({ recipientUid: CLIENT, state: "pending", attemptCount: 0, providerMessageId: null });
+  });
+
   it("is idempotent on retry with the same interval", async () => {
     seedCompletedShift();
     const first = await createValidatedShiftHoursFromShift({

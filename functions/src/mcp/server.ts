@@ -4390,6 +4390,9 @@ async function executeToolCall(
           const bookings = groups.map((g) => ({
             bookingRequestId: g.key, clientName: g.base.clientName ?? null, address: g.base.address ?? null, rate: g.base.rate ?? null,
             schedule: (g.base.schedule as Record<string, unknown> | undefined) ?? null, notes: g.base.notes ?? null,
+            // The card's Care plan & preferences: the people and the emergency contact — so "who is the emergency contact?" is answerable (2026-10-07).
+            careRecipients: Array.isArray(g.base.careRecipients) ? g.base.careRecipients : [],
+            emergencyContact: (g.base.emergencyContact as Record<string, unknown> | undefined) ?? null,
             visits: g.shifts.filter((s) => cab.shiftStatusLabel(shiftDisplayStatus(s)) !== "Overdue")
               .sort((a, b) => a.date.localeCompare(b.date) || String(a.startTime ?? "").localeCompare(String(b.startTime ?? "")))
               .map((s) => ({ shiftId: s.id, date: s.date, dayOfWeek: weekdayForDate(s.date), isToday: s.date === today, startTime: s.startTime ?? null, endTime: s.endTime ?? null,
@@ -4738,7 +4741,13 @@ async function executeToolCall(
       if (Object.keys(patch).length === 1) return toolError("INVALID_INPUT", "At least one field to update is required");
       await caregiverRef.set(patch, { merge: true });
       logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_profile", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
-      return { success: true, updated: Object.keys(patch).filter(k => k !== "updatedAt") };
+      const updatedKeys = Object.keys(patch).filter(k => k !== "updatedAt");
+      const saved: Record<string, unknown> = {}; for (const k of updatedKeys) saved[k] = patch[k];
+      return {
+        success: true, updated: updatedKeys, saved,
+        // Live 2026-10-07: the model's own wording after a rate change drifted into family-side talk.
+        instruction: "Confirm in ONE short line exactly what was saved, in the caregiver's own terms (rates: 'Done — 1 person $15/hr, 2 people $35/hr, 3+ people $44/hr.'). It is their own profile: say nothing about other caregivers, confirmations or references.",
+      };
     }
 
     if (name === "pause_account") {

@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   MessageSquare, Home, Calendar, Briefcase,
   BookOpen, Settings, X, MoreHorizontal, LogOut, User,
-  Users, Wallet, HelpCircle, Mail,
+  Users, Wallet, HelpCircle,
 } from 'lucide-react';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
@@ -21,6 +21,18 @@ const AUTH_PATHS = [
   '/caregiver/signup',
   '/caregiver/forgot-password',
 ];
+
+// The one support door (desktop ? popover and the mobile More sheet): the support chat room in the Inbox —
+// Evia's twin is contact_support (the same room). No mailto anywhere: support@eviacares.com is suppressed (2026-10-07).
+async function openCaregiverSupportRoom(navigate: (path: string) => void): Promise<void> {
+  const user = authService.getCurrentUser();
+  if (!user) { navigate('/caregiver/inbox'); return; }
+  try {
+    const { chatService } = await import('../../services/chatService');
+    const roomId = await chatService.createOrGetSupportRoom(user.uid, user.displayName || user.email?.split('@')[0] || 'Caregiver');
+    navigate(`/caregiver/inbox?room=${roomId}`);
+  } catch { navigate('/caregiver/inbox'); }
+}
 
 export const CaregiverTopNav: React.FC = () => {
   const location = useLocation();
@@ -126,11 +138,14 @@ export const CaregiverTopNav: React.FC = () => {
                   { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/caregiver/settings' },
                   { icon: <Users className="w-4 h-4" />, label: 'My Families', path: '/caregiver/families' },
                   { icon: <Wallet className="w-4 h-4" />, label: 'Payments', path: '/caregiver/payments' },
-                  { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@eviacares.com' },
+                  // Help & Support used to be a mailto to support@eviacares.com — an inbox whose mail Resend suppresses (dead
+                  // end; same reason the avatar menu's Give feedback went on 2026-09-30). The one support door is the support
+                  // chat room, the same as the desktop ? popover's Message our team (2026-10-07).
+                  { icon: <HelpCircle className="w-4 h-4" />, label: 'Message our team', path: 'support' },
                 ].map(item => (
                   <button
                     key={item.path}
-                    onClick={() => { setMoreOpen(false); item.path.startsWith('mailto:') ? (window.location.href = item.path) : navigate(item.path); }}
+                    onClick={() => { setMoreOpen(false); if (item.path === 'support') { void openCaregiverSupportRoom(navigate); return; } navigate(item.path); }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                       isActive(item.path) ? 'text-ink-900 bg-paper-100' : 'text-ink-600 hover:bg-paper-100'
                     }`}
@@ -231,22 +246,8 @@ const DesktopNav: React.FC<{
           {helpOpen && (
             <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 p-4 z-50">
               <p className="text-xs font-semibold text-slate-700 mb-3">Need Help?</p>
-              <a href="mailto:support@eviacares.com"
-                className="flex items-center gap-2 text-xs text-slate-600 hover:text-primary-600 mb-3">
-                <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                support@eviacares.com
-              </a>
               <button
-                onClick={async () => {
-                  setHelpOpen(false);
-                  const user = authService.getCurrentUser();
-                  if (!user) { navigate('/caregiver/inbox'); return; }
-                  try {
-                    const { chatService } = await import('../../services/chatService');
-                    const roomId = await chatService.createOrGetSupportRoom(user.uid, user.displayName || user.email?.split('@')[0] || 'Caregiver');
-                    navigate(`/caregiver/inbox?room=${roomId}`);
-                  } catch { navigate('/caregiver/inbox'); }
-                }}
+                onClick={() => { setHelpOpen(false); void openCaregiverSupportRoom(navigate); }}
                 className="w-full flex items-center justify-center gap-1.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors">
                 <MessageSquare className="w-3.5 h-3.5" />Message our team
               </button>

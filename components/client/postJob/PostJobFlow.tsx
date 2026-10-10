@@ -108,7 +108,8 @@ export const PostJobFlow: React.FC = () => {
             );
           }
 
-          // Save per-recipient care needs and notes to carePlans.
+          // Save per-recipient care needs to carePlans. The job description stays on the job post only —
+          // care-plan Notes are the family's private, per-person field, edited on the Care Plan page (founder, 2026-10-09).
           // Location (with pets/smoking) is synced to locationPool — only set on recipient if none exists yet.
           const cpRef = db.collection('carePlans').doc(currentUser.uid);
           const cpSnap = await cpRef.get();
@@ -135,7 +136,6 @@ export const PostJobFlow: React.FC = () => {
             const updates: Record<string, any> = {
               [`recipientPlans.${key}.careNeeds`]: data.careTypes,
               [`recipientPlans.${key}.careNeedDetails`]: data.careNeedDetails || {},
-              [`recipientPlans.${key}.notes`]: data.description.trim(),
             };
             // Only set location if recipient has none saved yet
             if (!existingLocs?.length) {
@@ -145,7 +145,7 @@ export const PostJobFlow: React.FC = () => {
               await cpRef.update(updates);
             } catch (e: any) {
               if (e.code === 'not-found') {
-                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, careNeedDetails: data.careNeedDetails || {}, notes: data.description.trim(), locations: locationEntry } } });
+                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, careNeedDetails: data.careNeedDetails || {}, locations: locationEntry } } });
               }
             }
           }

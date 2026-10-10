@@ -82,7 +82,7 @@ const BASE_JOB_DATA = {
 };
 
 describe("buildAndSaveJobPost — carePlans notes parity with the website wizard", () => {
-  it("writes the collected jobDescription directly into recipientPlans.{key}.notes", async () => {
+  it("does NOT copy the jobDescription into recipientPlans.{key}.notes — the post's description and the care plan's private Notes are separate (founder, 2026-10-09)", async () => {
     await buildAndSaveJobPost({
       uid: "client1",
       phone: "+15550001111",
@@ -92,7 +92,7 @@ describe("buildAndSaveJobPost — carePlans notes parity with the website wizard
 
     const plan = hoisted.docState.get("carePlans/client1");
     const key = Object.keys(plan.recipientPlans)[0];
-    expect(plan.recipientPlans[key].notes).toBe(BASE_JOB_DATA.jobDescription);
+    expect(plan.recipientPlans[key].notes).toBeUndefined();
   });
 
   // 2026-09-14 (live-caught): recipientPlans only ever carried the parent
@@ -112,7 +112,7 @@ describe("buildAndSaveJobPost — carePlans notes parity with the website wizard
     expect(plan.recipientPlans[key].careNeedDetails).toEqual({});
   });
 
-  it("writes an empty string (not undefined) when no description was collected, matching the website's own unconditional write", async () => {
+  it("writes no notes even when no description was collected (the care plan's Notes are not this field)", async () => {
     await buildAndSaveJobPost({
       uid: "client2",
       phone: "+15550002222",
@@ -122,10 +122,10 @@ describe("buildAndSaveJobPost — carePlans notes parity with the website wizard
 
     const plan = hoisted.docState.get("carePlans/client2");
     const key = Object.keys(plan.recipientPlans)[0];
-    expect(plan.recipientPlans[key].notes).toBe("");
+    expect(plan.recipientPlans[key].notes).toBeUndefined();
   });
 
-  it("shares the same notes across every recipient in a multi-recipient household", async () => {
+  it("a multi-recipient household gets one plan entry each, none carrying the job description", async () => {
     await buildAndSaveJobPost({
       uid: "client3",
       phone: "+15550003333",
@@ -139,7 +139,7 @@ describe("buildAndSaveJobPost — carePlans notes parity with the website wizard
     const plan = hoisted.docState.get("carePlans/client3");
     const notesValues = Object.values(plan.recipientPlans).map((r: any) => r.notes);
     expect(notesValues).toHaveLength(2);
-    expect(notesValues.every((n) => n === BASE_JOB_DATA.jobDescription)).toBe(true);
+    expect(notesValues.every((n) => n === undefined)).toBe(true);
   });
 });
 

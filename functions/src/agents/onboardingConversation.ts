@@ -2164,7 +2164,38 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
   }
 }
 
+/** "fix the note" with the new text in the same message → that text; a bare ask → null; "remove it" → "". */
+async function noteReplacementFromReply(text: string): Promise<string | null> {
+  const raw = await parseWithClaude(
+    'The family asked to change the short note caregivers read about the job. If their message CONTAINS the new note text (e.g. "change the note to: mom needs help mornings", "the note should say …"), return ONLY that text, verbatim, nothing else. ' +
+    'If they want the note removed, return exactly NONE. If they only asked to change it without giving the new text, return exactly EMPTY.',
+    text,
+  ).catch(() => "EMPTY");
+  const t = raw.trim();
+  if (!t || t.toUpperCase() === "EMPTY") return null;
+  if (t.toUpperCase() === "NONE") return "";
+  return t.slice(0, 2500);
+}
+
 async function handleClientConfirmIntake(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  if ((session as unknown as Record<string, unknown>).clientIntakeAwaitingNote === true) {
+    const clear = () => db.collection("agent_sessions").doc(phone).update({ clientIntakeAwaitingNote: admin.firestore.FieldValue.delete() }).catch(() => {});
+    const norm = text.trim().toUpperCase();
+    const isNone = norm === "NONE" || norm === "REMOVE" || norm === "REMOVE IT";
+    if (!isNone && await isQuestionOrOther(text, "What should the note say instead?")) {
+      // A question mid-step is answered; the note question stays parked.
+      const answer = await answerQuestionMidFlow(text, session, phone);
+      await sendMessage(chatId, `${answer}\n\nWhat should the note say instead? (Reply NONE to remove it.)`);
+      return;
+    }
+    await clear();
+    const note = isNone ? "" : text.trim().slice(0, 2500);
+    await mergeOnboardingData(phone, { jobDescription: note });
+    const refreshed = await db.collection("agent_sessions").doc(phone).get();
+    await sendMessage(chatId, note ? "Got it — the note is updated." : "Got it — the note is removed.");
+    await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
+    return;
+  }
   // One classification for the reply to "Did I get that right?": confirm, a
   // correction, a NOTE for caregivers (the wizard's "What would you like
   // caregivers to know" answer often lands here — live 2026-09-20 "my son is
@@ -2173,13 +2204,30 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     'Evia sent the family a summary of their care request and asked "Did I get that right?". Classify their reply with exactly one word: ' +
     'confirm — yes / correct / looks good / go ahead. ' +
     'edit — they correct or change a detail that is IN the summary (a day, time, rate, name, age, address, care need). ' +
-    'note — they add something for the caregivers to know rather than correcting anything (e.g. "my son is amazing", "she loves gardening", "please be patient with him", "he is hard of hearing"). ' +
-    'question — they ask something, or say something unrelated. Reply with one word: confirm, edit, note, or question.',
+    'fix_note — they want the note / description for caregivers changed, rewritten, replaced or removed ("fix the note", "change the note to …", "remove the note"), with or without giving the new text. ' +
+    'note — they ADD something for the caregivers to know rather than correcting anything (e.g. "my son is amazing", "she loves gardening", "please be patient with him", "he is hard of hearing"). ' +
+    'question — they ask something, or say something unrelated. Reply with one word: confirm, edit, fix_note, note, or question.',
     text,
   );
   if (kind === "question") {
     const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, `${answer}\n\nDoes that all look right? Say yes and I'll show you who can help, or tell me what to fix.`);
+    return;
+  }
+  if (kind === "fix_note") {
+    // Live 2026-10-09: "Can you fix the note" was read as a question, the mid-flow answer improvised a
+    // "paste the text and tell me the tone" step, and a later "did you fix it" was answered "yes" — nothing had
+    // changed. The note is REPLACED (never appended), then the full recap is sent again like any other edit.
+    const given = await noteReplacementFromReply(text);
+    if (given === null) {
+      await db.collection("agent_sessions").doc(phone).set({ clientIntakeAwaitingNote: true }, { merge: true }).catch(() => {});
+      await sendMessage(chatId, "Sure — what should the note say instead? Caregivers browsing jobs can read it, so leave out contact info, medical details and addresses. (Reply NONE to remove it.)");
+      return;
+    }
+    await mergeOnboardingData(phone, { jobDescription: given });
+    const refreshed = await db.collection("agent_sessions").doc(phone).get();
+    await sendMessage(chatId, given ? "Got it — the note is updated." : "Got it — the note is removed.");
+    await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
     return;
   }
   if (kind === "note") {
@@ -2281,11 +2329,9 @@ export async function persistClientCareRecords(
     d = { ...d, careNeeds, careNeedDetails };
     await mergeOnboardingData(phone, { careNeeds, careNeedDetails }).catch(() => {});
   }
-  // Care Plan "Notes" = the wizard's "What would you like caregivers to know" (the
-  // page falls back to job_postings.jobDescription only when notes is unset, so an
-  // empty string here used to hide the note). The family's own words only — Evia
-  // never adds to the note (2026-10-04).
-  const noteText = typeof d.jobDescription === "string" ? d.jobDescription.trim() : "";
+  // The job description is NOT copied into the care plan's Notes (founder, 2026-10-09): it is the public
+  // post's text; care-plan Notes are the family's private per-person field, added later on the Care Plan
+  // page or through update_care_plan, and carried onto visits from there.
   const seniorAge    = d.age as number | undefined;
   // Home address (account holder) — may differ from care address
   const homeStreet   = (d.homeStreet  as string | undefined) || street;
@@ -2311,7 +2357,6 @@ export async function persistClientCareRecords(
       relationship: r.relationship ?? "",
       careNeeds,
       careNeedDetails,
-      ...(noteText ? { notes: noteText } : {}),
       // Provenance for multi-recipient households: these needs are a
       // signup-time COPY shared across everyone — the care-plan interview
       // confirms them per person rather than trusting them as individual.
@@ -5307,7 +5352,9 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
       "(6) Speak TO the person, never ABOUT them in the third person, and never narrate progress or process (no \"I'll keep her on track\", \"I'll get everything set for the next step\" — that reads like an internal status report). " +
       "(7) If they ask for an email or contact address, the only one that exists is support@eviacares.com — never invent any other address. " +
       "(8) NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you just sent, " +
-      "resent, or will send a link: real links are delivered by the system as separate tappable messages, not by you.",
+      "resent, or will send a link: real links are delivered by the system as separate tappable messages, not by you. " +
+      "(9) NEVER say you changed, updated, saved, fixed or removed anything — you cannot change their answers in this reply. " +
+      "If they want something changed, say they can tell you exactly what to change and it will be updated.",
     text,
     { maxTokens: 90 },
   )).trim();

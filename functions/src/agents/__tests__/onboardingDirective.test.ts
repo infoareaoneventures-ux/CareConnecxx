@@ -155,7 +155,10 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("never suggest they put medical details anywhere else");
     expect(d).toContain("no follow-up sweep");
     expect(d).toContain("caregivers browsing jobs can read it");
-    expect(d).toContain("never suggest what to put in it");
+    // 2026-10-09: the description is asked with the website's own step wording, is the job POST's only (not the care plan), and the site's example may be offered once if asked.
+    expect(d).toContain("what else should caregivers know about this job or your loved one?");
+    expect(d).toContain("not the care plan");
+    expect(d).toContain("never add to or rewrite them");
     expect(d).not.toContain("weave two or three natural examples");
   });
 });

@@ -399,7 +399,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         ...stored,
         careNeeds: stored.careNeeds ?? wizardData?.careNeeds ?? [],
         locations: stored.locations ?? wizardLocations.slice(0, 1),
-        notes: stored.notes ?? wizardData?.jobDescription ?? '',
+        notes: stored.notes ?? '', // never the job post's description (founder, 2026-10-09: the two are separate)
         careNeedDetails: stored.careNeedDetails ?? {},
         lifestyle: { ...emptyLifestyle(), ...(stored.lifestyle || {}) },
         tasks: { ...emptyTasks(), ...(stored.tasks || {}) },
@@ -409,7 +409,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       careNeeds: wizardData?.careNeeds || [],
       careNeedDetails: {},
       locations: wizardLocations.slice(0, 1),
-      notes: wizardData?.jobDescription || '',
+      notes: '',
       lifestyle: emptyLifestyle(),
       tasks: emptyTasks(),
     };

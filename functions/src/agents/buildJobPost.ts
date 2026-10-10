@@ -217,12 +217,9 @@ export async function buildAndSaveJobPost(params: {
       careNeedDetails,
       careLevel,
       // (no `conditions` — diagnoses are out of scope; the site never writes them)
-      // Direct write, matching the website's own PostJobFlow.tsx /
-      // mirrorJobPostRecipientsToWeb — before 2026-09-07 this was never set
-      // here, so the Care Plan page's "Notes" section relied entirely on its
-      // own frontend fallback to job_postings.jobDescription instead of a
-      // first-class field like the web wizard writes.
-      notes: description,
+      // No `notes` here (founder, 2026-10-09): the job description is the PUBLIC post's only; the care plan's
+      // private per-person Notes are a separate field the family edits on the Care Plan page / update_care_plan.
+      // PostJobFlow.tsx and CarePlan.tsx stopped copying it the same day.
       // Signup-time copy shared across the household — see onboardingConversation.
       ...(recipients.length > 1 ? { sharedAtSignup: true } : {}),
       updatedAt:    new Date().toISOString(),

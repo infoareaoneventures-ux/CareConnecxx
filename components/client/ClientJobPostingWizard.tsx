@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { AvatarUpload } from '../ui/AvatarUpload';
 import { evaluateServiceArea, OUT_OF_AREA_MESSAGE } from '../../utils/serviceArea';
+import { resumeStepForDraft } from '../../utils/jobPostingDraftResume';
 import { dbService, createJobPosting, loadJobPostingDraft, saveJobPostingDraft } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 
@@ -349,8 +350,11 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
         });
         if (d._homeAddress) setHomeAddress(d._homeAddress);
         if (typeof d._customAddressOpen === 'boolean') setCustomAddressOpen(d._customAddressOpen);
-        if (typeof d.draftStep === 'number' && d.draftStep > 1 && d.draftStep < TOTAL_STEPS) setStep(d.draftStep);
-        else setStep(prev => (prev === 1 && Object.keys(d).some(k => k in INITIAL_FORM) ? 2 : prev));
+        // The first step still missing an answer, whichever door wrote the draft (the wizard's own
+        // per-step cursor or Evia's per-answer mirror) — a text-collected draft used to open at step 2
+        // and the family clicked Next through everything Evia had already asked (founder, 2026-10-09).
+        const resume = resumeStepForDraft(d, d.draftStep);
+        if (resume > 1) setStep(resume);
       } catch { /* start fresh */ }
       finally { draftReady.current = true; }
     })();

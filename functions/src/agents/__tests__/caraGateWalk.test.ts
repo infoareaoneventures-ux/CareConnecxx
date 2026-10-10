@@ -186,6 +186,7 @@ let awaitingKind = "other"; // classifyAwaitingReply verdict at awaiting steps
 let wantsLink    = "NO";    // wantsGateLinkResend verdict (identity/stripe/bgcheck resend gate)
 let wantsMore    = "NO";    // wantsMoreCaregivers verdict ("show me more caregivers" mid-gate)
 let intakeConfirmIntent  = "confirm"; // handleClientConfirmIntake's confirm-vs-edit classification
+let noteReplacement = "EMPTY";        // noteReplacementFromReply: the new note text, NONE, or EMPTY (bare ask)
 let intakeCorrectionJson = "{}";      // extractIntakeCorrections' extracted-fields JSON
 vi.mock("../../utils/openaiClient", () => ({
   quickComplete: vi.fn(async (prompt: string) => {
@@ -200,7 +201,8 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes("warm human-feeling care coordinator")) return "Here's a helpful answer."; // answerQuestionMidFlow
     if (prompt.includes("confirm or edit")) return intakeConfirmIntent;
     // 2026-09-20: handleClientConfirmIntake classifies confirm / edit / note / question in one call.
-    if (prompt.includes("confirm, edit, note, or question")) return questionMode ? "question" : intakeConfirmIntent;
+    if (prompt.includes("confirm, edit, fix_note, note, or question")) return questionMode ? "question" : intakeConfirmIntent;
+    if (prompt.includes("asked to change the short note")) return noteReplacement;
     if (prompt.includes("The family is correcting their care intake")) return intakeCorrectionJson;
     return stepAnswer;
   }),
@@ -862,6 +864,39 @@ describe("client care records + payment mirror", () => {
     expect(hoisted.docState.has(`carePlans/${CLIENT_UID}`)).toBe(false);
   });
 
+  it("client_confirm_intake: 'fix the note' asks for the new text, then REPLACES the note and re-sends the recap (live 2026-10-09: it was answered as a question and nothing changed)", async () => {
+    const session = seed("client_confirm_intake", { ...CLIENT_DATA, jobDescription: "I need the service for my family member." },
+      { userType: "client", userId: CLIENT_UID });
+    intakeConfirmIntent = "fix_note";
+    noteReplacement = "EMPTY";
+    await handleOnboardingStep(PHONE, CHAT, "Can you fix the note", session);
+    let text = sentMessages.map((m) => JSON.stringify(m.text)).join("\n");
+    expect(text).toMatch(/what should the note say instead/i);
+    expect(text).not.toMatch(/tone/i);
+    expect(stored().clientIntakeAwaitingNote).toBe(true);
+    expect(stored().onboardingStep).toBe("client_confirm_intake");
+
+    sentMessages.length = 0;
+    const parked = seed("client_confirm_intake", { ...CLIENT_DATA, jobDescription: "I need the service for my family member." },
+      { userType: "client", userId: CLIENT_UID, clientIntakeAwaitingNote: true });
+    await handleOnboardingStep(PHONE, CHAT, "Mom needs help with mornings and light housekeeping.", parked);
+    text = sentMessages.map((m) => JSON.stringify(m.text)).join("\n");
+    expect(text).toMatch(/the note is updated/i);
+    expect(stored().onboardingData.jobDescription).toBe("Mom needs help with mornings and light housekeeping.");
+    expect(stored().clientIntakeAwaitingNote).not.toBe(true); // cleared (the mock keeps the delete sentinel)
+    expect(sentMessages.length).toBeGreaterThanOrEqual(2); // the confirmation AND the full recap again
+    expect(hoisted.docState.has(`carePlans/${CLIENT_UID}`)).toBe(false); // nothing persisted until they confirm
+
+    // The new text given in the same message replaces at once — no append.
+    sentMessages.length = 0;
+    const again = seed("client_confirm_intake", { ...CLIENT_DATA, jobDescription: "old note" }, { userType: "client", userId: CLIENT_UID });
+    noteReplacement = "She likes the radio on in the afternoon.";
+    await handleOnboardingStep(PHONE, CHAT, "change the note to: She likes the radio on in the afternoon.", again);
+    expect(stored().onboardingData.jobDescription).toBe("She likes the radio on in the afternoon.");
+    noteReplacement = "EMPTY";
+    intakeConfirmIntent = "confirm";
+  });
+
   it("client_confirm_intake: confirming proceeds to persist care records and show caregivers", async () => {
     const session = seed("client_confirm_intake", { ...CLIENT_DATA, rate: 26 },
       { userType: "client", userId: CLIENT_UID });
@@ -1112,7 +1147,7 @@ describe("finished-profile guard — Evia's record writers never re-open the sit
 // Evia's plan (with the family's notes) and auto-seeded an empty one instead:
 // "NOTES — No notes added yet" on a family that had given Evia a note.
 describe("persistClientCareRecords — plan key matches the site's roster key", () => {
-  it("keys the primary AND additional recipients first_last, carries the note, and matches the roster's split", async () => {
+  it("keys the primary AND additional recipients first_last, keeps the job description OFF the care plan, and matches the roster's split", async () => {
     const data = {
       firstName: "Hamse", seniorName: "H M", relationship: "father", age: 80,
       careNeeds: ["Dementia / Memory Care"], city: "San Jose", zipCode: "95134", state: "CA",
@@ -1123,7 +1158,8 @@ describe("persistClientCareRecords — plan key matches the site's roster key", 
     await persistClientCareRecords("client-uid", PHONE, data);
     const plan = hoisted.docState.get("carePlans/client-uid");
     expect(Object.keys(plan.recipientPlans).sort()).toEqual(["h_m", "mary_ann_smith"]);
-    expect(plan.recipientPlans.h_m.notes).toBe("He gets anxious in the evenings; a calm voice helps.");
+    expect(plan.recipientPlans.h_m.notes).toBeUndefined(); // the post's description is not the care plan's Notes (2026-10-09)
+    expect(hoisted.docState.get("job_postings/client-uid").jobDescription).toBe("He gets anxious in the evenings; a calm voice helps.");
     expect(plan.recipientPlans.h_m.age).toBe(80);
     // The roster the page keys from — same split, same names.
     const jp = hoisted.docState.get("job_postings/client-uid");

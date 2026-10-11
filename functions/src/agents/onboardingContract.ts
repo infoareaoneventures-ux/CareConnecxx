@@ -5,22 +5,28 @@
 // Kept as a PURE LEAF module (no heavy imports) so both the MCP tool handlers and
 // the onboarding directive can use it without dragging in the onboarding graph.
 //
-// SOURCE OF TRUTH — these mirror the legacy contracts and must stay in sync:
-//   - CLIENT_REQUIRED_FIELDS  ↔ Object.values(CLIENT_STEP_FIELD) in onboardingConversation.ts
+// SOURCE OF TRUTH — these mirror the deterministic path and must stay in sync:
 //   - CLIENT post-collection  ↔ CLIENT_POST_COLLECTION_STEP ("client_confirm_intake")
 //   - isFieldFilled           ↔ isFieldFilled in onboardingConversation.ts
-//   - CAREGIVER_REQUIRED_FIELDS ↔ caregiver step parse targets in onboardingSteps.caregiver.ts
+//   - CAREGIVER_REQUIRED_FIELDS ↔ the site's CaregiverOnboardingWizard step list
+//     (components/caregiver/CaregiverOnboardingWizard.tsx) and the
+//     caregivers/{uid} mirror (buildCaregiverProfileMirror) — the scripted
+//     caregiver_ask_* handlers and onboardingSteps.caregiver.ts were deleted
+//     (loop-only, 2026-07-08); the loop IS the collection path.
 //
-// NOTE (caregiver sequencing, resolved): the scripted caregiver flow is in fact
-// collect-then-gate, like the client's — every conversational field (name,
-// location, story, experience, specialties, profile, availability, job type,
-// rate, email, bio) is collected BEFORE the first transactional gate
-// (caregiver_send_photo). The gates then run strictly scripted: photo → documents
-// (SKIP allowed) → MVR consent → membership checkout → background check (Checkr)
-// → Stripe Connect. So the caregiver loop uses the same "collect all, then hand
-// to the first gate" model as the client: the loop owns only the steps in
-// CAREGIVER_COLLECTION_STEPS, and complete_collection hands off to
-// CAREGIVER_FIRST_GATE_STEP. Gate/awaiting steps are never routed to the loop.
+// Caregiver sequencing: collect-then-gate, like the client's. Every
+// conversational field — location (street, ZIP → city/state), the photo (a
+// tokened upload link sent INSIDE the loop, 2026-09-25), job type +
+// availability, services + experience bucket, rate + travel distance, bio — is
+// collected BEFORE the first transactional gate. complete_collection stamps
+// onboardingStatus 'profile_complete' and hands off to CAREGIVER_FIRST_GATE_STEP
+// (caregiver_send_membership); the gates then run strictly scripted in the
+// dashboard's card order: membership checkout ($69.99/yr) → consent-first
+// Checkr background check → Stripe Connect payouts. (The old photo / documents
+// / MVR-consent gates are gone — transport documents were retired 2026-10-06;
+// the MVR follows Transportation through the same consent page.) The loop owns
+// only the steps in CAREGIVER_COLLECTION_STEPS; gate/awaiting steps are never
+// routed to the loop.
 
 // Pure helpers only (no I/O) — caregiverAvailability is itself a leaf module.
 import { normalizeDays, hasTimeOfDaySignal } from "./caregiverAvailability";
@@ -37,9 +43,9 @@ export const CLIENT_COLLECTION_STEPS: readonly string[] = [
 ];
 
 // The conversational caregiver collection steps the agent loop owns, in the
-// scripted flow's order (mirror of the caregiver_ask_* sequence in
-// onboardingConversation.ts / onboardingSteps.caregiver.ts). Deliberately
-// EXCLUDED, mirroring the client list:
+// historical caregiver_ask_* cursor order (the scripted handlers behind those
+// names are deleted; the cursor names survive as the loop's step ids).
+// Deliberately EXCLUDED, mirroring the client list:
 //   - (the confirm-name steps were removed 2026-10-03: the name typed on /start is
 //     kept as entered; a known name starts at the first real question.)
 //   - every gate/awaiting step (photo, documents, MVR, membership, bgcheck,

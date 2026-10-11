@@ -56,6 +56,11 @@ const COVER_QUESTION = "Cover letter (optional) — tell the client why you're a
 // Profile, Client's budget — plus the cover letter, then SUBMIT / CANCEL.
 const APPLY_CONFIRM = (d: ApplyFlowData) =>
   `Ready to send?\n\nJob: ${d.jobTitle}\n${d.jobLine}\n\n${d.profile}\nClient's budget: ${d.budget}\n\nCover letter: ${d.coverLetter ? `"${d.coverLetter}"` : "(none)"}\n\nReply SUBMIT to send your application, or CANCEL.`;
+/** The Apply modal's facts at any step: the job as shown, the profile block, the budget, and what SUBMIT does. */
+const APPLY_FACTS = (d: ApplyFlowData) =>
+  `The Apply for Position modal on their screen:\nJob: ${d.jobTitle}\n${d.jobLine}\n${d.profile}\nClient's budget: ${d.budget}${d.coverLetter !== undefined ? `\nCover letter: ${d.coverLetter ? `"${d.coverLetter}"` : "(none)"}` : ""}\n\n` +
+  "The cover letter is optional (SKIP sends none); the family sees it with the application. Nothing is sent until the caregiver replies SUBMIT on the recap — the Jobs page's Apply; CANCEL sends nothing and the job stays on the Jobs page. " +
+  "An application can be sent once per job; the family then requests an interview, accepts, or declines, and the application shows on My Applications.";
 
 export async function startApplyFlow(
   phone: string, chatId: string, session: AgentSession, args: { caregiverId: string; jobId: string },
@@ -115,7 +120,7 @@ export async function handleApplyFlowStep(phone: string, chatId: string, text: s
   if (step === "apply_cover") {
     if (await isBackOutRequest(text, COVER_QUESTION)) return cancelled();
     if (await isQuestionOrOther(text, COVER_QUESTION)) {
-      await sendMessage(chatId, await answerMidFlow(text, COVER_QUESTION));
+      await sendMessage(chatId, await answerMidFlow(text, COVER_QUESTION, { facts: APPLY_FACTS(data) }));
       return;
     }
     const verdict = await parse(
@@ -140,7 +145,7 @@ export async function handleApplyFlowStep(phone: string, chatId: string, text: s
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
-      if (await isQuestionOrOther(text, APPLY_CONFIRM(data))) await sendMessage(chatId, await answerMidFlow(text, APPLY_CONFIRM(data)));
+      if (await isQuestionOrOther(text, APPLY_CONFIRM(data))) await sendMessage(chatId, await answerMidFlow(text, APPLY_CONFIRM(data), { facts: APPLY_FACTS(data) }));
       else await sendMessage(chatId, `${DIDNT_CATCH} ${APPLY_CONFIRM(data)}`);
       return;
     }
@@ -167,6 +172,8 @@ export interface RescheduleFlowData {
   interviewId: string;
   clientName: string;
   jobTitle?: string;
+  /** The interview's CURRENT scheduled time, as the opening text showed it ("Monday, September 28 at 10:00 AM"); "" when none. */
+  currentLabel?: string;
   date?: string;   // YYYY-MM-DD
   time?: string;   // HH:MM
 }
@@ -175,6 +182,13 @@ const DATE_QUESTION = "What date? (e.g. 9/28 or next Monday)";
 const TIME_QUESTION = "What time? Interviews run between 9:00 AM and 6:00 PM, on the hour or half hour (e.g. 10:30 AM).";
 const RS_CONFIRM = (d: RescheduleFlowData, label: string) =>
   `New time: ${label}\n\nReply SEND to propose it to ${d.clientName} — the interview stays at its current time until they confirm — or CANCEL.`;
+/** The reschedule form's facts at any step: which interview, when it is NOW, what has been chosen, the picker's rules, what SEND does. */
+const RS_FACTS = (d: RescheduleFlowData) =>
+  `Interview with ${d.clientName}${d.jobTitle ? ` for "${d.jobTitle}"` : ""}, currently ${d.currentLabel || "with no time set"}. ` +
+  `${d.date && d.time ? `New time chosen so far: ${formatInterviewTime(parseScheduledTimeMs(`${d.date}T${d.time}:00`))}. ` : d.date ? `New date chosen so far: ${d.date}; the time is still to be chosen. ` : "No new date chosen yet. "}` +
+  "Interviews run between 9:00 AM and 6:00 PM Pacific, on the hour or half hour, on a future date. " +
+  "SEND (on the recap) proposes the new time to the family; the interview stays at its current time until they confirm, and the family can accept or propose another. " +
+  "Nothing is proposed until SEND; CANCEL leaves the interview as it is.";
 
 export async function startInterviewRescheduleFlow(
   phone: string, chatId: string, session: AgentSession, args: { caregiverId: string; interviewId: string },
@@ -202,13 +216,13 @@ export async function startInterviewRescheduleFlow(
     await textCaregiverGateBlock(phone, chatId, gate, cg);
     return { started: false, reason: "gated" };
   }
-  const data: RescheduleFlowData = { interviewId: args.interviewId, clientName: String(iv.clientName || "the family"), jobTitle: iv.jobTitle as string | undefined };
+  const current = typeof iv.scheduledTime === "string" ? formatInterviewTime(parseScheduledTimeMs(iv.scheduledTime)) : "";
+  const data: RescheduleFlowData = { interviewId: args.interviewId, clientName: String(iv.clientName || "the family"), jobTitle: iv.jobTitle as string | undefined, currentLabel: current };
   await db.collection("agent_sessions").doc(phone).update({
     interviewRescheduleFlowStep: "rs_date",
     interviewRescheduleFlowData: data,
     stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString(),
   });
-  const current = typeof iv.scheduledTime === "string" ? formatInterviewTime(parseScheduledTimeMs(iv.scheduledTime)) : "";
   await sendMessage(chatId, `${status === "accepted" || status === "confirmed" ? "Reschedule" : "Propose a new time for"} your interview with ${data.clientName}${data.jobTitle ? ` (${data.jobTitle})` : ""}${current ? `, currently ${current}` : ""}.\n\n${DATE_QUESTION}`);
   return { started: true };
 }
@@ -224,7 +238,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
 
   if (step === "rs_date") {
     if (await isBackOutRequest(text, DATE_QUESTION)) return cancelled();
-    if (await isQuestionOrOther(text, DATE_QUESTION)) { await sendMessage(chatId, await answerMidFlow(text, DATE_QUESTION)); return; }
+    if (await isQuestionOrOther(text, DATE_QUESTION)) { await sendMessage(chatId, await answerMidFlow(text, DATE_QUESTION, { facts: RS_FACTS(data) })); return; }
     const today = businessTodayStr();
     const raw = await parse(
       `Today is ${today} (Pacific time). The caregiver is naming the DATE for an interview. Reply with that date as YYYY-MM-DD ` +
@@ -251,7 +265,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
 
   if (step === "rs_time") {
     if (await isBackOutRequest(text, TIME_QUESTION)) return cancelled();
-    if (await isQuestionOrOther(text, TIME_QUESTION)) { await sendMessage(chatId, await answerMidFlow(text, TIME_QUESTION)); return; }
+    if (await isQuestionOrOther(text, TIME_QUESTION)) { await sendMessage(chatId, await answerMidFlow(text, TIME_QUESTION, { facts: RS_FACTS(data) })); return; }
     const raw = await parse("The caregiver is naming a TIME of day. Reply with it as 24-hour HH:MM (e.g. 10:30, 14:00), or NONE if no time is given.", text);
     const m = /(\d{1,2}):(\d{2})/.exec(raw);
     const time = m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
@@ -276,7 +290,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
-      if (await isQuestionOrOther(text, question)) await sendMessage(chatId, await answerMidFlow(text, question));
+      if (await isQuestionOrOther(text, question)) await sendMessage(chatId, await answerMidFlow(text, question, { facts: RS_FACTS(data) }));
       else await sendMessage(chatId, `${DIDNT_CATCH} ${question}`);
       return;
     }

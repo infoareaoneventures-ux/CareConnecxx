@@ -50,13 +50,13 @@ export const BackgroundCheckModal: React.FC<BackgroundCheckModalProps> = ({ onCl
       }, 3500);
     } catch (error: any) {
       console.error('BackgroundCheck submit error:', error);
-      const msg = error?.message || '';
-      if (msg.includes('not logged in') || msg.includes('Backend not connected') || msg.includes('unauthenticated')) {
+      // dbService.initiateBackgroundCheck preserves the callable's code + message.
+      // An already-live invitation is NOT an error: the server answers
+      // { status: 'already' } (backgroundCheckConsent.ts) and the success screen shows.
+      const code: string = typeof error?.code === 'string' ? error.code : '';
+      const msg: string = error?.message || '';
+      if (code.endsWith('unauthenticated') || msg.includes('Backend not connected')) {
         onShowToast('You must be logged in to submit. Please refresh and try again.', 'error');
-      } else if (msg.includes('already') || msg.includes('candidateId')) {
-        onShowToast('A background check is already in progress. Check your email for the Checkr link.', 'info');
-        setStep('success');
-        return;
       } else {
         onShowToast(msg || 'Submission failed. Please try again or contact support.', 'error');
       }

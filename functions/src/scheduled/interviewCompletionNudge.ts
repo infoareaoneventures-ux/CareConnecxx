@@ -25,8 +25,8 @@ export const NUDGE_DELAY_MS = 60 * 60 * 1000; // 1 hour after scheduledTime, per
 export const RENUDGE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // space repeats ~2 days apart, same as stale-applicant/timesheet nudges
 
 // Renders a UTC ISO timestamp in the family's local (Pacific — matches the
-// project's own convention elsewhere, e.g. morningBriefing's cron and
-// jobPostingFlow's "today" anchoring) day-of-week/date/time, so a message
+// project's own convention elsewhere, e.g. jobPostingFlow's "today"
+// anchoring) day-of-week/date/time, so a message
 // that mentions when the interview was never reads off the wrong calendar
 // day just because UTC and Pacific fall on different dates.
 //

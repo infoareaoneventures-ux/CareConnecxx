@@ -42,6 +42,7 @@ vi.mock("../utils/parseWithClaude", () => ({ parseWithClaude: (...a: any[]) => (
 vi.mock("./humanReply", () => ({ answerHumanMidFlow: vi.fn(async ({ reAsk }: any) => `Answer. ${reAsk}`) }));
 
 import { handleCaregiverCancelShift, cancelShiftLikeThePage, cancelBookingLikeThePage, loadCancelOptions } from "./caregiverCancelShiftHandler";
+import { answerHumanMidFlow } from "./humanReply";
 
 const PHONE = "+15555550100", CHAT = "chat", CG = "cg1";
 const shift = (id: string, over: Record<string, unknown>) => hoisted.docs.set(`shifts/${id}`, { caregiverId: CG, status: "scheduled", clientName: "Basra Yousuf", clientId: "fam1", bookingRequestId: "br1", startTime: "11:00", endTime: "14:00", ...over });
@@ -84,6 +85,13 @@ describe("the options — each visit with a ✕, then the whole booking", () => 
     await handleCaregiverCancelShift(CG, "Maria", PHONE, "CANCEL", {}, CHAT);
     expect(hoisted.sent[0]).toMatch(/^What do you need to cancel\?/);
     expect(hoisted.parse).not.toHaveBeenCalled();
+    // "CANCEL SHIFT" / "cancel my booking" are bare keywords too (2026-10-11: the regex had `s+` for `\s+`, so they reached the resolver)
+    for (const kw of ["CANCEL SHIFT", "cancel my booking", "Cancel a visit"]) {
+      hoisted.sent.length = 0; hoisted.parse.mockClear();
+      await handleCaregiverCancelShift(CG, "Maria", PHONE, kw, {}, CHAT);
+      expect(hoisted.sent[0]).toMatch(/^What do you need to cancel\?/);
+      expect(hoisted.parse).not.toHaveBeenCalled();
+    }
   });
   it("nothing cancellable → says so and clears the step", async () => {
     await handleCaregiverCancelShift(CG, "Maria", PHONE, "cancel", {}, CHAT);
@@ -142,11 +150,38 @@ describe("confirm — the page's dialogs, then the page's writes", () => {
     expect(hoisted.sent.at(-1)).toMatch(/^Okay — keeping that one\./);
     hoisted.parse.mockResolvedValueOnce("YES"); // isQuestionOrOther → a question
     await handleCaregiverCancelShift(CG, "Maria", PHONE, "will I still get paid?", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "a", cancelKind: "booking" }, CHAT);
-    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. Cancel this shift and all future scheduled shifts/);
+    // The answer is followed by the whole dialog on their screen (the option line + the page's question).
+    expect(hoisted.sent.at(-1)).toBe(`Answer. The whole booking with Basra Yousuf — every upcoming visit (2).\n\n${BOOKING_CONFIRM}`);
     expect(hoisted.updates.find((u) => u.path.startsWith("shifts/"))).toBeUndefined();
     await handleCaregiverCancelShift(CG, "Maria", PHONE, "CANCEL", { cancelStep: "confirm_shift", cancelCandidates: options }, CHAT);
     expect(hoisted.sent.at(-1)).toBe("No problem — your shifts are unchanged.");
     shift("b", { date: "2099-10-03", status: "cancelled" });
     expect(await cancelShiftLikeThePage("b")).toEqual({ ok: false, reason: "not_scheduled", status: "cancelled" });
+  });
+  // Founder 2026-10-11: a mid-flow question is answered from what is on the screen + the page's real cancel facts —
+  // never a static sentence the model could pad with an invented fee or 24-hour policy.
+  it("a question at the dialog briefs the model with the dialog, what YES writes (24h → needs_replacement, else cancelled, no fee) and that nothing has happened", async () => {
+    hoisted.parse.mockResolvedValueOnce("YES"); // isQuestionOrOther → a question
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "is there a cancellation fee?", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "b", cancelKind: "visit" }, CHAT);
+    const call = vi.mocked(answerHumanMidFlow).mock.calls.at(-1)![0];
+    expect(call.audience).toBe("caregiver");
+    expect(call.reAsk).toBe(`Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only).\n\n${VISIT_CONFIRM}`);
+    expect(call.situation).toContain("Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only)");
+    expect(call.situation).toContain("Nothing has been cancelled yet");
+    expect(call.situation).toContain("YES cancels only this one visit");
+    expect(call.situation).toContain("within 24 hours is marked needs_replacement");
+    expect(call.situation).toContain("No fee, charge or penalty is applied to the caregiver");
+    expect(hoisted.updates.find((u) => u.path.startsWith("shifts/"))).toBeUndefined();
+  });
+  it("a question at the numbered list briefs the model with the list itself", async () => {
+    hoisted.parse.mockResolvedValueOnce("YES"); // isQuestionOrOther → a question
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "which one is the Saturday visit?", { cancelStep: "confirm_shift", cancelCandidates: options }, CHAT);
+    const call = vi.mocked(answerHumanMidFlow).mock.calls.at(-1)![0];
+    expect(call.reAsk).toBe("Reply with the number of what to cancel (1–3), or CANCEL to back out.");
+    expect(call.situation).toContain("1. Mon, Sep 28, 2099 at 11:00 AM – 2:00 PM — Basra Yousuf (this visit only)");
+    expect(call.situation).toContain("2. Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only)");
+    expect(call.situation).toContain("3. The whole booking with Basra Yousuf — every upcoming visit (2)");
+    expect(call.situation).toContain("Nothing is cancelled by picking a number");
+    expect(hoisted.sent.at(-1)).toBe("Answer. Reply with the number of what to cancel (1–3), or CANCEL to back out.");
   });
 });

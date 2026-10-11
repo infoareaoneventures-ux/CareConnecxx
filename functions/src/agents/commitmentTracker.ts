@@ -198,6 +198,18 @@ export async function sweepOverdueCommitments(): Promise<void> {
         });
         continue;
       }
+      // Families only (founder, 2026-10-11 — caregiver sweep A4): the promised
+      // re-answer / re-attempt never runs for a caregiver. Close the commitment
+      // so it can neither loop nor escalate.
+      if (c.userType === "caregiver" || session.userType === "caregiver") {
+        await doc.ref.update({
+          status:     "cancelled",
+          resolution: "caregiver_followups_disabled",
+          resolvedAt: nowIso,
+          sweepAfter: admin.firestore.FieldValue.delete(),
+        });
+        continue;
+      }
 
       // Fulfilled by another path since the promise was made?
       if (c.kind === "matching") {
@@ -265,7 +277,10 @@ export async function sweepDroppedTurns(): Promise<void> {
     try {
       if (w.phone && w.chatId) {
         const sessionSnap = await db.collection("agent_sessions").doc(w.phone).get();
-        if (!sessionSnap.data()?.optedOut) {
+        const watchSession = sessionSnap.data() ?? {};
+        // Families only (2026-10-11): a caregiver's dropped turn is not re-answered.
+        const watchIsCaregiver = w.userType === "caregiver" || watchSession.userType === "caregiver";
+        if (!watchSession.optedOut && !watchIsCaregiver) {
           console.warn("[commitmentTracker] dropped turn detected — tracking commitment", {
             phone: w.phone, preview: (w.text ?? "").slice(0, 60),
           });

@@ -9,7 +9,6 @@ import { MobileHandoff } from './auth/onboarding/MobileHandoff';
 import { QRHandoff } from './auth/onboarding/QRHandoff';
 
 import { CaregiverHomeDashboard } from './caregiver/CaregiverHomeDashboard';
-import { CaregiverOnboardingWizard } from './caregiver/CaregiverOnboardingWizard';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 
 interface CaregiverDashboardProps {
@@ -47,6 +46,19 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
       return unsub;
    }, [currentUser?.uid]);
 
+   // Return from the membership checkout (CaregiverMembership.tsx successUrl
+   // `/caregiver/dashboard?membership=success`): same pattern as the client
+   // Membership page's `?success=true` — acknowledge once, strip the param.
+   // The membership fields themselves arrive through the live caregivers/{uid}
+   // listener above once the payment webhook writes them.
+   useEffect(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('membership') !== 'success') return;
+      onShowToast('Membership payment complete — thank you.', 'success');
+      window.history.replaceState({}, '', '/caregiver/dashboard');
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, []);
+
    // Payout fields (stripeAccountId/payoutsEnabled/chargesEnabled) live on the
    // owner-only private/payout subdoc, not the caregivers/{uid} doc the
    // onSnapshot above watches — fetch and merge separately, same pattern
@@ -61,18 +73,15 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
       return () => { active = false; };
    }, [currentUser?.uid]);
 
-   // No profile doc yet — show wizard if they've already texted Evia, handoff screen if not
+   // No profile doc yet — the setup wizard is owned by the CaregiverRoute overlay
+   // (App.tsx renders it whenever the record is missing or not profile_complete),
+   // so this page never mounts a second copy; it shows the handoff screen only
+   // for a caregiver who has not connected with Evia yet.
    if (docMissing && !profile) {
       if (currentUser?.eviaConnected && currentUser?.uid) {
          return (
             <div className="min-h-screen bg-paper-50 pb-24">
                <CaregiverTopNav />
-               <CaregiverOnboardingWizard
-                  uid={currentUser.uid}
-                  firstName={currentUser.displayName?.split(' ')[0] || ''}
-                  onComplete={() => { /* doc will appear via onSnapshot once wizard writes it */ }}
-                  onShowToast={onShowToast}
-               />
             </div>
          );
       }

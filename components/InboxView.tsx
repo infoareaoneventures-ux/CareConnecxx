@@ -208,6 +208,30 @@ export const InboxView: React.FC<InboxViewProps> = ({
     return () => { cancelled = true; };
   }, [caregiverParam, currentUid, isClient, roomsLoaded, rooms]);
 
+  // `?client=<id>` (caregiver Bookings / Calendar / Dashboard "Message" buttons):
+  // open the existing conversation with that family, or create it the same way the
+  // Families page does (chatService.getOrCreateChatRoom), then select it.
+  const clientParam = searchParams.get('client');
+  useEffect(() => {
+    if (!clientParam || !currentUid || isClient || !roomsLoaded || !db) return;
+    const existing = rooms.find(r => !r.isSupport && r.participants.includes(clientParam));
+    if (existing) { setSelectedRoomId(existing.id); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const uSnap = await db.collection('users').doc(clientParam).get().catch(() => null);
+        const d = (uSnap?.data() as any) || {};
+        const clientName = d?.displayName || d?.name || 'Family';
+        const roomId = await chatService.getOrCreateChatRoom(currentUid, currentName, clientParam, clientName);
+        if (!cancelled) setSelectedRoomId(roomId);
+      } catch {
+        if (!cancelled) onShowToast?.('Could not open this conversation. Please try again.', 'error');
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientParam, currentUid, isClient, roomsLoaded]);
+
   // Subscribe to this user's chat rooms
   useEffect(() => {
     if (!currentUid) return;

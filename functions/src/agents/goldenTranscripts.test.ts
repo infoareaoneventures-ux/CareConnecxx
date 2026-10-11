@@ -812,25 +812,6 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
     },
   },
 
-  {
-    name:        "caregiver-referral-partial-info-one-question",
-    description: "Caregiver wants to refer someone but only gives a name. Evia asks for the missing phone only.",
-    userType: "caregiver",
-    claudeScript: [
-      { text: "I can invite Ana. What's her phone number?" },
-    ],
-    input: { text: "i wanna refer my friend Ana shes a great caregiver" },
-    expect: {
-      replyContains:       ["Ana", "phone number"],
-      replyNotContains:    ["name and phone", "email", "contact support"],
-      toolsCalled:         [],
-      noSupportDeflection: true,
-      noGenericHelpAsk:    true,
-      noListShape:         true,
-      oneQuestionAtATime:  true,
-    },
-  },
-
   // ── U7 — capability discovery ("what can you do?") ──────────────────────────
   // These prove the assertion machinery on role-aware discovery replies. The
   // capability hint is injected into the system prompt; here Claude's reply is
@@ -855,14 +836,14 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-what-can-you-do-schedule-pay-jobs",
-    description: "Caregiver asks what Evia can do. Reply surfaces shift closeout, pay status, and referral recipes.",
+    description: "Caregiver asks what Evia can do. Reply surfaces shift closeout, hours and pay status recipes.",
     userType: "caregiver",
     claudeScript: [
-      { text: "I can help you close out a shift, submit hours, check payout status, or refer another caregiver." },
+      { text: "I can help you close out a shift, submit hours, or check your payout status." },
     ],
     input: { text: "what can i ask you?" },
     expect: {
-      replyContains:    ["shift", "payout", "refer"],
+      replyContains:    ["shift", "payout", "hours"],
       replyNotContains: ["what can I help you with", "how can I help", "here is a list", "feature"],
       toolsCalled:      [],
       noListShape:      true,

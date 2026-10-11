@@ -35,6 +35,11 @@ export async function answerHumanQuestionOnly(opts: {
       "if details are missing, answer as best you can with what you have. " +
       "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
       "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages. " +
+      // Founder 2026-10-11: a mid-flow answer never claims an action — this ONE shared place carries the rule
+      // (the same wording as onboardingConversation.answerQuestionMidFlow's rule 9).
+      "NEVER say you changed, updated, saved, fixed, cancelled, sent or removed anything — you cannot change their " +
+      "answers or anything else in this reply. If they want something changed, say they can tell you exactly what to " +
+      "change and it will be updated. " +
       ANTI_INVENTION_CLAUSE,
     opts.text,
     { maxTokens: opts.maxTokens ?? 160 },

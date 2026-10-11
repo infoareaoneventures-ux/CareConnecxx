@@ -433,13 +433,19 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                             <button
                               onClick={async () => {
                                 if (!db) return;
-                                await db.collection('shifts').doc(s.id).update({
-                                  status: 'completed',
-                                  completedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                                  ...(endNote.trim() ? { completionNotes: endNote.trim() } : {}),
-                                });
-                                setEndingShift(null);
-                                setEndNote('');
+                                // Same write as the Bookings page's End Shift (CaregiverBookingsPage.tsx handleEnd).
+                                try {
+                                  await db.collection('shifts').doc(s.id).update({
+                                    status: 'completed',
+                                    completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                    ...(endNote.trim() ? { completionNotes: endNote.trim() } : {}),
+                                  });
+                                  setEndingShift(null);
+                                  setEndNote('');
+                                } catch {
+                                  onShowToast?.('Could not end this shift. Please try again.', 'error');
+                                }
                               }}
                               className="flex-1 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors"
                             >
@@ -464,7 +470,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                             <Lock className="w-3 h-3" /> Activate Membership
                           </button>
                         ) : blockReason === 'background' ? (
-                          <button onClick={() => navigate('/caregiver/dashboard')} className="mt-2 w-full py-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
+                          <button onClick={() => navigate('/caregiver/settings')} className="mt-2 w-full py-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
                             <Lock className="w-3 h-3" /> Complete Verification
                           </button>
                         ) : (
@@ -473,7 +479,15 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                               if (!db || startingShift) return;
                               setStartingShift(s.id);
                               try {
-                                await db.collection('shifts').doc(s.id).update({ status: 'in-progress', startedAt: new Date() });
+                                // Same write as the Bookings page's Start Shift (CaregiverBookingsPage.tsx handleStart):
+                                // server clock, updatedAt stamped.
+                                await db.collection('shifts').doc(s.id).update({
+                                  status: 'in-progress',
+                                  startedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                  updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                });
+                              } catch {
+                                onShowToast?.('Could not start this shift. Please try again.', 'error');
                               } finally {
                                 setStartingShift(null);
                               }
@@ -549,7 +563,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                     ) : null;
                   })()}
                   <button
-                    onClick={() => navigate('/caregiver/inbox')}
+                    onClick={() => navigate(b.clientId ? `/caregiver/inbox?client=${b.clientId}` : '/caregiver/inbox')}
                     className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
                   >
                     <MessageSquare className="w-3.5 h-3.5" /> Message
@@ -599,7 +613,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
             };
             // Unified action items: unsubmitted first, then correction
             const fmtDuration = (hrs: number) => { const s = Math.round(hrs * 3600); const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; };
-            type ActionItem = { key: string; clientName: string; clientPhotoURL?: string; clientId?: string; shiftDate: string; startTs: any; endTs: any; hrs: number; pay: number; badge: { label: string; color: string; bg: string }; actionLabel: string };
+            type ActionItem = { key: string; clientName: string; clientPhotoURL?: string; clientId?: string; shiftDate: string; startTs: any; endTs: any; hrs: number; pay: number; badge: { label: string; color: string; bg: string } };
             const items: ActionItem[] = [
               ...unsubmittedShifts.map(s => {
                 const startTs = s.startedAt ?? null;
@@ -608,12 +622,12 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                 const endD    = endTs   && typeof endTs.toDate   === 'function' ? endTs.toDate()   : endTs   ? new Date(endTs)   : null;
                 const hrs     = startD && endD ? (endD.getTime() - startD.getTime()) / 3_600_000 : 0;
                 const pay     = hrs * (s.rate ?? 0);
-                return { key: s.id, clientName: s.clientName || 'Client', clientPhotoURL: s.clientPhotoURL, clientId: s.clientId, shiftDate: fmtD(s.date ? `${s.date}T00:00` : null), startTs, endTs, hrs, pay, badge: { label: 'Not Submitted', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' }, actionLabel: 'Submit' };
+                return { key: s.id, clientName: s.clientName || 'Client', clientPhotoURL: s.clientPhotoURL, clientId: s.clientId, shiftDate: fmtD(s.date ? `${s.date}T00:00` : null), startTs, endTs, hrs, pay, badge: { label: 'Not Submitted', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' }};
               }),
               ...correctionHours.map(h => {
                 const hrs = getShiftHoursDisplay(h);
                 const pay = h.grossPay ?? (hrs * (h.payRate ?? 0));
-                return { key: h.id, clientName: h.clientName || 'Client', clientPhotoURL: h.clientPhotoURL || clientPhotoMap[h.clientId], clientId: h.clientId, shiftDate: fmtD(h.finalStartTime ?? h.submittedStartTime), startTs: h.finalStartTime ?? h.submittedStartTime, endTs: h.finalEndTime ?? h.submittedEndTime, hrs, pay, badge: { label: 'Correction Recvd', color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200' }, actionLabel: 'Respond' };
+                return { key: h.id, clientName: h.clientName || 'Client', clientPhotoURL: h.clientPhotoURL || clientPhotoMap[h.clientId], clientId: h.clientId, shiftDate: fmtD(h.finalStartTime ?? h.submittedStartTime), startTs: h.finalStartTime ?? h.submittedStartTime, endTs: h.finalEndTime ?? h.submittedEndTime, hrs, pay, badge: { label: 'Correction Recvd', color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200' }};
               }),
             ];
             return (

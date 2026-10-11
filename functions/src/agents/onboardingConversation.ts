@@ -1009,7 +1009,7 @@ export async function handleOnboardingStep(
 ): Promise<void> {
   let step = session.onboardingStep ?? "";
   const norm = text.trim().toUpperCase();
-  const { service, inboundLocation, inboundMedia } = opts;
+  const { inboundLocation, inboundMedia } = opts; // opts.service: only the deleted correction re-ask read it (2026-10-11)
 
   // Out-of-area waitlist parking (Santa Clara County gate). A waitlisted signup
   // that keeps texting gets a calm acknowledgement, not a re-collect loop. "START
@@ -1213,27 +1213,14 @@ export async function handleOnboardingStep(
         if (Number.isFinite(n)) correctionValue = n;
       }
       await mergeOnboardingData(phone, { [correctionField]: correctionValue });
-      // Re-ask the current question
-      const stepMessages: Record<string, string> = {
-        client_ask_name:       "What's your first and last name?",
-        client_ask_senior:     "How often do you need care — occasional, part-time, or full-time?", // the wizard's first question (the cursor name is historical)
-        client_ask_needs:      "What kind of help do they need, and how old are they?",
-        client_ask_location:   "What city and zip code are you in?",
-        client_ask_schedule:   "How many days a week and what hours do you need care?",
-        caregiver_ask_name:    "What's your first and last name?",
-        caregiver_ask_location:"What's your street address, city, and zip code? (Families only ever see the city.)",
-        caregiver_ask_experience: "How many years of caregiving experience do you have?",
-        caregiver_ask_specialties: "What types of care do you specialize in?",
-        caregiver_ask_availability: "What days and hours are you available to work?",
-        caregiver_ask_job_type: "Are you looking for occasional, part-time, or full-time work?",
-        caregiver_ask_rate:    "What's your hourly rate?",
-        caregiver_ask_email:   "What's your email address?",
-      };
-      let repeat = stepMessages[step] ?? "Could you continue where we left off?";
-      if (step === "client_ask_location" || step === "caregiver_ask_location") {
-        repeat = locationPrompt(repeat, service);
-      }
-      await sendMessage(chatId, `Got it — updated.\n\n${repeat}`);
+      // Re-ask: the per-step question map that used to sit here (client_ask_* /
+      // caregiver_ask_* re-asks) was unreachable — every collection-step turn is
+      // routed to the agent loop by shouldRouteOnboardingToLoop before
+      // handleOnboardingStep runs (loop-only, 2026-07-08), so this block only
+      // ever sees the KEPT steps (verify_phone, client_ask_plan, the awaiting
+      // steps not excluded above), none of which had an entry. Deleted
+      // 2026-10-11; the generic line is what those steps always got.
+      await sendMessage(chatId, "Got it — updated.\n\nCould you continue where we left off?");
       return;
     }
   }

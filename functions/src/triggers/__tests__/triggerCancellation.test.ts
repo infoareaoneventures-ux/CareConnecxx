@@ -80,6 +80,7 @@ vi.mock("../../linq/client", () => ({ sendToPhone: vi.fn() }));
 
 import {
   isReplyExempt,
+  isCaregiverFollowUp,
   cancelTriggersByRef,
   cancelTriggerIfUserReplied,
   generateTriggerMessage,
@@ -104,6 +105,28 @@ describe("isReplyExempt", () => {
     expect(isReplyExempt({ type: "custom", message: "How was the week?" })).toBe(false);
     expect(isReplyExempt({ type: "custom", message: "Just checking in about caregivers" })).toBe(false);
     expect(isReplyExempt({ type: "qa_retry", message: "qa_retry:{}" })).toBe(false);
+  });
+});
+
+// Families only (founder, 2026-10-11 — caregiver sweep A4).
+describe("isCaregiverFollowUp", () => {
+  it("retires a model-worded custom follow-up whose recipient session is a caregiver", () => {
+    expect(isCaregiverFollowUp({ type: "custom", message: "How did the visit go?" }, { userType: "caregiver" })).toBe(true);
+  });
+
+  it("retires one the scheduler already marked for a caregiver", () => {
+    expect(isCaregiverFollowUp({ type: "custom", message: "Checking in", userType: "caregiver" }, {})).toBe(true);
+  });
+
+  it("lets a family's follow-up through", () => {
+    expect(isCaregiverFollowUp({ type: "custom", message: "How did the visit go?" }, { userType: "client" })).toBe(false);
+    expect(isCaregiverFollowUp({ type: "custom", message: "How did the visit go?" }, undefined)).toBe(false);
+  });
+
+  it("never touches interview reminders, qa_retry or the caregiver check-ins", () => {
+    expect(isCaregiverFollowUp({ type: "appointment_reminder", message: "Interview in an hour" }, { userType: "caregiver" })).toBe(false);
+    expect(isCaregiverFollowUp({ type: "custom", message: "qa_retry:{}" }, { userType: "caregiver" })).toBe(false);
+    expect(isCaregiverFollowUp({ type: "caregiver_checkin", message: "Are you on your way?" }, { userType: "caregiver" })).toBe(false);
   });
 });
 

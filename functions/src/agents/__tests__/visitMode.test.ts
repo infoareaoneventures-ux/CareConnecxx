@@ -66,6 +66,10 @@ describe("visit mode — free text while a visit is in progress", () => {
     expect(await handleVisitModeMessage("+1", "chat", "cg1", "I'm done with the visit", session())).toBe("handled");
     expect(hoisted.sent.at(-1)).toBe(END_PROMPT);
     expect(hoisted.sessionWrites.at(-1)).toMatchObject({ pendingShiftEnd: { shiftId: "v1" } });
+    // Parked with the same 30-minute expiry as the FINISH keyword (2026-10-11) — never an open-ended park.
+    const parked = hoisted.sessionWrites.at(-1);
+    expect(Date.parse(parked.pendingShiftEnd.expiresAt) - Date.parse(parked.pendingShiftEnd.at)).toBe(30 * 60 * 1000);
+    expect(parked.stateExpiresAt).toBe(parked.pendingShiftEnd.expiresAt);
   });
 
   it("a task said in their own words → the page's task toggle, by number; an observation riding along is noted too", async () => {

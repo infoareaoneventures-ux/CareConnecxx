@@ -6,7 +6,7 @@
 // routing is NOT changed here. (The family add / remove flows these tests
 // originally pinned were removed with the family-group feature, 2026-09-23.)
 //
-// Mock style follows routeClient.test.ts / caregiverReferral.test.ts: in-memory
+// Mock style follows routeClient.test.ts: in-memory
 // Firestore, every collaborator stubbed, dynamic `handleToolCall` mocked so the
 // real MCP server (heavy) is never loaded.
 

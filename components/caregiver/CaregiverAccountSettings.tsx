@@ -4,7 +4,7 @@ import { authService, dbService } from '../../services/api';
 import { submitAccountAction } from '../../services/accountActionQueue';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
-import type { Caregiver, CaregiverDocument, UserProfile } from '../../types';
+import type { Caregiver, CaregiverDocument } from '../../types';
 import { geocodeToLatLng } from '../../utils/geocode';
 import { usePhoneReauth } from '../../hooks/usePhoneReauth';
 import { AccountStandingSection } from './AccountStandingSection';
@@ -29,7 +29,6 @@ export const CaregiverAccountSettings: React.FC = () => {
     ...Array.from(blockedIds).filter(id => !blockedUserProfiles[id]).map(id => ({ id, name: 'Blocked User', photo: '' })),
   ];
   const [profile, setProfile] = useState<Caregiver | null>(null);
-  const [prefs, setPrefs] = useState<Partial<UserProfile>>({});
   const [openAccount, setOpenAccount] = useState(true);
   const [openBlocked, setOpenBlocked] = useState(false);
   const [openStanding, setOpenStanding] = useState(true);
@@ -123,7 +122,6 @@ export const CaregiverAccountSettings: React.FC = () => {
         setCity(cp.city || '');
         setState(cp.state || '');
         setPausedUntil(cp.pausedUntil || null);
-        setPrefs({});
       }
     })();
     return () => { active = false; };
@@ -292,7 +290,6 @@ export const CaregiverAccountSettings: React.FC = () => {
     : typeof (memberSinceRaw as any)?.seconds === 'number' ? new Date((memberSinceRaw as any).seconds * 1000)
     : new Date(memberSinceRaw as string | number);
   const memberSince = memberSinceDate && !Number.isNaN(memberSinceDate.getTime()) ? memberSinceDate.toLocaleDateString() : '—';
-  const hasTransportation = ((profile as any)?.skills || (profile as any)?.services || []).includes('Transportation');
 
   return (
     <>

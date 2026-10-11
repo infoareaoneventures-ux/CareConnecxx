@@ -8,12 +8,10 @@
 //
 // Production routing is NOT changed by this file — it only observes the existing
 // coded path. The candidate flows characterized here (per the U9 plan):
-//   • caregiver referral — mid-flow question, one-question-at-a-time, success
 //   • caregiver availability update — early-exit/state-machine dispatch
-//   • duplicate inbound idempotency (highest-value characterization)
 //   • emergency / keyword early-exit short-circuit behavior
 //
-// Mock style mirrors the existing routeCaregiver tests (caregiverReferral.test.ts,
+// Mock style mirrors the existing routeCaregiver tests (e.g.
 // handleCareNotes.billing.test.ts): an in-memory Firestore with query filtering,
 // every collaborator stubbed, assert on Firestore writes + outbound messages.
 
@@ -122,7 +120,6 @@ vi.mock("../client", () => ({
 const quickComplete = vi.fn(async (..._a: any[]) => "");
 vi.mock("../../utils/openaiClient", () => ({ quickComplete: (...a: any[]) => quickComplete(...a) }));
 vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg") }));
-vi.mock("../../utils/dndGuard", () => ({ sendIfNotDND: vi.fn(async () => {}) }));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn(async () => {}) }));
 vi.mock("../../observability/actionLedger", () => ({ logAgentAction: vi.fn(async () => {}) }));
@@ -151,125 +148,17 @@ function ctx(text: string) {
   };
 }
 
-function referralDocs() {
-  return [...hoisted.docState.entries()]
-    .filter(([p]) => p.startsWith("referrals/"))
-    .map(([path, data]) => ({ path, data }));
-}
-
 beforeEach(() => {
   hoisted.reset();
   vi.clearAllMocks();
-  // Default LLM stub mirrors caregiverReferral.test.ts: prompt-aware.
-  quickComplete.mockImplementation(async (sys: string, user: string) => {
-    if (/refer, invite, or recommend/i.test(sys)) return "NO";       // referral intent (off by default)
+  // Default LLM stub: prompt-aware.
+  quickComplete.mockImplementation(async (sys: string) => {
     if (/question or off-topic/i.test(sys)) return "NO";             // mid-flow question guard
-    if (/Extract the referred caregiver's name/i.test(sys)) {
-      return /maria lopez/i.test(user) ? "Maria Lopez" : "";
-    }
     if (/Classify this caregiver message as one of/i.test(sys)) return "NONE"; // NLU fallback
     return "";
   });
   sendToPhone.mockResolvedValue({ message_id: "m2" });
   sendMessage.mockResolvedValue({ message_id: "m1" });
-});
-
-// ── R14: incomplete input asks exactly ONE missing question ───────────────────
-describe("characterization — caregiver referral coded flow", () => {
-  it("asks for exactly ONE missing field (phone) when only a name is supplied", async () => {
-    seed();
-    quickComplete.mockImplementation(async (sys: string, user: string) => {
-      if (/refer, invite, or recommend/i.test(sys)) return "YES";
-      if (/question or off-topic/i.test(sys)) return "NO";
-      if (/Extract the referred caregiver's name/i.test(sys)) return /maria lopez/i.test(user) ? "Maria Lopez" : "";
-      return "";
-    });
-
-    const outcome = await routeCaregiverMessage(ctx("refer a caregiver Maria Lopez"));
-
-    expect(outcome).toBe("handled");
-    // Exactly one outbound question, and it's the phone (not all-at-once).
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith("cg-chat", "What phone number should I text for Maria Lopez?");
-    expect(sendToPhone).not.toHaveBeenCalled();
-    // Partial state captured so the next message resumes the flow.
-    expect(hoisted.docState.get(`agent_sessions/${CG_PHONE}`).pendingCaregiverReferral)
-      .toMatchObject({ referredName: "Maria Lopez" });
-  });
-
-  it("answers a MID-FLOW question and re-asks the current question instead of misparsing it", async () => {
-    // pendingCaregiverReferral set with a name already; the next message is a question.
-    seed({
-      pendingCaregiverReferral: { referredName: "Maria Lopez", startedAt: "2026-06-19T00:00:00.000Z" },
-      stateExpiresAt: "2099-01-01T00:00:00.000Z",
-    });
-    quickComplete.mockImplementation(async (sys: string) => {
-      if (/question or off-topic/i.test(sys)) return "YES";   // it IS a mid-flow question
-      return "";
-    });
-
-    const outcome = await routeCaregiverMessage(ctx("wait, will they need a background check?"));
-
-    expect(outcome).toBe("handled");
-    // Coded behavior: re-ask the CURRENT question (phone, since name is known); do
-    // NOT create a referral or text anyone off a misparsed question.
-    expect(sendMessage).toHaveBeenCalledWith("cg-chat", "What phone number should I text for Maria Lopez?");
-    expect(sendToPhone).not.toHaveBeenCalled();
-    expect(referralDocs()).toHaveLength(0);
-    // Pending state preserved (not cleared) so the flow survives the question.
-    expect(hoisted.docState.get(`agent_sessions/${CG_PHONE}`).pendingCaregiverReferral)
-      .toMatchObject({ referredName: "Maria Lopez" });
-  });
-
-  it("completes the referral with a non-bookable, Checkr-gated end-state once name+phone are in hand", async () => {
-    seed();
-    quickComplete.mockImplementation(async (sys: string, user: string) => {
-      if (/refer, invite, or recommend/i.test(sys)) return "YES";
-      if (/question or off-topic/i.test(sys)) return "NO";
-      if (/Extract the referred caregiver's name/i.test(sys)) return /maria lopez/i.test(user) ? "Maria Lopez" : "";
-      return "";
-    });
-
-    const outcome = await routeCaregiverMessage(ctx("refer a caregiver Maria Lopez 555-222-3333"));
-
-    expect(outcome).toBe("handled");
-    const [referral] = referralDocs();
-    // End-state PROJECTION — the contract a future agent-composed path must match.
-    expect(referral.data).toMatchObject({
-      referrerUserId: CAREGIVER_ID, referrerRole: "caregiver", referredRole: "caregiver",
-      referredName: "Maria Lopez", referredPhone: "+15552223333",
-      source: "cara_sms", status: "invited", bookable: false, checkrRequired: true, deliveryStatus: "sent",
-    });
-    expect(referral.data.eligibilityRequired).toMatchObject({
-      onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", checkrResult: "clear",
-    });
-    expect(sendToPhone).toHaveBeenCalledOnce();
-  });
-});
-
-// ── Duplicate inbound idempotency (the highest-value characterization) ────────
-describe("characterization — duplicate inbound does NOT double-write", () => {
-  it("a replayed referral-completion inbound produces ONE referral, not two", async () => {
-    seed();
-    quickComplete.mockImplementation(async (sys: string, user: string) => {
-      if (/refer, invite, or recommend/i.test(sys)) return "YES";
-      if (/question or off-topic/i.test(sys)) return "NO";
-      if (/Extract the referred caregiver's name/i.test(sys)) return /maria lopez/i.test(user) ? "Maria Lopez" : "";
-      return "";
-    });
-
-    // First delivery: full name+phone → completes, then CLEARS pendingCaregiverReferral.
-    await routeCaregiverMessage(ctx("refer Maria Lopez 555-222-3333"));
-    expect(referralDocs()).toHaveLength(1);
-
-    // Duplicate delivery of the SAME inbound. Because the coded flow cleared the
-    // pending-referral state and the second message re-triggers fresh intent, the
-    // characterization records what the coded path does today: a duplicate inbound
-    // does not resume a now-finished flow off stale pending state.
-    const session2 = hoisted.docState.get(`agent_sessions/${CG_PHONE}`);
-    expect(session2.pendingCaregiverReferral).toBeUndefined();
-  });
-
 });
 
 // ── State-machine dispatch / early exits ──────────────────────────────────────
@@ -280,7 +169,6 @@ describe("characterization — caregiver state-machine dispatch", () => {
     const outcome = await routeCaregiverMessage(ctx("just saying hi, how are you?"));
 
     expect(outcome).toBe("fallthrough");
-    expect(referralDocs()).toHaveLength(0);
   });
 
   it("a legacy job-invite flag left on a session no longer owns the reply (invite flow removed 2026-09-27)", async () => {

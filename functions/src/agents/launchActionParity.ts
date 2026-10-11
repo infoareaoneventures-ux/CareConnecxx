@@ -636,17 +636,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     status: "shipped",
   },
   {
-    id: "caregiver-refer-caregiver",
-    actor: "caregiver",
-    action: "Refer another caregiver",
-    webSurface: "n/a",
-    collection: "referrals",
-    tool: "create_caregiver_referral",
-    promptActor: "caregiver",
-    status: "shipped",
-    notes: "Writes non-bookable caregiver referrals, sends the SMS invite, and keeps bookability gated on onboardingStatus='profile_complete', verificationStatus='approved', and Checkr clear.",
-  },
-  {
     id: "caregiver-check-background-status",
     actor: "caregiver",
     action: "Check background check status",
@@ -655,17 +644,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     tool: "get_background_check_status",
     promptActor: "caregiver",
     status: "shipped",
-  },
-  {
-    id: "caregiver-upload-intro-video",
-    actor: "caregiver",
-    action: "Upload an intro video to the caregiver profile (intended tool: update to update_caregiver_profile or a media pipeline route into caregivers.introVideoUrl)",
-    webSurface: "components/caregiver/CaregiverIntroVideo.tsx",
-    collection: "caregivers",
-    tool: null,
-    promptActor: null,
-    status: "blocker",
-    notes: "Parity audit 2026-07-06: web-only write to caregivers.introVideoUrl — update_caregiver_profile excludes it and no SMS media pipeline routes a texted video there. Should-have (not launch-critical): needs a Storage upload path for SMS media before the tool is honest.",
   },
 
   // ── Admin exception handling (R3) ──────────────────────────────────────────

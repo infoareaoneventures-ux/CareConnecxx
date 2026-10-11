@@ -277,7 +277,6 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         bio: form.bio,
         onboardingStep: 2,
         onboardingStatus: 'profile_complete',
-        verificationStatus: 'profile_complete',
         location: [form.locationCity, form.locationState].filter(Boolean).join(', ') || undefined,
       }) as any);
       next();

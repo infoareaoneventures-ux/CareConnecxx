@@ -148,8 +148,8 @@ interface CaregiverCalendarPageProps {
 
 export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ onNavigate: _onNavigate }) => {
   const navigate = useNavigate();
-  const { blockReason } = useCaregiverGate();
-  const { setMembershipModalOpen } = useCareConnex();
+  const { blockReason, gateFresh, GateModal } = useCaregiverGate();
+  const { setMembershipModalOpen, addToast: pageToast } = useCareConnex();
   const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
   const [weekOffset, setWeekOffset] = useState(0);
@@ -280,12 +280,12 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       setAvailability(editAvail);
       setShowAvailModal(false);
     } catch {
-      setAvailability(editAvail);
-      setShowAvailModal(false);
+      // Failure is not success: keep the modal open with the edits intact so the caregiver can retry.
+      pageToast('Could not save your availability. Please try again.', 'error');
     } finally {
       setSaving(false);
     }
-  }, [user, editAvail]);
+  }, [user, editAvail, pageToast]);
 
   const today = new Date();
   const todayStr = localDate(today);
@@ -819,7 +819,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           {/* Bottom row: Message + Cancel */}
           <div className="flex gap-2 pt-1">
             <button
-              onClick={() => navigate('/caregiver/inbox')}
+              onClick={() => navigate(shift.clientId ? `/caregiver/inbox?client=${shift.clientId}` : '/caregiver/inbox')}
               className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 flex items-center justify-center gap-1.5 text-sm"
             >
               <MessageSquare className="w-4 h-4" />Message
@@ -929,6 +929,8 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     const handleAccept = async () => {
       const fdb = db;
       if (!fdb) return;
+      // Same fresh-read gate as the Jobs tab's Accept / Apply Now (the rules gate the write again).
+      if (!(await gateFresh())) return;
       setAccepting(true);
       try {
         // Same write as the Jobs tab's Accept (JobBoard.tsx).
@@ -938,7 +940,10 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         // Notification handled by onVideoInterviewWrite Cloud Function
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'accepted' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'accepted' as const } : prev);
-      } catch { } finally { setAccepting(false); }
+        addToast('Interview accepted', 'success');
+      } catch {
+        addToast('Failed to accept interview', 'error');
+      } finally { setAccepting(false); }
     };
 
     const handleDecline = async () => {
@@ -955,7 +960,9 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         // Notification handled by onVideoInterviewWrite Cloud Function
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'declined' as const } : prev);
-      } catch { } finally { setDeclining(false); }
+      } catch {
+        addToast('Failed to decline interview', 'error');
+      } finally { setDeclining(false); }
     };
 
     // "Propose a different time" — the same write as the Jobs page's Propose new
@@ -999,7 +1006,9 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         });
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);
-      } catch { } finally { setCancelling(false); }
+      } catch {
+        addToast('Failed to cancel interview', 'error');
+      } finally { setCancelling(false); }
     };
 
     const careTypes: string[] = job?.careTypes || job?.requirements || [];
@@ -1098,17 +1107,30 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           {/* Accept / Decline for pending requests */}
           {interview.status === 'requested' && !showPropose && (
             <div className="flex gap-2">
-              <button onClick={handleAccept} disabled={accepting}
-                className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
-                {accepting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Accept
-              </button>
+              {/* Same gate as the Jobs tab's Accept (membership / background check); Decline stays available. */}
+              {blockReason === 'membership' ? (
+                <button onClick={() => setMembershipModalOpen(true)}
+                  className="flex-1 py-2 bg-slate-100 border border-slate-200 text-slate-500 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors hover:bg-slate-200">
+                  <Lock className="w-4 h-4" /> Activate Membership
+                </button>
+              ) : blockReason === 'background' ? (
+                <button onClick={() => navigate('/caregiver/dashboard')}
+                  className="flex-1 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
+                  <Lock className="w-4 h-4" /> Complete Verification
+                </button>
+              ) : (
+                <button onClick={handleAccept} disabled={accepting}
+                  className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
+                  {accepting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Accept
+                </button>
+              )}
               <button onClick={handleDecline} disabled={declining}
                 className="flex-1 py-2 border border-red-200 hover:bg-red-50 text-red-600 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
                 {declining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-4 h-4" />} Decline
               </button>
             </div>
           )}
-          {interview.status === 'requested' && !showPropose && (
+          {interview.status === 'requested' && !showPropose && !blockReason && (
             <button onClick={() => setShowPropose(true)}
               className="py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
               <CalendarIcon className="w-3.5 h-3.5" /> Propose a different time
@@ -1148,7 +1170,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           )}
 
           <div className="flex gap-2">
-            <button onClick={() => navigate('/caregiver/inbox')}
+            <button onClick={() => navigate(interview.clientId ? `/caregiver/inbox?client=${interview.clientId}` : '/caregiver/inbox')}
               className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm flex items-center justify-center gap-1.5">
               <MessageSquare className="w-4 h-4" /> Message
             </button>
@@ -1761,6 +1783,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         document.body
       )}
     </div>
+      {GateModal}
   </>
   );
 };

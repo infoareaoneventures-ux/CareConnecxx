@@ -23,6 +23,7 @@ import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { relayIntoSharedChatThread } from "../utils/chatThread";
 import { businessTodayStr } from "../utils/scheduledTime";
+import { isQuestionOrOther, answerMidFlow } from "./stepHandler";
 
 const db = admin.firestore();
 
@@ -91,6 +92,13 @@ export async function relayCaregiverMessageToFamily(caregiverId: string, text: u
 }
 
 export const latePrompt = (family: string) => `What should I tell ${family}? I'll send it as your message.`;
+/** What a mid-flow question is answered from (founder 2026-10-11): who the family is and exactly what happens to the text. */
+export const RELAY_FACTS = (family: string, draft?: string) =>
+  `The family is ${family} — the family of the caregiver's visit (the one in progress, else today's, else the next scheduled). ` +
+  `${draft ? `The message waiting to be sent reads: "${draft}". ` : ""}` +
+  `The message is posted into ${family}'s Inbox thread as the caregiver's OWN words, exactly as typed — Evia adds, rewrites and sends nothing of its own. ` +
+  "The family sees it in the app and by text, as a message from the caregiver, and can reply in the same thread. " +
+  "Nothing has been sent yet; NO or CANCEL backs out without sending.";
 
 const FLOW_TTL_MS = 30 * 60 * 1000;
 type PendingChoice = { candidates: FamilyRef[]; text?: string };
@@ -131,7 +139,10 @@ export async function handleLateKeyword(phone: string, chatId: string, caregiver
       return "handled";
     }
     if (upper === "NO" || upper === "N" || upper === "CANCEL") { await clear(); await say("Okay — nothing sent."); return "handled"; }
-    await say(confirmRelayPrompt(confirm.clientName, confirm.text));
+    // A question is answered from what is on their screen, then the confirm is re-asked (nothing sent either way).
+    const confirmQ = confirmRelayPrompt(confirm.clientName, confirm.text);
+    if (await isQuestionOrOther(raw, confirmQ)) { await say(await answerMidFlow(raw, confirmQ, { audience: "caregiver", facts: RELAY_FACTS(confirm.clientName, confirm.text) })); return "handled"; }
+    await say(confirmQ);
     return "handled";
   }
 
@@ -150,6 +161,10 @@ export async function handleLateKeyword(phone: string, chatId: string, caregiver
   }
   if (pending) {
     if (upper === "NO" || upper === "CANCEL") { await clear(); await say("Okay — nothing sent."); return "handled"; }
+    // "What should I tell <family>?" — a question is answered (who the family is, where the words go) and the question
+    // re-asked; only a non-question reply is relayed (2026-10-11: before this, a question was texted to the family verbatim).
+    const family = pending.clientName || "the family";
+    if (await isQuestionOrOther(raw, latePrompt(family))) { await say(await answerMidFlow(raw, latePrompt(family), { audience: "caregiver", facts: RELAY_FACTS(family) })); return "handled"; }
     const r = await relayCaregiverMessageToFamily(caregiverId, raw, pending.clientId ? { clientId: pending.clientId, clientName: pending.clientName || "the family" } : null);
     await clear();
     await say(r.ok ? `Sent to ${r.clientName} as your message.` : r.message);

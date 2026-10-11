@@ -211,6 +211,16 @@ const START_Q = (d: LogHoursFlowData) => `Log hours for ${d.clientName}, ${fmtDa
 const END_Q = (d: LogHoursFlowData) => `And what time did you finish? Reply a time, or KEEP for the scheduled ${fmtTime(d.endTime)}.`;
 const TASKS_Q = (d: LogHoursFlowData, shift: Doc) => [`Which tasks were done?`, ...recipientBlocks(shift, taskItems(shift) as TaskItem[], { withNotes: true }), "", "Reply the numbers (e.g. 1, 3), ALL, or NONE."].join("\n");
 const NOTE_Q = "Any notes about the visit? Reply with the note, or SKIP.";
+/** The Log Hours modal's facts at any step: the visit, what has been entered so far, the task list, and what LOG does. */
+const VISIT_FACTS = (d: LogHoursFlowData) => [
+  `Log Hours is for a visit that was missed on the schedule: ${d.clientName}, ${fmtDate(d.date)}, scheduled ${fmtTime(d.startTime)} – ${fmtTime(d.endTime)}.`,
+  d.startAt ? `Actual start entered: ${fmtDate(d.startDate ?? d.date)} ${fmtTime(d.startAt)}.` : "Actual start: not entered yet.",
+  d.endAt ? `Actual end entered: ${fmtDate(d.endDate ?? d.date)} ${fmtTime(d.endAt)}.` : "Actual end: not entered yet.",
+  d.taskList.length ? `The visit's tasks, numbered: ${d.taskList.map((t) => `${t.number}. ${t.label}${t.recipientName ? ` (${t.recipientName})` : ""}`).join("; ")}.` : "The visit has no care plan tasks.",
+  d.tasks ? `Tasks marked done: ${d.tasks.length}/${d.taskList.length}.` : "",
+  d.note !== undefined ? (d.note ? `Note entered: "${d.note}".` : "No note.") : "",
+  "KEEP uses the scheduled time. LOG (on the final recap) marks the visit completed with these times, tasks and note — the modal's Log Hours — and then SUBMIT submits the hours for payment; nothing is saved before LOG. CANCEL leaves the visit as missed.",
+].filter(Boolean).join(" ");
 function totalLabel(d: LogHoursFlowData): string | null {
   const s = parseScheduledTimeMs(`${d.startDate}T${d.startAt}:00`), e = parseScheduledTimeMs(`${d.endDate}T${d.endAt}:00`);
   if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return null;
@@ -277,7 +287,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
   if (step === "lh_start") {
     const q = START_Q(data);
     if (await isBackOutRequest(text, q)) return cancelled();
-    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; }
+    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: VISIT_FACTS(data) })); return; }
     const w = await parseWhen(text, data.startTime, data.date);
     if (!w) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
     return next({ startDate: w.date, startAt: w.time }, "lh_end", END_Q(data));
@@ -285,7 +295,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
   if (step === "lh_end") {
     const q = END_Q(data);
     if (await isBackOutRequest(text, q)) return cancelled();
-    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; }
+    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: VISIT_FACTS(data) })); return; }
     // The page defaults the end DATE to the next day when the scheduled end is before the start (crosses midnight).
     const crosses = (data.endTime || "") < (data.startTime || "");
     const defaultEndDate = crosses ? addDays(data.startDate ?? data.date, 1) : (data.startDate ?? data.date);
@@ -317,7 +327,13 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
       }
     }
     if (keys === null) {
-      if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; }
+      if (await isQuestionOrOther(text, q)) {
+        // The screen is the full task list (with the recipients' notes) they were just sent — re-read from the visit.
+        const snap = await db.collection("shifts").doc(data.shiftId).get().catch(() => null);
+        const screen = snap?.exists ? TASKS_Q(data, (snap.data() ?? {}) as Doc) : q;
+        await sendMessage(chatId, await answerMidFlow(text, q, { facts: `${screen === q ? "" : `The task list on their screen:\n${screen}\n\n`}${VISIT_FACTS(data)}` }));
+        return;
+      }
       await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return;
     }
     return next({ tasks: keys }, "lh_note", NOTE_Q);
@@ -328,7 +344,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     let note = "";
     if (norm !== "SKIP" && norm !== "NONE" && norm !== "NO") {
       const kind = await parse("A caregiver was asked: \"Any notes about the visit? Reply with the note, or SKIP.\" Classify: NOTE if the message is the note itself, QUESTION if it is a question or something else.", text);
-      if (kind.toUpperCase().startsWith("Q")) { await sendMessage(chatId, await answerMidFlow(text, NOTE_Q)); return; }
+      if (kind.toUpperCase().startsWith("Q")) { await sendMessage(chatId, await answerMidFlow(text, NOTE_Q, { facts: `${VISIT_FACTS(data)} The note is saved on the visit with the logged hours, in the caregiver's own words, and the family can see it.` })); return; }
       note = text.trim();
     }
     const merged = { ...data, note };
@@ -350,7 +366,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
-      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q));
+      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: VISIT_FACTS(data) }));
       else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
       return;
     }

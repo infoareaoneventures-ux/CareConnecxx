@@ -48,7 +48,6 @@ const PROMPT_EXEMPT = new Set<string>([
   // qaAgent.ts (it ends the turn), not a user-facing action — internal-only like
   // `task`/`resume_execution_agent`, so it is not a capability-map row.
   "task", "write_todos", "resume_execution_agent", "complete_task",
-  "morning-caregiver-briefing",
   // Onboarding-loop plumbing: described per-turn by the onboarding directive
   // (buildOnboardingDirective / caregiverOnboardingDirective), not by the static
   // system prompts this guard scans — the directive is the authoritative doc.
@@ -61,7 +60,6 @@ const NEW_AGENT_NATIVE_TOOLS = [
   // found them bound but invisible (schemas only, no prompt line).
   "start_shift", "complete_shift", "update_shift_task",
   "respond_to_booking_request", "withdraw_job_application",
-  "create_caregiver_referral",
   // Payments › Timesheets (2026-10-01): the tab + its two modals as flows replaced respond_to_shift_hour_correction / get_shifts.
   "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
 ];

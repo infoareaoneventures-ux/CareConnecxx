@@ -56,10 +56,6 @@ import { getAppUrl } from "../config/appUrl";
 import { caregiverAnnualAmount, clientMonthlyAmount, clientMonthlyDisplay } from "../config/pricing";
 import { logAgentAction } from "../observability/actionLedger";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
-import {
-  createCaregiverReferralInvite,
-  resolveCaregiverReferralName,
-} from "../agents/caregiverReferral";
 
 const db = admin.firestore();
 
@@ -1380,22 +1376,6 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId", "text"],
     },
   },
-  {
-    name: "create_caregiver_referral",
-    description:
-      "Invite a referred caregiver by SMS. Writes a non-bookable referral record, sends the application link, " +
-      "and keeps the referred caregiver gated on onboarding plus Checkr clear before bookability.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:    { type: "string", description: "The referring caregiver document ID" },
-        phone:          { type: "string", description: "The referring caregiver's SMS phone number" },
-        referredName:   { type: "string", description: "Name of the caregiver being referred" },
-        referredPhone:  { type: "string", description: "Phone number to text the application link to" },
-      },
-      required: ["caregiverId", "phone", "referredName", "referredPhone"],
-    },
-  },
 
   // ── Full-platform coverage tools ─────────────────────────────────────────
   {
@@ -1837,8 +1817,8 @@ export const MCP_TOOLS: McpTool[] = [
     name: "send_onboarding_link",
     description:
       "Generate AND send a tappable onboarding/signup link directly to this chat. Use this whenever a family " +
-      "or caregiver asks you to (re)send a subscription/payment, identity verification, profile photo, document " +
-      "upload, background check, or payout-setup link. The tool sends the link itself — after it succeeds, just " +
+      "or caregiver asks you to (re)send a subscription/payment, identity verification, profile photo, " +
+      "background check, or payout-setup link. The tool sends the link itself — after it succeeds, just " +
       "briefly confirm (e.g. \"Sent! Tap the link to verify your identity\"). NEVER create a support ticket for a " +
       "link you can send with this tool. Pick the linkType that matches what they asked for. NEVER tell the user " +
       "a link is coming or being pulled up without calling this tool in the same turn — narrating a link does not " +
@@ -1859,7 +1839,8 @@ export const MCP_TOOLS: McpTool[] = [
           description:
             "Which link to send. Families: client_payment (subscription / payment method setup), client_identity " +
             "(identity verification). Caregivers: caregiver_membership (annual membership), caregiver_photo, " +
-            "caregiver_documents (certifications), caregiver_background_check, caregiver_payouts (Stripe payout setup).",
+            "caregiver_background_check, caregiver_payouts (Stripe payout setup). There is no document-upload link " +
+            "(transport documents were retired 2026-10-06 — Transportation is the driving record only).",
         },
       },
       required: ["linkType"],
@@ -1912,56 +1893,6 @@ export const MCP_TOOLS: McpTool[] = [
         clientId:    { type: "string", description: "The family/client's user ID (auto-injected on family turns)" },
       },
       required: [],
-    },
-  },
-  // ── Checkr Candidate MCP bridge (docs.checkr.com/mcp) ──────────────────────
-  // Pulls the caregiver's FULL redacted report straight from Checkr, gated by
-  // Checkr's own candidate identity verification (email OTP). Flow:
-  // request_checkr_verification → verify_checkr_otp → get_checkr_report.
-  {
-    name: "request_checkr_verification",
-    description:
-      "Start a secure Checkr identity-verification session so the caregiver's FULL background-check report can be " +
-      "pulled with get_checkr_report. Checkr emails a one-time code to the caregiver's email on file with Checkr. " +
-      "Use when get_background_check_status isn't enough — e.g. the caregiver asks which screenings ran, what a " +
-      "\"consider\" result means for THEIR report, or why it's delayed. Confirm their email first; max 3 code sends " +
-      "per session.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
-        email:       { type: "string", description: "The caregiver's email — must match the email on their Checkr candidate record" },
-      },
-      required: ["caregiverId", "email"],
-    },
-  },
-  {
-    name: "verify_checkr_otp",
-    description:
-      "Complete Checkr identity verification with the one-time code the caregiver received by email after " +
-      "request_checkr_verification. Max 3 attempts per session; on success get_checkr_report becomes available.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
-        code:        { type: "string", description: "The one-time code from the caregiver's email" },
-      },
-      required: ["caregiverId", "code"],
-    },
-  },
-  {
-    name: "get_checkr_report",
-    description:
-      "Fetch the caregiver's latest background-check report details live from Checkr (status, result, individual " +
-      "screenings, exceptions, candidate portal link) — all PII redacted by Checkr. Requires a verified session " +
-      "(request_checkr_verification then verify_checkr_otp first). For a quick status answer use " +
-      "get_background_check_status instead.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
-      },
-      required: ["caregiverId"],
     },
   },
   // ── Account & profile ─────────────────────────────────────────────────────
@@ -2495,7 +2426,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "complete_shift",
   "update_shift_task",
   "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
-  "create_caregiver_referral",
   "get_caregiver_availability",
   // Requests-tab Q&A parity (2026-09-14) — matches CaregiverBookingsPage's
   // own Requests tab (booking_requests where caregiverId + status:'pending').
@@ -2514,10 +2444,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "start_interview_reschedule_flow",
   // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
   "react_to_message",
-  // Checkr Candidate MCP bridge (2026-07-09) — full report details, OTP-gated
-  "request_checkr_verification",
-  "verify_checkr_otp",
-  "get_checkr_report",
   // Booking-pipeline parity (2026-08-30) — the caregiver's own accept/decline
   // of a family's schedule-change request.
   // Account Settings phone-recovery audit (2026-09-02) — delete_account looks
@@ -2566,12 +2492,7 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "complete_shift",
   "update_shift_task",
   "show_timesheets", "start_submit_hours_flow", "start_review_correction_flow",
-  "create_caregiver_referral",
   "get_caregiver_availability",
-  // Checkr Candidate MCP bridge (2026-07-09) — a caregiver's own report only
-  "request_checkr_verification",
-  "verify_checkr_otp",
-  "get_checkr_report",
   // Booking-pipeline parity (2026-08-30) — caregiver-only accept/decline.
   // Caregiver's own reschedule proposals / journal writes — were reachable from
   // a client conversation because the filter is subtractive (2026-09-23 sweep).
@@ -2584,6 +2505,10 @@ export async function handleToolCallForCaregiver(
   input: Record<string, unknown>,
   shadowMode = false,
 ): Promise<unknown> {
+  // Claude-scheduled follow-ups are a family-only feature (2026-10-11).
+  if (name === "schedule_followup" || name === "cancel_followup") {
+    return toolError("PERMISSION_DENIED", "Follow-ups are scheduled for families only — not for caregivers.");
+  }
   return handleToolCall(name, input, shadowMode);
 }
 
@@ -2665,46 +2590,12 @@ export interface McpPrompt {
   arguments: Array<{ name: string; description: string; required: boolean }>;
 }
 
-export const MCP_PROMPTS: McpPrompt[] = [
-  {
-    name: "morning-caregiver-briefing",
-    description: "Pre-shift briefing sent to caregivers on the morning of a visit.",
-    arguments: [
-      { name: "caregiverName", description: "Caregiver's first name",          required: true },
-      { name: "seniorName",    description: "Senior's name",                   required: true },
-      { name: "schedule",      description: "Time and duration of visit",      required: false },
-      { name: "address",       description: "Client address",                  required: true },
-      { name: "mapsUrl",       description: "Google Maps URL",                 required: false },
-      { name: "medLine",       description: "Medication reminder line",        required: false },
-      { name: "verifiedNote",  description: "Background check verified note", required: false },
-    ],
-  },
-];
+// (The only prompt, "morning-caregiver-briefing", was removed 2026-10-11 with
+// the caregiver morning briefing itself — founder decision, caregiver sweep A3.)
+export const MCP_PROMPTS: McpPrompt[] = [];
 
-export function handlePromptGet(name: string, args: Record<string, string>): string {
-  switch (name) {
-    case "morning-caregiver-briefing": {
-      const { caregiverName, seniorName, schedule, address, mapsUrl, medLine, verifiedNote } = args;
-      const extras = [
-        schedule   ? `Visit time/duration: ${schedule}` : null,
-        mapsUrl    ? `Maps link: ${mapsUrl}` : null,
-        medLine    ? `Medications: ${medLine}` : null,
-        verifiedNote ? `Background check: ${verifiedNote}` : null,
-      ].filter(Boolean).join("\n");
-      return [
-        `You are Evia. Write a short, direct morning briefing text for caregiver ${caregiverName}.`,
-        ``,
-        `They have a visit today with ${seniorName} at ${address}.`,
-        extras ? `Additional context:\n${extras}` : null,
-        ``,
-        `Write it like a quick heads-up from a trusted coordinator — not a manager, not a cheerleader.`,
-        `Keep it under 100 words. Plain text only. End with: Reply ARRIVED when you get there.`,
-      ].filter(Boolean).join("\n");
-    }
-
-    default:
-      return `Prompt "${name}" not found.`;
-  }
+export function handlePromptGet(name: string, _args: Record<string, string>): string {
+  return `Prompt "${name}" not found.`;
 }
 
 // Structured error response so Claude can reason about failures rather than hallucinating
@@ -2796,6 +2687,34 @@ async function assertSeniorAccess(seniorId: string, sessionClientId: unknown) {
     return toolError("PERMISSION_DENIED", "Not authorized to access this senior's data");
   }
   return null;
+}
+
+// Is this tool call a CAREGIVER's turn? qaAgent injects the speaker's identity
+// last (authoritative): a caregiver turn carries userId = the caregiver's uid
+// and caregiverId = that same uid, never a clientId; a family turn carries
+// clientId = userId. A model-supplied caregiverId on a family turn therefore
+// never equals userId, and a caregiver turn with no session userId still
+// counts as the caregiver (fail-safe: the narrower read).
+function isCaregiverCaller(input: Record<string, unknown>): boolean {
+  const cg = input.caregiverId;
+  return typeof cg === "string" && cg.length > 0 && (input.userId === undefined || input.userId === cg);
+}
+
+// The site's rule for what a caregiver may see of a family: the Bookings and
+// My Families pages read booking_requests + shifts where caregiverId is hers —
+// an accepted booking request with that family, or a visit (scheduled,
+// in-progress or completed) with them. Same query shapes as loadFamilies /
+// send_client_message (caregiverId equality, then filtered here) so no new
+// composite index is needed.
+async function caregiverWorksWithClient(caregiverId: string, clientId: string): Promise<boolean> {
+  if (!caregiverId || !clientId) return false;
+  const [bookingsSnap, shiftsSnap] = await Promise.all([
+    db.collection("booking_requests").where("caregiverId", "==", caregiverId).limit(100).get(),
+    db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "in", ["scheduled", "in-progress", "completed"]).get(),
+  ]);
+  const accepted = bookingsSnap.docs.some((d) => { const b = d.data(); return b.caregiverId === caregiverId && b.clientId === clientId && b.status === "accepted"; });
+  if (accepted) return true;
+  return shiftsSnap.docs.some((d) => { const s = d.data(); return s.caregiverId === caregiverId && s.clientId === clientId && ["scheduled", "in-progress", "completed"].includes(String(s.status)); });
 }
 
 // R11 (memory-grounding U4b): memory MUTATION tools must never trust a
@@ -2978,10 +2897,6 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_payout_status", "get_signup_completeness",
   // CRUD/parity gap closures (agent-native audit 2026-07) — pure reads only
   "list_interviews", "list_blocked_users",
-  // get_checkr_report is a pure remote read (Checkr redacts PII; nothing is
-  // consumed or mutated). request_checkr_verification / verify_checkr_otp are
-  // NOT read-only — they send a real OTP email / burn a verify attempt.
-  "get_checkr_report",
 ]);
 
 export function isReadOnlyTool(name: string): boolean {
@@ -3272,8 +3187,23 @@ async function executeToolCall(
     switch (name) {
       case "get_senior_profile": {
         if (!input.seniorId) return toolError("INVALID_INPUT", "seniorId is required");
-        const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
-        if (denied) return denied;
+        if (isCaregiverCaller(input)) {
+          // A caregiver (2026-10-11): the owner check used to compare the
+          // senior's owning client against the caregiver's own uid — denied
+          // every time, or, when the model passed a clientId, trusted it. The
+          // site shows a caregiver the care recipient of a family she has an
+          // accepted booking or a visit with (the Bookings page's cards) — so
+          // that relationship, against the caregiver's authoritative id, is the
+          // rule here; everyone else is denied.
+          const spData = (await db.collection("senior_profiles").doc(input.seniorId as string).get()).data();
+          const ownerId = (spData?.userId ?? spData?.clientId ?? input.seniorId) as string; // legacy profiles are keyed by the client's uid
+          if (!(await caregiverWorksWithClient(input.caregiverId as string, ownerId))) {
+            return toolError("PERMISSION_DENIED", "Not authorized to access this senior's data");
+          }
+        } else {
+          const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
+          if (denied) return denied;
+        }
         logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_senior_profile").catch(() => {});
         // Canonical-first via the shared repository (U6/R17): senior_profiles —
         // the collection assertSeniorAccess authorized against — wins, so a
@@ -3312,16 +3242,29 @@ async function executeToolCall(
         // 'needs_replacement' included (2026-09-14): the site's list shows a
         // cancelled-by-caregiver visit alongside the scheduled ones (with its
         // Find Replacement / Skip buttons), and the agent needs its shiftId.
-        const shiftSnap = await db.collection("shifts")
-          .where("clientId", "==", input.clientId)
-          .where("status", "in", ["scheduled", "in-progress", "needs_replacement"])
-          .where("date", ">=", today)
-          .orderBy("date", "asc")
-          .limit(6)
-          .get();
+        // A caregiver's turn (2026-10-11): the site lets a caregiver read only
+        // the visits that are HERS (firestore.rules shifts: caregiverId == uid;
+        // her Bookings page's own query, loadCaregiverActiveShifts' shape) — so
+        // with a family's clientId she gets that family's upcoming visits with
+        // her, never the family's whole schedule (this used to return any
+        // family's visits to any caregiver who named a clientId). A
+        // needs_replacement visit is one she cancelled — not hers any more.
+        const callerCaregiverId = isCaregiverCaller(input) ? (input.caregiverId as string) : null;
+        const shiftDocs = callerCaregiverId
+          ? (await db.collection("shifts")
+              .where("caregiverId", "==", callerCaregiverId)
+              .where("status", "in", ["scheduled", "in-progress"])
+              .get()).docs.filter((d) => d.data().clientId === input.clientId && String(d.data().date ?? "") >= today && d.data().caregiverId === callerCaregiverId && ["scheduled", "in-progress"].includes(String(d.data().status)))
+          : (await db.collection("shifts")
+              .where("clientId", "==", input.clientId)
+              .where("status", "in", ["scheduled", "in-progress", "needs_replacement"])
+              .where("date", ">=", today)
+              .orderBy("date", "asc")
+              .limit(6)
+              .get()).docs;
         // id is returned so the agent can pass a real shiftId to manage_booking /
         // get_callout_backups — data() alone left it with nothing to act on.
-        const merged = shiftSnap.docs
+        const merged = shiftDocs
           // displayStatus = the page's pill (Overdue for a scheduled visit whose time passed).
           .map((d): Record<string, unknown> => ({ id: d.id, ...d.data(), displayStatus: shiftDisplayStatus(d.data()), dayOfWeek: weekdayForDate(String(d.data().date ?? "")) }))
           .sort((a, b) => `${a.date}${a.startTime ?? ""}`.localeCompare(`${b.date}${b.startTime ?? ""}`));
@@ -4411,6 +4354,13 @@ async function executeToolCall(
         const { phone, userId, message: followUpMsg, scheduledAt, reason } = input;
         if (!phone || !userId || !followUpMsg || !scheduledAt) {
           return toolError("INVALID_INPUT", "phone, userId, message, and scheduledAt are required");
+        }
+        // Families only (founder, 2026-10-11 — caregiver sweep A4): Evia never
+        // schedules a model-worded follow-up to a caregiver. The tool is not in
+        // CAREGIVER_TOOLS; this is the backstop for any other way in.
+        const sfSessSnap = await db.collection("agent_sessions").doc(phone as string).get().catch(() => null);
+        if (sfSessSnap?.data()?.userType === "caregiver") {
+          return toolError("PERMISSION_DENIED", "Follow-ups are scheduled for families only — not for caregivers.");
         }
         // Validate scheduledAt is in the future
         if (new Date(scheduledAt as string) <= new Date()) {
@@ -5590,33 +5540,6 @@ async function executeToolCall(
     // use, and the daily auto-sweep already delivers earnings for free.
     // Instant payout (above) remains the only on-demand payout.
 
-    if (name === "create_caregiver_referral") {
-      return runActionNativeMcpWrite(name, input, async () => {
-      const caregiverId = stringInput(input, "caregiverId");
-      const phone = stringInput(input, "phone");
-      const referredName = stringInput(input, "referredName");
-      const referredPhone = stringInput(input, "referredPhone");
-      if (!caregiverId || !phone || !referredName || !referredPhone) {
-        return toolError("INVALID_INPUT", "caregiverId, phone, referredName, and referredPhone are required");
-      }
-      const referrerName = await resolveCaregiverReferralName(caregiverId, phone);
-      const result = await createCaregiverReferralInvite({
-        referrerUserId: caregiverId,
-        referrerPhone: phone,
-        referrerName,
-        referredName,
-        referredPhone,
-        source: "cara_sms",
-      });
-      return {
-        ...result,
-        status: "invited",
-        referredRole: "caregiver",
-        checkrRequired: true,
-      };
-      });
-    }
-
     if (name === "resume_execution_agent") {
       const { agentId, input: agentInput } = input as { agentId: string; input: string };
       if (!agentId || !agentInput) return toolError("INVALID_INPUT", "agentId and input are required");
@@ -6322,110 +6245,6 @@ async function executeToolCall(
       }
 
       return toolError("INVALID_INPUT", "caregiverId or clientId is required");
-    }
-
-    // ── Checkr Candidate MCP bridge ──────────────────────────────────────────
-    // Sessions live on Checkr's side (1 hour, one candidate, Mcp-Session-Id
-    // header). Each turn is a separate function invocation, so the session id
-    // is persisted per caregiver in checkr_mcp_sessions and reused by the
-    // verify/report tools.
-    if (name === "request_checkr_verification") {
-      const { caregiverId, email } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return toolError("INVALID_INPUT", "A valid email is required");
-      }
-      const checkrMcp = await import("./checkrMcpClient");
-      if (!checkrMcp.isCheckrMcpConfigured()) {
-        return toolError("UNAVAILABLE",
-          "Checkr report lookup isn't configured yet — use get_background_check_status for the current status.");
-      }
-      try {
-        const mcpSessionId = await checkrMcp.initializeCheckrSession();
-        const result = await checkrMcp.callCheckrTool(mcpSessionId, "request_candidate_verification", { email });
-        if (result.isError) {
-          return { error: true, message: result.text || "Checkr couldn't send a verification code to that email." };
-        }
-        await db.collection("checkr_mcp_sessions").doc(caregiverId as string).set({
-          sessionId: mcpSessionId,
-          email,
-          verified:  false,
-          createdAt: nowIso,
-          // Checkr sessions last 1h; expire ours slightly earlier so we never
-          // hand the agent a session Checkr has already evicted.
-          expiresAt: new Date(Date.now() + 55 * 60 * 1000).toISOString(),
-        });
-        return {
-          success: true,
-          message: "Checkr emailed the caregiver a one-time code. Ask them for it, then call verify_checkr_otp.",
-        };
-      } catch (e) {
-        console.error("[request_checkr_verification] error:", e);
-        return { error: true, message: "I couldn't reach Checkr just now. Try again in a moment." };
-      }
-    }
-
-    if (name === "verify_checkr_otp") {
-      const { caregiverId, code } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      if (!code) return toolError("INVALID_INPUT", "code is required");
-      const sessRef  = db.collection("checkr_mcp_sessions").doc(caregiverId as string);
-      const sessSnap = await sessRef.get();
-      const sess = sessSnap.exists ? (sessSnap.data() as Record<string, unknown>) : null;
-      if (!sess || (sess.expiresAt as string) < new Date().toISOString()) {
-        return toolError("NOT_FOUND",
-          "No active Checkr verification session — call request_checkr_verification first.");
-      }
-      const checkrMcp = await import("./checkrMcpClient");
-      try {
-        const result = await checkrMcp.callCheckrTool(
-          sess.sessionId as string,
-          "verify_candidate_otp",
-          { email: sess.email, code: String(code).trim() },
-        );
-        if (result.isError) {
-          return { error: true, message: result.text || "That code didn't verify — Checkr allows 3 attempts per session." };
-        }
-        await sessRef.set({ verified: true, verifiedAt: nowIso }, { merge: true });
-        return { success: true, message: "Identity verified with Checkr. get_checkr_report is now available." };
-      } catch (e) {
-        if (e instanceof checkrMcp.CheckrMcpError && e.sessionExpired) {
-          await sessRef.delete().catch(() => {});
-          return toolError("NOT_FOUND",
-            "The Checkr session expired — start over with request_checkr_verification.");
-        }
-        console.error("[verify_checkr_otp] error:", e);
-        return { error: true, message: "I couldn't verify that with Checkr just now. Try again in a moment." };
-      }
-    }
-
-    if (name === "get_checkr_report") {
-      const { caregiverId } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const sessRef  = db.collection("checkr_mcp_sessions").doc(caregiverId as string);
-      const sessSnap = await sessRef.get();
-      const sess = sessSnap.exists ? (sessSnap.data() as Record<string, unknown>) : null;
-      if (!sess || !sess.verified || (sess.expiresAt as string) < new Date().toISOString()) {
-        return toolError("PERMISSION_DENIED",
-          "Checkr identity verification needed first — call request_checkr_verification, then verify_checkr_otp.");
-      }
-      const checkrMcp = await import("./checkrMcpClient");
-      try {
-        const result = await checkrMcp.callCheckrTool(sess.sessionId as string, "get_report", {});
-        if (result.isError) {
-          return { error: true, message: result.text || "Checkr couldn't return the report just now." };
-        }
-        logAudit({ eventType: "health_data_accessed", userId: caregiverId as string, data: { source: "mcp:get_checkr_report" } }).catch(() => {});
-        return { success: true, report: result.data ?? result.text };
-      } catch (e) {
-        if (e instanceof checkrMcp.CheckrMcpError && e.sessionExpired) {
-          await sessRef.delete().catch(() => {});
-          return toolError("NOT_FOUND",
-            "The Checkr session expired — start over with request_checkr_verification.");
-        }
-        console.error("[get_checkr_report] error:", e);
-        return { error: true, message: "I couldn't pull the report from Checkr just now. Try again in a moment." };
-      }
     }
 
     // ── update_caregiver_availability ───────────────────────────────────────

@@ -691,16 +691,14 @@ const BookingGroupCard: React.FC<{
   shifts: Shift[];
   /** One visit at a time (2026-10-07): the caregiver's visits in progress, any booking — Start Shift is replaced while one is open. */
   inProgressVisits: Array<{ id: string; status?: string; clientName?: string }>;
-  amendments: BookingAmendment[];
   onCancel: (id: string) => void;
-  onAcceptAmendment: (amendment: BookingAmendment) => Promise<void>;
   /** The family's membership lapsed past its grace window — no new visits are generated (booking_requests.schedulePausedAt). */
   schedulePaused?: boolean;
   /** The booking's own note (booking_requests.notes); undefined while the requests haven't loaded. */
   bookingNote?: string | null;
   /** ?visit=<shiftId> from an Evia text — open this visit's tasks and scroll to it (2026-09-29). */
   focusShiftId?: string | null;
-}> = ({ shifts, inProgressVisits, amendments, onCancel, onAcceptAmendment, schedulePaused, bookingNote, focusShiftId }) => {
+}> = ({ shifts, inProgressVisits, onCancel, schedulePaused, bookingNote, focusShiftId }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
   const { setMembershipModalOpen } = useCareConnex();
@@ -1134,56 +1132,7 @@ const BookingGroupCard: React.FC<{
         </div>
       )}
 
-      {/* ── Recurring schedule amendment requests ── */}
-      {amendments.map(amendment => (
-        <div key={amendment.id} className="border-t border-violet-100 bg-violet-50 px-5 py-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="space-y-0.5 mb-1">
-                {ALL_DAYS_ORDER.filter(d => amendment.newDays[d]?.length).map(day => (
-                  <p key={day} className="text-xs text-slate-700">
-                    <span className="font-semibold">{day}</span>
-                    {' · '}
-                    {amendment.newDays[day].map(b => `${fmtTime(b.start)} – ${fmtTime(b.end)}`).join(', ')}
-                  </p>
-                ))}
-              </div>
-              <p className="text-xs text-slate-500 mt-1">
-                {amendment.startDate
-                  ? `Starts ${fmtDate(amendment.startDate)}`
-                  : 'Starts immediately'}
-                {amendment.ongoing
-                  ? ' · Ongoing'
-                  : amendment.endDate
-                    ? ` → ${fmtDate(amendment.endDate)}`
-                    : ''}
-              </p>
-              {amendment.notes && <p className="text-xs text-slate-400 italic mt-0.5">{amendment.notes}</p>}
-            </div>
-            <div className="flex gap-2 shrink-0 mt-0.5">
-              <button
-                onClick={() => onAcceptAmendment(amendment)}
-                className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors"
-              >
-                <CheckCircle className="w-3.5 h-3.5" /> Accept
-              </button>
-              <button
-                onClick={async () => {
-                  if (!db) return;
-                  await db.collection('booking_amendments').doc(amendment.id).update({
-                    status: 'declined',
-                    respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                  }).catch(() => {});
-                  // Notification handled by onBookingAmendmentWrite Cloud Function
-                }}
-                className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors"
-              >
-                Decline
-              </button>
-            </div>
-          </div>
-        </div>
-      ))}
+      {/* Recurring schedule amendments are shown (and answered) in the Requests tab, not in the card. */}
 
       {/* ── Upcoming shifts ── */}
       <div className="border-t border-slate-100">
@@ -1648,7 +1597,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
 
   const completedCount = shifts.filter(s => s.status === 'completed').length;
   const cancelledCount = shifts.filter(s => s.status === 'cancelled').length;
-  const missedCount    = shifts.filter(s => s.status === 'scheduled' || s.status === 'pending').length;
+  const missedCount    = shifts.filter(s => s.status === 'scheduled').length;
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
@@ -1690,7 +1639,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
       <div className="border-t border-slate-100">
         {(showAllShifts ? shifts : shifts.slice(0, 2)).map(shift => {
           const isCompleted = shift.status === 'completed';
-          const isMissed    = shift.status === 'scheduled' || shift.status === 'pending';
+          const isMissed    = shift.status === 'scheduled';
           const isOpen = expandedShiftId === shift.id;
           const actualStart = fmtTs(shift.startedAt);
           const actualEnd   = fmtTs(shift.completedAt);
@@ -2003,14 +1952,15 @@ export const CaregiverBookingsPage: React.FC = () => {
     return () => unsub();
   }, [uid]);
 
-  // Fetch overdue shifts (scheduled but date+time has passed)
+  // Fetch overdue shifts (scheduled but date+time has passed). Only 'scheduled' —
+  // a shift that was never accepted is not a missed visit and must not be loggable.
   useEffect(() => {
     if (!uid || !db) return;
     const n = new Date();
     const today = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
     const unsub = db.collection('shifts')
       .where('caregiverId', '==', uid)
-      .where('status', 'in', ['scheduled', 'pending'])
+      .where('status', '==', 'scheduled')
       .where('date', '<=', today)
       .onSnapshot(snap => {
         // Include previous days + today's shifts only if the scheduled time has already passed
@@ -2386,15 +2336,13 @@ export const CaregiverBookingsPage: React.FC = () => {
                   />
                 );
 
-                // Amendments are shown in the Requests tab — pass empty array here
+                // Amendments are shown in the Requests tab, not in the card
                 return Array.from(groups.entries()).map(([key, groupShifts]) => (
                   <BookingGroupCard
                     inProgressVisits={inProgressVisits}
                     key={key}
                     shifts={groupShifts}
-                    amendments={[]}
                     onCancel={handleCancelShift}
-                    onAcceptAmendment={handleAcceptAmendment}
                     schedulePaused={!!(requests.find(r => r.id === groupShifts[0]?.bookingRequestId) as any)?.schedulePausedAt}
                     bookingNote={(() => { const r = requests.find(x => x.id === groupShifts[0]?.bookingRequestId); return r ? (r.notes || null) : undefined; })()}
                     focusShiftId={focusShiftId}

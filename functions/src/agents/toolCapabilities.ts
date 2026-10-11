@@ -120,16 +120,10 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // Final signup audit (2026-07-14) — cross-cutting profile/gates read; tagged
   // broadly so "did I miss anything?" reaches it under most filtered intents.
   get_signup_completeness:     ["care_plan", "booking", "billing"],
-  // Checkr Candidate MCP bridge (2026-07-09) — caregiver-only, so the tags
-  // never drive client intent-filtering; tagged to satisfy coverage.
-  request_checkr_verification: ["care_plan"],
-  verify_checkr_otp:           ["care_plan"],
-  get_checkr_report:           ["care_plan"],
 
   // ── messaging (contact prefs, safety) ─────────────────────
   send_caregiver_message:           ["messaging"],
   send_client_message:              ["messaging"],
-  create_caregiver_referral:        ["messaging", "booking"],
   get_recent_messages:              ["messaging"],
   update_preferences:               ["messaging"],
   request_email_change:             ["messaging"],

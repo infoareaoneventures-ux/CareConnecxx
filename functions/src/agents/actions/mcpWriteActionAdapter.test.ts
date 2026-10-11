@@ -17,15 +17,17 @@ beforeEach(() => {
 
 describe("mcpWriteActionAdapter", () => {
   it("recognizes migrated consequential MCP write actions", () => {
-    expect(isSupportedMcpWriteAction("create_caregiver_referral")).toBe(true);
     expect(isSupportedMcpWriteAction("complete_shift")).toBe(true);
+    expect(isSupportedMcpWriteAction("start_shift")).toBe(true);
+    // create_caregiver_referral was removed 2026-10-11 (caregiver sweep A1).
+    expect(isSupportedMcpWriteAction("create_caregiver_referral")).toBe(false);
     expect(isSupportedMcpWriteAction("get_shifts")).toBe(false);
   });
 
   it("validates required fields before executing legacy MCP logic", async () => {
     await expect(runMcpWriteCaraAction(
-      "create_caregiver_referral",
-      { caregiverId: "cg1" },
+      "complete_shift",
+      { shiftId: "sh1" },
       async () => ({ success: true }),
     )).rejects.toBeInstanceOf(CaraActionValidationError);
   });
@@ -41,29 +43,27 @@ describe("mcpWriteActionAdapter", () => {
       },
     });
 
-    const execute = vi.fn(async () => ({ success: true, invited: true, referredPhone: "+15550001111" }));
+    const execute = vi.fn(async () => ({ success: true, shiftId: "sh-1", completed: true }));
     const input = {
       caregiverId: "cg-1",
-      phone: "+15550002222",
-      referredName: "Maria",
-      referredPhone: "+15550001111",
+      shiftId: "sh-1",
     };
 
-    await expect(runMcpWriteCaraAction("create_caregiver_referral", input, execute))
-      .resolves.toEqual({ success: true, invited: true, referredPhone: "+15550001111" });
-    await expect(runMcpWriteCaraAction("create_caregiver_referral", input, execute))
-      .resolves.toEqual({ success: true, invited: true, referredPhone: "+15550001111" });
+    await expect(runMcpWriteCaraAction("complete_shift", input, execute))
+      .resolves.toEqual({ success: true, shiftId: "sh-1", completed: true });
+    await expect(runMcpWriteCaraAction("complete_shift", input, execute))
+      .resolves.toEqual({ success: true, shiftId: "sh-1", completed: true });
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(logAgentAction.mock.calls[0][0]).toMatchObject({
-      actionType: "caregiver_referral_invited",
+      actionType: "shift_completed",
       status: "confirmed",
-      toolName: "create_caregiver_referral",
+      toolName: "complete_shift",
     });
     expect(logAgentAction.mock.calls.at(-1)?.[0]).toMatchObject({
-      actionType: "caregiver_referral_invited",
+      actionType: "shift_completed",
       status: "duplicate_blocked",
-      toolName: "create_caregiver_referral",
+      toolName: "complete_shift",
     });
   });
 });

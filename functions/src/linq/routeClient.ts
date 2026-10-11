@@ -11,7 +11,6 @@ import { handleCorrectionFlowStep } from "../agents/correctionFlow";
 import { handleCancelFlowStep } from "../agents/cancelFlow";
 import { handleInterviewFlowStep } from "../agents/interviewFlow";
 import { handleReviewFlowStep } from "../agents/reviewFlow";
-import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 
 const db = admin.firestore();
 
@@ -53,9 +52,10 @@ export async function extractContactNameAndPhone(
 // handleInbound. Returns "handled" when the message was fully handled
 // (handleInbound must return), or "fallthrough" when no state machine matched
 // (handleInbound continues to intent routing). NOTE: this sequence is NOT
-// wrapped in a userType check — some blocks (e.g. timesheetStep,
-// availabilityStep) run for caregivers too; healthcareFlowStep checks
-// userType internally. Preserve those internal conditions exactly.
+// wrapped in a userType check — some blocks (e.g. pendingDecision) run for
+// caregivers too; healthcareFlowStep checks userType internally. Preserve those
+// internal conditions exactly. (The caregiver availabilityStep block moved to
+// routeCaregiver 2026-10-11.)
 export async function routeClientStateMachines(ctx: ClientRouteContext): Promise<"handled" | "fallthrough"> {
   const { phone, chatId, text, norm, session } = ctx;
 
@@ -315,22 +315,12 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
   // (modifyScheduleFlow.ts) was removed 2026-09-13 for the same reason —
   // modifyScheduleStep can no longer be set either.
 
-  // ── Availability update flow (multi-step state machine) ──────────────────
-  if ((session as any).availabilityStep) {
-    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-    try {
-      await handleAvailabilityUpdate(
-        (session.caregiverId ?? session.userId ?? phone) as string,
-        phone,
-        text,
-        session as unknown as Record<string, unknown>,
-        (msg: string) => sendMessage(chatId, msg)
-      );
-    } finally {
-      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-    }
-    return "handled";
-  }
+  // (The Update Availability flow (availabilityStep) is a caregiver-only modal
+  // — only routeIntent's UPDATE_AVAILABILITY and the My Profile editor set it,
+  // both for caregivers — and since 2026-10-11 it is resumed in
+  // routeCaregiver's parked-page-flows block BEFORE the page keywords (a bare
+  // CANCEL used to open the cancel-shift flow on top of it). Nothing sets it
+  // on a family session, so there is no block for it here.)
 
   // ── Decision notices (agents/decisionNotices.ts, 2026-09-27) ──────────────
   // "Yes confirm" to a proposed interview time runs the page's accept here,

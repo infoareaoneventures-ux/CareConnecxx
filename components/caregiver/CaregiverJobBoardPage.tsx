@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { JobBoard } from './JobBoard';
@@ -8,7 +7,6 @@ import { dbService } from '../../services/api';
 import type { Caregiver } from '../../types';
 
 export const CaregiverJobBoardPage: React.FC = () => {
-  const navigate = useNavigate();
   const { currentUser, addToast } = useCareConnex();
   const [profile, setProfile] = useState<Caregiver | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,7 +39,6 @@ export const CaregiverJobBoardPage: React.FC = () => {
           <JobBoard
             onShowToast={addToast}
             profile={profile}
-            onJobAccepted={() => navigate('/caregiver/bookings')}
           />
         )}
       </div>

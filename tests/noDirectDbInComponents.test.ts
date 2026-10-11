@@ -25,7 +25,6 @@ const DIRECT_DB = /\bdb\.(collection|doc)\(/;
 const KNOWN_OFFENDERS = new Set<string>([
   "components/CarePlan.tsx",
   "components/CaregiverDashboard.tsx",
-  "components/CaregiverProfile.tsx",
   "components/FindCaregivers.tsx",
   "components/InboxView.tsx",
   "components/Schedule.tsx",

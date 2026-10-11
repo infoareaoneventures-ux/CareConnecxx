@@ -124,9 +124,6 @@ export { projectActivityFeed } from './triggers/projectActivityFeed';
 // Token-scoped quick-confirm callable (replaces the QuickConfirmPage direct web
 // writes to agent_tasks / agent_approvals).
 
-// Linq Sprint 4 — weekly digest
-export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
-
 // Objective ledger sweep + intelligence canary
 export { sweepExpiredObjectives } from './scheduled/objectiveExpirySweeper';
 export { intelligenceCanaryWatch } from './agents/intelligenceCanaryWatch';
@@ -156,7 +153,6 @@ export {
 
 // Evia scheduled jobs
 export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
-export { sendMorningBriefings } from './scheduled/morningBriefing';
 export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
 export { memoryOperationWorker } from './scheduled/memoryOperationWorker';
@@ -170,7 +166,7 @@ export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder'
 export { sendShiftEndReminders } from './scheduled/shiftEndReminder';
 // Caregiver Timesheets reminders (2026-10-01): unsubmitted hours a day after the visit, a correction 3h before it auto-accepts — bell + text, once each
 export { sendCaregiverTimesheetReminders } from './scheduled/caregiverTimesheetReminders';
-export { processDndQueue } from './scheduled/dndQueueProcessor';
+// (processDndQueue — the agent_dnd_queue drainer — was deleted 2026-10-11: nothing in production ever wrote that queue (its only writer, utils/dndGuard.sendIfNotDND, has no callers). Deploy must delete v1-processDndQueue.)
 export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';
 // Agentic-reliability wave (2026-07): alert aging digest, hourly failure-spike
 // pager, and learned quiet-hours inference.
@@ -178,7 +174,6 @@ export { adminAlertAgingDaily } from './scheduled/adminAlertAging';
 export { opsAnomalyWatchHourly } from './scheduled/opsAnomalyWatch';
 export { inferActiveHoursWeekly } from './scheduled/inferActiveHours';
 export { expireAccountRecoveryRequests } from './scheduled/accountRecoveryExpiry';
-export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
 export { dispatchBillingApprovalNotices } from './billing/approvalNoticeDispatcher';
 
 // Proactive trigger engine (runs every 5 min)

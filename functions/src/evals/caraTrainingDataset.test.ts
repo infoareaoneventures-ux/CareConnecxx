@@ -22,7 +22,6 @@ describe("Evia training dataset", () => {
       "shift_hours_approve",
       "shift_hours_dispute",
       "caregiver_approval_status",
-      "caregiver_referral",
       "caregiver_safety_report",
       "memory_forget_or_correction",
     ]) {
@@ -42,7 +41,6 @@ describe("Evia training dataset", () => {
       "review_shift_hours",
       "complete_shift",
       "show_payouts",
-      "create_caregiver_referral",
       "update_memory_file",
     ]) {
       expect(allTools.has(tool), `missing recipe tool coverage: ${tool}`).toBe(true);

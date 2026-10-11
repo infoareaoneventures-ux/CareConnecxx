@@ -648,103 +648,6 @@ export const dbService = {
         }
     },
 
-    acceptJob: async (jobId: string, caregiver: Caregiver) => {
-        // SECURITY FIX: Wrap in transaction to prevent race conditions
-        if (isConfigured && db) {
-            const fdb = db;
-            const DEFAULT_HOURS_PER_VISIT = 3; // Standard visit duration
-
-            const jobRef = fdb.collection('job_posts').doc(jobId);
-            
-            try {
-                const result = await fdb.runTransaction(async (transaction) => {
-                    // Read job within transaction for atomicity
-                    const jobDoc = await transaction.get(jobRef);
-                    if (!jobDoc.exists) throw new Error("Job not found");
-                    
-                    const jobData = jobDoc.data();
-                    if (!jobData) throw new Error("Job data is corrupted");
-                    
-                    // CRITICAL FIX: Check if job is already filled
-                    if (jobData.status === 'filled') {
-                        throw new Error("This job has already been accepted by another caregiver");
-                    }
-                    
-                    if (jobData.status !== 'open') {
-                        throw new Error("This job is no longer available");
-                    }
-
-                    // Create appointment atomically
-                    const appointmentRef = fdb.collection('appointments').doc();
-                    transaction.set(appointmentRef, {
-                        caregiverId: caregiver.id,
-                        caregiverName: caregiver.name,
-                        clientName: jobData.clientName,
-                        clientId: jobData.clientId,
-                        date: jobData.date,
-                        isoDate: jobData.date,
-                        time: jobData.startTime,
-                        duration: DEFAULT_HOURS_PER_VISIT,
-                        status: 'confirmed',
-                        paymentStatus: 'pending',
-                        cost: jobData.rate * DEFAULT_HOURS_PER_VISIT,
-                        createdAt: new Date().toISOString()
-                    });
-
-                    // Update job status atomically
-                    transaction.update(jobRef, { status: 'filled', acceptedBy: caregiver.id, acceptedAt: new Date().toISOString() });
-                    
-                    return jobData;
-                });
-
-                return true;
-            } catch (error: any) {
-                console.error("Accept job failed:", error);
-                // Return user-friendly error without exposing internal details
-                if (error.message?.includes('already been accepted')) {
-                    throw new Error('This job has already been accepted by another caregiver');
-                } else if (error.message?.includes('no longer available')) {
-                    throw new Error('This job is no longer available');
-                } else {
-                    throw new Error('Failed to accept job. Please try again.');
-                }
-            }
-        }
-        throw new Error("Database not connected");
-    },
-
-    // Get pending booking requests for caregiver
-    // Update appointment (for accept/decline)
-    // Batch-create multiple appointments for a recurring booking series
-    // Accept an entire recurring booking group (caregiver confirms all dates at once)
-    // Decline an entire recurring booking group
-    declineRecurringGroup: async (recurringGroupId: string, caregiverId: string, clientId: string, caregiverName: string): Promise<void> => {
-        if (!isConfigured || !db) throw new Error('Database not connected');
-
-        const snap = await db.collection('appointments')
-            .where('recurringGroupId', '==', recurringGroupId)
-            .where('caregiverId', '==', caregiverId)
-            .get();
-
-        if (snap.empty) return;
-
-        const batch = db.batch();
-        const now = new Date().toISOString();
-        snap.docs.forEach(doc => {
-            batch.update(doc.ref, {
-                status: 'cancelled',
-                cancelledBy: 'caregiver',
-                caregiverDeclinedAt: now,
-                cancellationReason: 'Caregiver declined booking request',
-            });
-        });
-        await batch.commit();
-
-        // U3: the client "booking declined" notification is owned by the
-        // onAppointmentCancelled server trigger (fires on cancelledBy:'caregiver').
-        // Browser peer-write (rules-blocked) removed.
-    },
-
     // Create notification
     createNotification: async (notification: {
         userId: string;
@@ -1252,7 +1155,9 @@ export const dbService = {
     // shows stale values until a manual refresh (the "silent action" gap).
     subscribeCaregiverProfile: (caregiverId: string, onUpdate: (profile: Record<string, any> | null) => void) => {
         if (isConfigured && db) {
-            return db.collection('publicCaregiverProfiles').doc(caregiverId).onSnapshot(doc => {
+            // caregivers/{uid} — the record Evia and the webhooks write (rate, verification,
+            // background check, membership). The public mirror carries only the family-facing subset.
+            return db.collection('caregivers').doc(caregiverId).onSnapshot(doc => {
                 onUpdate(doc.exists ? ({ id: doc.id, ...doc.data() }) : null);
             }, (error) => { if (error.code === 'permission-denied') return; });
         }
@@ -1371,7 +1276,17 @@ export const dbService = {
                 return true;
             } catch (error: any) {
                 console.error("Background Check Error:", error);
-                throw new Error('Background check initiation failed. Please try again or contact support.');
+                // Keep the server's code + message (HttpsError: unauthenticated,
+                // failed-precondition "Consent is required." / "...email on file.",
+                // invalid-argument "Invalid ZIP code format.", ...) so the modal can
+                // show the real reason instead of one generic line.
+                const err = new Error(
+                    (typeof error?.message === 'string' && error.message.trim())
+                        ? error.message
+                        : 'Background check initiation failed. Please try again or contact support.',
+                ) as Error & { code?: string };
+                if (typeof error?.code === 'string') err.code = error.code;
+                throw err;
             }
         }
         throw new Error("Backend not connected");
@@ -1409,72 +1324,6 @@ export const dbService = {
     },
 
     // --- JOB APPLICATION API ---
-    applyToJob: async (jobId: string, caregiverId: string, applicationData: {
-        caregiverName: string;
-        caregiverPhoto?: string;
-        coverLetter?: string;
-        proposedRate?: number;
-    }) => {
-        // Rate limit: Prevent duplicate application submission
-        const cacheKey = `apply_${jobId}_${caregiverId}`;
-        return dedupePromise(cacheKey, async () => {
-            if (isConfigured && db) {
-                // Get job details first
-                const jobDoc = await db.collection('job_posts').doc(jobId).get();
-                if (!jobDoc.exists) throw new Error("Job not found");
-                const jobData = jobDoc.data() as JobPost;
-
-                // Check for existing application
-                const existingQuery = await db.collection('job_applications')
-                    .where('jobId', '==', jobId)
-                    .where('caregiverId', '==', caregiverId)
-                    .limit(1)
-                    .get();
-                
-                if (!existingQuery.empty) {
-                    throw new Error("You have already applied to this job");
-                }
-
-                // Create application
-                await db.collection('job_applications').add({
-                    jobId,
-                    jobTitle: jobData.title,
-                    caregiverId,
-                    clientId: jobData.clientId,
-                    clientName: jobData.clientName,
-                    status: 'pending',
-                    appliedAt: new Date().toISOString(),
-                    ...applicationData
-                });
-
-                // U3: the client "new application" notification is owned by the
-                // onJobApplicationCreate server trigger (fires on this
-                // job_applications write). Browser peer-write removed.
-
-                return true;
-            }
-            throw new Error("Database not connected");
-        });
-    },
-
-    getMyApplications: async (caregiverId: string) => {
-        if (isConfigured && db) {
-            try {
-                const snap = await db.collection('job_applications')
-                    .where('caregiverId', '==', caregiverId)
-                    .orderBy('appliedAt', 'desc')
-                    .get();
-                const applications: any[] = [];
-                snap.forEach(doc => applications.push({ id: doc.id, ...doc.data() }));
-                return applications;
-            } catch (e: any) {
-                if (e.code === 'permission-denied') return [];
-                return [];
-            }
-        }
-        return [];
-    },
-
     getJobApplications: async (clientId: string) => {
         if (isConfigured && db) {
             try {

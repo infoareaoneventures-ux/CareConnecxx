@@ -29,7 +29,7 @@ import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
 import { fmtTime } from "./caregiverBookingRequests";
 import {
-  START_WINDOW_MINUTES, END_PROMPT, taskItems, startsInMinutes, checkTasks, addVisitNote,
+  START_WINDOW_MINUTES, END_PROMPT, taskItems, startsInMinutes, checkTasks, addVisitNote, parkShiftEnd,
   visitLine, clock, type TaskItem,
 } from "./inShift";
 
@@ -160,9 +160,9 @@ export async function handleVisitModeMessage(
       return "handled";
     }
     case "finish":
-      // The same parked END question the FINISH keyword asks (inShift.ts), for THIS visit by id — the reply
-      // (the closing note, or SKIP) is then handled by handleInShiftKeyword's pendingShiftEnd branch.
-      await db.collection("agent_sessions").doc(phone).set({ pendingShiftEnd: { shiftId, at: new Date(nowMs).toISOString() } }, { merge: true }).catch(() => {});
+      // The same parked END question the FINISH keyword asks (inShift.ts), for THIS visit by id, with the same
+      // 30-minute expiry — the reply (the closing note, or SKIP) is then handled by handleInShiftKeyword's pendingShiftEnd branch.
+      await parkShiftEnd(phone, shiftId, nowMs);
       await say(END_PROMPT);
       return "handled";
     case "ambiguous": {

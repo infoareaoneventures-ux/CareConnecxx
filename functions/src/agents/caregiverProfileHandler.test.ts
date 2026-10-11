@@ -359,6 +359,83 @@ describe("caregiverProfileHandler", () => {
     });
   });
 
+  // Founder 2026-10-11: a mid-flow question is answered FROM what is on the screen (the step's question / recap) plus
+  // the section's real facts — never a static sentence — and the step's question is re-asked. Nothing is written.
+  describe("mid-flow questions are answered from the screen", () => {
+    const briefing = () => String(hoisted.quickComplete.mock.calls.at(-1)?.[0]);
+    it("pause confirm — 'will I lose bookings?' is briefed with the Settings page's facts (nothing cancelled, reversible), then re-asked", async () => {
+      parseWithClaude.mockResolvedValueOnce("YES"); // isQuestionOrOther → a question
+      hoisted.quickComplete.mockResolvedValueOnce("No — your existing bookings stay exactly as they are.");
+      await handleCaregiverProfileUpdate(
+        CG_ID, PHONE, "will I lose my bookings?",
+        { profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: "2026-07-12" },
+        CHAT, "pause",
+      );
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No — your existing bookings stay exactly as they are.\n\nPause your account until 2026-07-12? Reply YES to pause, or NO to cancel.");
+      expect(briefing()).toContain("Audience: caregiver");
+      expect(briefing()).toContain("Pause your account until 2026-07-12? Reply YES to pause, or NO to cancel.");
+      expect(briefing()).toContain("It does NOT cancel anything that already exists");
+      expect(briefing()).toContain("Fully reversible anytime: text REACTIVATE, or use the Reactivate button on the Account Settings page");
+      expect(briefing()).toContain("Nothing is paused until the caregiver replies YES");
+      expect(briefing()).toContain("NEVER say you changed, updated, saved, fixed, cancelled, sent or removed anything");
+      expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ pausedUntil: expect.anything() }));
+    });
+    it("rates — the rule is any amount above $0 ($25 only an example) and the section as it reads now", async () => {
+      parseWithClaude.mockResolvedValueOnce("YES");
+      hoisted.quickComplete.mockResolvedValueOnce("Any amount above $0 — it's your number.");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "is there a minimum rate?", {}, CHAT, "rates");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/^Any amount above \$0 — it's your number\.\n\nWhat would you like to change — your rate for 1 person/);
+      expect(briefing()).toContain("Your rate has to be more than $0 — any amount above $0 is fine, there is no floor and no ceiling; $25 is only an example.");
+      expect(briefing()).toContain("The Rates section currently reads:\nNo rate set yet.\nUp to 1 client at once");
+      expect(briefing()).toContain("YES saves the whole section together, like the page's Save");
+    });
+    it("bio confirm — this editor has no minimum (the signup questionnaire's 150 is named as such); the proposed bio is the screen", async () => {
+      parseWithClaude.mockResolvedValueOnce("YES");
+      hoisted.quickComplete.mockResolvedValueOnce("No minimum here — it's saved as written.");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "is it long enough?", { profileUpdateStep: "confirm", profileUpdateField: "bio", profileUpdateValue: "Warm and patient." }, CHAT, "bio");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No minimum here — it's saved as written.\n\nSo — want me to save this bio?\n\n\"Warm and patient.\"");
+      expect(briefing()).toContain("This editor has no minimum length (the signup questionnaire asked for at least 150 characters)");
+      expect(briefing()).toContain("\"Warm and patient.\"");
+      expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ bio: expect.anything() }));
+    });
+    it("services / languages / looking for / travel — each briefed with its own list and the save rule", async () => {
+      parseWithClaude.mockResolvedValueOnce("YES"); hoisted.quickComplete.mockResolvedValueOnce("A.");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "can I add wound care?", {}, CHAT, "skills");
+      expect(briefing()).toContain("exactly these eight services");
+      expect(briefing()).toContain("Medication Reminders Only means reminding when it is time, never giving medication");
+      parseWithClaude.mockResolvedValueOnce("YES"); hoisted.quickComplete.mockResolvedValueOnce("A.");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "is Somali on the list?", {}, CHAT, "languages");
+      expect(briefing()).toContain("The languages are chosen from this list only:");
+      expect(briefing()).toContain("at least one language stays on the profile");
+      parseWithClaude.mockResolvedValueOnce("YES"); hoisted.quickComplete.mockResolvedValueOnce("A.");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "can I pick two?", {}, CHAT, "jobtype");
+      expect(briefing()).toContain("Looking for is ONE choice from:");
+      parseWithClaude.mockResolvedValueOnce("YES"); hoisted.quickComplete.mockResolvedValueOnce("A.");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "measured from where?", {}, CHAT, "travel");
+      expect(briefing()).toContain("measured from the address in Account Settings");
+      expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ profileUpdateStep: "confirm" }));
+    });
+    it("a failed YES/NO parse at a confirm re-asks the recap — it never saves, pauses or clears the flow", async () => {
+      // services
+      parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("__parse_error__");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "mm", { profileUpdateStep: "confirm", profileUpdateField: "skills", profileUpdateValue: JSON.stringify(["Companionship"]) }, CHAT, "skills");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("So — save these services: Companionship? Reply YES or NO.");
+      // pause
+      parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("__parse_error__");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "mm", { profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: "indefinite" }, CHAT, "pause");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("Pause your account indefinitely? Reply YES to pause, or NO to cancel.");
+      // bio
+      parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("__parse_error__");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "mm", { profileUpdateStep: "confirm", profileUpdateField: "bio", profileUpdateValue: "Warm." }, CHAT, "bio");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("So — want me to save this bio?\n\n\"Warm.\"");
+      // rates
+      parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("__parse_error__");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "mm", { profileUpdateStep: "confirm", profileUpdateField: "rates", profileUpdateValue: JSON.stringify({ hourlyRate: 28 }) }, CHAT, "rates");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/^Your Rates section would read:\n1 Person: \$28\/hr/);
+      expect(updateMock).not.toHaveBeenCalled(); // no write, no clear — the flow stays parked as it was
+    });
+  });
+
   describe("PHOTO flow", () => {
     it("sends a web upload link", async () => {
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "change my photo", {}, CHAT, "photo");

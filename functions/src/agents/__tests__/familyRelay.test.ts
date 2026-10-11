@@ -37,6 +37,13 @@ vi.mock("firebase-admin", () => {
 vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async (_c: string, m: string) => { hoisted.sent.push(m); return { message_id: "m" }; }) }));
 vi.mock("../../utils/chatThread", () => ({ relayIntoSharedChatThread: vi.fn(async (o: any) => { hoisted.relayed.push(o); }) }));
 
+// The shared question guard / answerer (stepHandler): a question at "What should I tell X?" is answered, never relayed.
+const stepMocks = vi.hoisted(() => ({
+  isQuestion: vi.fn(async (_t: string, _q: string) => false),
+  answer: vi.fn(async (_t: string, reAsk: string, _o?: { audience?: string; facts?: string }) => `Answer. ${reAsk}`),
+}));
+vi.mock("../stepHandler", () => ({ isQuestionOrOther: (...a: any[]) => (stepMocks.isQuestion as any)(...a), answerMidFlow: (...a: any[]) => (stepMocks.answer as any)(...a) }));
+
 import { handleLateKeyword, relayLateSentence, relayCaregiverMessageToFamily } from "../familyRelay";
 import { businessTodayStr } from "../../utils/scheduledTime";
 
@@ -112,5 +119,30 @@ describe("LATE — the caregiver's words, posted as their Inbox message", () => 
     const r = await relayCaregiverMessageToFamily("cg1", "hi", { clientId: "fam1", clientName: "Basra Yousuf" });
     expect(r).toMatchObject({ ok: false, reason: "membership" });
     expect(await handleLateKeyword("+1", "chat", "cg1", "what's my schedule?", {})).toBe("passthrough");
+  });
+  // Founder 2026-10-11: before this, a question at "What should I tell X?" was texted to the family verbatim.
+  it("a question at 'What should I tell X?' is answered (who the family is, where the words go) and re-asked — never relayed; only a non-question reply relays", async () => {
+    stepMocks.isQuestion.mockResolvedValueOnce(true);
+    expect(await handleLateKeyword("+1", "chat", "cg1", "will she get this as a text?", { pendingFamilyMessage: { clientId: "fam1", clientName: "Basra Yousuf" } })).toBe("handled");
+    expect(hoisted.relayed).toHaveLength(0);
+    expect(hoisted.sent.at(-1)).toBe("Answer. What should I tell Basra Yousuf? I'll send it as your message.");
+    expect(hoisted.sessionWrites).toHaveLength(0); // still parked
+    const [text, reAsk, opts] = stepMocks.answer.mock.calls.at(-1)!;
+    expect(text).toBe("will she get this as a text?");
+    expect(reAsk).toBe("What should I tell Basra Yousuf? I'll send it as your message.");
+    expect(opts?.audience).toBe("caregiver");
+    expect(opts?.facts).toContain("The family is Basra Yousuf");
+    expect(opts?.facts).toContain("posted into Basra Yousuf's Inbox thread as the caregiver's OWN words, exactly as typed");
+    expect(opts?.facts).toContain("Nothing has been sent yet");
+    // the real reply relays
+    expect(await handleLateKeyword("+1", "chat", "cg1", "Running 10 minutes late!", { pendingFamilyMessage: { clientId: "fam1", clientName: "Basra Yousuf" } })).toBe("handled");
+    expect(hoisted.relayed[0].text).toBe("Running 10 minutes late!");
+    // and at the YES/NO confirm, a question is answered with the waiting message in the facts, then the confirm re-asked
+    const confirm = { clientId: "fam1", clientName: "Basra Yousuf", text: "stuck in traffic" };
+    stepMocks.isQuestion.mockResolvedValueOnce(true);
+    expect(await handleLateKeyword("+1", "chat", "cg1", "can I change the wording?", { pendingRelayConfirm: confirm })).toBe("handled");
+    expect(hoisted.relayed).toHaveLength(1);
+    expect(hoisted.sent.at(-1)).toBe('Answer. Send to Basra Yousuf as your message: "stuck in traffic"? Reply YES or NO.');
+    expect(stepMocks.answer.mock.calls.at(-1)![2]?.facts).toContain('The message waiting to be sent reads: "stuck in traffic".');
   });
 });

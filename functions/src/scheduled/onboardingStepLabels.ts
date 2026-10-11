@@ -1,6 +1,6 @@
-// Human-readable label for an onboarding step, for the two reminder jobs
-// (onboardingReengagement, staleSessionNudge) and the website bell copy they
-// share (2026-09-26). Pure leaf — no imports.
+// Human-readable label for an onboarding step, for the onboarding reminder job
+// (staleSessionNudge) and the website bell copy it
+// shares (2026-09-26). Pure leaf — no imports.
 export function humanLabelForStep(step: string): string {
   const map: Record<string, string> = {
     verify_phone:                       "verifying your phone number",

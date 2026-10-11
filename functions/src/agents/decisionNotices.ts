@@ -15,6 +15,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
+import { answerMidFlow } from "./stepHandler";
 
 const db = admin.firestore();
 
@@ -78,7 +79,13 @@ export function matchDecisionWord(text: string, options: string[]): string | nul
   return options.includes(norm) ? norm : null;
 }
 
-/** Exact word first; otherwise a quick-tier classifier; a question / anything else → null (the agent takes it). */
+/** A question ABOUT the parked notice (the item itself, or what the offered replies do) — answered from the notice, never sent to the agent blind. */
+export const QUESTION_ABOUT_NOTICE = "QUESTION";
+
+/**
+ * Exact word first; otherwise a quick-tier classifier. A question about THIS notice → QUESTION_ABOUT_NOTICE (answered
+ * from the notice's own text, 2026-10-11); a request about something else / anything unclear → null (the agent takes it).
+ */
 export async function classifyDecision(text: string, pd: PendingDecision): Promise<string | null> {
   const exact = matchDecisionWord(text, pd.options);
   if (exact) return exact;
@@ -90,12 +97,96 @@ export async function classifyDecision(text: string, pd: PendingDecision): Promi
     `Evia texted a person about ${pd.label} and asked them to reply with one of: ${pd.options.join(", ")}. ` +
     `Classify their reply as exactly one of those words when it clearly means that choice — including when the word sits inside a sentence about this same item ` +
     `(e.g. "please decline the booking request" → DECLINE, "yes confirm" → CONFIRM, "I can't make it" / "I can't accept this" → DECLINE, ` +
-    `"sounds good" → the positive option, "tell me more" → DETAILS when offered). Only a question, a request about something else, or an unclear reply is OTHER. Reply with ONE word only.`,
+    `"sounds good" → the positive option, "tell me more" → DETAILS when offered). ` +
+    `A question ABOUT this same item (its time, place, pay, who it is with, what happens next) or about what those replies do → QUESTION. ` +
+    `Only a request about something else, or an unclear reply, is OTHER. Reply with ONE word only.`,
     text,
     { maxTokens: 5 },
   ).catch(() => "OTHER");
   const word = raw.trim().toUpperCase().replace(/[^A-Z]/g, "");
+  if (word === QUESTION_ABOUT_NOTICE) return QUESTION_ABOUT_NOTICE;
   return pd.options.includes(word) ? word : null;
+}
+
+// ── A question while a notice is parked: answered from the notice, then the expected reply re-stated ──
+const OPTION_MEANING: Record<DecisionKind, string> = {
+  interview_request:       "ACCEPT accepts the interview (the Jobs page's Accept — the Google Meet link is then texted to both sides); DECLINE declines it; PROPOSE proposes a different time to the family.",
+  interview_proposal:      "CONFIRM confirms the proposed time (the interview moves to it); PROPOSE proposes another time instead.",
+  booking_request:         "ACCEPT accepts the booking (its visits go on the caregiver's schedule and the family is told); DECLINE declines it (a YES/NO confirm follows first); DETAILS shows the whole request.",
+  booking_request_decline: "YES declines the booking request; NO leaves it pending on the Requests tab.",
+  amendment:               "ACCEPT accepts the family's schedule change (the booking's visits follow the new schedule); DECLINE declines it and the schedule stays as it was.",
+  new_job:                 "APPLY starts the application (a cover letter is asked, then SUBMIT sends it); DETAILS shows the whole job post.",
+  job_application:         "VIEW shows the caregiver's profile link; INTERVIEW requests an interview with them; DECLINE declines the application (a YES/NO confirm follows first).",
+  job_application_decline: "YES declines the application (the caregiver is not told); NO leaves it pending on the post.",
+};
+const listWords = (ws: string[]) => (ws.length > 1 ? `${ws.slice(0, -1).join(", ")} or ${ws[ws.length - 1]}` : ws[0] ?? "");
+/** The expected reply, re-stated after the answer. */
+export const expectedReplyLine = (pd: PendingDecision) => `Reply ${listWords(pd.options)} for ${pd.label}.`;
+
+/** The notice's own record, as the page shows it — best effort, each loader fails soft to the notice's label. */
+export async function noticeScreenText(pd: PendingDecision, session: AgentSession & Record<string, unknown>): Promise<string> {
+  const caregiverId = String(session.caregiverId ?? "");
+  try {
+    switch (pd.kind) {
+      case "booking_request":
+      case "booking_request_decline": {
+        const br = await import("./caregiverBookingRequests");
+        const loaded = await br.loadBookingRequestFor(caregiverId, pd.recordId);
+        if (loaded.ok) return [...br.requestCardLines(loaded.req), ...br.requestDetailsLines(loaded.req)].join("\n");
+        break;
+      }
+      case "amendment": {
+        const br = await import("./caregiverBookingRequests");
+        const snap = await db.collection("booking_amendments").doc(pd.recordId).get();
+        if (snap.exists) return br.amendmentCardLines({ ...(snap.data() as Omit<import("./caregiverBookingRequests").Amendment, "id">), id: snap.id }).join("\n");
+        break;
+      }
+      case "interview_request":
+      case "interview_proposal": {
+        const snap = await db.collection("video_interviews").doc(pd.recordId).get();
+        const iv = snap.exists ? (snap.data() ?? {}) : null;
+        if (!iv) break;
+        const { interviewTimeIso, interviewTypeLabel } = await import("./caregiverInterviewsTab");
+        const { parseScheduledTimeMs, formatInterviewTime } = await import("../utils/scheduledTime");
+        const whenIso = interviewTimeIso(iv);
+        const whenMs = whenIso ? parseScheduledTimeMs(whenIso) : NaN;
+        const proposedMs = typeof iv.reschedulePendingTime === "string" ? parseScheduledTimeMs(iv.reschedulePendingTime) : NaN;
+        return [
+          `Interview${iv.jobTitle ? ` for "${String(iv.jobTitle)}"` : ""} — ${pd.role === "caregiver" ? `family: ${String(iv.clientName || "the family")}` : `caregiver: ${String(iv.caregiverName || "your caregiver")}`}`,
+          `Type: ${interviewTypeLabel(iv)}`,
+          Number.isFinite(whenMs) ? `Scheduled time: ${formatInterviewTime(whenMs)}` : "Scheduled time: not set yet",
+          Number.isFinite(proposedMs) ? `Proposed new time: ${formatInterviewTime(proposedMs)} (proposed by the ${String(iv.rescheduledBy || "other side")})` : "",
+          `Status: ${String(iv.status ?? "pending")}`,
+        ].filter(Boolean).join("\n");
+      }
+      case "new_job": {
+        const { loadJobDetails } = await import("./jobBoardPage");
+        const { jobDetailsText } = await import("./jobBoardText");
+        const r = await loadJobDetails(caregiverId, pd.recordId);
+        if (r.ok) return jobDetailsText(r.details);
+        break;
+      }
+      case "job_application":
+      case "job_application_decline": {
+        const snap = await db.collection("job_applications").doc(pd.recordId).get();
+        const app = snap.exists ? (snap.data() ?? {}) : null;
+        if (!app) break;
+        return [
+          `Application from ${String(app.caregiverName ?? pd.party ?? "a caregiver")} to "${String(app.jobTitle ?? "your post")}"`,
+          app.coverLetter ? `Cover letter: "${String(app.coverLetter)}"` : "No cover letter.",
+          `Status: ${String(app.status ?? "pending")}`,
+        ].join("\n");
+      }
+    }
+  } catch { /* fail soft — the label below still grounds the answer */ }
+  return `Evia's notice was about ${pd.label}${pd.party ? ` (${pd.party})` : ""}.`;
+}
+
+/** Answer a question about the parked notice from its own record + what the replies do, then re-state the expected reply. Nothing is decided. */
+export async function answerNoticeQuestion(chatId: string, text: string, pd: PendingDecision, session: AgentSession & Record<string, unknown>): Promise<void> {
+  const screen = await noticeScreenText(pd, session);
+  const facts = `What the notice showed them:\n${screen}\n\nWhat each reply does: ${OPTION_MEANING[pd.kind]} The decision is still waiting — nothing has been accepted, declined, confirmed or sent.`;
+  await sendMessage(chatId, await answerMidFlow(text, expectedReplyLine(pd), { audience: pd.role === "client" ? "family" : "caregiver", facts }));
 }
 
 export function isExpired(pd: PendingDecision, now = Date.now()): boolean {
@@ -119,6 +210,9 @@ export async function handlePendingDecisionReply(
   if (isExpired(pd)) { await clearDecision(phone); return "passthrough"; }
   const choice = await classifyDecision(text, pd);
   if (!choice) return "passthrough";
+  // A question about the notice is answered from the notice itself (2026-10-11: it used to reach the agent with nothing
+  // about the pending notice); the decision stays parked and the expected reply is re-stated.
+  if (choice === QUESTION_ABOUT_NOTICE) { await answerNoticeQuestion(chatId, text, pd, session); return "handled"; }
   await runDecision(phone, chatId, session, pd, choice);
   return "handled";
 }

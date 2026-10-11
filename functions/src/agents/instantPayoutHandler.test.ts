@@ -44,6 +44,7 @@ vi.mock("../payoutCommon", () => ({
 vi.mock("./caregiverPayouts", () => ({ sendPayoutSetupLink: vi.fn(async (phone: string) => { hoisted.linkSent.push(phone); return true; }) }));
 
 import { startInstantPayout, handleInstantPayoutConfirm, cashOutModalText, NOT_SET_UP, SETUP_INCOMPLETE, NOTHING_TO_CASH_OUT, HOLD_OFF } from "./instantPayoutHandler";
+import { answerMidFlow } from "./stepHandler";
 
 const CG = "cg-1", PHONE = "+15555550100", CHAT = "chat-1";
 const enabled = () => { hoisted.payFields = { stripeAccountId: "acct_1", payoutsEnabled: true, chargesEnabled: true }; };
@@ -130,12 +131,22 @@ describe("handleInstantPayoutConfirm — the modal's two buttons", () => {
     expect(hoisted.executeInstantPayout).toHaveBeenCalledTimes(1);
     expect(session().pendingInstantPayoutConfirm).toBe("__delete__");
   });
-  it("a question keeps the confirmation parked and re-asks", async () => {
+  it("a question keeps the confirmation parked and re-asks — briefed with the modal's own lines (fee, net, timing)", async () => {
     park(); hoisted.isQuestion.mockResolvedValueOnce(true);
     await handleInstantPayoutConfirm(CG, PHONE, "how long does it take?", CHAT);
     expect(hoisted.sent.at(-1)).toBe("Answer. Reply CASH OUT to send $49.00 now, or CANCEL.");
     expect(session().pendingInstantPayoutAmount).toBe("4950");
     expect(hoisted.executeInstantPayout).not.toHaveBeenCalled();
+    // Founder 2026-10-11: the answer is grounded in the Cash Out modal exactly as texted, not the reply line alone.
+    const [text, reAsk, opts] = vi.mocked(answerMidFlow).mock.calls.at(-1)!;
+    expect(text).toBe("how long does it take?");
+    expect(reAsk).toBe("Reply CASH OUT to send $49.00 now, or CANCEL.");
+    expect(opts?.facts).toContain("Available Now $49.50");
+    expect(opts?.facts).toContain("Stripe instant fee (1%, min $0.50) −$0.50");
+    expect(opts?.facts).toContain("You'll Receive $49.00");
+    expect(opts?.facts).toContain("Arrives in about 30 minutes");
+    expect(opts?.facts).toContain("Regular payouts happen automatically every day and are free");
+    expect(opts?.facts).toContain("nothing is sent until the caregiver replies CASH OUT");
   });
   it("an unclear reply re-asks without clearing", async () => {
     park();

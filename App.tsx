@@ -34,7 +34,6 @@ const CaregiverCalendarPage = lazy(() => import('./components/caregiver/Caregive
 const CaregiverMembership = lazy(() => import('./components/caregiver/CaregiverMembership').then(module => ({ default: module.CaregiverMembership })));
 const CaregiverBookingsPage = lazy(() => import('./components/caregiver/CaregiverBookingsPage').then(module => ({ default: module.CaregiverBookingsPage })));
 const CaregiverJobBoardPage = lazy(() => import('./components/caregiver/CaregiverJobBoardPage').then(module => ({ default: module.CaregiverJobBoardPage })));
-const CaregiverIntroVideo = lazy(() => import('./components/caregiver/CaregiverIntroVideo').then(module => ({ default: module.CaregiverIntroVideo })));
 const CaregiverFamiliesPage = lazy(() => import('./components/caregiver/CaregiverFamiliesPage').then(module => ({ default: module.CaregiverFamiliesPage })));
 const CaregiverAccountSettings = lazy(() => import('./components/caregiver/CaregiverAccountSettings').then(module => ({ default: module.CaregiverAccountSettings })));
 const CaregiverPaymentsPage = lazy(() => import('./components/caregiver/CaregiverPaymentsPage').then(module => ({ default: module.CaregiverPaymentsPage })));
@@ -252,7 +251,6 @@ const AppContent: React.FC = () => {
       case 'caregiver-membership': setMembershipModalOpen(true); break;
       case 'caregiver-jobs': navigate('/caregiver/jobs'); break;
       case 'caregiver-bookings': navigate('/caregiver/bookings'); break;
-      case 'caregiver-video': navigate('/caregiver/video'); break;
       case 'caregiver-families': navigate('/caregiver/families'); break;
       case 'caregiver-settings': navigate('/caregiver/settings'); break;
       case 'caregiver-transactions': navigate('/caregiver/payments'); break;
@@ -405,7 +403,6 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/membership" element={<CaregiverRoute element={<Navigate to="/caregiver/dashboard" replace />} />} />
           <Route path="/caregiver/bookings" element={<CaregiverRoute element={<CaregiverBookingsPage />} />} />
           <Route path="/caregiver/jobs" element={<CaregiverRoute element={<CaregiverJobBoardPage />} />} />
-          <Route path="/caregiver/video" element={<CaregiverRoute element={<CaregiverIntroVideo />} />} />
           <Route path="/caregiver/families" element={<CaregiverRoute element={<CaregiverFamiliesPage />} />} />
           <Route path="/caregiver/settings" element={<CaregiverRoute element={<CaregiverAccountSettings />} />} />
           <Route path="/caregiver/payments" element={<CaregiverRoute element={<CaregiverPaymentsPage />} />} />

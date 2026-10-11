@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { answerHumanMidFlow } from "./humanReply";
+import { isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 import { businessTodayStr, parseScheduledTimeMs } from "../utils/scheduledTime";
 import { fmtDate, fmtTime } from "./caregiverBookingRequests";
 import { isShiftOverdue } from "./shiftReschedule";
@@ -67,19 +67,22 @@ export function optionLine(o: CancelOption): string {
 const confirmFor = (o: CancelOption) => `${optionLine(o)}.\n\n${o.kind === "booking" ? CONFIRM_BOOKING : CONFIRM_VISIT}`;
 const listText = (opts: CancelOption[]) => `What do you need to cancel?\n${opts.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n\nReply with the number, or CANCEL to back out.`;
 
-async function isQuestionOrOther(text: string, currentQuestion: string): Promise<boolean> {
-  const result = await parseWithClaude(
-    `The caregiver is cancelling a visit or a booking. Current step's question: "${currentQuestion}". ` +
-      "Reply YES if their message is a general question or off-topic comment unrelated to that question. " +
-      "Reply NO if it is a direct answer. Only reply YES or NO.",
-    text,
-    5,
-  );
-  return result.toUpperCase().startsWith("Y");
-}
-async function answerMidFlow(text: string, reAsk: string): Promise<string> {
-  return answerHumanMidFlow({ audience: "caregiver", situation: "caregiver is cancelling one of their upcoming visits or a booking", text, reAsk });
-}
+// A mid-flow question is answered FROM what is on the caregiver's screen (founder 2026-10-11): the dialog or the
+// numbered list they were just sent, plus what the page's cancel actually does — never a static sentence the
+// model could pad with an invented fee or policy, and never a claim that anything was cancelled.
+const answerMidFlow = (text: string, reAsk: string, facts: string) => answerMidFlowShared(text, reAsk, { audience: "caregiver", facts });
+/** What the Bookings page's cancel actually does (verified: it writes status, cancelledBy, updatedAt and nothing else). */
+export const CANCEL_RULES =
+  "A visit that starts within 24 hours is marked needs_replacement — the family is offered a replacement caregiver; any other visit is marked cancelled. " +
+  "It is recorded as cancelled by the caregiver and the family is notified, exactly as when the site's cancel button is used. " +
+  "No fee, charge or penalty is applied to the caregiver — only the visit's status changes. " +
+  "Within 24 hours of a visit, cancelling is the only option (rescheduling is not offered that close to the start). " +
+  "'This visit only' cancels one visit and the rest of the booking stays active; 'the whole booking' cancels this visit and every future scheduled visit of that booking, and the booking itself is closed when none of them was urgent.";
+/** The dialog's facts: nothing has happened yet, what YES would do for THIS option, and the page's rules. */
+export const CANCEL_FACTS = (o: CancelOption) =>
+  `Nothing has been cancelled yet; YES cancels, NO keeps it. ${o.kind === "booking"
+    ? `YES cancels this visit and every future scheduled visit of the booking with ${o.clientName} (${o.count ?? 0} visits).`
+    : `YES cancels only this one visit (${optionLine(o)}).`} ${CANCEL_RULES}`;
 
 /** The page's options: every visit with a ✕ (scheduled, today or later, not overdue), then one "whole booking" per booking. */
 export async function loadCancelOptions(caregiverId: string): Promise<CancelOption[]> {
@@ -204,7 +207,9 @@ export async function handleCaregiverCancelShift(
     }
     await sessionRef.update({ cancelStep: "confirm_shift", cancelCandidates: JSON.stringify(options), stateExpiresAt: expires() });
     // A message that already names one thing skips the list (the bare CANCEL keyword never does).
-    const bare = /^CANCEL(s+(MYs+|As+)?(SHIFT|VISIT|BOOKING))?$/i.test(text.trim());
+    // (2026-10-11: this regex was written with `s+` for `\s+`, so "CANCEL SHIFT" / "cancel my booking" were not bare
+    // keywords here — hidden until now because the router's CANCEL_PHRASES matched them first.)
+    const bare = /^CANCEL(\s+(MY\s+|A\s+)?(SHIFT|VISIT|BOOKING))?$/i.test(text.trim());
     const named = bare ? null : await resolveOptionFromText(text, options);
     if (named) {
       await parkChoice(sessionRef, named, expires());
@@ -234,7 +239,8 @@ export async function handleCaregiverCancelShift(
       const confirm = chosen.kind === "booking" ? CONFIRM_BOOKING : CONFIRM_VISIT;
       // "Reply YES or NO" — a bare YES / NO is the strict protocol; anything else is checked for a question first.
       const norm = text.trim().toUpperCase();
-      if (norm !== "YES" && norm !== "NO" && await isQuestionOrOther(text, confirm)) { await sendMessage(chatId, await answerMidFlow(text, confirm)); return; }
+      // The screen is the whole dialog (the option line + the page's question); the facts are what YES actually writes.
+      if (norm !== "YES" && norm !== "NO" && await isQuestionOrOther(text, confirm)) { await sendMessage(chatId, await answerMidFlow(text, confirmFor(chosen), CANCEL_FACTS(chosen))); return; }
       const decision = norm === "YES" || norm === "NO" ? norm : await parseWithClaude(
         '"yes", "yeah", "confirm", "do it", "cancel it" → YES. "no", "wait", "never mind", "keep it", "back" → NO. Reply with exactly YES or NO.',
         text, 5,
@@ -265,7 +271,12 @@ export async function handleCaregiverCancelShift(
     }
 
     const reAskPick = `Reply with the number of what to cancel (1–${options.length}), or CANCEL to back out.`;
-    if (await isQuestionOrOther(text, reAskPick)) { await sendMessage(chatId, await answerMidFlow(text, reAskPick)); return; }
+    // The screen is the numbered list they were just sent; the facts are what cancelling does (nothing yet).
+    if (await isQuestionOrOther(text, reAskPick)) {
+      const facts = `The numbered list on their screen:\n${listText(options)}\n\nNothing is cancelled by picking a number — a YES/NO dialog follows. ${CANCEL_RULES}`;
+      await sendMessage(chatId, await answerMidFlow(text, reAskPick, facts));
+      return;
+    }
     const pick = parseInt(text.trim(), 10);
     const option = options.find((o) => o.index === pick) ?? (Number.isNaN(pick) ? await resolveOptionFromText(text, options) : null);
     if (!option) { await sendMessage(chatId, `Please reply with a number between 1 and ${options.length}, or CANCEL to back out.`); return; }

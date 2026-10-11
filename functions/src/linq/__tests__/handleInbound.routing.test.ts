@@ -275,7 +275,6 @@ vi.mock("../../utils/sessionState", () => ({
 vi.mock("../../utils/caraMessage", () => ({
   generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg"),
 }));
-vi.mock("../../utils/dndGuard", () => ({ sendIfNotDND: vi.fn(async () => {}) }));
 vi.mock("../../ai/feedback", () => ({ writeFeedbackSignal: vi.fn(async () => {}) }));
 vi.mock("../../memory/zepClient", () => ({
   initializeZepOnFirstContact: vi.fn(async () => {}),

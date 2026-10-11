@@ -33,7 +33,7 @@ vi.mock("firebase-admin", () => {
 vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async (_c: string, m: string) => { hoisted.sent.push(m); return { message_id: "m" }; }) }));
 vi.mock("../../utils/openaiClient", () => ({ quickComplete: (...a: any[]) => (hoisted.quick as any)(...a) }));
 
-import { taskItems, startVisit, checkTasks, addVisitNote, endVisit, resolveVisit, handleInShiftKeyword, END_PROMPT } from "../inShift";
+import { taskItems, startVisit, checkTasks, addVisitNote, endVisit, resolveVisit, handleInShiftKeyword, END_PROMPT, PENDING_END_TTL_MS } from "../inShift";
 import { businessTodayStr } from "../../utils/scheduledTime";
 
 const la = (d: Date) => { const p: Record<string, string> = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(d)) p[x.type] = x.value; return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour === "24" ? "00" : p.hour}:${p.minute}` }; };
@@ -146,12 +146,26 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
     expect(hoisted.sent.at(-1)).toMatch(/^Done with a task\?/);
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "FINISH", {})).toBe("handled");
     expect(hoisted.sent.at(-1)).toBe(END_PROMPT);
-    expect(hoisted.sessionWrites.at(-1).pendingShiftEnd).toMatchObject({ shiftId: "s1" });
-    // a question while the END prompt is parked goes to the agent, the prompt stays parked
-    hoisted.quick.mockResolvedValueOnce("QUESTION");
-    expect(await handleInShiftKeyword("+1", "chat", "cg1", "does the family see this?", { pendingShiftEnd: { shiftId: "s1" } })).toBe("passthrough");
+    const parked = hoisted.sessionWrites.at(-1);
+    expect(parked.pendingShiftEnd).toMatchObject({ shiftId: "s1" });
+    // The parked END question expires like every other parked step (2026-10-11: it never did).
+    expect(Date.parse(parked.pendingShiftEnd.expiresAt) - Date.parse(parked.pendingShiftEnd.at)).toBe(PENDING_END_TTL_MS);
+    expect(parked.stateExpiresAt).toBe(parked.pendingShiftEnd.expiresAt);
+    // a question while the END prompt is parked is answered FROM the step (the visit, what SKIP / a note do) and the
+    // question re-asked — the step stays parked, the visit stays in progress, the question is never the closing note
+    hoisted.quick.mockResolvedValueOnce("QUESTION").mockResolvedValueOnce("Yes — the closing note is saved on the visit and the family can see it.");
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "does the family see this?", parked)).toBe("handled");
     expect(hoisted.docs.get("shifts/s1").status).toBe("in-progress");
-    expect(await handleInShiftKeyword("+1", "chat", "cg1", "Mai was in great spirits today.", { pendingShiftEnd: { shiftId: "s1" } })).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe(`Yes — the closing note is saved on the visit and the family can see it.\n\n${END_PROMPT}`);
+    const briefing = String((hoisted.quick as any).mock.calls.at(-1)[0]);
+    expect(briefing).toContain("Audience: caregiver");
+    expect(briefing).toContain(END_PROMPT);
+    expect(briefing).toContain("The visit being ended: ");
+    expect(briefing).toContain("Basra Yousuf");
+    expect(briefing).toContain("nothing has ended yet");
+    expect(briefing).toContain("SKIP ends the visit without a note; CANCEL keeps the visit in progress");
+    expect(hoisted.sessionWrites.at(-1)).toBe(parked); // nothing re-parked, nothing cleared
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "Mai was in great spirits today.", parked)).toBe("handled");
     expect(hoisted.docs.get("shifts/s1")).toMatchObject({ status: "completed", completionNotes: "Mai was in great spirits today." });
     expect(hoisted.sent.at(-1)).toMatch(/^Ended /);
   });
@@ -191,9 +205,24 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
   });
   it("SKIP ends without a note; anything else falls through", async () => {
     shift("s1", { status: "in-progress", date: businessTodayStr() });
-    expect(await handleInShiftKeyword("+1", "chat", "cg1", "skip", { pendingShiftEnd: { shiftId: "s1" } })).toBe("handled");
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "skip", { pendingShiftEnd: { shiftId: "s1", at: new Date().toISOString() } })).toBe("handled");
     expect(hoisted.docs.get("shifts/s1").status).toBe("completed");
     expect(hoisted.docs.get("shifts/s1").completionNotes).toBeUndefined();
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "what's my schedule tomorrow?", {})).toBe("passthrough");
+  });
+  it("an expired END question never consumes a later text as the closing note — it is dropped and the text goes on (2026-10-11)", async () => {
+    shift("s1", { status: "in-progress", date: businessTodayStr() });
+    const stale = { shiftId: "s1", at: new Date(Date.now() - PENDING_END_TTL_MS - 60_000).toISOString() }; // a legacy park: `at` only, 31 minutes old
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "what's my schedule tomorrow?", { pendingShiftEnd: stale })).toBe("passthrough");
+    expect(hoisted.docs.get("shifts/s1").status).toBe("in-progress");
+    expect(hoisted.docs.get("shifts/s1").completionNotes).toBeUndefined();
+    expect(hoisted.sessionWrites.at(-1)).toEqual({ pendingShiftEnd: "__delete__" });
+    expect(hoisted.quick).not.toHaveBeenCalled();
+    const expired = { shiftId: "s1", at: new Date().toISOString(), expiresAt: new Date(Date.now() - 1000).toISOString() };
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "She ate well.", { pendingShiftEnd: expired })).toBe("passthrough");
+    expect(hoisted.docs.get("shifts/s1").status).toBe("in-progress");
+    // a live park still takes the note
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "She ate well.", { pendingShiftEnd: { shiftId: "s1", at: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() } })).toBe("handled");
+    expect(hoisted.docs.get("shifts/s1")).toMatchObject({ status: "completed", completionNotes: "She ate well." });
   });
 });

@@ -165,3 +165,39 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
     expect(hoisted.startApply).toHaveBeenCalledWith("+1", "chat", expect.anything(), { caregiverId: "cg1", jobId: "job1" });
   });
 });
+
+// Founder 2026-10-11: a question about a parked notice is answered from the notice itself (what it showed, what each
+// reply does) and the expected reply re-stated — before this it reached the agent with nothing about the pending notice.
+describe("a question while a notice is parked", () => {
+  it("about the notice → answered from it, audience by role, decision still parked, expected reply re-stated; nothing runs", async () => {
+    const pd = parkedDecision("interview_request", "iv1", "an interview request from The Nguyen Family", "caregiver", Date.now(), "The Nguyen Family");
+    (hoisted.quick as any).mockResolvedValueOnce("QUESTION").mockResolvedValueOnce("It is a video interview — accepting sends you both the Meet link.");
+    expect(await handlePendingDecisionReply("+1", "chat", "is it a video call?", session(pd))).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe("It is a video interview — accepting sends you both the Meet link.\n\nReply ACCEPT, DECLINE or PROPOSE for an interview request from The Nguyen Family.");
+    const classifier = hoisted.quick.mock.calls.at(-2)![0] as string;
+    expect(classifier).toContain("A question ABOUT this same item");
+    const briefing = hoisted.quick.mock.calls.at(-1)![0] as string;
+    expect(briefing).toContain("Audience: caregiver");
+    expect(briefing).toContain("Reply ACCEPT, DECLINE or PROPOSE for an interview request from The Nguyen Family.");
+    expect(briefing).toContain("Evia's notice was about an interview request from The Nguyen Family (The Nguyen Family)."); // no record in this fixture → the label grounds it
+    expect(briefing).toContain("ACCEPT accepts the interview (the Jobs page's Accept");
+    expect(briefing).toContain("nothing has been accepted, declined, confirmed or sent");
+    expect(briefing).toContain("NEVER say you changed, updated, saved, fixed, cancelled, sent or removed anything");
+    expect(hoisted.sessionUpdates).toHaveLength(0); // still parked
+    expect(hoisted.respondInterview).not.toHaveBeenCalled();
+    expect(hoisted.startReschedule).not.toHaveBeenCalled();
+  });
+  it("a family's notice is answered to the family audience; a question about something else still goes to the agent", async () => {
+    const pd = parkedDecision("job_application", "app1", "Maria Garcia's application to \"Weekend help\"", "client", Date.now(), "Maria Garcia");
+    (hoisted.quick as any).mockResolvedValueOnce("QUESTION").mockResolvedValueOnce("Declining is confirmed first, and Maria is not told.");
+    expect(await handlePendingDecisionReply("+1", "chat", "what happens if I decline?", session(pd))).toBe("handled");
+    expect(hoisted.sent.at(-1)).toBe("Declining is confirmed first, and Maria is not told.\n\nReply VIEW, INTERVIEW or DECLINE for Maria Garcia's application to \"Weekend help\".");
+    const briefing = hoisted.quick.mock.calls.at(-1)![0] as string;
+    expect(briefing).toContain("Audience: family");
+    expect(briefing).toContain("DECLINE declines the application (a YES/NO confirm follows first)");
+    hoisted.quick.mockClear();
+    expect(await handlePendingDecisionReply("+1", "chat", "what jobs did I post?", session(pd))).toBe("passthrough"); // the default mock → OTHER
+    expect(hoisted.quick).toHaveBeenCalledTimes(1);
+    expect(hoisted.sessionUpdates).toHaveLength(0);
+  });
+});

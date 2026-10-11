@@ -140,15 +140,7 @@ export async function sendResendEmailLink(chatId: string, caregiverId: string): 
   }
 }
 
-/** The page's Pause account / Reactivate buttons — the same shared writes its queue action calls, the page's toasts. */
-export async function pauseFromSettings(chatId: string, caregiverId: string, until?: string): Promise<boolean> {
-  const { pauseCaregiver } = await import("./pauseAccount");
-  await pauseCaregiver(caregiverId, until ?? "indefinite");
-  await sendMessage(chatId, until
-    ? `Account paused — you'll automatically become active again on ${until}.`
-    : "Account paused — you won't be shown for new matches until you reactivate.");
-  return true;
-}
+/** The page's Reactivate button — the same shared write its queue action calls, the page's toast. (Pause parks the confirm flow — see handleSettingsKeyword.) */
 export async function reactivateFromSettings(chatId: string, caregiverId: string): Promise<boolean> {
   const { reactivateCaregiver } = await import("./pauseAccount");
   await reactivateCaregiver(caregiverId);
@@ -161,11 +153,24 @@ export async function handleSettingsKeyword(phone: string, chatId: string, careg
   const upper = text.trim().toUpperCase().replace(/\s+/g, " ");
   if (["SETTINGS", "MY SETTINGS", "ACCOUNT", "MY ACCOUNT", "ACCOUNT SETTINGS"].includes(upper)) { await sendCaregiverSettings(chatId, caregiverId); return "handled"; }
   if (["RESEND EMAIL LINK", "RESEND EMAIL", "RESEND CONFIRMATION"].includes(upper)) { await sendResendEmailLink(chatId, caregiverId); return "handled"; }
+  // PAUSE never writes on the keyword alone (caregiver sweep A6, 2026-10-11):
+  // it parks the SAME pause flow the tool/intent path uses (caregiverProfileHandler
+  // handlePauseAccount) — bare PAUSE asks until when, PAUSE <date> asks YES/NO —
+  // so every door confirms before pauseCaregiver writes. REACTIVATE stays
+  // immediate (nothing is lost by reactivating).
   const pause = /^PAUSE(?: ACCOUNT)?(?: (\d{4}-\d{2}-\d{2}))?$/.exec(upper);
   if (pause) {
     const until = pause[1];
     if (until && until < new Date().toISOString().slice(0, 10)) { await sendMessage(chatId, "That date has already passed — give me a future date (YYYY-MM-DD), or reply PAUSE to pause until you reactivate."); return "handled"; }
-    await pauseFromSettings(chatId, caregiverId, until); return "handled";
+    const stateExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    if (!until) {
+      await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "collect", profileUpdateField: "pause", stateExpiresAt });
+      await sendMessage(chatId, "When would you like to pause until? (e.g. \"until July 12\", \"for two weeks\", \"indefinitely\")");
+      return "handled";
+    }
+    await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: until, stateExpiresAt });
+    await sendMessage(chatId, `Pause your account until ${until}? You won't receive job matches during this time. Reply YES to pause, or NO to cancel.`);
+    return "handled";
   }
   if (upper === "REACTIVATE" || upper === "REACTIVATE ACCOUNT" || upper === "UNPAUSE") { await reactivateFromSettings(chatId, caregiverId); return "handled"; }
   return "passthrough";

@@ -5,10 +5,10 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { generateToken } from "./tokenService";
 import { getAppUrl } from "../config/appUrl";
 import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
-import { answerHumanMidFlow } from "./humanReply";
+import { isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { mapCaregiverServices, orderedCanonicalServices, serviceLabels, SERVICE_LABELS, serviceMenuText } from "./caregiverServices";
-import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
+import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, BIO_MIN_CHARS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
 import { LANGUAGE_OPTIONS, JOB_TYPE_OPTIONS, MAX_CLIENTS_OPTIONS, TRAVEL_OPTIONS, jobTypeLabel } from "./caregiverMyProfile";
 
 const db = admin.firestore();
@@ -46,25 +46,37 @@ function normalizeField(v: unknown): ProfileUpdateField | undefined {
   return typeof v === "string" ? (v as ProfileUpdateField) : undefined;
 }
 
-async function isQuestionOrOther(text: string, currentQuestion: string): Promise<boolean> {
-  const result = await parseWithClaude(
-    `The caregiver is updating their profile. Current step's question: "${currentQuestion}". ` +
-      "Reply YES if their message is a general question or off-topic comment unrelated to that question. " +
-      "Reply NO if it is a direct answer. Only reply YES or NO.",
-    text,
-    5,
-  );
-  return result.toUpperCase().startsWith("Y");
-}
+// A mid-flow question is answered FROM what is on the caregiver's screen (founder 2026-10-11): the step's own
+// question / recap is the briefing (stepHandler.answerMidFlow), plus the section's real facts below — never a
+// static sentence, and never a claim that anything was changed. The re-ask follows the answer.
+const answerMidFlow = (text: string, reAsk: string, facts: string) => answerMidFlowShared(text, reAsk, { audience: "caregiver", facts });
 
-async function answerMidFlow(text: string, reAsk: string): Promise<string> {
-  return answerHumanMidFlow({
-    audience: "caregiver",
-    situation: "caregiver is updating their profile",
-    text,
-    reAsk,
-  });
-}
+// The My Profile page's facts, section by section — what each editor saves and the page's own rules.
+const SAVE_RULE = "Nothing is saved until the caregiver replies YES to the recap; NO leaves the profile as it is.";
+export const RATES_FACTS = (current: RatesDraft) =>
+  `${RATE_RULE_TEXT} — any amount above $0 is fine, there is no floor and no ceiling; $${RATE_EXAMPLE} is only an example. ` +
+  `The Rates section holds the hourly rate for 1 person, 2 people and 3+ people (2 and 3+ may be left unset), the years of experience ` +
+  `(${EXPERIENCE_BUCKETS.join(", ")}) and how many clients at once (${MAX_CLIENTS_OPTIONS.join(", ")}); YES saves the whole section together, like the page's Save. ` +
+  `The Rates section currently reads:\n${ratesRecap(current)}\n${SAVE_RULE}`;
+export const SKILLS_FACTS =
+  `The Care Services editor offers exactly these eight services: ${SERVICE_LABELS.join(", ")} — nothing else can be added. ` +
+  "Medication Reminders Only means reminding when it is time, never giving medication; caregivers here do not give medication or medical treatment. " +
+  `Families see the saved services on the caregiver's profile and in matching. ${SAVE_RULE}`;
+export const LANGUAGES_FACTS =
+  `The languages are chosen from this list only: ${LANGUAGE_OPTIONS.join(", ")}; at least one language stays on the profile. Families see them under About. ${SAVE_RULE}`;
+export const JOB_TYPE_FACTS =
+  `Looking for is ONE choice from: ${JOB_TYPE_OPTIONS.map((j) => j.label).join(", ")}; it shows under Weekly Availability on the profile. ${SAVE_RULE}`;
+export const TRAVEL_FACTS =
+  `The travel distance is one of ${TRAVEL_OPTIONS.join(", ")} miles, measured from the address in Account Settings; families further away are not matched. ${SAVE_RULE}`;
+export const BIO_FACTS =
+  `The bio is what families see on the profile, in the caregiver's own words. This editor has no minimum length (the signup questionnaire asked for at least ${BIO_MIN_CHARS} characters); ` +
+  `the new bio replaces the old one. ${SAVE_RULE}`;
+// The Account Settings page's own words: "Stop showing up for new matches without deleting your profile. Reversible anytime."
+export const PAUSE_FACTS =
+  "Pausing stops the caregiver showing up for new matches without deleting the profile. It does NOT cancel anything that already exists — " +
+  "upcoming visits, accepted bookings, interviews and messages all stay exactly as they are, and the caregiver is still expected at them. " +
+  "Fully reversible anytime: text REACTIVATE, or use the Reactivate button on the Account Settings page. With an end date, the account becomes " +
+  "active again on that date automatically; with no date, it stays paused until reactivated. Nothing is paused until the caregiver replies YES.";
 
 
 async function clearProfileFlow(phone: string): Promise<void> {
@@ -188,7 +200,7 @@ async function handleRatesUpdate(
   const confirmLine = `Your Rates section would read:\n${ratesRecap(draft)}\n\nReply YES to save, NO to leave it as it is, or tell me another change.`;
   const reAsk = step === "confirm" ? confirmLine : RATES_Q;
   if (await isQuestionOrOther(text, reAsk)) {
-    await sendMessage(chatId, await answerMidFlow(text, reAsk));
+    await sendMessage(chatId, await answerMidFlow(text, reAsk, RATES_FACTS(current)));
     return;
   }
   if (step === "confirm") {
@@ -196,6 +208,8 @@ async function handleRatesUpdate(
       '"yes", "save", "confirm", "do it" → YES. "no", "cancel", "wait", "never mind" → NO. Anything describing a rate, years of experience or a number of clients → CHANGE. Reply exactly YES, NO or CHANGE.',
       text, 8,
     );
+    // A failed parse re-asks the recap — it never saves, clears or re-interprets the reply (2026-10-11).
+    if (decision === "__parse_error__") { await sendMessage(chatId, confirmLine); return; }
     if (decision.toUpperCase().startsWith("YES")) {
       await clearProfileFlow(phone);
       // The page's Save, field for field (CaregiverProfile.tsx Rates › onSave).
@@ -277,7 +291,7 @@ async function handleSkillsUpdate(
   if (step === "collect") {
     const reAsk = `Which services would you like to add or remove? The list is: ${menu}. (For example "add Personal Care" or "remove Transportation".)`;
     if (await isQuestionOrOther(text, reAsk)) {
-      await sendMessage(chatId, await answerMidFlow(text, reAsk));
+      await sendMessage(chatId, await answerMidFlow(text, reAsk, SKILLS_FACTS));
       return;
     }
     const raw = await parseWithClaude(
@@ -355,13 +369,11 @@ async function handleSkillsUpdate(
   })();
   const reAskConfirm = `So — save these services: ${serviceLabels(proposed).join(", ") || "(none)"}? Reply YES or NO.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
-    await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
+    await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, SKILLS_FACTS));
     return;
   }
-  const decision = await parseWithClaude(
-    '"yes", "save", "confirm" → YES. "no", "cancel", "wait" → NO. Reply exactly YES or NO.',
-    text, 5,
-  );
+  const decision = await yesNo(text);
+  if (decision === "OTHER") { await sendMessage(chatId, reAskConfirm); return; } // a failed parse re-asks, never acts
   await clearProfileFlow(phone);
   if (decision === "YES") {
     // The page's write: services + skills — only the eight, nothing else.
@@ -393,7 +405,7 @@ async function handleLanguagesUpdate(
 ): Promise<void> {
   const step = (session.profileUpdateStep as string) ?? "collect";
   if (step === "collect") {
-    if (await isQuestionOrOther(text, LANGUAGES_Q)) { await sendMessage(chatId, await answerMidFlow(text, LANGUAGES_Q)); return; }
+    if (await isQuestionOrOther(text, LANGUAGES_Q)) { await sendMessage(chatId, await answerMidFlow(text, LANGUAGES_Q, LANGUAGES_FACTS)); return; }
     const raw = await parseWithClaude(
       "The caregiver is choosing the languages she speaks from a FIXED list: " + LANGUAGE_OPTIONS.map((l) => `"${l}"`).join(", ") + ". " +
         'Reply with raw JSON only: {"action": "set" | "add" | "remove", "languages": [exact names from the list], "other": [anything she named that is not on the list]}. ' +
@@ -428,7 +440,7 @@ async function handleLanguagesUpdate(
   }
   const proposed = (() => { try { return JSON.parse((session.profileUpdateValue as string) ?? "[]") as string[]; } catch { return [] as string[]; } })();
   const reAskConfirm = `So — save these languages: ${proposed.join(", ")}? Reply YES or NO.`;
-  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm)); return; }
+  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, LANGUAGES_FACTS)); return; }
   const d = await yesNo(text);
   if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
   await clearProfileFlow(phone);
@@ -447,7 +459,7 @@ async function handleJobTypeUpdate(
 ): Promise<void> {
   const step = (session.profileUpdateStep as string) ?? "collect";
   if (step === "collect") {
-    if (await isQuestionOrOther(text, JOB_TYPE_Q)) { await sendMessage(chatId, await answerMidFlow(text, JOB_TYPE_Q)); return; }
+    if (await isQuestionOrOther(text, JOB_TYPE_Q)) { await sendMessage(chatId, await answerMidFlow(text, JOB_TYPE_Q, JOB_TYPE_FACTS)); return; }
     const raw = await parseWithClaude(
       'Which ONE job type is the caregiver choosing? "occasional" / "now and then" / "as needed" → occasional. "part time" / "a few days a week" → part-time. "full time" / "every day" → full-time. ' +
         "Reply exactly occasional, part-time, full-time, or none.",
@@ -465,7 +477,7 @@ async function handleJobTypeUpdate(
   }
   const id = String(session.profileUpdateValue ?? "");
   const reAskConfirm = `So — set Looking for to ${jobTypeLabel(id)}? Reply YES or NO.`;
-  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm)); return; }
+  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, JOB_TYPE_FACTS)); return; }
   const d = await yesNo(text);
   if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
   await clearProfileFlow(phone);
@@ -485,7 +497,7 @@ async function handleTravelUpdate(
 ): Promise<void> {
   const step = (session.profileUpdateStep as string) ?? "collect";
   if (step === "collect") {
-    if (await isQuestionOrOther(text, TRAVEL_Q)) { await sendMessage(chatId, await answerMidFlow(text, TRAVEL_Q)); return; }
+    if (await isQuestionOrOther(text, TRAVEL_Q)) { await sendMessage(chatId, await answerMidFlow(text, TRAVEL_Q, TRAVEL_FACTS)); return; }
     const raw = await parseWithClaude("Extract the travel distance in miles as a number. If none is stated, reply none. Reply with just the number.", text, 10);
     const radius = toServiceRadius(raw);
     if (!radius) {
@@ -499,7 +511,7 @@ async function handleTravelUpdate(
   }
   const radius = Number(session.profileUpdateValue ?? 0);
   const reAskConfirm = `So — set your travel distance to ${radius} miles? Reply YES or NO.`;
-  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm)); return; }
+  if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, TRAVEL_FACTS)); return; }
   const d = await yesNo(text);
   if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
   await clearProfileFlow(phone);
@@ -522,7 +534,7 @@ async function handleBioUpdate(
   if (step === "collect") {
     const reAsk = BIO_Q;
     if (await isQuestionOrOther(text, reAsk)) {
-      await sendMessage(chatId, await answerMidFlow(text, reAsk));
+      await sendMessage(chatId, await answerMidFlow(text, reAsk, BIO_FACTS));
       return;
     }
     const trimmed = text.trim();
@@ -550,13 +562,11 @@ async function handleBioUpdate(
   const proposedBio = (session.profileUpdateValue as string) ?? "";
   const reAskConfirm = `So — want me to save this bio?\n\n"${proposedBio}"`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
-    await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
+    await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, BIO_FACTS));
     return;
   }
-  const decision = await parseWithClaude(
-    '"yes", "save", "confirm" → YES. "no", "cancel", "wait" → NO. Reply exactly YES or NO.',
-    text, 5,
-  );
+  const decision = await yesNo(text);
+  if (decision === "OTHER") { await sendMessage(chatId, reAskConfirm); return; } // a failed parse re-asks, never acts
   await clearProfileFlow(phone);
   if (decision === "YES" && proposedBio) {
     await db.collection("caregivers").doc(caregiverId).update({
@@ -598,7 +608,7 @@ async function handlePauseAccount(
   if (step === "collect") {
     const reAsk = "When would you like to pause until? (e.g. \"until July 12\", \"for two weeks\", \"indefinitely\")";
     if (await isQuestionOrOther(text, reAsk)) {
-      await sendMessage(chatId, await answerMidFlow(text, reAsk));
+      await sendMessage(chatId, await answerMidFlow(text, reAsk, PAUSE_FACTS));
       return;
     }
     // Business-timezone today — a UTC anchor after 5pm PT parses "until
@@ -645,13 +655,15 @@ async function handlePauseAccount(
   const untilLabel = until === "indefinite" ? "indefinitely" : `until ${until}`;
   const reAskConfirm = `Pause your account ${untilLabel}? Reply YES to pause, or NO to cancel.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
-    await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
+    await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, PAUSE_FACTS));
     return;
   }
   const decision = await parseWithClaude(
-    '"yes", "pause", "confirm", "do it" → YES. "no", "cancel", "wait" → NO. Reply exactly YES or NO.',
-    text, 5,
+    '"yes", "pause", "confirm", "do it" → YES. "no", "cancel", "wait" → NO. Anything else → OTHER. Reply exactly YES, NO or OTHER.',
+    text, 6,
   );
+  // A failed or unclear parse re-asks — pausing is never decided by a guess (2026-10-11).
+  if (decision !== "YES" && decision !== "NO") { await sendMessage(chatId, reAskConfirm); return; }
   await clearProfileFlow(phone);
   if (decision === "YES") {
     await pauseCaregiver(caregiverId, until);

@@ -34,7 +34,6 @@ function rateLabel(job: { rate?: number | null; rateFlexible?: boolean } | null 
 interface JobBoardProps {
     onShowToast: AddToastFunction;
     profile: Caregiver | null;
-    onJobAccepted: () => void;
     hideApplicationsTab?: boolean;
 }
 
@@ -115,7 +114,7 @@ const JobCardSkeleton: React.FC = () => (
 const CHIP = (selected: boolean) =>
     `px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${selected ? 'bg-primary-600 border-primary-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`;
 
-export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobAccepted, hideApplicationsTab = false }) => {
+export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideApplicationsTab = false }) => {
     const { blockedIds, setMembershipModalOpen, caregiverProfile } = useCareConnex();
     // Hidden jobs live on caregivers/{uid}.hiddenJobIds (live via context) so the
     // website and Evia share one list — before 2026-09-27 they sat in this
@@ -162,7 +161,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     const [rescheduleOpenId, setRescheduleOpenId] = useState<string | null>(null);
     const [rescheduleDate, setRescheduleDate] = useState('');
     const [rescheduleTime, setRescheduleTime] = useState('');
-    const [appFilter, setAppFilter] = useState<'pending' | 'closed'>('pending');
+    const [appFilter, setAppFilter] = useState<'pending' | 'accepted' | 'closed'>('pending');
     const [ivFilter, setIvFilter] = useState<'all' | 'pending' | 'accepted' | 'confirmed' | 'completed' | 'declined' | 'cancelled'>(() => {
         const f = searchParams.get('filter');
         if (f === 'pending' || f === 'accepted' || f === 'confirmed' || f === 'completed' || f === 'declined' || f === 'cancelled') return f;
@@ -341,6 +340,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
 
     const handleAcceptInterview = async (iv: InterviewItem) => {
         if (!db || !profile) return;
+        // Same fresh-read gate as Apply Now (the rules gate the write again).
+        if (!(await gateFresh())) return;
         setSubmittingInterview(iv.id);
         try {
             // U3: the client notification is owned by the onVideoInterviewWrite
@@ -457,6 +458,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     // scheduledTime actually changes, same doc throughout.
     const handleAcceptRescheduleProposal = async (iv: InterviewItem) => {
         if (!db || !profile || !iv.reschedulePendingTime) return;
+        // Accepting the family's new time is an accept — same gate as Accept.
+        if (!(await gateFresh())) return;
         setSubmittingInterview(iv.id);
         try {
             await db.collection('video_interviews').doc(iv.id).update({
@@ -902,6 +905,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                 const baseApps = applications;
                 const visibleApps = appFilter === 'pending'
                     ? baseApps.filter(a => a.status === 'pending')
+                    : appFilter === 'accepted'
+                    ? baseApps.filter(a => a.status === 'accepted')
                     : baseApps.filter(a => a.status === 'rejected' || a.status === 'withdrawn');
                 return (
                     <div className="space-y-4">
@@ -917,10 +922,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                             </div>
                         ) : (
                             <>
-                            {/* Tabs: Pending | Closed */}
+                            {/* Tabs: Pending | Accepted | Closed — every status the page's StatusBadge labels has a home */}
                             <div className="flex bg-slate-100 rounded-lg p-0.5 mb-2">
                                 {([
-                                    { key: 'pending', label: 'Pending', count: baseApps.filter(a => a.status === 'pending').length },
+                                    { key: 'pending',  label: 'Pending',  count: baseApps.filter(a => a.status === 'pending').length },
+                                    { key: 'accepted', label: 'Accepted', count: baseApps.filter(a => a.status === 'accepted').length },
                                     { key: 'closed',  label: 'Closed',  count: baseApps.filter(a => a.status === 'rejected' || a.status === 'withdrawn').length },
                                 ] as const).map(({ key, label, count }) => (
                                     <button key={key} onClick={() => setAppFilter(key)}
@@ -1176,7 +1182,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                         {(() => {
                                             return (
                                                 <div className="mt-3">
-                                                    {iv.status === 'pending' && blockReason ? (
+                                                    {/* Gated (membership / background check): Accept, Accept new time,
+                                                        Propose and Reschedule all go behind the gate CTA — the reschedule
+                                                        form below is hidden under the same gate, so a visible Propose/
+                                                        Reschedule button would open nothing. Decline/Cancel stays. */}
+                                                    {blockReason && (iv.status === 'pending' || iv.status === 'accepted') ? (
                                                         <div className="flex items-center justify-between">
                                                             {iv.jobId ? (
                                                                 <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
@@ -1185,11 +1195,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                             ) : <span />}
                                                             <div className="flex gap-2">
                                                                 <button
-                                                                    onClick={() => handleDeclineInterview(iv)}
+                                                                    onClick={() => (iv.status === 'accepted' ? handleCancelInterview(iv) : handleDeclineInterview(iv))}
                                                                     disabled={submittingInterview === iv.id}
                                                                     className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
                                                                 >
-                                                                    {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
+                                                                    {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (iv.status === 'accepted' ? 'Cancel' : 'Decline')}
                                                                 </button>
                                                                 {blockReason === 'membership' ? (
                                                                     <button onClick={() => setMembershipModalOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200 text-slate-500 rounded-lg text-xs font-semibold hover:bg-slate-200 transition-colors">

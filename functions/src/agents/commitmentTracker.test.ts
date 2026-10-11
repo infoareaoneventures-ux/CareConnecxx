@@ -493,3 +493,56 @@ describe("sweepDroppedTurns", () => {
     expect(hoisted.turnWatch().size).toBe(1);
   });
 });
+
+// ── Families only (founder, 2026-10-11 — caregiver sweep A4) ─────────────────
+describe("caregiver sessions are skipped (follow-ups are a family-only feature)", () => {
+  it("closes a caregiver's overdue qa_answer commitment without re-running the agent", async () => {
+    hoisted.seedCommitment(`${PHONE}_qa_answer`, baseQaCommitment({ userType: "caregiver", caregiverId: "cg1" }));
+    hoisted.seedSession(PHONE, { userType: "caregiver", caregiverId: "cg1" });
+
+    await sweepOverdueCommitments();
+
+    const doc = hoisted.commitments().get(`${PHONE}_qa_answer`)!;
+    expect(doc.status).toBe("cancelled");
+    expect(doc.resolution).toBe("caregiver_followups_disabled");
+    expect(doc.sweepAfter).toBeUndefined();
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(sendSplit).not.toHaveBeenCalled();
+    expect(hoisted.adminAlerts).toHaveLength(0);
+  });
+
+  it("uses the session's role when the commitment itself carries none", async () => {
+    hoisted.seedCommitment(`${PHONE}_qa_answer`, baseQaCommitment({ userType: undefined }));
+    hoisted.seedSession(PHONE, { userType: "caregiver" });
+
+    await sweepOverdueCommitments();
+
+    expect(hoisted.commitments().get(`${PHONE}_qa_answer`)!.status).toBe("cancelled");
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("still re-answers a family's commitment", async () => {
+    hoisted.seedCommitment(`${PHONE}_qa_answer`, baseQaCommitment());
+    hoisted.seedSession(PHONE, { userType: "client" });
+    runQaAgent.mockResolvedValue("Maria is coming tomorrow at 9.");
+
+    await sweepOverdueCommitments();
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(hoisted.commitments().get(`${PHONE}_qa_answer`)!.status).toBe("fulfilled");
+  });
+
+  it("consumes a caregiver's dropped-turn marker without tracking a commitment", async () => {
+    hoisted.seedTurnWatch("chat_12", {
+      phone: PHONE, chatId: "chat_12", text: "did my hours go through?",
+      userId: "cg1", userType: "caregiver",
+      inboundAt: pastIso(15 * 60_000), dueAt: pastIso(60_000),
+    });
+    hoisted.seedSession(PHONE, { userType: "caregiver" });
+
+    await sweepDroppedTurns();
+
+    expect(hoisted.commitments().has(`${PHONE}_qa_answer`)).toBe(false);
+    expect(hoisted.turnWatch().size).toBe(0);
+  });
+});

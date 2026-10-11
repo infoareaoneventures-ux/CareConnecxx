@@ -54,7 +54,6 @@ issueEscalator (reply half)|caregiverReferral (reply half)`.
 | `scheduled/wellbeingCheckin.ts` | wellbeing ask | **gated (engineGate.ts)** |
 | `scheduled/staleSessionNudge.ts` | stale-session nudge | **gated (engineGate.ts)** |
 | `scheduled/staleApplicantNudge.ts` | family nudge on applicants | **gated (engineGate.ts)** |
-| `scheduled/onboardingReengagement.ts` | signup re-engagement | **gated (engineGate.ts)** |
 | ~~`scheduled/paywallWinback.ts`~~ | winback | **removed 2026-09-23** — Evia-only family text; the `lastPaywallViewedAt`/`paywallContext` stamp went with it on both sides |
 | `scheduled/caregiverInactivityCheck.ts` | caregiver re-engagement | **gated (engineGate.ts)** — both sends (caregiver nudge + family warn, distinct dedupe keys) |
 | ~~`scheduled/firstVisitActivation.ts`~~ | activation nudge | **removed 2026-09-23** — Evia-only family text; no site equivalent |

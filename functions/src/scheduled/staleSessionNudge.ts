@@ -1,151 +1,242 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { generateCaraMessage } from "../utils/caraMessage";
-import { getMarketRateText } from "../utils/marketRateRange";
 import { caregiverAnnualDisplay, clientMonthlyDisplay } from "../config/pricing";
-import { LIVE_GATE_FACT_BUILDERS } from "../agents/liveGateFacts";
-import { describeWhoIsWho } from "../agents/careRecipients";
 import { AgentSession } from "../linq/client";
 import { gateOptionalSend } from "./engineGate";
 import { writeUserNotification } from "../notifications/userNotification";
 import { humanLabelForStep } from "./onboardingStepLabels";
+import { decideNudge, MAX_NUDGES } from "./onboardingNudgeCadence";
+import {
+  BIO_MIN_CHARS, CAREGIVER_COLLECTION_STEPS, CLIENT_COLLECTION_STEPS, EXPERIENCE_BUCKETS,
+  RATE_EXAMPLE, TRAVEL_RADIUS_OPTIONS, availabilityComplete, isFieldFilled, missingRequiredFields,
+} from "../agents/onboardingContract";
+import { SERVICE_LABELS } from "../agents/caregiverServiceLabels";
+
+// The ONE onboarding reminder (caregiver sweep A8, founder 2026-10-11 — the
+// 48h stale nudge, the 7-day stuck-gate resend and the daily re-engagement
+// job were three overlapping schedules with model-written copy; "one per day
+// is too much"). Now:
+//   • cadence (onboardingNudgeCadence.ts): three texts per silence — about 2,
+//     5 and 12 days after the person's last message — never two in one day,
+//     nothing after 14 days of silence; a reply restarts the series.
+//   • a nudge exists only because text has no open tab: it names the step the
+//     person stopped at (the same label the website bell shows) and, for a
+//     reply step, re-asks that step's question in fixed words; for a gate step
+//     (membership checkout, background-check consent page, photo upload,
+//     payout setup — and the family's payment / identity links) it carries the
+//     link again through the same resend path the LINK keyword uses.
+//   • never to a caregiver who finished the step on the website
+//     (reconcileCaregiverOnboardingWithSite moves the cursor first), never to a
+//     family whose website progress is already real (self-heals the session).
+//   • the website bell gets the same reminder only when the text actually went.
+
+const db = admin.firestore();
+
+// Link-gate steps: the nudge re-delivers the link (resendStuckStep) instead of
+// asking for a reply. caregiver_send_* / client_send_* are the same gates
+// before their first delivery.
+const LINK_GATE_STEPS: ReadonlySet<string> = new Set([
+  "caregiver_send_membership", "caregiver_awaiting_membership",
+  "caregiver_send_bgcheck", "caregiver_awaiting_bgcheck_consent", "caregiver_awaiting_bgcheck",
+  "caregiver_send_stripe_connect", "caregiver_awaiting_stripe",
+  "client_send_payment", "client_awaiting_payment", "client_awaiting_identity",
+]);
+
+/** The fixed fact line for a link gate — the link itself follows with its own intro. */
+function gateLine(step: string): string {
+  switch (step) {
+    case "caregiver_send_membership":
+    case "caregiver_awaiting_membership":
+      return `Your ${caregiverAnnualDisplay()} membership includes your background check and unlocks applying to jobs.`;
+    case "caregiver_send_bgcheck":
+    case "caregiver_awaiting_bgcheck_consent":
+      return "It's included in your membership and takes about a minute to authorize — Checkr then emails you a secure link to finish.";
+    case "caregiver_awaiting_bgcheck":
+      return "Checkr emailed you a secure link to finish (about 5 minutes). Families can't book you until it's complete.";
+    case "caregiver_send_stripe_connect":
+    case "caregiver_awaiting_stripe":
+      return "It's how you get paid for your visits.";
+    case "client_send_payment":
+    case "client_awaiting_payment":
+      return `Your ${clientMonthlyDisplay()} membership is what lets you message, interview and book caregivers.`;
+    case "client_awaiting_identity":
+      return "It's a 30-second step that keeps every family on the platform safe.";
+    default:
+      return "";
+  }
+}
+
+// The wizard's questions, field by field, in fixed words (= the site's
+// CaregiverOnboardingWizard steps / the family's ClientJobPostingWizard).
+const CAREGIVER_FIELD_QUESTIONS: Record<string, string> = {
+  name:           "What's your first and last name?",
+  street:         "What's your street address and ZIP code?",
+  zipCode:        "What's your street address and ZIP code?",
+  city:           "What's your street address and ZIP code?",
+  state:          "What's your street address and ZIP code?",
+  jobType:        "What kind of work are you looking for — occasional shifts, part-time, or full-time?",
+  availability:   "Which days of the week and times of day (morning, afternoon, evening, overnight) are you available?",
+  specialties:    `Which care services do you offer? ${SERVICE_LABELS.join(", ")}.`,
+  yearsExperience: `How many years of caregiving experience do you have? (${EXPERIENCE_BUCKETS.join(", ")})`,
+  hourlyRate:     `What's your hourly rate? (for example $${RATE_EXAMPLE})`,
+  serviceRadius:  `How far are you willing to travel for work? (${TRAVEL_RADIUS_OPTIONS.join(", ")} miles)`,
+  email:          "What's your email address?",
+  bio:            `Tell families a bit about yourself — at least ${BIO_MIN_CHARS} characters about your experience and how you care for people.`,
+};
+const CLIENT_FIELD_QUESTIONS: Record<string, string> = {
+  careFrequency:        "How often do you need care — occasional, part-time, or full-time?",
+  homeStreet:           "What's your home street address and ZIP code?",
+  homeZipCode:          "What's your home street address and ZIP code?",
+  sameAsHomeAddress:    "Will the care take place at your home address? Reply YES or NO.",
+  city:                 "What's the ZIP code where care will take place?",
+  zipCode:              "What's the ZIP code where care will take place?",
+  startDate:            "When would you like care to start, and which days of the week?",
+  selectedDays:         "When would you like care to start, and which days of the week?",
+  relationship:         "Who is the care for? (Their name and your relationship to them — or just say it's for you)",
+  seniorName:           "Who is the care for? (Their name and your relationship to them — or just say it's for you)",
+  emergencyContactName: "Who should we list as the emergency contact? (Name and phone number)",
+  emergencyContactPhone: "Who should we list as the emergency contact? (Name and phone number)",
+  careNeeds:            "What kind of help do they need day to day?",
+  rate:                 "What hourly rate are you planning to pay?",
+  email:                "What's your email address?",
+  firstName:            "What's your first name?",
+};
+// The scripted family steps after collection (onboardingConversation.ts), same words.
+const CLIENT_STEP_QUESTIONS: Record<string, string> = {
+  client_confirm_intake: "Does that all look right? Say yes and I'll show you who can help, or tell me what to fix.",
+  client_ask_needs:      "How old is your loved one, and what kind of help do they need?",
+  client_ask_schedule:   "How often do they need someone, and what times of day work best?",
+  client_ask_senior:     "Who are you looking for care for? (Their name and your relationship — or just say it's for you)",
+  client_ask_name:       "What's your first and last name?",
+};
+
+/** Does the caregiver's own record already hold this wizard field (filled on the website)? */
+function caregiverRecordHas(cg: Record<string, unknown> | undefined, field: string): boolean {
+  if (!cg) return false;
+  switch (field) {
+    case "profilePhoto": return isFieldFilled(cg.photo) || isFieldFilled(cg.profilePhoto) || isFieldFilled(cg.photoURL)
+      || isFieldFilled((cg.documents as Record<string, unknown> | undefined)?.profilePhoto);
+    case "specialties":  return isFieldFilled(cg.skills) || isFieldFilled(cg.services) || isFieldFilled(cg.primaryServices);
+    case "yearsExperience": return isFieldFilled(cg.yearsExperience) || isFieldFilled(cg.experience);
+    case "jobType":      return isFieldFilled(cg.jobType) || isFieldFilled(cg.jobTypes);
+    case "availability": {
+      const grid = cg.weeklyAvailability as Record<string, unknown> | undefined;
+      return (!!grid && typeof grid === "object" && Object.keys(grid).length > 0) || availabilityComplete(cg.availability);
+    }
+    default: return isFieldFilled(cg[field]);
+  }
+}
+
+interface NudgePlan {
+  text: string;
+  /** "resend" = resendStuckStep (the LINK keyword's path); "photo" = the tokened upload link. */
+  link?: "resend" | "photo";
+}
+
+/** Compose the fixed nudge for where the person stopped. */
+async function planNudge(session: Record<string, unknown>, nudgeNumber: number): Promise<NudgePlan> {
+  const step      = (session.onboardingStep as string | undefined) ?? "ask_role";
+  const data      = (session.onboardingData ?? {}) as Record<string, unknown>;
+  const firstName = String(data.firstName ?? data.name ?? "").trim().split(/\s+/)[0] ?? "";
+  const greeting  = firstName ? `Hey ${firstName}!` : "Hey there!";
+  const userType  = session.userType as string | undefined;
+  const last      = nudgeNumber >= MAX_NUDGES ? " This is my last reminder — reply whenever you're ready and we'll pick up right here." : "";
+
+  if (!userType || step === "ask_role" || step === "verify_phone") {
+    const namePart = firstName ? ` ${firstName}` : "";
+    return { text: `Hi${namePart}, still thinking about care? Whenever you're ready, just tell me — are you looking for care for someone, or are you a caregiver yourself?${last}` };
+  }
+
+  const label = humanLabelForStep(step);
+  if (LINK_GATE_STEPS.has(step)) {
+    return { text: `${greeting} You stopped at ${label}. ${gateLine(step)}${last} Here's your link again:`, link: "resend" };
+  }
+
+  if (userType === "caregiver") {
+    if (CAREGIVER_COLLECTION_STEPS.includes(step)) {
+      const uid = (session.caregiverId ?? session.userId) as string | undefined;
+      let cg: Record<string, unknown> | undefined;
+      if (uid) cg = (await db.collection("caregivers").doc(uid).get().catch(() => null))?.data() as Record<string, unknown> | undefined;
+      const missing = missingRequiredFields("caregiver", data).filter((f) => !caregiverRecordHas(cg, f));
+      const field = missing[0];
+      if (field === "profilePhoto") {
+        return { text: `${greeting} Your caregiver profile stopped at your profile photo — families see it first.${last} Here's your upload link again:`, link: "photo" };
+      }
+      const q = field ? CAREGIVER_FIELD_QUESTIONS[field] : undefined;
+      if (q) return { text: `${greeting} Your caregiver profile stopped at ${label}. ${q}${last}` };
+    }
+    return { text: `${greeting} Your caregiver profile stopped at ${label}. Reply here and I'll pick up right there.${last}` };
+  }
+
+  // family
+  if (CLIENT_COLLECTION_STEPS.includes(step)) {
+    const field = missingRequiredFields("client", data)[0];
+    const q = field ? CLIENT_FIELD_QUESTIONS[field] : undefined;
+    if (q) return { text: `${greeting} You stopped at ${label}. ${q}${last}` };
+  }
+  const stepQ = CLIENT_STEP_QUESTIONS[step];
+  if (stepQ) return { text: `${greeting} You stopped at ${label}. ${stepQ}${last}` };
+  return { text: `${greeting} You stopped at ${label}. Reply here and I'll pick up right there.${last}` };
+}
 
 // The same reminder in the website's notification bell (founder, 2026-09-26:
 // "add it to the notification bell" — both doors see the same thing at the
-// same moment). Idempotent per session per day; a session with no account yet
-// has no bell to write. Non-fatal: the text still went out.
-async function writeReminderBell(
-  phone: string,
-  session: Record<string, unknown>,
-  kind: "stale_nudge" | "stuck_gate_resend",
-  title: string,
-  body: string,
-): Promise<void> {
+// same moment), written only when the text actually went. Idempotent per
+// session per day; a session with no account yet has no bell to write.
+async function writeReminderBell(phone: string, session: Record<string, unknown>): Promise<void> {
   const uid = (session.caregiverId ?? session.userId) as string | undefined;
   if (!uid) return;
+  const step = (session.onboardingStep as string | undefined) ?? "";
   await writeUserNotification({
     sourcePath:     `agent_sessions/${phone}`,
-    eventId:        `${kind}:${new Date().toISOString().slice(0, 10)}`,
+    eventId:        `stale_nudge:${new Date().toISOString().slice(0, 10)}`,
     recipientId:    uid,
-    transitionType: kind,
+    transitionType: "stale_nudge",
     type:           "onboarding_reminder",
-    title,
-    body,
-    data:           { step: session.onboardingStep ?? "" },
+    title:          session.userType === "caregiver" ? "Finish your caregiver setup" : "Finish setting up care",
+    body:           `You stopped at ${humanLabelForStep(step)} — pick up on your dashboard whenever you're ready.`,
+    data:           { step },
   }).catch((err) => console.error(`[staleSessionNudge] bell write failed (non-fatal) for …${phone.slice(-4)}:`, err));
 }
-
-const db = admin.firestore();
 
 // Runs daily at 10 AM PT (17:00 UTC)
 export const sendStaleSessionNudges = functions.pubsub
   .schedule("0 17 * * *")
   .onRun(async () => {
-    const now        = Date.now();
-    const fortyEightHoursAgo = new Date(now - 48 * 60 * 60 * 1000).toISOString();
-    const seventyTwoHoursAgo = new Date(now - 72 * 60 * 60 * 1000).toISOString();
-    const sevenDaysAgo       = new Date(now - 7  * 24 * 60 * 60 * 1000).toISOString();
-
-    // ── Auto-recover sessions stuck waiting for a webhook for 7+ days ─────────
-    const WEBHOOK_AWAITING_STEPS = [
-      "caregiver_awaiting_bgcheck_consent",
-      "caregiver_awaiting_bgcheck",
-      "caregiver_awaiting_stripe",
-      "caregiver_awaiting_membership",
-      "client_awaiting_payment",
-      "client_awaiting_identity",
-    ];
-    const stuckSnap = await db.collection("agent_sessions")
-      .where("onboardingStep", "in", WEBHOOK_AWAITING_STEPS)
-      .get();
-
-    for (const doc of stuckSnap.docs) {
-      const session = doc.data();
-      if (session.optedOut) continue;
-      // Only recover sessions stuck > 7 days
-      const updatedAt = (session.updatedAt ?? session.createdAt ?? "") as string;
-      if (!updatedAt || updatedAt > sevenDaysAgo) continue;
-      // Idempotency: don't re-send more than once per 7 days
-      if (session.stuckRecoverySentAt && session.stuckRecoverySentAt > sevenDaysAgo) continue;
-
-      try {
-        const { resendStuckStep } = await import("../agents/onboardingConversation");
-        const sent = await resendStuckStep(doc.id);
-        if (sent) {
-          await doc.ref.update({ stuckRecoverySentAt: new Date().toISOString() });
-          // A recovery that actually re-delivered a gate link must open the
-          // SAME per-step resend cooldown the inbound `other` path uses —
-          // otherwise a nudge followed by an immediate "hm ok" reply delivers
-          // two link cards within a minute. Scoped to the gate-parked steps
-          // the cooldown governs (isGateLinkKeywordStep); the text-only 48h
-          // nudges below never stamp.
-          const step = session.onboardingStep as string;
-          const { isGateLinkKeywordStep, stampGateLinkResent } = await import("../agents/gateLinkCooldown");
-          if (isGateLinkKeywordStep(step)) await stampGateLinkResent(doc.id, step);
-          await writeReminderBell(doc.id, session, "stuck_gate_resend",
-            "One step left to finish",
-            `Your ${humanLabelForStep(step)} is still waiting — open your dashboard to finish it.`);
-          console.log(`[staleSessionNudge] Re-sent stuck step for ${doc.id} (step: ${session.onboardingStep})`);
-        }
-      } catch (err) {
-        console.error(`[staleSessionNudge] resendStuckStep failed for ${doc.id}:`, err);
-      }
-    }
-
-    // (The 7-day auto-complete for sessions parked at the caregiver permissions
-    // questions went with those questions, 2026-09-27 — the website has no such
-    // step; webhooks.ts finishes any legacy session still parked there on its
-    // next text.)
-
-    // Sessions that started onboarding but never completed
+    const now = Date.now();
     const snap = await db.collection("agent_sessions")
       .where("onboardingStep", "!=", "complete")
       .get();
 
     for (const doc of snap.docs) {
-      const session = doc.data();
+      let session = doc.data() as Record<string, unknown>;
+      if (session.optedOut || !session.chatId) continue;
 
-      // Skip opted-out users
-      if (session.optedOut) continue;
-
-      // Must be older than 48h (stale)
-      if (!session.createdAt || session.createdAt > fortyEightHoursAgo) continue;
-
-      // Don't nudge again within 72h of last nudge
-      if (session.nudgeSentAt && session.nudgeSentAt > seventyTwoHoursAgo) continue;
-
-      // Cap at 2 nudges total
-      if ((session.nudgeCount ?? 0) >= 2) continue;
-
-      if (!session.chatId) continue;
+      const decision = decideNudge(session, now);
+      if (decision.due === 0) continue;
 
       try {
-        // Live check (2026-08-30 fix): a client who finished the real thing
-        // via the WEBSITE — not through this SMS conversation — still has a
-        // stale, incomplete onboardingStep on this session doc forever, since
-        // nothing here ever re-syncs it. Without this check this job wrongly
-        // told a client who'd already finished on the site "you're almost
-        // there, just tell us who needs care." Only clients have an
-        // independent website path (caregiver onboarding is SMS-only per
-        // CLAUDE.md), so this only applies when userType isn't "caregiver."
-        if (session.userType !== "caregiver" && session.userId) {
+        // Live check before any text: the website may have finished the step.
+        if (session.userType === "caregiver") {
+          const { reconcileCaregiverOnboardingWithSite } = await import("../agents/caregiverSiteSync");
+          session = (await reconcileCaregiverOnboardingWithSite(doc.id, session as unknown as AgentSession)) as unknown as Record<string, unknown>;
+          if (session.onboardingStep === "complete") continue;
+        } else if (session.userId) {
+          // A family who finished on the website keeps a stale cursor here
+          // forever (2026-08-30) — self-heal so the session stops surfacing.
           const userSnap = await db.collection("users").doc(session.userId as string).get();
           if (userSnap.exists) {
             const { userHasRealOnboardingProgress } = await import("../linq/webhooks");
             if (await userHasRealOnboardingProgress(session.userId as string, userSnap.data()!)) {
-              // Self-heal so this session stops surfacing here every day.
               await doc.ref.update({ onboardingStep: "complete" });
               continue;
             }
           }
         }
 
-        // U8 engine gate (KTD15): this 48h stale nudge is an OPTIONAL
-        // discretionary send — the engine decides per recipient per pass. A
-        // lost pass re-enters naturally on the next daily run. (The stuck-step
-        // resend and permissions auto-complete loops above are transactional
-        // and stay ungated per the manifest.)
+        // U8 engine gate (KTD15): an OPTIONAL discretionary send — a lost pass
+        // re-enters on the next daily run (the cadence is "on or after" a day).
         const g = await gateOptionalSend({
           phone: doc.id,
           candidate: {
@@ -161,112 +252,44 @@ export const sendStaleSessionNudges = functions.pubsub
           continue;
         }
 
-        const step      = session.onboardingStep ?? "ask_role";
-        const firstName = (session.onboardingData?.firstName ?? session.onboardingData?.name ?? "") as string;
-        const greeting  = firstName ? `Hey ${firstName}!` : "Hey there!";
-        const userType  = session.userType as string | undefined;
+        const plan = await planNudge(session, decision.due);
+        const step = (session.onboardingStep as string | undefined) ?? "";
 
-        // Build a per-step nudge in Evia's own voice instead of a frozen template.
-        // Each branch supplies (a) a context describing the moment + the concrete
-        // facts she must keep (prices, the SKIP keyword, value props) and (b) the
-        // original copy as a fallback if the model call fails. This is a daily
-        // cron, so the extra generation call carries no user-facing latency.
-        const language: "en" | "es" = session.preferredLanguage === "es" ? "es" : "en";
-        const audience: "caregiver" | "family" = userType === "caregiver" ? "caregiver" : "family";
-        const namePart = firstName ? ` ${firstName}` : "";
-        let context: string;
-        let fallback: string;
-        if (!userType || step === "ask_role") {
-          context =
-            `You haven't heard back from this person (name: ${firstName || "unknown"}) in a couple of days. ` +
-            `They first reached out about care but never told you whether they need care for a loved one or are a caregiver looking for work. ` +
-            `Send a warm, no-pressure nudge that re-opens the conversation and asks naturally whether they're ` +
-            `looking for care for someone or are a caregiver themselves. No numbered lists or menus. Keep it short.`;
-          fallback =
-            `Hi${namePart}, still thinking about care? Whenever you're ready, just tell me — ` +
-            `are you looking for care for someone, or are you a caregiver yourself?`;
-        } else if (userType === "caregiver") {
-          if (step === "caregiver_send_bgcheck" || step === "caregiver_awaiting_bgcheck_consent") {
-            context = `${firstName || "This caregiver"} stalled before authorizing their background check — the last thing before families can book them, and it's already included in the membership they paid. Warmly nudge them: it takes about a minute to review and authorize, then Checkr emails them a secure link to finish, and they can reply here to get the link again.`;
-            fallback = `${greeting} Your background check is the last step before you can start getting booked — and it's already included in your membership.\n\nAuthorizing it takes about a minute, then Checkr emails you a secure link to finish. Reply here and I'll send the link again.`;
-          } else if (step === "caregiver_awaiting_bgcheck") {
-            context = `${firstName || "This caregiver"} authorized their background check but hasn't finished Checkr's form yet. Warmly nudge them: the secure link is in their email from Checkr, it takes about 5 minutes, families can't book them until it's done, and they can reply here to get the link texted again.`;
-            fallback = `${greeting} Your background check is almost done — Checkr emailed you a secure link to finish (about 5 minutes).\n\nFamilies can't book you until it's complete. Reply here and I'll text you the link again.`;
-          } else if (step === "caregiver_ask_rate") {
-            const rateText = await getMarketRateText(); // live SCC caregiver rates, fail-soft static
-            context = `${firstName || "This caregiver"} stalled on setting their hourly rate. Warmly, no pressure: most caregivers on Evia charge ${rateText}, and they can always update it later. Encourage them to pick something.`;
-            fallback = `${greeting} Still thinking about your hourly rate?\n\nMost caregivers on Evia charge ${rateText}. You can always update it later. No pressure to get it perfect now.`;
-          } else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
-            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their ${caregiverAnnualDisplay()} membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
-            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour ${caregiverAnnualDisplay()} membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
-          } else {
-            context = `${firstName || "This caregiver"} stalled partway through profile setup. Send a short, warm nudge inviting them to reply whenever they're ready to continue.`;
-            fallback = `${greeting} Your caregiver profile is almost done.\n\nReply here whenever you're ready to continue.`;
-          }
-        } else {
-          if (step === "client_send_payment" || step === "client_awaiting_payment") {
-            // Accurate money copy (2026-07-09): this checkout is a monthly
-            // subscription (clientMonthlyDisplay) that bills immediately — never
-            // claim "no charges until you book" or frame it as card-on-file.
-            context = `${firstName || "This family member"} stalled at the last step — starting their ${clientMonthlyDisplay()} Evia membership, which is what lets them message, interview and book the caregivers they've seen. Warmly nudge: it takes about 30 seconds, the search starts the moment it's active, and they can reply here to get the link again.`;
-            fallback = `${greeting} The last step is starting your membership (${clientMonthlyDisplay()}) so you can message, interview and book the caregivers you've seen.\n\nTakes about 30 seconds — reply here and I'll send the link again.`;
-          } else if (step === "client_awaiting_identity") {
-            context = `${firstName || "This family member"} stalled on a quick identity check. Warmly reassure: it's a 30-second step that keeps every family on the platform safe, and they can reply here to get a fresh link.`;
-            fallback = `${greeting} Just one quick identity check left — it's a 30-second step that keeps every family on the platform safe.\n\nReply here and I'll send you a fresh link.`;
-          } else if (step === "client_ask_schedule") {
-            context = `${firstName || "This family member"} stalled before telling you how often they need care. Warmly nudge: once you know the schedule you can show them who's available nearby.`;
-            fallback = `${greeting} Almost there. Just need to know how often you need care and I'll show you who's available nearby.`;
-          } else {
-            context = `${firstName || "This family member"} stalled partway through getting set up. Send a short, warm nudge inviting them to reply whenever they're ready and you'll pick up where you left off.`;
-            fallback = `${greeting} I'm here whenever you're ready to continue.\n\nJust reply and I'll pick up where we left off.`;
-          }
-          // firstName above is the ACCOUNT HOLDER (the family member texting),
-          // not the care recipient — without this grounding the model has
-          // attributed visits to the account holder ("book Anahi's first
-          // visits" when the care is for her mom Rosie, 2026-07-17).
-          const whoIsWho = describeWhoIsWho((session.onboardingData ?? {}) as Record<string, unknown>);
-          if (whoIsWho) context = `${whoIsWho} ${context}`;
-        }
-
-        // Ground the per-step nudge in the user's LIVE state so a branch's
-        // baked-in assertion (e.g. the bg-check branch's "hasn't finished
-        // Checkr's form yet") can never contradict Firestore — a cleared or
-        // considered check must not ship that copy. Grounding only; this does
-        // not change which sessions get nudged or the cadence. Fail-soft: a
-        // builder error leaves the original (ungrounded) context untouched.
-        const liveBuilder = LIVE_GATE_FACT_BUILDERS[step];
-        if (liveBuilder) {
-          try {
-            const liveFact = await liveBuilder(doc.id, session as AgentSession);
-            if (liveFact) {
-              context = `${liveFact} Ground your nudge in this live status and NEVER assert a state that contradicts it. ${context}`;
-            }
-          } catch (err) {
-            console.warn("[staleSessionNudge] live fact builder failed (ungrounded nudge):", err);
-          }
-        }
-
-        const message = await generateCaraMessage({
-          audience,
-          language,
-          context: `${context} This is a gentle re-engagement text after a couple of days of silence — sound like a real person checking in, never pushy or salesy.`,
-          fallback,
-          maxTokens: 130,
-        });
-
-        await sendViaInteractionAgent(doc.id, {
-          content:     message,
+        const textWent = await sendViaInteractionAgent(doc.id, {
+          content:     plan.text,
           urgency:     "low",
           sourceAgent: "stale_nudge",
-          canDrop:     true,
+          canDrop:     false,
         });
-        await writeReminderBell(doc.id, session, "stale_nudge",
-          userType === "caregiver" ? "Finish your caregiver setup" : "Finish setting up care",
-          `You stopped at ${humanLabelForStep(step)} — pick up on your dashboard whenever you're ready.`);
+
+        let linkWent = false;
+        if (plan.link === "resend") {
+          const { resendStuckStep } = await import("../agents/onboardingConversation");
+          linkWent = await resendStuckStep(doc.id);
+          if (linkWent) {
+            // The re-delivered link opens the SAME per-step resend cooldown the
+            // inbound `other` path uses — otherwise a nudge followed by an
+            // immediate "hm ok" reply delivers two link cards within a minute.
+            const { isGateLinkKeywordStep, stampGateLinkResent } = await import("../agents/gateLinkCooldown");
+            if (isGateLinkKeywordStep(step)) await stampGateLinkResent(doc.id, step);
+          }
+        } else if (plan.link === "photo") {
+          const { sendOnboardingLink } = await import("../agents/onboardingConversation");
+          linkWent = (await sendOnboardingLink(doc.id, "caregiver_photo")).success;
+        }
+
+        if (!textWent && !linkWent) {
+          console.info("staleSessionNudge.notSent", { phone: doc.id, step, nudge: decision.due });
+          continue; // nothing reached them — no bell, no count; the cadence retries tomorrow
+        }
+
+        await writeReminderBell(doc.id, session);
         await doc.ref.update({
-          nudgeSentAt: new Date().toISOString(),
-          nudgeCount:  admin.firestore.FieldValue.increment(1),
+          nudgeSentAt:   new Date(now).toISOString(),
+          nudgeCount:    decision.countSoFar + 1,
+          nudgeAnchorAt: decision.anchorAt,
         });
+        console.log(`[staleSessionNudge] nudge ${decision.due}/${MAX_NUDGES} for …${doc.id.slice(-4)} (step: ${step}, link: ${plan.link ?? "none"})`);
       } catch (err) {
         console.error("staleSessionNudge error for", doc.id, err);
       }

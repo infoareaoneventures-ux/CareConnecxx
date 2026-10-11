@@ -3,13 +3,50 @@ import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { quickComplete } from "../utils/openaiClient";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate } from "../agents/caregiverProfileHandler";
-import {
-  createCaregiverReferralInvite,
-  normalizeCaregiverReferralPhone,
-  resolveCaregiverReferralName,
-} from "../agents/caregiverReferral";
+import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 
 const db = admin.firestore();
+
+// ── Parked page flows (2026-10-11) ───────────────────────────────────────────
+// A modal the caregiver is in the middle of over text: the Cash Out modal
+// (instantPayoutHandler), the Cancel-shift dialog (caregiverCancelShiftHandler),
+// a My Profile section editor (caregiverProfileHandler) and the Update
+// Availability modal (availabilityHandler). While one is parked, the reply is
+// THAT modal's answer — resumed before any page keyword, exactly like the
+// scripted flows above it. Live before this: CASH OUT ran the PAYOUTS keyword
+// first and re-opened the modal it was answering (the confirm was unreachable
+// except via YES / SEND / CONFIRM), and a bare CANCEL opened the Cancel-shift
+// flow on top of the parked one. The expiry rules are each flow's own.
+type ParkedFlow = "pendingInstantPayoutConfirm" | "cancelStep" | "profileUpdateStep" | "availabilityStep";
+const PARKED_FLOW_ORDER: readonly ParkedFlow[] = ["pendingInstantPayoutConfirm", "cancelStep", "profileUpdateStep", "availabilityStep"];
+// Each flow's own session fields (what its handler's clear() deletes).
+const PARKED_FLOW_FLAGS: Record<ParkedFlow, readonly string[]> = {
+  pendingInstantPayoutConfirm: ["pendingInstantPayoutConfirm", "pendingInstantPayoutAmount"],
+  cancelStep:                  ["cancelStep", "cancelCandidates", "cancelShiftId", "cancelKind", "cancelShiftDate", "cancelShiftClientId", "cancelReason", "stateExpiresAt"],
+  profileUpdateStep:           ["profileUpdateStep", "profileUpdateField", "profileUpdateValue", "stateExpiresAt"],
+  availabilityStep:            ["availabilityStep", "pendingAvailability", "pendingDays", "pendingAction", "stateExpiresAt"],
+};
+async function clearParkedFlow(phone: string, flow: ParkedFlow): Promise<void> {
+  const update: Record<string, admin.firestore.FieldValue> = {};
+  for (const f of PARKED_FLOW_FLAGS[flow]) update[f] = admin.firestore.FieldValue.delete();
+  await db.collection("agent_sessions").doc(phone).update(update).catch(() => {});
+}
+// The flow's own "nothing changed" line — the same sentence its handler sends on
+// a back-out, so CANCEL reads the same at every step of that flow.
+const PARKED_FLOW_CANCEL_LINE: Partial<Record<ParkedFlow, string>> = {
+  profileUpdateStep: "No problem — your profile wasn't changed.",
+  availabilityStep:  "Okay — your availability wasn't changed.",
+};
+
+function parkedFlowExpired(flow: ParkedFlow, session: AgentSession): boolean {
+  if (flow === "pendingInstantPayoutConfirm") {
+    // Parked with its own ISO stamp and a 10-minute life (no stateExpiresAt).
+    const setAt = String((session as any).pendingInstantPayoutConfirm ?? "");
+    return setAt < new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  }
+  const expiry = (session as any).stateExpiresAt as string | undefined;
+  return !!expiry && new Date(expiry) < new Date();
+}
 
 export interface CaregiverRouteContext {
   phone: string;
@@ -19,132 +56,13 @@ export interface CaregiverRouteContext {
   session: AgentSession;
 }
 
-interface PendingCaregiverReferral {
-  referredName?:  string;
-  referredPhone?: string;
-  startedAt?:     string;
-}
-
-function normalizeReferralPhone(raw: string): string {
-  return normalizeCaregiverReferralPhone(raw);
-}
-
-function extractPhoneFromText(text: string): string {
-  const match = text.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/);
-  return match ? normalizeReferralPhone(match[0]) : "";
-}
-
-// Name extraction is meaning-parsing of free-form text — CLAUDE.md mandates an
-// LLM, never a keyword-strip heuristic. (Phone extraction stays regex: that is
-// format detection, the explicitly-allowed exception, like email validation.)
-async function extractReferralName(text: string): Promise<string> {
-  const raw = await quickComplete(
-    "Extract the referred caregiver's name from this text. If no name is present, reply with an empty string. Reply with only the name.",
-    text,
-    { maxTokens: 30 },
-  ).catch(() => "");
-  return raw.trim().replace(/^["']|["']$/g, "");
-}
-
-// Intent detection on free-form SMS — CLAUDE.md forbids regex/keyword matching
-// here. The `norm` fast-path is allowed: it's the upstream LLM classifier's
-// result, not a string heuristic. Everything else goes through the LLM.
-async function isCaregiverReferralIntent(text: string, norm: string): Promise<boolean> {
-  if (norm === "REFER" || norm === "REFERRAL") return true;
-  const raw = await quickComplete(
-    "Does this caregiver's message EXPLICITLY express intent to refer, invite, or recommend ANOTHER person " +
-      "to become an Evia caregiver (e.g. \"I want to refer my friend\", \"can I invite someone\")? " +
-      "A bare acknowledgment like \"yes\", \"no\", \"ok\", \"sure\", or \"sounds good\" is NOT referral intent — " +
-      "it is an answer to some earlier question, so reply NO. " +
-      "Reply YES only when the message itself names or clearly describes bringing in another person. " +
-      "Reply only YES or NO.",
-    text,
-    { maxTokens: 5 },
-  ).catch(() => "");
-  return raw.trim().toUpperCase().startsWith("Y");
-}
-
-async function handleCaregiverReferral(
-  phone: string,
-  chatId: string,
-  text: string,
-  session: AgentSession,
-  pending?: PendingCaregiverReferral,
-): Promise<void> {
-  // CLAUDE.md handler checklist: while collecting referral details, a mid-flow
-  // question must not be misparsed as a name/phone. Detect it (LLM, not regex)
-  // and re-ask the current question instead of extracting garbage from it.
-  if (pending) {
-    const qRaw = await quickComplete(
-      "A caregiver is being asked for a referral's name and phone number. Is THIS message a question or off-topic, rather than a name/phone answer? Reply only YES or NO.",
-      text,
-      { maxTokens: 5 },
-    ).catch(() => "");
-    if (qRaw.trim().toUpperCase().startsWith("Y")) {
-      const reAsk = pending.referredName
-        ? `What phone number should I text for ${pending.referredName}?`
-        : "Who should I invite? Send me their name.";
-      await sendMessage(chatId, reAsk);
-      return;
-    }
-  }
-
-  const extractedPhone = extractPhoneFromText(text);
-  const extractedName  = await extractReferralName(text);
-  const next: PendingCaregiverReferral = {
-    ...(pending ?? {}),
-    ...(extractedName  ? { referredName: extractedName } : {}),
-    ...(extractedPhone ? { referredPhone: extractedPhone } : {}),
-    startedAt: pending?.startedAt ?? new Date().toISOString(),
-  };
-
-  if (!next.referredName) {
-    await db.collection("agent_sessions").doc(phone).set({
-      pendingCaregiverReferral: next,
-      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    }, { merge: true });
-    await sendMessage(chatId, "Who should I invite? Send me their name.");
-    return;
-  }
-
-  if (!next.referredPhone) {
-    await db.collection("agent_sessions").doc(phone).set({
-      pendingCaregiverReferral: next,
-      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    }, { merge: true });
-    await sendMessage(chatId, `What phone number should I text for ${next.referredName}?`);
-    return;
-  }
-
-  try {
-    const referrerName = await resolveCaregiverReferralName(session.caregiverId, phone);
-    const result = await createCaregiverReferralInvite({
-      referrerUserId: session.caregiverId ?? session.userId ?? phone,
-      referrerPhone: phone,
-      referrerName,
-      referredName: next.referredName,
-      referredPhone: next.referredPhone,
-      source: "cara_sms",
-    });
-    if (result.deliveryStatus === "sent") {
-      await sendMessage(chatId, `Sent. I texted ${next.referredName} the caregiver application link.`);
-    } else {
-      await sendMessage(chatId, `I saved the referral, but I couldn't text ${next.referredName} yet. I flagged it for admin review.`);
-    }
-  } finally {
-    await db.collection("agent_sessions").doc(phone).update({
-      pendingCaregiverReferral: admin.firestore.FieldValue.delete(),
-      stateExpiresAt: admin.firestore.FieldValue.delete(),
-    }).catch(() => {});
-  }
-}
-
 // ── Caregiver keyword handlers ────────────────────────────────────────────────
 
-// (handleArrived — the ARRIVED keyword — was deleted 2026-09-28: it read and
+// (handleArrived — the old ARRIVED handler — was deleted 2026-09-28: it read and
 // wrote the retired `appointments` collection, so it never found a visit. The
 // page's Start Shift / Tasks / notes / End now run over text through
-// agents/inShift.ts: START · DONE n · NOTE … · END.)
+// agents/inShift.ts: START (ARRIVED is still accepted there as its alias) ·
+// DONE n · UNDO n · NOTE … · TASKS · FINISH · SKIP.)
 
 // (handleShiftConfirmation — the day-before YES/NO — was removed 2026-09-28:
 // the site never asks a caregiver to re-confirm a visit they accepted. The
@@ -216,6 +134,46 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       return "handled";
     }
 
+    // ── Parked page flows — Cash Out · Cancel shift · Profile editor · Update Availability ──
+    // (see PARKED_FLOW_* above). The flow's reply words (CASH OUT / SAVE / YES /
+    // a number) are its answer; a bare CANCEL — and NO where the flow offered it
+    // — backs out of THAT flow with its own one-line "nothing changed" (the Cash
+    // Out and Cancel-shift handlers own that line themselves; the profile editor
+    // and availability modal don't accept CANCEL at every step, so it is handled
+    // here for them). Only with nothing parked does CANCEL open the cancel-shift
+    // flow below.
+    for (const flow of PARKED_FLOW_ORDER) {
+      if (!(session as any)[flow]) continue;
+      if (parkedFlowExpired(flow, session)) {
+        await clearParkedFlow(phone, flow);
+        continue; // the stale flag is gone; nothing to answer — route the text normally
+      }
+      if (flow === "availabilityStep" && !session.caregiverId && !session.userId) continue;
+      if (flow === "profileUpdateStep" && !session.caregiverId) continue;
+      if (norm === "CANCEL" && PARKED_FLOW_CANCEL_LINE[flow]) {
+        await clearParkedFlow(phone, flow);
+        await sendMessage(chatId, PARKED_FLOW_CANCEL_LINE[flow] as string);
+        return "handled";
+      }
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        if (flow === "pendingInstantPayoutConfirm") {
+          const { handleInstantPayoutConfirm } = await import("../agents/instantPayoutHandler");
+          await handleInstantPayoutConfirm(session.caregiverId ?? phone, phone, text, chatId);
+        } else if (flow === "cancelStep") {
+          const cgDoc = session.caregiverId ? await db.collection("caregivers").doc(session.caregiverId).get().catch(() => null) : null;
+          await handleCaregiverCancelShift(session.caregiverId ?? phone, cgDoc?.data()?.name ?? "Caregiver", phone, text, session as unknown as Record<string, unknown>, chatId);
+        } else if (flow === "profileUpdateStep") {
+          await handleCaregiverProfileUpdate(session.caregiverId as string, phone, text, session as unknown as Record<string, unknown>, chatId);
+        } else {
+          await handleAvailabilityUpdate((session.caregiverId ?? session.userId ?? phone) as string, phone, text, session as unknown as Record<string, unknown>, (msg: string) => sendMessage(chatId, msg));
+        }
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return "handled";
+    }
+
     // ── Decision notices (agents/decisionNotices.ts, 2026-09-27) ────────────
     // A notice that ended in "Reply ACCEPT or DECLINE" parked the expected
     // decision; a plain reply runs the page's own write here — no tool choice,
@@ -228,35 +186,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       } finally {
         if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
       }
-    }
-
-    const pendingReferral = (session as any).pendingCaregiverReferral as PendingCaregiverReferral | undefined;
-    if (pendingReferral) {
-      const referralExpiry = (session as any).stateExpiresAt as string | undefined;
-      if (referralExpiry && new Date(referralExpiry) < new Date()) {
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingCaregiverReferral: admin.firestore.FieldValue.delete(),
-          stateExpiresAt: admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-      } else {
-        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-        try {
-          await handleCaregiverReferral(phone, chatId, text, session, pendingReferral);
-        } finally {
-          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
-        }
-        return "handled";
-      }
-    }
-
-    if (await isCaregiverReferralIntent(text, norm)) {
-      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-      try {
-        await handleCaregiverReferral(phone, chatId, text, session);
-      } finally {
-        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
-      }
-      return "handled";
     }
 
     // ── In-shift keywords — START · DONE n · NOTE … · END · SKIP ──────────
@@ -354,7 +283,8 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       // CANCEL — the Bookings page's two cancel buttons as a scripted flow
       // (agents/caregiverCancelShiftHandler.ts). A certain door: the flow lists
       // what the page lets them cancel and asks the page's own dialog. (Inside a
-      // parked step CANCEL still means back out — those steps run before this.)
+      // parked flow CANCEL means back out — the parked-page-flows block and the
+      // scripted flows at the top of this router run before this.)
       CANCEL: async () => {
         if (!session.caregiverId) return;
         const cgDoc = await db.collection("caregivers").doc(session.caregiverId).get().catch(() => null);
@@ -425,86 +355,9 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // A flag with no setter and no expiry was one hijack away from consuming
     // every inbound text.)
 
-    // ── Caregiver-initiated shift cancellation — multi-step state machine ─
-    if ((session as any).cancelStep) {
-      const expiry = (session as any).stateExpiresAt as string | undefined;
-      if (expiry && new Date(expiry) < new Date()) {
-        await db.collection("agent_sessions").doc(phone).update({
-          cancelStep:          admin.firestore.FieldValue.delete(),
-          cancelCandidates:    admin.firestore.FieldValue.delete(),
-          cancelShiftId:       admin.firestore.FieldValue.delete(),
-          cancelShiftDate:     admin.firestore.FieldValue.delete(),
-          cancelShiftClientId: admin.firestore.FieldValue.delete(),
-          stateExpiresAt:      admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-      } else {
-        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-        try {
-          const cgDoc = session.caregiverId
-            ? await db.collection("caregivers").doc(session.caregiverId).get()
-            : null;
-          await handleCaregiverCancelShift(
-            session.caregiverId ?? phone,
-            cgDoc?.data()?.name ?? "Caregiver",
-            phone,
-            text,
-            session as unknown as Record<string, unknown>,
-            chatId,
-          );
-        } finally {
-          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
-        }
-        return "handled";
-      }
-    }
-
-    // ── Profile update flow (rate / skills / bio / photo / pause / reactivate)
-    if ((session as any).profileUpdateStep) {
-      const expiry = (session as any).stateExpiresAt as string | undefined;
-      if (expiry && new Date(expiry) < new Date()) {
-        await db.collection("agent_sessions").doc(phone).update({
-          profileUpdateStep:  admin.firestore.FieldValue.delete(),
-          profileUpdateField: admin.firestore.FieldValue.delete(),
-          profileUpdateValue: admin.firestore.FieldValue.delete(),
-          stateExpiresAt:     admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-      } else if (session.caregiverId) {
-        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-        try {
-          await handleCaregiverProfileUpdate(
-            session.caregiverId,
-            phone,
-            text,
-            session as unknown as Record<string, unknown>,
-            chatId,
-          );
-        } finally {
-          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
-        }
-        return "handled";
-      }
-    }
-
-    // ── PAYOUT instant-payout YES/NO confirmation ──────────────────────────
-    if ((session as any).pendingInstantPayoutConfirm) {
-      const setAt = (session as any).pendingInstantPayoutConfirm as string;
-      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      if (setAt < tenMinAgo) {
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingInstantPayoutConfirm: admin.firestore.FieldValue.delete(),
-          pendingInstantPayoutAmount:  admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-      } else {
-        const { handleInstantPayoutConfirm } = await import("../agents/instantPayoutHandler");
-        await handleInstantPayoutConfirm(
-          session.caregiverId ?? phone,
-          phone,
-          text,
-          chatId,
-        );
-        return "handled";
-      }
-    }
+    // (The Cancel-shift, profile-editor and Cash Out confirm resumes that used to
+    // sit here — AFTER the page keywords — moved to the parked-page-flows block
+    // at the top of this router on 2026-10-11; see PARKED_FLOW_ORDER.)
 
     // ── "running about 10 minutes late" in plain words → relayed verbatim ──
     // Only LATE is inferred here (2026-09-28): arriving / finishing a visit is

@@ -168,7 +168,7 @@ export function buildEmotionalContextDirective(
     case "anxious": {
       const topicLine =
         topic === "health"
-          ? "Topic is health: ground reassurance in journal/notes/care_plan data — call get_care_journal or get_senior_profile before stating anything specific about their condition."
+          ? "Topic is health: ground reassurance in journal/notes/care_plan data — call get_care_journal_client or get_senior_profile before stating anything specific about their condition."
           : topic === "logistics"
             ? "Topic is logistics: give a clear specific answer (time, name, yes/no) fast; reassurance is a single sentence at most."
             : "";
@@ -192,7 +192,7 @@ export function buildEmotionalContextDirective(
     case "frustrated": {
       const topicLine =
         topic === "health"
-          ? "Topic is health/care: acknowledge the specific care concern by name and pull recent journal notes (get_care_journal) before responding so your acknowledgment is grounded."
+          ? "Topic is health/care: acknowledge the specific care concern by name and pull recent journal notes (get_care_journal_client) before responding so your acknowledgment is grounded."
           : topic === "logistics"
             ? "Topic is logistics: fix the logistics directly in this turn — cancel, reschedule, refund, message the caregiver. Don't ask permission for the obvious next step."
             : "";

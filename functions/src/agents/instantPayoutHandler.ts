@@ -49,6 +49,12 @@ export function cashOutModalText(availableCents: number): string {
   ].join("\n");
 }
 const REASK = (availableCents: number) => `Reply CASH OUT to send ${money(Math.max(0, availableCents - instantPayoutFeeCentsFor(availableCents)))} now, or CANCEL.`;
+/** The modal's facts for a mid-flow question: the modal as texted (amount, fee, net, timing) plus its footnote, exactly as the page states them. */
+export const CASH_OUT_FACTS = (availableCents: number) =>
+  `The Cash Out modal on their screen:\n${cashOutModalText(availableCents)}\n\n` +
+  "Stripe charges 1% (minimum $0.50) for instant payouts; the fee comes out of the amount sent, so the caregiver receives the 'You'll Receive' figure. " +
+  "Regular payouts happen automatically every day and are free — nothing to request — and land in the bank within ~2 business days. " +
+  "CASH OUT sends the whole instantly-available balance (there is no partial amount) to the connected bank account in about 30 minutes; nothing is sent until the caregiver replies CASH OUT, and CANCEL leaves the daily schedule as it is.";
 
 /**
  * Entry: CASH OUT / PAYOUT, the agent's request_instant_payout, or the
@@ -101,7 +107,7 @@ export async function handleInstantPayoutConfirm(caregiverId: string, phone: str
   if (norm === "CASH OUT" || norm === "CASHOUT" || norm === "CASH OUT NOW" || norm === "YES" || norm === "SEND" || norm === "CONFIRM") action = "send";
   else if (norm === "CANCEL" || norm === "NO" || norm === "WAIT" || norm === "NOT YET") action = "cancel";
   else if (await isBackOutRequest(text, q)) action = "cancel";
-  else if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; } // confirmation stays parked
+  else if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: CASH_OUT_FACTS(previewCents) })); return; } // confirmation stays parked
   else {
     const v = await quickComplete("Evia asked the caregiver to reply CASH OUT to send an instant payout, or CANCEL. Classify: SEND (go ahead), CANCEL (hold off), or OTHER.\nReply with ONLY the word.", text, { maxTokens: 5 }).catch(() => "OTHER");
     action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";

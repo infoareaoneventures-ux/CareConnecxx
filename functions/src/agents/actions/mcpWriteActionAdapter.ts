@@ -64,19 +64,6 @@ const writeActionConfigs = {
     idempotencyKey: (input: Record<string, unknown>) =>
       `update_shift_task:${input.caregiverId}:${input.shiftId ?? "in_progress"}:${JSON.stringify(input.numbers ?? input.taskKeys ?? input.taskKey ?? "")}:${input.completed ?? "toggle"}`,
   },
-  create_caregiver_referral: {
-    role: "caregiver",
-    inputSchema: z.object({
-      caregiverId: stringValue,
-      phone: stringValue,
-      referredName: stringValue,
-      referredPhone: stringValue,
-    }).passthrough(),
-    auditType: "caregiver_referral_invited",
-    targetCollection: "referrals",
-    idempotencyKey: (input: Record<string, unknown>) =>
-      `create_caregiver_referral:${input.caregiverId}:${input.referredPhone}`,
-  },
 } as const;
 
 type SupportedMcpWriteAction = keyof typeof writeActionConfigs;
@@ -166,7 +153,6 @@ function targetDocIdFromResult(output: unknown): string | undefined {
     "appointmentId",
     "shiftId",
     "taskId",
-    "referralId",
     "entryId",
     "bookingRequestId", // respond_to_booking_request — 2026-09-28: an unverifiable receipt made the agent ask for confirmation twice
   ]) {

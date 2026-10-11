@@ -1042,8 +1042,8 @@ const handleInboundInner = traceable(
   // ── Chat health gate — honour OPTED_OUT; do NOT mute direct replies ───────────
   // We only hard-stop on OPTED_OUT (a real user opt-out we must respect). CRITICAL
   // health reflects line/deliverability risk that matters for PROACTIVE/bulk sends
-  // (reminders, digests) — those are already gated by the global circuit breaker and
-  // sendIfNotDND. Suppressing a direct reply to a user who just texted in makes Evia
+  // (reminders) — those are already gated by the global circuit breaker and the
+  // engine gate. Suppressing a direct reply to a user who just texted in makes Evia
   // look broken, so we log CRITICAL for observability but still respond. If Linq
   // genuinely rejects the send, sendMessage surfaces that downstream.
   const chatHealth = (ev.data?.chat?.health_status?.status ?? "HEALTHY") as string;
@@ -1834,10 +1834,10 @@ const handleInboundInner = traceable(
           // deliberately never guesses `bio` (any message could be misread, and a
           // wrong bio is family-visible). But AT the caregiver_ask_bio step the
           // user's message IS their bio answer. When the model acknowledges it
-          // ("lovely — next I'll send your photo step") but skips
-          // save_onboarding_field, bio stays missing, the cursor never reaches
-          // caregiver_send_photo, and the promised photo-upload link is never
-          // sent — signup dead-ends. Capture it here as the safety-net fallback
+          // ("lovely — that's everything") but skips save_onboarding_field, bio
+          // stays missing, complete_collection never fires, and the cursor never
+          // reaches the first gate (caregiver_send_membership) — signup
+          // dead-ends. Capture it here as the safety-net fallback
           // (length + not-"skip" gated so a short ack isn't stored as a bio).
           if (loopRole === "caregiver" && step === "caregiver_ask_bio" && !curData.bio) {
             const bioText = text.trim();
@@ -1915,10 +1915,12 @@ const handleInboundInner = traceable(
         // for an inbound that never comes. Drive it now so Evia doesn't go
         // silent right after "that's everything I need".
         //   client    → matches → paywall (or the honest no-supply hold)
-        //   caregiver → the scripted photo-upload gate (caregiver_send_photo),
-        //               driven through the legacy runner with the "__RESUME__"
-        //               sentinel (the established no-user-text drive; the send
-        //               handler ignores inbound text)
+        //   caregiver → the first dashboard card, the membership checkout
+        //               (caregiver_send_membership — the photo is collected
+        //               inside the loop since 2026-09-25), driven through the
+        //               legacy runner with the "__RESUME__" sentinel (the
+        //               established no-user-text drive; the send handler
+        //               ignores inbound text)
         if (curStep === firstGateStep(loopRole)) {
           try {
             if (loopRole === "caregiver") {
@@ -2234,9 +2236,9 @@ const handleInboundInner = traceable(
   // ── Client-side pre-intent state machines (extracted to routeClient.ts) ──────
   // Covers: awaitingEmergencyContactUpdate,
   // pendingShiftApproval, pendingDisputeDetail, collectingCredential,
-  // jobPostingStep, bookingFlowStep, healthcareFlowStep,
-  // availabilityStep. Deliberately NOT wrapped
-  // in a userType check — some blocks run for caregivers too.
+  // jobPostingStep, bookingFlowStep, healthcareFlowStep. Deliberately NOT
+  // wrapped in a userType check — some blocks run for caregivers too. (The
+  // caregiver availabilityStep resume lives in routeCaregiver since 2026-10-11.)
   if (await routeClientStateMachines({ phone, chatId, text, norm, session }) === "handled") return;
 
   // ── pendingRematch + pendingTask + intent routing + QA fallback ─────────────

@@ -44,6 +44,7 @@ export interface ProactiveTrigger {
   bell?: { recipientId: string; type: string; title: string; body: string; data?: Record<string, unknown> };
   // Claude-scheduled trigger fields
   source?:           "claude" | "system";   // "claude" = scheduled by Evia via schedule_followup tool
+  userType?:         "client" | "caregiver"; // recipient role when the scheduler knows it (families only for "custom")
   intent?:           string;                // why this trigger exists (used for dynamic content + suppression)
   suppressionReason?: string;               // set when context-aware suppression cancels the trigger
   expiresAt?:        string;
@@ -220,6 +221,20 @@ export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): bo
 // triggers (weekly check-ins, Evia-scheduled follow-ups) stay droppable.
 export function triggerSendOptions(t: Pick<ProactiveTrigger, "type" | "message">): { urgency: "standard"; canDrop: boolean } {
   return { urgency: "standard", canDrop: !isReplyExempt(t) };
+}
+
+// Caregiver sweep A4 (founder, 2026-10-11): Claude-scheduled / model-worded
+// follow-ups — the "custom" triggers that are not a qa_retry — go to FAMILIES
+// only. One addressed to a caregiver (the trigger's own userType, or the
+// recipient session's) is marked done without sending. Interview reminders,
+// qa_retry and every other type are untouched. Exported for tests.
+export function isCaregiverFollowUp(
+  t: Pick<ProactiveTrigger, "type" | "message" | "userType">,
+  session: { userType?: unknown } | null | undefined,
+): boolean {
+  if (t.type !== "custom") return false;
+  if ((t.message ?? "").startsWith("qa_retry:")) return false;
+  return t.userType === "caregiver" || session?.userType === "caregiver";
 }
 
 // U8 engine gate (KTD15): classify a DISCRETIONARY trigger's content into a
@@ -496,6 +511,13 @@ export const runTriggerEngine = functions.pubsub
       const session = sessionSnap.data()!;
       if (session.optedOut) {
         await doc.ref.update({ cancelledAt: now });
+        continue;
+      }
+      // Families only (2026-10-11): a model-worded follow-up addressed to a
+      // caregiver is retired here, never sent.
+      if (isCaregiverFollowUp(trigger, session)) {
+        await doc.ref.update({ cancelledAt: now, suppressionReason: "caregiver_followups_disabled", deliveryState: "suppressed", deliveryCompletedAt: now }).catch(() => {});
+        console.info("triggerEngine.caregiver_followup_skipped", { triggerId: doc.id, type: trigger.type });
         continue;
       }
 

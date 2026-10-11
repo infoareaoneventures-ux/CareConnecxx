@@ -47,6 +47,7 @@ vi.mock("../caregiverAccessGate", () => ({
 }));
 
 import { loadPastTab, pastTabText, visitDetailText, handleLogHoursFlowStep, handlePastBookingsKeyword, sendCaregiverPastBookings, EMPTY_TEXT } from "../caregiverPastBookings";
+import { answerMidFlow, isQuestionOrOther } from "../stepHandler";
 
 const RECIPIENTS = [{ name: "H M", relationship: "parent", notes: "testing for additional notes specific to the care recipient", careNeeds: ["occasional help", "Dementia / Memory Care", "Mobility Assistance"], careNeedDetails: { "Mobility Assistance": ["Transfer Assist"] } }];
 const shift = (id: string, over: Record<string, unknown>) => hoisted.docs.set(`shifts/${id}`, { caregiverId: "cg1", clientId: "fam1", clientName: "Basra Yousuf", bookingRequestId: "br1", startTime: "19:30", endTime: "19:45", careRecipients: RECIPIENTS, tasksCompleted: [], ...over });
@@ -162,6 +163,40 @@ describe("Log Hours — the modal as a flow, ending in the page's write", () => 
     hoisted.docs.set("shifts/miss", { ...hoisted.docs.get("shifts/miss"), status: "completed" });
     await handleLogHoursFlowStep("+1", "chat", "LOG", session({ logHoursFlowStep: "lh_confirm", logHoursFlowData: { ...base, endDate: "2000-01-01", endAt: "20:00", tasks: [], note: "" } }));
     expect(hoisted.sent.at(-1)).toBe("That visit is already completed — nothing to log.");
+    expect(hoisted.updates.filter((u) => u.path === "shifts/miss")).toHaveLength(0);
+  });
+});
+
+// Founder 2026-10-11: a mid-flow question is answered FROM the modal on the screen — the visit, the task list, what LOG does.
+describe("Log Hours — mid-flow questions are briefed with the visit and the task list", () => {
+  const taskList = [{ number: 1, key: "0_occasional help", label: "occasional help", recipientName: "H M" }, { number: 2, key: "0_Dementia / Memory Care", label: "Dementia / Memory Care", recipientName: "H M" }, { number: 3, key: "0_Mobility Assistance_Transfer Assist", label: "Mobility Assistance — Transfer Assist", recipientName: "H M" }];
+  const base = { shiftId: "miss", clientName: "Basra Yousuf", date: "2000-01-01", startTime: "19:30", endTime: "19:45", taskList };
+  const session = (over: Record<string, unknown>) => ({ caregiverId: "cg1", chatId: "chat", ...over }) as any;
+  const lastCall = () => vi.mocked(answerMidFlow).mock.calls.at(-1)!;
+  it("end step: the visit and the start already entered; tasks step: the full numbered list with the recipient's note; note step: the visit facts", async () => {
+    shift("miss", { date: "2000-01-01", status: "scheduled" });
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleLogHoursFlowStep("+1", "chat", "what time was it scheduled to end?", session({ logHoursFlowStep: "lh_end", logHoursFlowData: { ...base, startDate: "2000-01-01", startAt: "19:30" } }));
+    expect(hoisted.sent.at(-1)).toBe("Answer. And what time did you finish? Reply a time, or KEEP for the scheduled 7:45 PM.");
+    expect(lastCall()[2]?.facts).toContain("Basra Yousuf, Sat, Jan 1, 2000, scheduled 7:30 PM – 7:45 PM");
+    expect(lastCall()[2]?.facts).toContain("Actual start entered: Sat, Jan 1, 2000 7:30 PM.");
+    expect(lastCall()[2]?.facts).toContain("Actual end: not entered yet.");
+    expect(lastCall()[2]?.facts).toContain("nothing is saved before LOG");
+    expect(hoisted.sessionWrites).toHaveLength(0); // the step stays
+    // tasks: the list on their screen is re-read from the visit (with the recipient's note), not just the short re-ask
+    const withTimes = { ...base, startDate: "2000-01-01", startAt: "19:30", endDate: "2000-01-01", endAt: "20:05" };
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleLogHoursFlowStep("+1", "chat", "what does the transfer assist one mean?", session({ logHoursFlowStep: "lh_tasks", logHoursFlowData: withTimes }));
+    expect(hoisted.sent.at(-1)).toBe("Answer. Which tasks were done? Reply the numbers (e.g. 1, 3), ALL, or NONE.");
+    const facts = String(lastCall()[2]?.facts);
+    expect(facts).toContain("The task list on their screen:\nWhich tasks were done?\nH M (parent)\nNote: testing for additional notes specific to the care recipient\nTasks:\n1. occasional help\n2. Dementia / Memory Care\n3. Mobility Assistance — Transfer Assist");
+    expect(facts).toContain("Actual end entered: Sat, Jan 1, 2000 8:05 PM.");
+    // note
+    hoisted.quick.mockResolvedValueOnce("QUESTION");
+    await handleLogHoursFlowStep("+1", "chat", "will the family see the note?", session({ logHoursFlowStep: "lh_note", logHoursFlowData: { ...withTimes, tasks: ["0_occasional help"] } }));
+    expect(hoisted.sent.at(-1)).toBe("Answer. Any notes about the visit? Reply with the note, or SKIP.");
+    expect(lastCall()[2]?.facts).toContain("Tasks marked done: 1/3.");
+    expect(lastCall()[2]?.facts).toContain("The note is saved on the visit with the logged hours, in the caregiver's own words, and the family can see it.");
     expect(hoisted.updates.filter((u) => u.path === "shifts/miss")).toHaveLength(0);
   });
 });

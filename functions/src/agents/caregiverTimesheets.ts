@@ -400,6 +400,9 @@ export interface SubmitHoursFlowData {
   scheduledStartMs: number | null; scheduledEndMs: number | null;
   items: Array<{ type: "custom"; label: string; amount: number; note?: string }>;
 }
+// How every figure on the Timesheets page is worked out — briefed with any mid-flow question (live 2026-10-11:
+// "Is the base correct" was answered with guesses about mattresses).
+const MONEY_FACTS = "Base pay = the time between the start and end shown × the hourly rate (the page calls it Base pay). Additional charges (mileage, supplies, overtime, a custom item) are flat amounts the caregiver entered and are added on top. The total = base pay + additional charges. The family's card is billed that total plus Evia's service fee; the caregiver receives the total.";
 const modalHeader = (d: SubmitHoursFlowData) => `Submit hours worked — ${d.clientName} · ${shortDate(Date.parse(d.startIso))}`;
 const basePayLine = (d: SubmitHoursFlowData) => `Base pay (${dur(d.totalHours)} @ $${d.rate}/hr) ${money(d.totalHours * d.rate)}`;
 const ITEMS_Q = (d: SubmitHoursFlowData) => [
@@ -440,6 +443,9 @@ const SUBMIT_CONFIRM_Q = (d: SubmitHoursFlowData) => {
     "Reply SUBMIT to submit, or CANCEL.",
   ].filter((l) => l !== null).join("\n");
 };
+/** The Submit hours modal's facts at any of its steps: the summary so far, the modal's payment note, the money rules. */
+const SUBMIT_FACTS = (d: SubmitHoursFlowData) =>
+  `The Submit hours modal so far:\n${SUBMIT_CONFIRM_Q(d)}\n\nNothing is submitted until the caregiver replies SUBMIT on that summary; CANCEL leaves the visit under Unsubmitted. ${MONEY_FACTS}`;
 
 async function parse(prompt: string, text: string): Promise<string> {
   return quickComplete(prompt + "\nReply with ONLY the requested value — no explanation.", text, { maxTokens: 80 }).catch(() => "__parse_error__");
@@ -497,7 +503,7 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     if (text.trim().toUpperCase() === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
     const parsed = await parseCharge(text);
     if (parsed === null || parsed.kind === "no_amount" || parsed.kind === "no_label") {
-      if (parsed === null && await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; }
+      if (parsed === null && await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: SUBMIT_FACTS(data) })); return; }
       // The modal's own validation messages.
       const msg = parsed?.kind === "no_amount" ? "Please enter an amount for each additional charge." : parsed?.kind === "no_label" ? "Please enter a label for each Custom charge." : DIDNT_CATCH;
       await sendMessage(chatId, `${msg} ${q}`); return;
@@ -519,7 +525,7 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
-      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q));
+      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: SUBMIT_FACTS(data) }));
       else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
       return;
     }
@@ -582,7 +588,12 @@ function counterGross(d: ReviewCorrectionFlowData): { hours: number; base: numbe
   const itemsTotal = (d.counterItems ?? d.proposedItems).reduce((t, li) => t + (Number(li.amount) || 0), 0);
   return { hours, base, gross: round2(base + itemsTotal) };
 }
-const MONEY_FACTS = "Base pay = the time between the start and end shown × the hourly rate (the page calls it Base pay). Additional charges (mileage, supplies, overtime, a custom item) are flat amounts the caregiver entered and are added on top. The total = base pay + additional charges. The family's card is billed that total plus Evia's service fee; the caregiver receives the total.";
+/** The Review correction modal's facts: the family's proposal as shown, what each reply does, and the money rules. */
+const REVIEW_FACTS = (d: ReviewCorrectionFlowData) =>
+  `The family's proposed correction on their screen:\n${proposedBlock(d)}\n\n` +
+  "ACCEPT accepts the family's corrected hours and total as proposed. COUNTER sends different hours (and amounts) back to the family, who then accepts or proposes again. " +
+  "Only the amounts of the existing additional charges can change on a counter (none added or removed). Nothing is accepted or sent until the caregiver replies ACCEPT, or SEND on the counter recap. " +
+  MONEY_FACTS;
 const C_CONFIRM_Q = (d: ReviewCorrectionFlowData) => {
   const g = counterGross(d);
   return [
@@ -657,7 +668,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
-      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q));
+      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) }));
       else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
       return;
     }
@@ -672,7 +683,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
   if (step === "rc_start") {
     const q = C_START_Q(data);
     if (norm === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
-    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; }
+    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) })); return; }
     const iso = await parseCounterTime(text, data.proposedStart);
     if (!iso) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
     return next({ counterStart: iso }, "rc_end", C_END_Q(data));
@@ -680,7 +691,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
   if (step === "rc_end") {
     const q = C_END_Q(data);
     if (norm === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
-    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; }
+    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: `${REVIEW_FACTS(data)} Counter start chosen so far: ${clockShort(Date.parse(data.counterStart ?? ""))}.` })); return; }
     const iso = await parseCounterTime(text, data.proposedEnd);
     if (!iso) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
     if (Date.parse(iso) <= Date.parse(data.counterStart ?? "")) { await sendMessage(chatId, `The end has to be after the start (${clockShort(Date.parse(data.counterStart ?? ""))}). ${q}`); return; }
@@ -691,7 +702,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     const q = C_ITEMS_Q(data);
     if (norm === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
     if (norm === "KEEP" || norm === "SAME" || norm === "SKIP") return next({ counterItems: data.proposedItems }, "rc_note", C_NOTE_Q);
-    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q)); return; }
+    if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) })); return; }
     // The modal lets only the AMOUNTS change (no add, no remove).
     const raw = await parse(`The existing charges are: ${data.proposedItems.map((li, i) => `${i + 1}. ${itemLabel(li)} $${Number(li.amount) || 0}`).join("; ")}. The caregiver is giving a new dollar amount for one or more of them. Reply JSON {"<index>": <amount>, ...} using the 1-based index. Reply NONE if no amount is given.`, text);
     let patch: Record<string, number> = {};
@@ -704,6 +715,8 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
   if (step === "rc_note") {
     if (norm === "CANCEL" || await isBackOutRequest(text, C_NOTE_Q)) return cancelled();
     if (norm === "SKIP" || norm === "NONE" || norm === "NO") return next({}, "rc_confirm", C_CONFIRM_Q(data));
+    // A question here is answered and the note re-asked — it never becomes the note the family reads (2026-10-11).
+    if (await isQuestionOrOther(text, C_NOTE_Q)) { await sendMessage(chatId, await answerMidFlow(text, C_NOTE_Q, { facts: `${REVIEW_FACTS(data)} The note goes to the family with the counter, in the caregiver's own words.` })); return; }
     return next({ note: text.trim().slice(0, 500) }, "rc_confirm", C_CONFIRM_Q({ ...data, note: text.trim() }));
   }
   if (step === "rc_confirm") {
@@ -718,7 +731,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
-      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: MONEY_FACTS }));
+      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) }));
       else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
       return;
     }

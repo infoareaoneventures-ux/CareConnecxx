@@ -9,12 +9,14 @@
 //
 // 2026-09-25 (founder: Evia = the site, same questions, same order): the
 // question list IS the site's CaregiverOnboardingWizard — location, photo,
-// availability, services + experience, transport documents when they offer
-// transportation, rate + travel distance, bio. The photo and the transport
-// documents are collected through the same tokened upload links the site's
-// pages use (send_onboarding_link), inside this loop. The old certification
-// upload, the drive/languages/gender extras, and the MVR opt-in are gone —
-// the site never asked them.
+// job type + availability, services + experience, rate + travel distance,
+// bio. The photo is collected through the same tokened upload link the
+// site's page uses (send_onboarding_link caregiver_photo), inside this loop —
+// a photo texted to Evia is NOT saved (the media handler re-sends the link).
+// The old certification upload, the transport-documents step (retired
+// 2026-10-06 — Transportation is the driving record only), the
+// drive/languages/gender extras, and the MVR opt-in are gone — the site never
+// asked them.
 //
 // Pure function over the onboardingContract — no I/O; value imports are
 // display constants only (config/pricing, marketRateRange's static FALLBACK_RANGE).
@@ -152,7 +154,7 @@ export function buildCaregiverOnboardingDirective(
     `    not a checklist — reflect it back when it's meaningful ("six years with dementia clients is real expertise") — then ask.`,
     `  - One question per message. Never send a numbered list or ask for several things at once. (The care-services menu below is the one list you do send — it is the website's own, by name, never numbered.)`,
     `  - ADDRESS: ask for their home address in one natural line (street, city, ZIP). Save street and zipCode; city and state fill in from the ZIP automatically (save them too if they said them). Families never see the street — mention that if they hesitate.`,
-    `  - PHOTO: when the photo is the next item, do NOT ask them to describe or text one — call send_onboarding_link (caregiver_photo) and say a clear, friendly headshot helps families choose. If they text a photo instead, that works too (it's saved the same way).`,
+    `  - PHOTO: when the photo is the next item, do NOT ask them to describe or text one — call send_onboarding_link (caregiver_photo) and say a clear, friendly headshot helps families choose. A photo texted to you is NOT saved — if they send one, the link is re-sent to them automatically; just point them to it.`,
     `  - JOB TYPE: occasional, part-time, or full-time — ONE choice, save jobType as occasional | part_time | full_time.`,
     `  - AVAILABILITY is TWO pieces, exactly like the website's picker: (1) the days of the week and (2) the parts of the day. Ask for both in ONE natural line: "Which days can you work, and are you more mornings, afternoons, evenings, or overnights? Any mix is fine." Save what they give as availability. If they answer only ONE piece (just "Monday", or just "mornings"), save it and ask for the OTHER piece before anything else — never assume days or times they didn't state, and never move on until both are saved (the save result tells you which half is still missing). Clock times ("weekdays 9 to 5") count as parts of the day.`,
     `  - ECHO WHAT YOU SAVED: right after they give availability, reflect back the days and parts of day you understood in plain words before the next question ("Perfect — Monday and Wednesday mornings and afternoons, got it. …"). If you got it wrong they'll correct you and you just re-save. Don't ask them to confirm and don't make it its own message — fold it into your acknowledgment.`,

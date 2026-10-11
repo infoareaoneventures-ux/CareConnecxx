@@ -64,6 +64,21 @@ describe("humanReply", () => {
     expect(String(quickComplete.mock.calls[0][0])).toContain(ANTI_INVENTION_CLAUSE);
   });
 
+  // Founder 2026-10-11: a mid-flow answer never claims an action — the rule lives in this ONE shared place.
+  it("tells the model it can never claim to have changed, saved, cancelled or sent anything", async () => {
+    quickComplete.mockResolvedValue("Your rate is still $28/hr — tell me the new number and it will be updated.");
+
+    await answerHumanQuestionOnly({
+      audience: "caregiver",
+      situation: "caregiver is updating their profile",
+      text: "did you change my rate?",
+    });
+
+    const system = String(quickComplete.mock.calls[0][0]);
+    expect(system).toContain("NEVER say you changed, updated, saved, fixed, cancelled, sent or removed anything");
+    expect(system).toContain("tell you exactly what to change and it will be updated");
+  });
+
   it("routes a guard-rejected meta-response to the deterministic fallback", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     quickComplete.mockResolvedValue(

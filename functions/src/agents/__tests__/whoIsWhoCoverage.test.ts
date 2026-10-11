@@ -70,8 +70,9 @@ describe("R11 — who-is-who grounding present at every audited family-facing br
       .toBeGreaterThanOrEqual(sites);
   });
 
-  it("prior-wave sites (staleSessionNudge, qaAgent) still reference describeWhoIsWho", () => {
-    expect(read("../../scheduled/staleSessionNudge.ts")).toContain("describeWhoIsWho(");
+  // (staleSessionNudge.ts left this list 2026-10-11: its copy is fixed wording
+  // naming the step — no model briefing to ground.)
+  it("prior-wave site (qaAgent) still references describeWhoIsWho", () => {
     expect(read("../qaAgent.ts")).toContain("describeWhoIsWho(");
   });
 

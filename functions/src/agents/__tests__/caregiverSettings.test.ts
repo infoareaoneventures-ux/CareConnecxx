@@ -11,10 +11,14 @@ const hoisted = vi.hoisted(() => ({
   linkResult: { success: true, linkType: "caregiver_photo", sent: true } as any,
   pause: vi.fn(async () => {}),
   reactivate: vi.fn(async () => {}),
+  updates: [] as Array<{ path: string; data: any }>,
 }));
 vi.mock("firebase-admin", () => {
   const firestore = Object.assign(() => ({
-    collection: (name: string) => ({ doc: (id: string) => ({ get: vi.fn(async () => ({ exists: hoisted.docs.has(`${name}/${id}`), id, data: () => hoisted.docs.get(`${name}/${id}`) })) }) }),
+    collection: (name: string) => ({ doc: (id: string) => ({
+      get: vi.fn(async () => ({ exists: hoisted.docs.has(`${name}/${id}`), id, data: () => hoisted.docs.get(`${name}/${id}`) })),
+      update: vi.fn(async (data: any) => { hoisted.updates.push({ path: `${name}/${id}`, data }); }),
+    }) }),
   }), { FieldValue: {} });
   return { __esModule: true, default: { firestore }, firestore };
 });
@@ -114,15 +118,20 @@ describe("keywords — the page's buttons through the same server paths", () => 
     await handleSettingsKeyword("+1", "chat", "cg1", "resend email");
     expect(hoisted.sent[2]).toBe("Your recovery email is already confirmed — nothing to resend.");
   });
-  it("PAUSE / PAUSE <date> / REACTIVATE = the page's buttons, the page's toasts; a past date is refused; other words pass through", async () => {
+  it("PAUSE never writes on the keyword alone (A6, 2026-10-11): bare PAUSE asks until when, PAUSE <date> asks YES/NO — the same parked pause flow as the tool path; a past date is refused; REACTIVATE = the page's button; other words pass through", async () => {
+    hoisted.updates.length = 0;
     expect(await handleSettingsKeyword("+1", "chat", "cg1", "pause")).toBe("handled");
-    expect(hoisted.pause).toHaveBeenCalledWith("cg1", "indefinite");
-    expect(hoisted.sent.at(-1)).toBe("Account paused — you won't be shown for new matches until you reactivate.");
+    expect(hoisted.pause).not.toHaveBeenCalled();
+    expect(hoisted.updates.at(-1)).toMatchObject({ path: "agent_sessions/+1", data: { profileUpdateStep: "collect", profileUpdateField: "pause" } });
+    expect(typeof hoisted.updates.at(-1)!.data.stateExpiresAt).toBe("string");
+    expect(hoisted.sent.at(-1)).toBe("When would you like to pause until? (e.g. \"until July 12\", \"for two weeks\", \"indefinitely\")");
     await handleSettingsKeyword("+1", "chat", "cg1", "PAUSE 2099-01-15");
-    expect(hoisted.pause).toHaveBeenLastCalledWith("cg1", "2099-01-15");
-    expect(hoisted.sent.at(-1)).toBe("Account paused — you'll automatically become active again on 2099-01-15.");
+    expect(hoisted.pause).not.toHaveBeenCalled();
+    expect(hoisted.updates.at(-1)).toMatchObject({ path: "agent_sessions/+1", data: { profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: "2099-01-15" } });
+    expect(hoisted.sent.at(-1)).toBe("Pause your account until 2099-01-15? You won't receive job matches during this time. Reply YES to pause, or NO to cancel.");
     await handleSettingsKeyword("+1", "chat", "cg1", "pause 2020-01-01");
     expect(hoisted.sent.at(-1)).toContain("That date has already passed");
+    expect(hoisted.pause).not.toHaveBeenCalled();
     expect(await handleSettingsKeyword("+1", "chat", "cg1", "REACTIVATE")).toBe("handled");
     expect(hoisted.reactivate).toHaveBeenCalledWith("cg1");
     expect(hoisted.sent.at(-1)).toBe("You're active again — you'll start showing up for new matches.");

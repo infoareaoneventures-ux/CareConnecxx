@@ -24,6 +24,7 @@ import { businessTodayStr, parseScheduledTimeMs, DEFAULT_TZ } from "../utils/sch
 import { isShiftOverdue } from "./shiftReschedule";
 import { fmtDate, fmtTime, type CareRecipient } from "./caregiverBookingRequests";
 import { getAppUrl } from "../config/appUrl";
+import { answerMidFlow } from "./stepHandler";
 
 const db = admin.firestore();
 export const START_WINDOW_MINUTES = 15;
@@ -257,6 +258,33 @@ export async function endVisit(caregiverId: string, shiftId: unknown, closingNot
 // ── The texted keywords (routeCaregiver): START · DONE n · UNDO n · NOTE … · TASKS · FINISH · SKIP ──
 export const END_PROMPT = "Ending the visit — any closing note for the family? Reply with the note, or SKIP to end without one.";
 
+// The parked END question expires like every other parked step (30 minutes, the shared idiom) — before 2026-10-11 it
+// never did, so a text sent hours later could end the visit as its closing note.
+export const PENDING_END_TTL_MS = 30 * 60 * 1000;
+export interface PendingShiftEnd { shiftId: string; at: string; expiresAt?: string }
+/** Parks the END question for THIS visit (FINISH keyword, the "which visit?" pick, and visit mode's "I'm done" all use it). */
+export async function parkShiftEnd(phone: string, shiftId: string, nowMs = Date.now()): Promise<void> {
+  const expiresAt = new Date(nowMs + PENDING_END_TTL_MS).toISOString();
+  await db.collection("agent_sessions").doc(phone).set(
+    { pendingShiftEnd: { shiftId, at: new Date(nowMs).toISOString(), expiresAt } satisfies PendingShiftEnd, stateExpiresAt: expiresAt },
+    { merge: true },
+  ).catch(() => {});
+}
+export function pendingEndExpired(p: PendingShiftEnd, nowMs = Date.now()): boolean {
+  // A park written before the expiry existed carries only `at` — it expires 30 minutes after that; one with neither expires now.
+  const t = p.expiresAt ? Date.parse(p.expiresAt) : p.at ? Date.parse(p.at) + PENDING_END_TTL_MS : NaN;
+  return !Number.isFinite(t) || t < nowMs;
+}
+/** What the END question is about, for a mid-step question: the visit, what SKIP / a note / CANCEL do. Nothing has ended yet. */
+export async function endStepFacts(caregiverId: string, shiftId: string): Promise<string> {
+  const snap = await db.collection("shifts").doc(shiftId).get().catch(() => null);
+  const shift = snap?.exists ? (snap.data() as Doc) : null;
+  const items = shift ? taskItems(shift) : [];
+  const visit = shift && shift.caregiverId === caregiverId ? `The visit being ended: ${visitLine(shift)}${items.length ? ` — tasks ${items.filter((t) => t.done).length}/${items.length} done` : ""}.` : "The visit being ended is the caregiver's visit in progress.";
+  return `${visit} The visit is still in progress — nothing has ended yet. Replying with a note ends the visit and saves that note on it as the closing note, which the family can see; ` +
+    "SKIP ends the visit without a note; CANCEL keeps the visit in progress. Ending the visit is the Bookings page's End button: the visit is marked completed and the caregiver then replies SUBMIT to submit hours.";
+}
+
 /**
  * Deterministic keyword protocol the start text announced ("Reply DONE 1…,
  * NOTE …, END"). Returns "handled" | "passthrough". A pending END question
@@ -280,21 +308,29 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     await runKeywordOnShift(phone, chatId, caregiverId, choice.keyword, picked.shiftId, say);
     return "handled";
   }
-  const pendingEnd = session.pendingShiftEnd as { shiftId: string } | undefined;
-  if (pendingEnd?.shiftId) {
+  const pendingEnd = session.pendingShiftEnd as PendingShiftEnd | undefined;
+  if (pendingEnd?.shiftId && pendingEndExpired(pendingEnd)) {
+    // An expired END question never consumes a later text as the closing note — it is dropped and the text goes on as usual.
+    await db.collection("agent_sessions").doc(phone).update({ pendingShiftEnd: admin.firestore.FieldValue.delete() }).catch(() => {});
+  } else if (pendingEnd?.shiftId) {
     if (upper === "CANCEL" || upper === "NO") {
       await db.collection("agent_sessions").doc(phone).update({ pendingShiftEnd: admin.firestore.FieldValue.delete() }).catch(() => {});
       await say("Okay — the visit stays in progress.");
       return "handled";
     }
     if (upper !== "SKIP") {
-      // A question mid-step is answered by the agent (the END question stays parked) — never saved as the closing note.
+      // A question mid-step is answered FROM the step (the visit, what SKIP / a note / CANCEL do) and the END question is
+      // re-asked — never saved as the closing note. (Before 2026-10-11 it went to the agent with the step silently still
+      // open, so the caregiver's next unrelated text ended the visit as its closing note.)
       const kind = await quickComplete(
         "A caregiver was asked: \"Any closing note for the family? Reply with the note, or SKIP.\" Classify their reply: " +
         "NOTE if it is the note itself (an observation about the visit or the person they cared for), QUESTION if it is a question or a request for something else. Reply with ONE word.",
         raw, { maxTokens: 3 },
       ).catch(() => "NOTE");
-      if (kind.trim().toUpperCase().startsWith("Q")) return "passthrough";
+      if (kind.trim().toUpperCase().startsWith("Q")) {
+        await say(await answerMidFlow(raw, END_PROMPT, { audience: "caregiver", facts: await endStepFacts(caregiverId, pendingEnd.shiftId) }));
+        return "handled";
+      }
     }
     const r = await endVisit(caregiverId, pendingEnd.shiftId, upper === "SKIP" ? "" : raw);
     await db.collection("agent_sessions").doc(phone).update({ pendingShiftEnd: admin.firestore.FieldValue.delete() }).catch(() => {});
@@ -313,7 +349,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     const v = await resolveVisit(caregiverId, undefined, "in_progress");
     if (!v.ok && v.reason === "ambiguous" && v.candidates) { await parkVisitChoice(phone, v.candidates, "FINISH"); await say(whichVisitPrompt(v.candidates)); return "handled"; }
     if (!v.ok) { await say(v.message); return "handled"; }
-    await db.collection("agent_sessions").doc(phone).set({ pendingShiftEnd: { shiftId: v.id, at: new Date().toISOString() } }, { merge: true }).catch(() => {});
+    await parkShiftEnd(phone, v.id);
     await say(END_PROMPT);
     return "handled";
   }
@@ -365,7 +401,7 @@ async function runKeywordOnShift(phone: string, chatId: string, caregiverId: str
   const upper = keyword.trim().toUpperCase();
   if (upper === "START") { const r = await startVisit(caregiverId, shiftId); await say(r.ok ? r.text : r.message); return; }
   if (upper === "FINISH") {
-    await db.collection("agent_sessions").doc(phone).set({ pendingShiftEnd: { shiftId, at: new Date().toISOString() } }, { merge: true }).catch(() => {});
+    await parkShiftEnd(phone, shiftId);
     await say(END_PROMPT); return;
   }
   if (upper === "TASKS") {

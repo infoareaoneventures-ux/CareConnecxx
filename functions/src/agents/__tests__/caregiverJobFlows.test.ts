@@ -65,6 +65,7 @@ vi.mock("../stepHandler", () => ({
 }));
 
 import { startApplyFlow, handleApplyFlowStep, startInterviewRescheduleFlow, handleInterviewRescheduleFlowStep } from "../caregiverJobFlows";
+import { answerMidFlow } from "../stepHandler";
 
 const PHONE = "+15550001111"; const CHAT = "chat-1";
 const cleared = { name: "Mahad", membershipStatus: "active", verified: true, experience: "3-5 years", skills: ["Companionship", "Transportation"], rating: 5, reviewCount: 0 };
@@ -126,11 +127,17 @@ describe("Apply flow — the Apply for Position modal", () => {
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).applyFlowStep).toBeUndefined();
   });
 
-  it("a question mid-flow is answered and the step stays", async () => {
+  it("a question mid-flow is answered and the step stays — briefed with the modal (job, Your Profile, budget) and what SUBMIT does", async () => {
     await startApplyFlow(PHONE, CHAT, session(), { caregiverId: "cg1", jobId: "job1" });
     await handleApplyFlowStep(PHONE, CHAT, "does the family see my cover letter?", session());
     expect(hoisted.sent[1]).toContain("Answer.");
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).applyFlowStep).toBe("apply_cover");
+    const facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
+    expect(facts).toContain("Job: Senior care in San Jose");
+    expect(facts).toContain("Your Profile\nExperience: 3-5 years");
+    expect(facts).toContain("Client's budget: $26/hr");
+    expect(facts).toContain("the family sees it with the application");
+    expect(facts).toContain("Nothing is sent until the caregiver replies SUBMIT");
   });
 
   it("the site's gate stands in for Apply Now: background check, then transport docs for a Transportation job (nothing written)", async () => {
@@ -188,6 +195,30 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
     expect(iv.rescheduledViaAgent).toBeUndefined();
     expect(hoisted.sent[4]).toBe("New time proposed — waiting on the family to confirm");
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).interviewRescheduleFlowStep).toBeUndefined();
+  });
+
+  // Founder 2026-10-11: "when is it now?" at the date step is answerable — the model is briefed with the interview's current time.
+  it("a question at the date, time or confirm step is briefed with the interview, its CURRENT time, what was chosen so far and the picker's rules", async () => {
+    await startInterviewRescheduleFlow(PHONE, CHAT, session(), { caregiverId: "cg1", interviewId: "iv1" });
+    await handleInterviewRescheduleFlowStep(PHONE, CHAT, "when is it now?", session());
+    expect(hoisted.sent.at(-1)).toBe("Answer. What date? (e.g. 9/28 or next Monday)");
+    let facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
+    expect(facts).toContain('Interview with Basra Yousuf for "Senior care in San Jose", currently Sunday, September 27 at 10:00 AM.');
+    expect(facts).toContain("No new date chosen yet.");
+    expect(facts).toContain("the interview stays at its current time until they confirm");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).interviewRescheduleFlowStep).toBe("rs_date");
+    await handleInterviewRescheduleFlowStep(PHONE, CHAT, "9/28", session());
+    await handleInterviewRescheduleFlowStep(PHONE, CHAT, "can I pick 7pm?", session());
+    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. What time\? Interviews run between 9:00 AM and 6:00 PM/);
+    facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
+    expect(facts).toContain("New date chosen so far: 2099-09-28; the time is still to be chosen.");
+    expect(facts).toContain("Interviews run between 9:00 AM and 6:00 PM Pacific, on the hour or half hour");
+    await handleInterviewRescheduleFlowStep(PHONE, CHAT, "10:30am", session());
+    await handleInterviewRescheduleFlowStep(PHONE, CHAT, "will she be told right away?", session());
+    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. New time: Monday, September 28 at 10:30 AM/);
+    facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
+    expect(facts).toContain("New time chosen so far: Monday, September 28 at 10:30 AM.");
+    expect(hoisted.docState.get("video_interviews/iv1").reschedulePendingTime).toBeUndefined(); // nothing proposed by a question
   });
 
   it("date and time in one message skips straight to the confirmation", async () => {

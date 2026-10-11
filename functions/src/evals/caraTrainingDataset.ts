@@ -220,48 +220,6 @@ export const STARTER_CARA_TRAINING_EXAMPLES: CaraTrainingExample[] = [
     reviewer: { status: "approved_seed", pii: "synthetic" },
   },
   {
-    id: "cara_caregiver_referral_partial_001",
-    split: "golden",
-    source: "synthetic_seed",
-    userRole: "caregiver",
-    channel: "linq_sms",
-    message: "i wanna refer my friend ana shes a great caregiver",
-    context: "Caregiver is approved. Referred caregiver phone is missing.",
-    labels: {
-      intent: "caregiver_referral",
-      risk: "low",
-      missingInfo: ["referred_phone"],
-      expectedTools: [],
-      expectedCollections: [],
-      expectedPageVisibility: [],
-      forbidden: ["name and phone", "email", "contact support"],
-      humanReviewRequired: false,
-    },
-    idealResponse: "I can invite Ana. What's her phone number?",
-    reviewer: { status: "approved_seed", pii: "synthetic" },
-  },
-  {
-    id: "cara_caregiver_referral_complete_001",
-    split: "eval",
-    source: "synthetic_seed",
-    userRole: "caregiver",
-    channel: "linq_sms",
-    message: "refer ana 555-444-2222",
-    context: "Caregiver is approved and wants to refer another caregiver.",
-    labels: {
-      intent: "caregiver_referral",
-      risk: "low",
-      missingInfo: [],
-      expectedTools: ["create_caregiver_referral"],
-      expectedCollections: ["referrals", "agent_action_ledger"],
-      expectedPageVisibility: ["admin_referrals"],
-      forbidden: ["bookable", "approved"],
-      humanReviewRequired: false,
-    },
-    idealResponse: "Done - I sent Ana the caregiver application link. She will not be bookable until onboarding is complete and Checkr clears her.",
-    reviewer: { status: "approved_seed", pii: "synthetic" },
-  },
-  {
     id: "cara_client_onboarding_one_question_001",
     split: "eval",
     source: "synthetic_seed",
@@ -658,7 +616,6 @@ function requiredResponseTerms(example: CaraTrainingExample): string[] {
   if (example.labels.risk === "critical") return ["911"];
   if (example.labels.intent === "medical_boundary") return ["doctor", "pharmacist"];
   if (example.labels.intent === "caregiver_approval_status") return ["not bookable"];
-  if (example.labels.intent === "caregiver_referral" && example.labels.missingInfo.length === 0) return ["Checkr"];
   if (example.labels.intent === "shift_hours_dispute") return ["What looks wrong"];
   const firstWord = example.idealResponse.split(/\s+/).find((part) => /^[A-Za-z0-9$]+/.test(part));
   return firstWord ? [firstWord.replace(/[^A-Za-z0-9$]/g, "")] : [];

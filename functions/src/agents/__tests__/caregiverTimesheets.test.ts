@@ -51,6 +51,7 @@ import {
   startReviewCorrectionFlow, handleReviewCorrectionFlowStep, handleTimesheetsKeyword,
   EMPTY_UNSUBMITTED, EMPTY_PENDING, EMPTY_HISTORY, EMPTY_REPORT, dur, type TimesheetRow, type SubmitHoursFlowData,
 } from "../caregiverTimesheets";
+import { answerMidFlow, isQuestionOrOther } from "../stepHandler";
 
 // 2:05:09 PM – 5:10:00 PM PDT on Sep 18, 2026 → 3:04:51 → $77.02 at $25/hr.
 const IN = "2026-09-18T21:05:09.000Z", OUT = "2026-09-19T00:10:00.000Z";
@@ -382,5 +383,90 @@ describe("keywords — TIMESHEETS · PENDING · HISTORY · REPORT · SUBMIT n ·
     expect(await handleTimesheetsKeyword("+1", "chat", "cg1", "REPORT Sep 1 to Sep 30", session())).toBe("handled");
     expect(hoisted.sent.at(-1)).toContain("Report · Sep 1 – Sep 30");
     expect(dur(1.5)).toBe("1:30:00");
+  });
+});
+
+// Founder 2026-10-11: a mid-flow question is answered FROM the modal on the screen + how every figure is worked out.
+describe("mid-flow questions are briefed with the modal and the money facts", () => {
+  const correction = () => hours("a1", {
+    status: "correction_proposed", proposedStartTime: "2026-09-18T21:30:00.000Z", proposedEndTime: "2026-09-19T00:00:00.000Z", proposedTotalHours: 2.5,
+    proposedLineItems: [{ type: "custom", label: "Mileage", note: "", amount: 12.5 }], proposedGrossPay: 75, proposalReason: "She left early",
+  });
+  const lastFacts = () => String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts ?? "");
+  it("Submit hours: a later charge turn and the SUBMIT confirm carry the summary so far, the payment note and the money rules", async () => {
+    shift("s1");
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    hoisted.quick.mockResolvedValueOnce('{"label":"Mileage","amount":12.5,"note":"20 miles"}');
+    await handleSubmitHoursFlowStep("+1", "chat", "Mileage 12.50 - 20 miles", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("Added Mileage · $12.50. Another charge? Reply it, or DONE.");
+    // a question on the "Another charge?" turn: the parser fails, the question check says yes
+    hoisted.quick.mockResolvedValueOnce("not json");
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleSubmitHoursFlowStep("+1", "chat", "is the mileage taxed?", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("Answer. Added Mileage · $12.50. Another charge? Reply it, or DONE.");
+    expect(lastFacts()).toContain("Submit hours worked — Basra Yousuf · Sep 18");
+    expect(lastFacts()).toContain("Base pay (3:04:51 @ $25/hr) $77.02");
+    expect(lastFacts()).toContain("Mileage · 20 miles $12.50");
+    expect(lastFacts()).toContain("Total $89.52");
+    expect(lastFacts()).toContain("Payment method: Card.");
+    expect(lastFacts()).toContain("Nothing is submitted until the caregiver replies SUBMIT");
+    expect(lastFacts()).toContain("Base pay = the time between the start and end shown × the hourly rate");
+    expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("sh_items");
+    // the confirm step
+    await handleSubmitHoursFlowStep("+1", "chat", "DONE", session() as never);
+    hoisted.quick.mockResolvedValueOnce("OTHER");
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleSubmitHoursFlowStep("+1", "chat", "why does it need manual approval?", session() as never);
+    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. Submit hours worked — Basra Yousuf/);
+    expect(lastFacts()).toContain("no automatic approval for submissions with extra charges");
+    expect(lastFacts()).toContain("The family's card is billed that total plus Evia's service fee");
+    expect(hoisted.submit).not.toHaveBeenCalled();
+  });
+  it("Review correction: the ACCEPT/COUNTER choice and the counter's start/end/charges turns carry the family's proposal and what each reply does", async () => {
+    correction();
+    await startReviewCorrectionFlow("+1", "chat", session() as never, { caregiverId: "cg1", appointmentId: "a1" });
+    hoisted.quick.mockResolvedValueOnce("OTHER");
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleReviewCorrectionFlowStep("+1", "chat", "Is the base correct", session() as never);
+    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. Review correction — Basra Yousuf/);
+    expect(lastFacts()).toContain("Client proposed: 2:30:00 PM – 5:00:00 PM · 2:30:00");
+    expect(lastFacts()).toContain("$25/hr · Base pay $62.50");
+    expect(lastFacts()).toContain("\"She left early\"");
+    expect(lastFacts()).toContain("ACCEPT accepts the family's corrected hours and total as proposed. COUNTER sends different hours");
+    expect(lastFacts()).toContain("Base pay = the time between the start and end shown × the hourly rate");
+    expect(hoisted.respond).not.toHaveBeenCalled();
+    await handleReviewCorrectionFlowStep("+1", "chat", "counter", session() as never);
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleReviewCorrectionFlowStep("+1", "chat", "what did she propose for the start?", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("Answer. Counter start — reply a time like 2:05 PM, or KEEP for 2:30 PM.");
+    expect(lastFacts()).toContain("Client proposed: 2:30:00 PM – 5:00:00 PM · 2:30:00");
+    await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleReviewCorrectionFlowStep("+1", "chat", "and the end?", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("Answer. Counter end — reply a time, or KEEP for 5:00 PM.");
+    expect(lastFacts()).toContain("Counter start chosen so far: 2:30 PM.");
+    await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleReviewCorrectionFlowStep("+1", "chat", "can I add supplies?", session() as never);
+    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. Additional charges: Mileage \$12\.50\./);
+    expect(lastFacts()).toContain("Only the amounts of the existing additional charges can change on a counter");
+  });
+  it("the counter note step: a question is answered and the note re-asked — it never becomes the note the family reads", async () => {
+    correction();
+    await startReviewCorrectionFlow("+1", "chat", session() as never, { caregiverId: "cg1", appointmentId: "a1" });
+    await handleReviewCorrectionFlowStep("+1", "chat", "counter", session() as never);
+    await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
+    await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
+    await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("Note (optional) — why do you disagree? Reply the note, or SKIP.");
+    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    await handleReviewCorrectionFlowStep("+1", "chat", "does the family see this note?", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("Answer. Note (optional) — why do you disagree? Reply the note, or SKIP.");
+    expect(lastFacts()).toContain("The note goes to the family with the counter, in the caregiver's own words.");
+    expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowStep).toBe("rc_note");
+    expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowData.note).toBeUndefined();
+    // the real note still lands
+    await handleReviewCorrectionFlowStep("+1", "chat", "I stayed until she was settled", session() as never);
+    expect(hoisted.sent.at(-1)).toContain("Note: \"I stayed until she was settled\"");
   });
 });

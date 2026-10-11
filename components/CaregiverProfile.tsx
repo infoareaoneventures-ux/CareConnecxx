@@ -9,10 +9,8 @@ import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
 import { dbService, authService } from '../services/api';
 import { useCareConnex } from '../context/CareConnexContext';
 import { useSearchParams } from 'react-router-dom';
-import { db } from '../lib/firebase';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilityService';
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
-import { ProfileApprovalBanner } from './caregiver/ProfileApprovalBanner';
 import {
   PRIMARY_SERVICES,
   serviceLabel,
@@ -47,25 +45,10 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const [editRateThree, setEditRateThree] = useState('');
   const [editMaxClients, setEditMaxClients] = useState('1');
   const [editRadius, setEditRadius] = useState('10');
-  const [editLocation, setEditLocation] = useState('');
   const [editJobTypes, setEditJobTypes] = useState<string[]>([]);
   const [editAvailability, setEditAvailability] = useState<Record<string, string[]>>({});
-  const [editActiveDays, setEditActiveDays] = useState<string[]>([]);
-  const [editActiveTimes, setEditActiveTimes] = useState<string[]>([]);
 
   const currentUser = authService.getCurrentUser();
-  const [hasEngagement, setHasEngagement] = useState(false);
-
-  useEffect(() => {
-    if (!currentUser?.uid || !db) return;
-    const uid = currentUser.uid;
-    Promise.all([
-      db.collection('job_applications').where('caregiverId', '==', uid).limit(1).get().catch(() => null),
-      db.collection('video_interviews').where('caregiverId', '==', uid).limit(1).get().catch(() => null),
-    ]).then(([apps, vids]) => {
-      if (!apps?.empty || !vids?.empty) setHasEngagement(true);
-    });
-  }, [currentUser?.uid]);
 
   useEffect(() => {
     let unsubscribeReviews: (() => void) | undefined;
@@ -86,7 +69,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
             setEditRateThree(String(p.rateFor3PlusSeniors || p.rateForThree || ''));
             setEditMaxClients(String(p.maxClients || '1'));
             setEditRadius(String(p.serviceRadius || '10'));
-            setEditLocation(p.location || (p.city && p.state ? `${p.city}, ${p.state}` : ''));
             setEditJobTypes(p.jobTypes || []);
             // Normalize to block IDs regardless of whether Firestore has TimeSlots (Evia) or block IDs (onboarding/profile)
             setEditAvailability(weeklySlotsToBl(p.weeklyAvailability || {}) as Record<string, string[]>);

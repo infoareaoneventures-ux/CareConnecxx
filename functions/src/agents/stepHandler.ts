@@ -125,11 +125,24 @@ export async function classifyAwaitingReply(text: string, waitingOn: string): Pr
 
 // Answer a mid-flow question briefly, then append the re-ask so the user can
 // still answer the step they were on.
-export async function answerMidFlow(text: string, reAsk: string): Promise<string> {
+/**
+ * A question asked mid-flow is answered FROM what is on the person's screen: the step's own text (the recap /
+ * question Evia last sent) is the briefing, plus any facts the flow passes (how a figure is computed). Live
+ * 2026-10-11: a caregiver reviewing a counter asked "Is the base correct" and the answerer, briefed with nothing,
+ * guessed "the medication dose, the mattress/base type…". The re-ask is appended after the answer as before.
+ */
+export async function answerMidFlow(
+  text: string, reAsk: string, opts: { audience?: "family" | "caregiver" | "admin"; facts?: string } = {},
+): Promise<string> {
+  const screen = String(reAsk || "").trim();
   return answerHumanMidFlow({
     text,
     reAsk,
-    situation: "the user asked a question mid-conversation in a guided Evia flow",
+    audience: opts.audience,
+    situation:
+      "the user asked a question mid-conversation in a guided Evia flow. " +
+      (screen ? `What Evia last sent them — what is on their screen right now — is:\n"""\n${screen}\n"""\nIf their question is about something in it (a line, a figure, a name, a time, how it was worked out), answer from it; never say you don't have those details. ` : "") +
+      (opts.facts ? `Facts: ${opts.facts} ` : ""),
   });
 }
 

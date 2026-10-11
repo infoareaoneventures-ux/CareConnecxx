@@ -37,34 +37,33 @@ describe("parseCareSignal (R2 — unknown is never negative)", () => {
 describe("parseWellness / describeWellness (AE1)", () => {
   it("renders explicit negatives as recorded observations", () => {
     const line = describeWellness(parseWellness({
-      wellness: { mood: "good", ateWell: false, tookMeds: false },
+      wellness: { mood: "good", ateWell: false, wasActive: false },
     }));
     expect(line).toContain("appetite low (recorded)");
-    expect(line).toContain("meds missed (recorded)");
+    expect(line).not.toMatch(/meds|medication/); // no medication line exists (non-medical, 2026-10-11)
     expect(line).toContain("mood good");
   });
 
   it("renders omitted fields as not recorded — never as concerns or misses", () => {
     const line = describeWellness(parseWellness({ wellness: { mood: "ok" } }));
     expect(line).toContain("appetite not recorded");
-    expect(line).toContain("med status not recorded");
     expect(line).not.toMatch(/appetite low|appetite concerns/);
     expect(line).not.toMatch(/meds missed|medications missed/);
   });
 
   it("handles a missing wellness map entirely", () => {
     const line = describeWellness(parseWellness({}));
-    expect(line).toBe("mood not recorded, appetite not recorded, med status not recorded");
+    expect(line).toBe("mood not recorded, appetite not recorded");
   });
 });
 
 describe("rollupCareSignals + describeSignalRate (known denominators, R34)", () => {
-  const entry = (tookMeds: unknown) => ({ wellness: { tookMeds } });
+  const entry = (wasActive: unknown) => ({ wellness: { wasActive } });
 
   it("counts yes/no/unknown separately", () => {
     const r = rollupCareSignals(
       [entry(true), entry(false), entry(undefined), entry("true"), entry("garbage")],
-      "tookMeds",
+      "wasActive",
     );
     expect(r).toEqual({ total: 5, yes: 2, no: 1, unknown: 2 });
   });
@@ -72,7 +71,7 @@ describe("rollupCareSignals + describeSignalRate (known denominators, R34)", () 
   it("computes the rate over known observations only, with coverage", () => {
     const r = rollupCareSignals(
       [entry(true), entry(true), entry(false), entry(undefined), entry(undefined)],
-      "tookMeds",
+      "wasActive",
     );
     // 2 of 3 known = 67%, NOT 2 of 5 = 40%
     expect(describeSignalRate(r)).toBe(
@@ -81,18 +80,18 @@ describe("rollupCareSignals + describeSignalRate (known denominators, R34)", () 
   });
 
   it("returns null below the minimum-evidence threshold instead of a fake rate", () => {
-    const r = rollupCareSignals([entry(true), entry(undefined), entry(undefined)], "tookMeds");
+    const r = rollupCareSignals([entry(true), entry(undefined), entry(undefined)], "wasActive");
     expect(r.yes + r.no).toBeLessThan(MIN_KNOWN_FOR_RATE);
     expect(describeSignalRate(r)).toBeNull();
   });
 
   it("returns null when every entry is unknown (zero known denominator)", () => {
-    const r = rollupCareSignals([entry(undefined), entry(null), entry("")], "tookMeds");
+    const r = rollupCareSignals([entry(undefined), entry(null), entry("")], "wasActive");
     expect(describeSignalRate(r)).toBeNull();
   });
 
   it("omits the coverage clause when every entry recorded the field", () => {
-    const r = rollupCareSignals([entry(true), entry(true), entry(false)], "tookMeds");
+    const r = rollupCareSignals([entry(true), entry(true), entry(false)], "wasActive");
     expect(describeSignalRate(r)).toBe("67% of the 3 visits where it was recorded");
   });
 });

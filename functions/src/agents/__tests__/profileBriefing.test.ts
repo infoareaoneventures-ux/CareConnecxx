@@ -140,9 +140,10 @@ describe("describeSharedProfile — canonical profile pinning", () => {
     expect(brief).not.toContain("companionship");
   });
 
-  it("canonical diagnoses win over the snapshot's conditions", () => {
+  it("legacy diagnoses / conditions are never briefed (non-medical marketplace, 2026-10-11)", () => {
     const brief = describeSharedProfile(SESSION, { diagnoses: ["dementia"] });
-    expect(brief).toContain("conditions mentioned: dementia");
+    expect(brief).not.toContain("dementia");
+    expect(brief).not.toContain("conditions");
     expect(brief).not.toContain("arthritis");
   });
 
@@ -164,7 +165,7 @@ describe("describeSharedProfile — canonical profile pinning", () => {
     const brief = describeSharedProfile(SESSION, { name: "Rosie" });
     expect(brief).toContain("San Jose (ZIP 95112)");
     expect(brief).toContain("care needs: companionship");
-    expect(brief).toContain("conditions mentioned: arthritis");
+    expect(brief).not.toContain("arthritis");
   });
 
   it("without a canonical profile the snapshot is unchanged (mid-signup surfaces)", () => {

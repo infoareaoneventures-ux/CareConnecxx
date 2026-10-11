@@ -375,10 +375,11 @@ export const MEMORY_SOURCE_PRIORITY_POLICY = [
 // U4: Build the pre-injected "core context" block for a client turn — identity,
 // location, account status, care-team roster, and the FULL care plan.
 //
-// PHI-IN-PROMPT POLICY (decision recorded 2026-06-24): the full care plan
-// (including diagnoses, medications, and doctor contacts) is pre-injected into
-// every client turn's system prompt by product decision, trading higher PHI
-// exposure in LLM payloads for richer default context and fewer tool round-trips.
+// PHI-IN-PROMPT POLICY (2026-06-24, re-verified 2026-10-07/11): the care plan as it
+// exists today — care needs (the eight services), notes, locations, lifestyle — is
+// pre-injected into every client turn's system prompt. There are NO diagnoses,
+// medications or doctor contacts anywhere in the product (non-medical marketplace;
+// medication instructions are refused at every free-text save).
 // Care-team phone numbers are intentionally NOT pre-injected (kept lazy via
 // get_care_team) to bound exposure. Re-record this in AGENT_NATIVE_EXCLUSIONS.md
 // when U1 lands. Honors KTD-8's latency budget: at most 3 extra parallel reads

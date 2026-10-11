@@ -16,7 +16,9 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
-import { isBackOutRequest, isQuestionOrOther, answerMidFlow } from "./stepHandler";
+import { isBackOutRequest, isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
+// Every mid-flow question here is a CAREGIVER's (2026-10-11): the shared answerer is briefed with what is on their screen.
+const answerMidFlow = (text: string, reAsk: string, opts: { facts?: string } = {}) => answerMidFlowShared(text, reAsk, { audience: "caregiver", ...opts });
 import { executeInstantPayout, InstantPayoutError, readInstantBalance } from "../payoutCommon";
 import { instantPayoutFeeCentsFor } from "../billing/shiftBillingAmounts";
 

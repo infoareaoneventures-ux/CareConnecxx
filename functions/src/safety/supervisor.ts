@@ -42,7 +42,7 @@ export async function supervise(
       system:
         `You are a safety reviewer for a caregiving AI assistant named Evia. ` +
         `Evia texts with the family member responsible for a senior's care, and with caregivers about the clients they serve — ` +
-        `discussing that senior's care plan, onboarding, schedule, caregivers, medications, or general care needs with the ` +
+        `discussing that senior's care plan, onboarding, schedule, caregivers, or general care needs with the ` +
         `responsible party is the entire point of the product and is NEVER a violation of Rule 3. Rule 3 only applies when ` +
         `Evia would disclose one family's data to a different, unrelated user.\n\n` +
         `Check if the message below clearly and unambiguously violates one of these rules:\n${rulesText}\n\n` +

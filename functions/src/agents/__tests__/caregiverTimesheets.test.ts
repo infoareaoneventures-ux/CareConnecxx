@@ -137,8 +137,8 @@ describe("the tab — the page's reads and chips", () => {
     expect(t).toContain("Rate $25/hr");
     expect(t).toContain("Clock in / out Sep 18, 2:05:09 PM – Sep 18, 5:10:00 PM");
     expect(t).toContain("Base pay $77.02\nMileage · 20 miles +$12.50\nTotal $89.52");
-    expect(t).toContain("History\n• Submitted by caregiver — Sep 18, 5:12 PM · 2:05 PM – 5:10 PM · 3:04:51 · $25/hr · Base $77.02 · Mileage +$12.50 · Total $89.52");
-    expect(t).toContain("• Client proposed correction — Sep 18, 8:04 PM · 2:30 PM – 5:00 PM · 2:30:00 · $25/hr · Base $62.50 · Mileage +$12.50 · Total $75.00 · \"She left early\"");
+    expect(t).toContain("History\n• Submitted by caregiver — Sep 18, 5:12 PM · 2:05 PM – 5:10 PM · 3:04:51 · $25/hr · Base pay $77.02 · Mileage +$12.50 · Total $89.52");
+    expect(t).toContain("• Client proposed correction — Sep 18, 8:04 PM · 2:30 PM – 5:00 PM · 2:30:00 · $25/hr · Base pay $62.50 · Mileage +$12.50 · Total $75.00 · \"She left early\"");
     expect(t.endsWith("Reply REVIEW 2 to accept the correction or send a counter.")).toBe(true);
     const p = timesheetDetailText({ id: "b", status: "pending_client_review", clientName: "B", payRate: 25, submittedStartTime: IN, submittedEndTime: OUT, grossPay: 77.02, autoApproveAt: "2026-09-20T00:12:00.000Z" });
     expect(p).toContain("Gross pay $77.02\nAuto-approves Sep 19, 5:12 PM");
@@ -288,7 +288,7 @@ describe("Review correction — the modal as a flow", () => {
     expect(hoisted.sent.at(-1)).toBe([
       "Review correction — Basra Yousuf",
       "Client proposed: 2:30:00 PM – 5:00:00 PM · 2:30:00",
-      "$25/hr · Base $62.50",
+      "$25/hr · Base pay $62.50",
       "Mileage +$12.50",
       "Total $75.00",
       "\"She left early\"",
@@ -323,7 +323,7 @@ describe("Review correction — the modal as a flow", () => {
     expect(hoisted.sent.at(-1)).toBe([
       "Your counter — Basra Yousuf",
       "2:30:00 PM – 5:10:00 PM · 2:40:00",
-      "$25/hr · Base $66.67",
+      "$25/hr · Base pay $66.67",
       "Mileage +$10.00",
       "Your total $76.67",
       "Note: \"I stayed until she was settled\"",

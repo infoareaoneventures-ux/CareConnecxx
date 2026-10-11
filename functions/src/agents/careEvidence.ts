@@ -1,6 +1,6 @@
 // Tri-state care-signal evidence (plan 2026-07-18-001 U1, R2-R6/AE1-AE3).
 //
-// Care journal wellness fields (ateWell / tookMeds / wasActive) are OPTIONAL
+// Care journal wellness fields (ateWell / wasActive) are OPTIONAL
 // booleans. Several prompt surfaces used JS truthiness on them, which turns a
 // missing field into "appetite concerns" / "meds missed" — deterministic
 // fabrication no model can correct. Every consumer of wellness meaning goes
@@ -33,7 +33,6 @@ export function parseCareSignal(value: unknown): CareSignal {
 export interface WellnessSignals {
   mood: string | null;
   ateWell: CareSignal;
-  tookMeds: CareSignal;
   wasActive: CareSignal;
 }
 
@@ -45,7 +44,6 @@ export function parseWellness(entry: unknown): WellnessSignals {
   return {
     mood,
     ateWell: parseCareSignal(w?.ateWell),
-    tookMeds: parseCareSignal(w?.tookMeds),
     wasActive: parseCareSignal(w?.wasActive),
   };
 }
@@ -58,11 +56,8 @@ export function describeWellness(w: WellnessSignals): string {
     w.ateWell === "yes" ? "ate well"
     : w.ateWell === "no" ? "appetite low (recorded)"
     : "appetite not recorded";
-  const meds =
-    w.tookMeds === "yes" ? "meds taken"
-    : w.tookMeds === "no" ? "meds missed (recorded)"
-    : "med status not recorded";
-  return `mood ${w.mood ?? "not recorded"}, ${ate}, ${meds}`;
+  // No medication line (2026-10-11): a non-medical marketplace records none.
+  return `mood ${w.mood ?? "not recorded"}, ${ate}`;
 }
 
 // ── Known-denominator rollups ────────────────────────────────────────────────
@@ -76,7 +71,7 @@ export interface SignalRollup {
 
 export function rollupCareSignals(
   entries: Array<Record<string, unknown>>,
-  field: "ateWell" | "tookMeds" | "wasActive",
+  field: "ateWell" | "wasActive",
 ): SignalRollup {
   const r: SignalRollup = { total: 0, yes: 0, no: 0, unknown: 0 };
   for (const e of entries) {

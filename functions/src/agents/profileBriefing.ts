@@ -130,8 +130,7 @@ export function describeSharedProfile(
     if (loc) facts.push(`location: ${loc}`);
     const careNeeds = asList(canon.needs) || asList(d.careNeeds);
     if (careNeeds) facts.push(`care needs: ${careNeeds}`);
-    const conditions = asList(canon.diagnoses) || asList(d.conditions);
-    if (conditions) facts.push(`conditions mentioned: ${conditions}`);
+    // (no diagnoses / conditions: a non-medical marketplace keeps none — the legacy reader went 2026-10-11)
     const days = asList(d.daysPerWeek);
     if (days) facts.push(`days per week: ${days}`);
     const timeOfDay = asList(d.timeOfDay);

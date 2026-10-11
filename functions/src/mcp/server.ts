@@ -118,7 +118,7 @@ export interface McpTool {
 export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_senior_profile",
-    description: "Get the profile of the senior being cared for, including name, age, diagnoses, and care needs.",
+    description: "Get the profile of the senior being cared for: name, age and care needs (non-medical — no diagnoses or medications exist).",
     input_schema: {
       type: "object",
       properties: {
@@ -2606,7 +2606,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResource[] = [
   {
     uri: "cara://senior/{seniorId}/profile",
     name: "Senior Profile",
-    description: "Name, age, diagnoses, and care needs for the senior.",
+    description: "Name, age and care needs for the senior (non-medical).",
     mimeType: "application/json",
   },
   {

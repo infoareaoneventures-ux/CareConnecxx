@@ -22,7 +22,9 @@
 import * as admin from "firebase-admin";
 import { sendMessage, type AgentSession } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
-import { isBackOutRequest, isQuestionOrOther, answerMidFlow } from "./stepHandler";
+import { isBackOutRequest, isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
+// Every mid-flow question here is a CAREGIVER's (2026-10-11): the shared answerer is briefed with what is on their screen.
+const answerMidFlow = (text: string, reAsk: string, opts: { facts?: string } = {}) => answerMidFlowShared(text, reAsk, { audience: "caregiver", ...opts });
 import { businessTodayStr, parseScheduledTimeMs, DEFAULT_TZ } from "../utils/scheduledTime";
 import { visitDetailText, type PastShift } from "./caregiverPastBookings";
 import { getAppUrl } from "../config/appUrl";
@@ -309,7 +311,7 @@ export function timesheetDetailText(r: TimesheetRow, n?: number): string {
         const hBase = typeof h.basePay === "number" ? h.basePay : h.action === "submitted" ? base : round2(h.hours * rate);
         const hItems = items(h.action === "submitted" ? (h.lineItems ?? r.lineItems) : h.lineItems);
         const hGross = typeof h.grossPay === "number" ? h.grossPay : h.action === "submitted" ? gross : round2(hBase + hItems.reduce((t, li) => t + (Number(li.amount) || 0), 0));
-        bits.push(`${clockShort(hs)} – ${clockShort(he)} · ${dur(h.hours)}`, `$${rate}/hr · Base ${money(hBase)}`, ...hItems.map((li) => `${itemLabel(li)} +${money(Number(li.amount) || 0)}`), `Total ${money(hGross)}`);
+        bits.push(`${clockShort(hs)} – ${clockShort(he)} · ${dur(h.hours)}`, `$${rate}/hr · Base pay ${money(hBase)}`, ...hItems.map((li) => `${itemLabel(li)} +${money(Number(li.amount) || 0)}`), `Total ${money(hGross)}`);
       }
       if (h.note) bits.push(`"${h.note}"`);
       lines.push(`• ${bits.join(" · ")}`);
@@ -562,7 +564,7 @@ const proposedBlock = (d: ReviewCorrectionFlowData) => {
   return [
     `Review correction — ${d.clientName}`,
     `Client proposed: ${clock(s)} – ${clock(e)} · ${dur(d.proposedHours)}`,
-    `$${d.payRate}/hr · Base ${money(base)}`,
+    `$${d.payRate}/hr · Base pay ${money(base)}`,
     ...d.proposedItems.map((li) => `${itemLabel(li)} +${money(Number(li.amount) || 0)}`),
     `Total ${money(d.proposedGross)}`,
     d.reason ? `"${d.reason}"` : null,
@@ -580,12 +582,13 @@ function counterGross(d: ReviewCorrectionFlowData): { hours: number; base: numbe
   const itemsTotal = (d.counterItems ?? d.proposedItems).reduce((t, li) => t + (Number(li.amount) || 0), 0);
   return { hours, base, gross: round2(base + itemsTotal) };
 }
+const MONEY_FACTS = "Base pay = the time between the start and end shown × the hourly rate (the page calls it Base pay). Additional charges (mileage, supplies, overtime, a custom item) are flat amounts the caregiver entered and are added on top. The total = base pay + additional charges. The family's card is billed that total plus Evia's service fee; the caregiver receives the total.";
 const C_CONFIRM_Q = (d: ReviewCorrectionFlowData) => {
   const g = counterGross(d);
   return [
     `Your counter — ${d.clientName}`,
     `${clock(Date.parse(d.counterStart ?? ""))} – ${clock(Date.parse(d.counterEnd ?? ""))} · ${dur(g.hours)}`,
-    `$${d.payRate}/hr · Base ${money(g.base)}`,
+    `$${d.payRate}/hr · Base pay ${money(g.base)}`,
     ...(d.counterItems ?? d.proposedItems).map((li) => `${itemLabel(li)} +${money(Number(li.amount) || 0)}`),
     `Your total ${money(g.gross)}`,
     d.note ? `Note: "${d.note}"` : null,
@@ -715,7 +718,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
-      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q));
+      if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: MONEY_FACTS }));
       else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
       return;
     }

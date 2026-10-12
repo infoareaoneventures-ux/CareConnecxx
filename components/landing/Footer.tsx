@@ -4,7 +4,7 @@ import { BloomMark } from '../ui/BloomMark';
 import { supportPhone } from '../../utils/launchConfig';
 
 // Minimal footer (founder, 2026-10-12): the mark, one line, the help phone,
-// five links. Router links only, so every pre-login page (landing, login,
+// six links (incl. the care-provider door, founder 2026-10-12). Router links only, so every pre-login page (landing, login,
 // /start, recovery, Privacy, Terms, not-found) mounts the same footer. The
 // social icons and the For Families / For Caregivers columns are gone with the
 // pages they pointed at; Privacy and Terms open the real /privacy and /terms
@@ -37,7 +37,8 @@ export const Footer: React.FC = () => {
                         <Link to="/privacy" className={linkClass}>Privacy</Link>
                         <Link to="/terms" className={linkClass}>Terms</Link>
                         <Link to="/login" className={linkClass}>Log in</Link>
-                        <Link to="/start?role=client" className={linkClass}>Get started</Link>
+                        <Link to="/start?role=client" className={linkClass}>Find care</Link>
+                        <Link to="/start?role=care-provider" className={linkClass}>Apply as a care provider</Link>
                         <Link to="/admin" className={linkClass}>Admin</Link>
                     </nav>
                 </div>

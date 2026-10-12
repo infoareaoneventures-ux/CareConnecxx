@@ -111,9 +111,9 @@ describe("the one public page says only what the product does", () => {
     expect(src).toMatch(/never administer or manage medication/);
   });
 
-  it("the footer is the mark, one line and five links", () => {
+  it("the footer is the mark, one line, the help phone and six links", () => {
     const src = copyOf(read("components/landing/Footer.tsx"));
-    for (const label of [">Privacy<", ">Terms<", ">Log in<", ">Get started<", ">Admin<"]) expect(src).toContain(label);
+    for (const label of [">Privacy<", ">Terms<", ">Log in<", ">Find care<", ">Apply as a care provider<", ">Admin<"]) expect(src).toContain(label);
     expect(src).not.toMatch(/Twitter|Facebook|Instagram|For Families|For Caregivers|For Care Providers|Family FAQ|Help Center|How It Works|LegalDocs/);
     expect(src).toContain("supportPhone"); // the help phone lives in the footer (2026-10-12)
   });
@@ -121,7 +121,8 @@ describe("the one public page says only what the product does", () => {
   it("the site header is Log in + Get started only (shared by every pre-login page), and the removed sections are not rendered", () => {
     const header = read("components/landing/SiteHeader.tsx");
     expect(header).not.toMatch(/Find Care|For Caregivers|For Care Providers|Find Jobs|>Help</);
-    for (const label of ["Log in", "Get started"]) expect(header).toContain(label);
+    for (const label of ["Apply as a care provider", "Log in", "Find care"]) expect(header).toContain(label);
+    expect(header).not.toContain("Get started"); // the family door is named (founder, 2026-10-12)
     for (const page of ["components/auth/TaskPageBar.tsx", "components/pages/PrivacyPolicyPage.tsx", "components/pages/TermsOfServicePage.tsx"]) expect(read(page)).toContain("SiteHeader");
     for (const page of ["components/auth/LoginPage.tsx", "components/auth/onboarding/OnboardingFlow.tsx", "components/pages/PrivacyPolicyPage.tsx", "components/pages/TermsOfServicePage.tsx"]) expect(read(page)).toContain("<Footer />");
     const src = read("components/LandingView.tsx");

@@ -5,7 +5,8 @@ import { BloomMark } from '../ui/BloomMark';
 import { Button } from '../ui/Button';
 
 // The ONE public header (founder, 2026-10-12): the mark + "Evia" (home),
-// Log in, Get started — on the landing page AND every other pre-login page
+// Apply as a care provider, Log in, Find care (the family door — named so a
+// provider looking for work never clicks it; founder, 2026-10-12) — on the landing page AND every other pre-login page
 // (login, /start, account recovery, Privacy, Terms, not-found). Router links
 // only, so any page can mount it without the landing page's onNavigate.
 export const SiteHeader: React.FC = () => {
@@ -22,11 +23,14 @@ export const SiteHeader: React.FC = () => {
                     </Link>
 
                     <div className="hidden md:flex items-center space-x-6">
+                        <Link to="/start?role=care-provider" className="text-ink-600 hover:text-ink-900 text-[15px] font-medium transition-colors">
+                            Apply as a care provider
+                        </Link>
                         <Link to="/login" className="text-ink-600 hover:text-ink-900 text-[15px] font-medium transition-colors">
                             Log in
                         </Link>
                         <Link to="/start?role=client" className="btn-depth-primary font-semibold px-5 py-2.5 rounded-full text-sm">
-                            Get started
+                            Find care
                         </Link>
                     </div>
 
@@ -46,9 +50,10 @@ export const SiteHeader: React.FC = () => {
             {open && (
                 <div className="md:hidden bg-white border-t border-slate-100 absolute w-full shadow-xl animate-slide-in">
                     <div className="px-4 pt-2 pb-6 space-y-2">
+                        <button onClick={() => go('/start?role=care-provider')} className="block w-full text-left px-3 py-3 text-base font-medium text-ink-700 hover:bg-primary-50 rounded-lg">Apply as a care provider</button>
                         <button onClick={() => go('/login')} className="block w-full text-left px-3 py-3 text-base font-medium text-primary-600 hover:bg-primary-50 rounded-lg">Log in</button>
                         <Button fullWidth onClick={() => go('/start?role=client')} variant="primary">
-                            Get started
+                            Find care
                         </Button>
                     </div>
                 </div>

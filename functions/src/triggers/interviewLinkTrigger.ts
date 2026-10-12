@@ -5,6 +5,7 @@ import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 import { trySend } from "../utils/toolNotify";
 import { parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
+import { writeUserNotification } from "../notifications/userNotification";
 
 const db = admin.firestore();
 
@@ -184,10 +185,23 @@ async function processInterview(
   const noteLine = typeof doc.notes === "string" && doc.notes.trim() ? ` Note: "${doc.notes.trim()}"` : "";
   if (!delivery.caregiver?.status) {
     const cgPhone = await resolveCaregiverPhone(doc.caregiverId);
-    const outcome = await deliverLink(cgPhone, interviewId, "caregiver",
-      `Your interview with ${clientName} is confirmed for ${formatted}.${noteLine} Join from your phone: ${callUrl}` +
-      (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : ""));
+    const cgText = `Your interview with ${clientName} is confirmed for ${formatted}.${noteLine} Join from your phone: ${callUrl}` +
+      (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : "");
+    const outcome = await deliverLink(cgPhone, interviewId, "caregiver", cgText);
     if (outcome) updates["linkDelivery.caregiver"] = outcome;
+    // Bell ⇄ text (C11): this text had no bell. The caregiver's Interviews tab shows
+    // the confirmed card with its Join link; the bell carries the same sentence,
+    // written only when the text went (sent, or accepted by our durable queue which
+    // delivers it and pages ops if it cannot). The family's bell for this accept is
+    // interview_accepted (onVideoInterviewWrite) — one bell per side.
+    if (doc.caregiverId && outcome && (outcome.status === "sent" || outcome.status === "queued")) {
+      await writeUserNotification({
+        sourcePath: `video_interviews/${interviewId}`, eventId: "confirmed-link", recipientId: doc.caregiverId,
+        transitionType: "interview_confirmed_link", type: "interview_confirmed", title: "Interview confirmed",
+        body: `Your interview with ${clientName} is confirmed for ${formatted}.${noteLine} Join from your Interviews tab: ${callUrl}`,
+        data: { interviewId },
+      }).catch((err) => console.error(`interview confirmed bell failed for ${interviewId}:`, err));
+    }
   }
 
   if (!delivery.client?.status) {

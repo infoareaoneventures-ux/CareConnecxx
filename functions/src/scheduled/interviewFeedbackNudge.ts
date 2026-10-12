@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { writeUserNotification } from "../notifications/userNotification";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { formatInterviewTime, parseScheduledTimeMs } from "../utils/scheduledTime";
 
@@ -202,6 +203,18 @@ export const sendInterviewFeedbackNudges = functions.pubsub
           feedbackNudgeCount: nudgeCount + 1,
           feedbackNudgedAt:   new Date(nowMs).toISOString(),
         }).catch(() => {});
+
+        // Bell ⇄ text in lockstep (C11, 2026-10-11): the site's copy, in the
+        // Interviews tab's words (its Send Booking / Not Selected buttons, no
+        // text keywords), written only because the text went. Idempotent per nudge number.
+        await writeUserNotification({
+          sourcePath: `video_interviews/${doc.id}`, eventId: `feedback-nudge-${nudgeCount + 1}`, recipientId: clientId,
+          transitionType: "interview_feedback_nudge", type: "interview_feedback_reminder", title: "How did the interview go?",
+          body: fitLevel === "maybe"
+            ? `You're still deciding on ${caregiverName}${whenClause}. Send Booking or Not Selected from your Interviews tab when you're ready.`
+            : `Your interview with ${caregiverName}${whenClause} is completed. Send Booking or Not Selected from your Interviews tab.`,
+          data: { interviewId: doc.id },
+        }).catch((err) => console.error("[sendInterviewFeedbackNudges] bell failed:", doc.id, err));
 
         // Same anchor as interviewCompletionNudge.ts's pendingCompletionNudge*
         // (2026-09-13 live incident) — without it, a reply like "not a fit"

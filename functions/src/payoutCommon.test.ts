@@ -71,6 +71,12 @@ vi.mock("firebase-admin", () => ({
   }),
 }));
 
+// payout_initiated: text first through the interaction agent, bell only when it went (C11).
+const lockstep = vi.hoisted(() => ({ sent: [] as any[], bells: [] as any[], sendResult: true }));
+vi.mock("./utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(async () => "+15550001111") }));
+vi.mock("./agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async (phone: string, out: any) => { lockstep.sent.push({ phone, out }); return lockstep.sendResult; }) }));
+vi.mock("./notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (n: any) => { lockstep.bells.push(n); return true; }) }));
+
 vi.mock("./stripe", () => ({
   getStripeClient: () => ({
     accounts: { retrieve: hoisted.accountsRetrieve },
@@ -148,7 +154,11 @@ describe("executeInstantPayout", () => {
     // Unified record: what arrives, what was paid out, and the fee.
     expect(hoisted.payoutSet).toHaveBeenCalledWith(expect.objectContaining({ amount: 49.5, grossAmount: 50, fee: 0.5, type: "instant", status: "pending", source: "app" }));
     expect(hoisted.payoutUpdate).toHaveBeenCalledWith(expect.objectContaining({ stripePayoutId: "po_1" }));
-    expect(hoisted.notifAdd).toHaveBeenCalled();
+    // Bell ⇄ text (C11): the page's success line went by text (fixed string), then the bell — never a raw add.
+    expect(lockstep.sent).toHaveLength(1);
+    expect(lockstep.sent[0].out).toMatchObject({ canDrop: false, fixedString: true, content: "Your instant payout is on its way — $49.50 after Stripe's $0.50 instant fee (1%, min $0.50). It arrives within about 30 minutes." });
+    expect(lockstep.bells[0]).toMatchObject({ type: "payout_initiated", recipientId: "cg1", sourcePath: "payouts/payout-doc-1", eventId: "po_1", body: lockstep.sent[0].out.content });
+    expect(hoisted.notifAdd).not.toHaveBeenCalled();
     // Replay guard runs transactionally: the shared lock doc is read (this is
     // what serializes concurrent requests) and bumped alongside the new doc.
     expect(hoisted.runTransaction).toHaveBeenCalledTimes(1);

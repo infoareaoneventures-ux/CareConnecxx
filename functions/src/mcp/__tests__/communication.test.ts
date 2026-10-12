@@ -522,14 +522,14 @@ describe("communication tools", () => {
       seed();
       const r = await handleToolCall("get_notifications", { userId: "cg1", role: "caregiver" }) as any;
       expect(r.success).toBe(true);
-      expect(r.results.items.map((i: any) => [i.type, i.page.path])).toEqual([["booking_request", "/caregiver/bookings"], ["interview_request", "/caregiver/jobs?tab=interviews"]]);
+      expect(r.results.items.map((i: any) => [i.type, i.page.path])).toEqual([["booking_request", "/caregiver/bookings?tab=requests"], ["interview_request", "/caregiver/jobs?tab=interviews"]]);
       expect(r.results.unreadCount).toBe(1);
     });
     it("no role passed → the user's recorded role decides (a caregiver record → caregiver pages; a family → family pages)", async () => {
       seed();
       hoisted.docState.set("users/cg1", { userType: "caregiver" });
       const cg = await handleToolCall("get_notifications", { userId: "cg1" }) as any;
-      expect(cg.results.items[0].page.path).toBe("/caregiver/bookings");
+      expect(cg.results.items[0].page.path).toBe("/caregiver/bookings?tab=requests");
       hoisted.docState.set("users/cg1", { userType: "client" });
       const fam = await handleToolCall("get_notifications", { userId: "cg1" }) as any;
       expect(fam.results.items[0].page.path).toBe("/client/bookings?tab=active");

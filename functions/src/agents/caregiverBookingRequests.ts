@@ -16,7 +16,6 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parkedDecision } from "./decisionNotices";
-import { businessTodayStr, DEFAULT_TZ } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -341,25 +340,13 @@ export async function respondToBookingRequest(caregiverId: string, id: string, d
 }
 
 // ── The amendment card's buttons — CaregiverBookingsPage.handleAcceptAmendment / Decline, verbatim ──
-function normDay(day: string): string { const d = day.trim(); return d.charAt(0).toUpperCase() + d.slice(1, 3).toLowerCase(); }
-function nextOccurrence(startDate: string, dayName: string): string {
-  const target = ALL_DAYS_ORDER.indexOf(normDay(dayName));
-  if (target === -1) return startDate;
-  const base = new Date(startDate + "T12:00:00");
-  const diff = (target - base.getDay() + 7) % 7;
-  base.setDate(base.getDate() + diff);
-  return base.toISOString().split("T")[0];
-}
-function addDaysLocal(dateStr: string, days: number): string { const d = new Date(dateStr + "T12:00:00"); d.setDate(d.getDate() + days); return d.toISOString().split("T")[0]; }
-// "Today" is the family's business day (Pacific), never the server's UTC date: live 2026-10-07, Mahad accepted
-// Wednesday extra shifts at 6 PM Pacific = 01:00Z Thursday, so generation started "tomorrow" and every Wednesday
-// visit for that day landed a week late (a one-day request for today would have created nothing). The site's
-// Accept button uses the browser's date — this is its twin.
-function todayStr(now: Date = new Date()): string { return businessTodayStr(DEFAULT_TZ, now); }
+// Both buttons are ONE write on the amendment ({status, respondedAt}). The
+// visits for an accepted change are generated server-side by
+// scheduled/shiftGenerator.ts onBookingAmendmentAccepted (2026-10-11) — the
+// page's window / merge / end-date / note rules live there, once, for both doors.
 
 export type AmendmentResult =
-  | { ok: true; status: "accepted"; shiftsCreated: number; toast: string }
-  | { ok: true; status: "declined"; shiftsCreated: 0; toast: string }
+  | { ok: true; status: "accepted" | "declined"; toast: string }
   | { ok: false; reason: "not_found" | "not_yours" | "not_pending"; status?: string };
 
 async function loadAmendmentFor(caregiverId: string, id: string): Promise<{ ok: true; a: Amendment; ref: FirebaseFirestore.DocumentReference } | { ok: false; reason: "not_found" | "not_yours" | "not_pending"; status?: string }> {
@@ -377,75 +364,13 @@ export async function declineAmendment(caregiverId: string, id: string): Promise
   const r = await loadAmendmentFor(caregiverId, id);
   if (!r.ok) return r;
   await r.ref.update({ status: "declined", respondedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, status: "declined", shiftsCreated: 0, toast: `Schedule change from ${r.a.clientName || "the family"} declined.` };
+  return { ok: true, status: "declined", toast: `Schedule change from ${r.a.clientName || "the family"} declined.` };
 }
 
-/** The Accept button: merge an ongoing change into the booking's schedule, create the visits for the next 4 weeks, mark accepted. */
+/** The Accept button: {status:'accepted', respondedAt} — the visits (and an ongoing change's merge into the booking's schedule) come from onBookingAmendmentAccepted. */
 export async function acceptAmendment(caregiverId: string, id: string): Promise<AmendmentResult> {
   const r = await loadAmendmentFor(caregiverId, id);
   if (!r.ok) return r;
-  const amendment = r.a;
-  const today = todayStr();
-  const generateFrom = amendment.startDate && amendment.startDate >= today ? amendment.startDate : today;
-  const generateTo = addDaysLocal(generateFrom, 27);
-  let count = 0;
-  if (amendment.bookingRequestId) {
-    const bookingRef = db.collection("booking_requests").doc(amendment.bookingRequestId);
-    const bookingSnap = await bookingRef.get();
-    if (bookingSnap.exists) {
-      const booking = bookingSnap.data() as Record<string, any>;
-      const currentDST: Record<string, ShiftBlock[]> = booking.schedule?.dayShiftTimes || {};
-      // Only an ongoing change joins the permanent schedule (a dated one would be re-created by the shift generator forever).
-      const mergedDST: Record<string, ShiftBlock[]> = amendment.ongoing
-        ? (() => { const dst = { ...currentDST }; for (const [day, blocks] of Object.entries(amendment.newDays)) { dst[day] = [...(dst[day] ?? []), ...blocks]; } return dst; })()
-        : currentDST;
-      if (amendment.ongoing) {
-        await bookingRef.update({ "schedule.dayShiftTimes": mergedDST, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-      }
-      const endDate: string | null = amendment.ongoing ? null : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));
-      let cgPhotoURL: string | null = booking.caregiverPhotoURL || null;
-      if (!cgPhotoURL && amendment.caregiverId) {
-        const cgSnap = await db.collection("caregivers").doc(amendment.caregiverId).get().catch(() => null);
-        const cgData = (cgSnap?.data() ?? {}) as Record<string, any>;
-        cgPhotoURL = cgData.photo || cgData.profilePhoto || cgData.photoURL || cgData.imageUrl || null;
-      }
-      const shiftBase = {
-        clientId: booking.clientId || amendment.clientId,
-        clientName: booking.clientName || amendment.clientName,
-        clientPhotoURL: booking.clientPhotoURL || null,
-        caregiverId: amendment.caregiverId,
-        caregiverName: booking.caregiverName || amendment.caregiverName,
-        caregiverPhotoURL: cgPhotoURL,
-        status: "scheduled",
-        address: booking.address || "",
-        careNeeds: booking.careNeeds || [],
-        lifestylePreferences: booking.lifestylePreferences || [],
-        rate: booking.rate ?? null,
-        paymentMethod: booking.paymentMethod || null,
-        notes: amendment.notes || booking.notes || "",
-        careRecipients: booking.careRecipients || [],
-        emergencyContact: booking.emergencyContact || null,
-        schedule: { ...(booking.schedule || {}), dayShiftTimes: mergedDST },
-        bookingRequestId: amendment.bookingRequestId,
-        recurringWeekly: true,
-        tasksCompleted: [] as string[],
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      };
-      const batch = db.batch();
-      for (const [day, blocks] of Object.entries(amendment.newDays)) {
-        for (const block of blocks) {
-          let dateStr = nextOccurrence(generateFrom, day);
-          while (dateStr <= generateTo && count < 490) {
-            if (endDate && dateStr > endDate) break;
-            batch.set(db.collection("shifts").doc(), { ...shiftBase, date: dateStr, startTime: block.start, endTime: block.end });
-            count++;
-            dateStr = addDaysLocal(dateStr, 7);
-          }
-        }
-      }
-      if (count > 0) await batch.commit();
-    }
-  }
   await r.ref.update({ status: "accepted", respondedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, status: "accepted", shiftsCreated: count, toast: `Schedule updated for ${amendment.clientName || "the family"} — new visits added.` };
+  return { ok: true, status: "accepted", toast: `Schedule updated for ${r.a.clientName || "the family"} — new visits added.` };
 }

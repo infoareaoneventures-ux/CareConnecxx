@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const hoisted = vi.hoisted(() => {
   const docState = new Map<string, any>();
-  const sent: Array<{ chatId: string; text: string }> = [];
+  const sent: Array<{ chatId: string; text: string; out?: any }> = [];
   const bells: any[] = [];
   const makeQuery = (coll: string, filters: Array<[string, string, any]>): any => ({
     where: (f: string, op: string, v: any) => makeQuery(coll, [...filters, [f, op, v]]),
@@ -57,7 +57,9 @@ vi.mock("../../ai/scoring", async (importOriginal) => {
     __importOriginal: importOriginal,
   };
 });
-vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async (chatId: string, text: string) => { hoisted.sent.push({ chatId, text }); return { message_id: "m" }; }) }));
+// C13: the notice goes through the interaction agent (opt-out, dedup, block-only review), never a raw send.
+vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async (phone: string, out: any) => { hoisted.sent.push({ chatId: phone, text: out.text ?? out.content, out }); return true; }) }));
+vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async () => { throw new Error("raw sendMessage must not be used by the new-job notice (C13)"); }) }));
 vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (n: any) => { hoisted.bells.push(n); return true; }) }));
 vi.mock("../../config/appUrl", () => ({ appLink: (p: string) => `https://eviacares.com${p}` }));
 
@@ -76,19 +78,29 @@ describe("sendNewJobNotices", () => {
     const res = await sendNewJobNotices("job1", JOB, "evt1");
     expect(res.notified).toEqual(["a"]);
     expect(hoisted.sent).toHaveLength(1);
-    expect(hoisted.sent[0].chatId).toBe("chat-a");
+    expect(hoisted.sent[0].chatId).toBe("+1a"); // the session's phone, through sendViaInteractionAgent
+    expect((hoisted.sent[0] as any).out).toMatchObject({ canDrop: false, fixedString: true, sourceAgent: "new_job_notice" });
     expect(hoisted.sent[0].text).toContain("New job near you: Care for Rosy · Santa Clara (3.9 mi away) · $26/hr · Part-time · Daytime · ASAP · Morning.");
     expect(hoisted.sent[0].text).not.toContain("http"); // Evia gives the details herself
     expect(hoisted.sent[0].text).not.toMatch(/yes or no/i);
     expect(hoisted.bells[0]).toMatchObject({ recipientId: "a", type: "new_job", transitionType: "new_job_posted", sourcePath: "job_posts/job1", eventId: "evt1", data: { jobId: "job1", link: "/caregiver/jobs?job=job1" } });
   });
 
-  it("bell only when the caregiver has no Evia session; membership is NOT required", async () => {
+  it("no Evia session → no text, and so no bell (bell ⇄ text, C11); membership is NOT required for the notice itself", async () => {
     cg("b", { membershipPaid: false });
     const res = await sendNewJobNotices("job1", JOB, "evt1");
-    expect(res.bellOnly).toEqual(["b"]);
+    expect(res.dropped).toEqual(["b"]);
     expect(hoisted.sent).toHaveLength(0);
-    expect(hoisted.bells).toHaveLength(1);
+    expect(hoisted.bells).toHaveLength(0);
+  });
+
+  it("a text the send layer dropped (opted out / blocked) writes no bell", async () => {
+    const { sendViaInteractionAgent } = await import("../../agents/caraAgent");
+    (sendViaInteractionAgent as any).mockResolvedValueOnce(false);
+    cg("a"); session("a");
+    const res = await sendNewJobNotices("job1", JOB, "evt1");
+    expect(res.dropped).toEqual(["a"]);
+    expect(hoisted.bells).toHaveLength(0);
   });
 
   it("skips: out of radius, paused, opted out, unfinished profile, blocked the client, active family", async () => {
@@ -102,7 +114,7 @@ describe("sendNewJobNotices", () => {
     hoisted.docState.set("shifts/s1", { caregiverId: "busy", status: "scheduled", bookingRequestId: "br1" });
     const res = await sendNewJobNotices("job1", JOB, "evt1");
     expect(res.notified).toEqual([]);
-    expect(res.bellOnly).toEqual([]);
+    expect(res.dropped).toEqual([]);
     expect(res.skipped).toBe(5); // 'mid' never enters the candidate query
     expect(hoisted.bells).toHaveLength(0);
   });
@@ -110,7 +122,7 @@ describe("sendNewJobNotices", () => {
   it("a caregiver with no travel distance is told about every open job, like their board", async () => {
     cg("nolimit", { serviceRadius: 0 });
     const res = await sendNewJobNotices("job1", { ...JOB, lat: 38.5816, lng: -121.4944 }, "evt1");
-    expect(res.bellOnly).toEqual(["nolimit"]);
+    expect(res.dropped).toEqual(["nolimit"]);
   });
 
   it("does nothing for a job that is not open or whose client is deactivated", async () => {

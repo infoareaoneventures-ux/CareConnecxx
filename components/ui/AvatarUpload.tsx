@@ -12,6 +12,14 @@ interface AvatarUploadProps {
   userId?: string;
   /** Storage sub-folder, e.g. 'caregivers' or 'clients' */
   storageFolder?: string;
+  /**
+   * The caller's own upload (file → download URL). When given it is THE path — the
+   * caregiver profile page passes services/api.ts uploadCaregiverProfilePhoto so its photo
+   * lands where the onboarding wizard's and Evia's do (profile-photos/caregivers/{uid},
+   * sweep C7, 2026-10-11). A failure surfaces as onUploadError (no base64 fallback into Firestore).
+   */
+  upload?: (file: File) => Promise<string>;
+  onUploadError?: (message: string) => void;
 }
 
 export const AvatarUpload: React.FC<AvatarUploadProps> = ({
@@ -21,6 +29,8 @@ export const AvatarUpload: React.FC<AvatarUploadProps> = ({
   ariaLabel = "Upload profile picture",
   userId,
   storageFolder,
+  upload,
+  onUploadError,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -28,6 +38,19 @@ export const AvatarUpload: React.FC<AvatarUploadProps> = ({
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (upload) {
+      setUploading(true);
+      try {
+        onImageSelected(await upload(file));
+      } catch (err: any) {
+        onUploadError?.(err?.message || 'Failed to upload photo. Please try again.');
+      } finally {
+        setUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+      return;
+    }
 
     // Upload to Firebase Storage when userId + storageFolder are provided
     if (userId && storageFolder) {

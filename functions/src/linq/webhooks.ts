@@ -24,6 +24,7 @@ import {
   stampCaregiverProfileComplete,
 } from "../agents/onboardingConversation";
 import { absorbCaregiverFields } from "../agents/caregiverFieldAbsorber";
+import { isCaregiverMembershipActive } from "../agents/caregiverAccessGate";
 import { runQaAgent } from "../agents/qaAgent";
 import {
   shouldRouteOnboardingToLoop,
@@ -136,8 +137,8 @@ export function caregiverDocHasRealProgress(cg: Record<string, unknown>): boolea
   if (cg.onboardingStatus === "profile_complete") return true;
   if (["active", "pending_review"].includes(String(cg.status ?? ""))) return true;
   if (["submitted", "verified", "approved"].includes(String(cg.verificationStatus ?? ""))) return true;
-  if (cg.membershipPaid === true) return true;
-  if (["active", "trialing"].includes(String(cg.membershipStatus ?? ""))) return true;
+  // Membership = the ONE rule (caregiverAccessGate, sweep C1 2026-10-11).
+  if (isCaregiverMembershipActive(cg)) return true;
   return false;
 }
 
@@ -949,15 +950,15 @@ const handleInboundInner = traceable(
           language: welcomeLanguage,
           context: welcomeAudience === "caregiver"
             ? `You're meeting ${webName} for the very first time over text. They just signed up to find caregiving work. ` +
-              `Introduce yourself warmly as Evia, mention that setting up their profile takes about 5 minutes and happens right here by text, ` +
+              `Introduce yourself warmly as Evia, mention that setting up their profile takes about 3 minutes and happens right here by text, ` +
               `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "how often they need care — occasional, part-time, or full-time (the wizard's first question; the person needing care comes later)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`
             : `You're meeting ${webName} for the very first time over text. They're looking for care for a loved one. ` +
               `Introduce yourself warmly as Evia, their care coordinator, ` +
               `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "how often they need care — occasional, part-time, or full-time (the wizard's first question; the person needing care comes later)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`,
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
-                ? `¡Hola ${webGreetName}! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu dirección (calle, ciudad y código postal)? Las familias solo ven la ciudad.`
-                : `Hi ${webGreetName}! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and it all happens right here.\n\nWhat's your street address, city, and zip code? (Families only ever see the city.)`)
+                ? `¡Hola ${webGreetName}! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 3 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu dirección (calle, ciudad y código postal)? Las familias solo ven la ciudad.`
+                : `Hi ${webGreetName}! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 3 minutes and it all happens right here.\n\nWhat's your street address, city, and zip code? (Families only ever see the city.)`)
             : (preferredLanguage === "es"
                 ? `¡Hola ${webGreetName}! Soy Evia, tu coordinadora de cuidados. ¿Para quién buscas cuidado? (Su nombre y tu relación con esa persona.)`
                 : `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. How often do you need care — occasional, part-time, or full-time?`),
@@ -971,13 +972,13 @@ const handleInboundInner = traceable(
           language: welcomeLanguage,
           context: welcomeAudience === "caregiver"
             ? "You're meeting someone for the very first time over text who just signed up to find caregiving work. " +
-              "Introduce yourself warmly as Evia, mention that setting up their profile takes about 5 minutes and happens right here, and ask their first and last name. Sound like a real person, not a form."
+              "Introduce yourself warmly as Evia, mention that setting up their profile takes about 3 minutes and happens right here, and ask their first and last name. Sound like a real person, not a form."
             : "You're meeting someone for the very first time over text who's looking for care for a loved one. " +
               "Introduce yourself warmly as Evia, their care coordinator, and ask their first and last name. Sound like a real person, not a form.",
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
-                ? "¡Hola! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 5 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu nombre y apellido?"
-                : "Hi! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 5 minutes and everything happens right here.\n\nWhat's your first and last name?")
+                ? "¡Hola! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 3 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu nombre y apellido?"
+                : "Hi! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 3 minutes and everything happens right here.\n\nWhat's your first and last name?")
             : (preferredLanguage === "es"
                 ? "¡Hola! Soy Evia, tu coordinadora de cuidados. ¿Cuál es tu nombre y apellido?"
                 : "Hi! I'm Evia — I'll be your care coordinator. What's your first and last name?"),

@@ -86,6 +86,21 @@ vi.mock("./utils/webhookLedger", () => ({
 
 vi.mock("./billing/paymentMethods", () => ({ isOfflinePaymentMethod: () => false }));
 
+// Bell ⇄ text in lockstep (C11): payoutNotice texts first through sendSMSToUser
+// and writes the bell through writeUserNotification only when the text went.
+const lockstep = vi.hoisted(() => ({
+  smsResult: { success: true } as { success: boolean; error?: string },
+  sends: [] as Array<{ userId: string; text: string }>,
+  bells: [] as any[],
+  order: [] as string[],
+}));
+vi.mock("./sms", () => ({
+  sendSMSToUser: vi.fn(async (userId: string, text: string) => { lockstep.sends.push({ userId, text }); lockstep.order.push("text"); return lockstep.smsResult; }),
+}));
+vi.mock("./notifications/userNotification", () => ({
+  writeUserNotification: vi.fn(async (n: any) => { lockstep.bells.push(n); lockstep.order.push("bell"); return true; }),
+}));
+
 // The handler dynamically imports this at finalization time.
 vi.mock("./agents/onboardingConversation", () => ({
   advanceOnboardingStep: (...a: unknown[]) => hoisted.advanceOnboardingStep(...a),
@@ -142,5 +157,55 @@ describe("stripeConnectWebhook — account.updated matching (Fix 1)", () => {
 
     expect(hoisted.advanceOnboardingStep).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith({ received: true, status: "already_processed" });
+  }, 20_000);
+});
+
+// Bell ⇄ text in lockstep (caregiver sweep C11, 2026-10-11): payout.paid /
+// payout.failed text FIRST; the Payouts-page bell is written only when the text
+// went. Before this the bell was a raw `.add()` written before a text whose
+// result was ignored.
+describe("stripeConnectWebhook — payoutNotice (bell ⇄ text)", () => {
+  beforeEach(() => {
+    lockstep.smsResult = { success: true };
+    lockstep.sends.length = 0;
+    lockstep.bells.length = 0;
+    lockstep.order.length = 0;
+  });
+
+  it("text sent → the bell follows it, keyed on the Stripe event (a redelivery never doubles it)", async () => {
+    const { payoutNotice } = await import("./stripeConnectWebhook");
+    const r = await payoutNotice("cg-1", "evt_po_1", "po_1", "payout_paid", "Payout Arrived",
+      "Your payout of $120.00 has been deposited to your bank account.",
+      "Evia: Your payout of $120.00 has been deposited to your bank account. It's under Payout history on your Payments page.");
+
+    expect(r).toEqual({ text: true, bell: true });
+    expect(lockstep.order).toEqual(["text", "bell"]);
+    expect(lockstep.sends).toEqual([{ userId: "cg-1", text: expect.stringContaining("Evia: Your payout of $120.00") }]);
+    expect(lockstep.bells).toEqual([{
+      sourcePath: "caregivers/cg-1", eventId: "evt_po_1", recipientId: "cg-1", transitionType: "payout_paid",
+      type: "payout_paid", title: "Payout Arrived", body: "Your payout of $120.00 has been deposited to your bank account.", data: { payoutId: "po_1" },
+    }]);
+  }, 20_000);
+
+  it("text dropped (no phone / line down / transport error) → no bell", async () => {
+    lockstep.smsResult = { success: false, error: "No phone number on file" };
+    const { payoutNotice } = await import("./stripeConnectWebhook");
+    const r = await payoutNotice("cg-1", "evt_po_2", "po_2", "payout_failed", "Payout Failed",
+      "Your payout of $120.00 could not be deposited. Please check your bank account details.",
+      "Evia: Your payout of $120.00 could not be deposited. Please check your bank account details. Reply SETUP for your Stripe link to update them.");
+
+    expect(r).toEqual({ text: false, bell: false });
+    expect(lockstep.sends).toHaveLength(1);
+    expect(lockstep.bells).toHaveLength(0);
+  }, 20_000);
+
+  it("the one exception: a caregiver who texted STOP keeps the bell — the site is her only channel", async () => {
+    lockstep.smsResult = { success: false, error: "Recipient has opted out of SMS notifications" };
+    const { payoutNotice } = await import("./stripeConnectWebhook");
+    const r = await payoutNotice("cg-1", "evt_po_3", "po_3", "payout_paid", "Payout Arrived", "Your payout of $50.00 has been deposited to your bank account.", "Evia: …");
+
+    expect(r).toEqual({ text: false, bell: true });
+    expect(lockstep.bells).toHaveLength(1);
+    expect(lockstep.bells[0]).toMatchObject({ eventId: "evt_po_3", transitionType: "payout_paid" });
   }, 20_000);
 });

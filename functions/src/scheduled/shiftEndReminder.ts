@@ -53,6 +53,15 @@ export function missedText(v: FirebaseFirestore.DocumentData): string {
   const family = String(v.clientName || visitSeniorName(v, "the family"));
   return `Your ${formatHHMMForDisplay(String(v.startTime ?? ""))} visit with ${family} wasn't started. If you did the visit, reply LOG to log the hours. If not, no action needed.`;
 }
+/** The bell's copy: the page's wording (Past Bookings shows the visit as Missed with a Log Hours button), never a text keyword (C18). */
+export function stillRunningBell(v: FirebaseFirestore.DocumentData): string {
+  const who = visitSeniorName(v, "your client");
+  return `${who}'s visit was scheduled to end at ${formatHHMMForDisplay(String(v.endTime ?? ""))} and is still in progress. Finish it from your Bookings page.`;
+}
+export function missedBell(v: FirebaseFirestore.DocumentData): string {
+  const family = String(v.clientName || visitSeniorName(v, "the family"));
+  return `Your ${formatHHMMForDisplay(String(v.startTime ?? ""))} visit with ${family} wasn't started. If you did the visit, log the hours from Past Bookings › Log Hours. If not, no action needed.`;
+}
 
 async function remind(doc: FirebaseFirestore.QueryDocumentSnapshot, kind: "running" | "missed", nowMs: number): Promise<boolean> {
   const v = doc.data();
@@ -60,20 +69,23 @@ async function remind(doc: FirebaseFirestore.QueryDocumentSnapshot, kind: "runni
   if (!caregiverId) return false;
   const text = kind === "running" ? stillRunningText(v, doc.id) : missedText(v);
   const stamp = kind === "running" ? "caraEndReminderSentAt" : "caraMissedReminderSentAt";
-  // Bell first (idempotent per visit), then the text with the same words.
-  await writeUserNotification({
-    sourcePath: `shifts/${doc.id}`, eventId: kind === "running" ? "end-reminder" : "missed-reminder", recipientId: caregiverId,
-    transitionType: kind === "running" ? "shift_end_reminder" : "shift_missed",
-    type: kind === "running" ? "shift_end_reminder" : "shift_missed",
-    title: kind === "running" ? "Visit still in progress" : "Visit not started",
-    body: text.replace(/ Text FINISH when you're done, or open it here: \S+$/, " Finish it from your Bookings page."),
-    data: { shiftId: doc.id },
-  }).catch((err) => console.error("[shiftEndReminder] bell failed:", doc.id, err));
+  // Text first; the bell (the same fact in the page's words — no text keywords,
+  // C18) is written only when the text actually went (bell ⇄ text, C11).
   let sent = false;
   const phone = await resolveCaregiverPhone(caregiverId);
   const sess = phone ? await db.collection("agent_sessions").doc(phone).get().catch(() => null) : null;
   if (phone && sess?.exists && !sess.data()?.optedOut) {
-    sent = await sendViaInteractionAgent(phone, { content: text, urgency: "standard", sourceAgent: kind === "running" ? "shift_end_reminder" : "shift_missed_reminder", canDrop: false });
+    sent = await sendViaInteractionAgent(phone, { content: text, urgency: "standard", sourceAgent: kind === "running" ? "shift_end_reminder" : "shift_missed_reminder", canDrop: false, fixedString: true });
+  }
+  if (sent) {
+    await writeUserNotification({
+      sourcePath: `shifts/${doc.id}`, eventId: kind === "running" ? "end-reminder" : "missed-reminder", recipientId: caregiverId,
+      transitionType: kind === "running" ? "shift_end_reminder" : "shift_missed",
+      type: kind === "running" ? "shift_end_reminder" : "shift_missed",
+      title: kind === "running" ? "Visit still in progress" : "Visit not started",
+      body: kind === "running" ? stillRunningBell(v) : missedBell(v),
+      data: { shiftId: doc.id },
+    }).catch((err) => console.error("[shiftEndReminder] bell failed:", doc.id, err));
   }
   await doc.ref.update({ [stamp]: new Date(nowMs).toISOString() }).catch(() => {});
   return sent;

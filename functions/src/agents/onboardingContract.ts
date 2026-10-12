@@ -238,11 +238,20 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CAREGIVER_REQUIRED_FIELDS,
   // Derived fields the save handler / absorber write alongside a required one:
   //   skills / services — the canonical care-services enum (from specialties)
-  // Nothing the wizard doesn't collect is allowed here (no certifications,
-  // gender, languages, canDrive, bioSkipped, jobTypes — removed 2026-09-25;
-  // transportDocs — removed 2026-10-06 with the documents step).
   "skills", "services",
+  // The wizard's rates step also shows three OPTIONAL inputs (RatesStep): a rate
+  // for two seniors, a rate for three or more, and "max clients at once". They
+  // are never asked as their own question — saved only when the caregiver
+  // offers them, under the profile page's canonical names (founder,
+  // 2026-10-11: rateFor2Seniors / rateFor3PlusSeniors, never rateForTwo/Three).
+  "rateFor2Seniors", "rateFor3PlusSeniors", "maxClients",
+  // Nothing the wizard doesn't collect is allowed here (no certifications,
+  // gender, languages, canDrive, bioSkipped — removed 2026-09-25;
+  // transportDocs — removed 2026-10-06 with the documents step).
 ]);
+
+/** signup/constants.ts MAX_CLIENTS_OPTIONS — the wizard's / profile page's "Max clients at once" select. */
+export const MAX_CLIENTS_OPTIONS: readonly string[] = ["1", "2", "3+"];
 
 // The step the flow advances to once conversational collection completes and the
 // agent loop hands back to the deterministic gate machine. Client → the intake
@@ -310,6 +319,9 @@ const CAREGIVER_FIELD_ALIASES: Record<string, string> = {
   services: "specialties", skills: "specialties", careservices: "specialties",
   experience: "yearsExperience", yearsofexperience: "yearsExperience",
   rate: "hourlyRate", hourly: "hourlyRate", payrate: "hourlyRate",
+  // The wizard's multi-select is ONE session field (jobType: one id or a list); the record gets jobTypes.
+  jobtypes: "jobType", worktype: "jobType", worktypes: "jobType", lookingfor: "jobType",
+  ratefortwo: "rateFor2Seniors", ratefortwoseniors: "rateFor2Seniors", rateforthree: "rateFor3PlusSeniors", rateforthreeseniors: "rateFor3PlusSeniors", rateforthreeplusseniors: "rateFor3PlusSeniors",
   radius: "serviceRadius", traveldistance: "serviceRadius", travelradius: "serviceRadius", distance: "serviceRadius",
   emailaddress: "email", about: "bio", aboutme: "bio", description: "bio",
 };
@@ -336,9 +348,12 @@ export function allowedFieldNamesForRole(role: OnboardingRole): string[] {
   return [...allowedFieldsForRole(role)];
 }
 
-// The canonical jobType enum the downstream world (caregiver doc, matching,
-// deriveJobDataFromIntake) expects. Mirrors JOB_TYPES in caregiverFieldAbsorber.ts
-// and the scripted parser's clamp in onboardingSteps.caregiver.ts.
+// The canonical enum of Evia's SESSION field jobType (one id, or a list when
+// the caregiver picked several — the wizard's multi-select). The RECORD gets
+// only the site's `jobTypes` array of hyphenated ids (caregiverProfileMirror):
+// nothing server-side reads a singular jobType off caregivers/{uid} — the
+// "matching reads jobType" note that used to live here was wrong (sweep C7,
+// 2026-10-11). Mirrors JOB_TYPES in caregiverFieldAbsorber.ts.
 export const CAREGIVER_JOB_TYPES: ReadonlySet<string> = new Set([
   "occasional", "part_time", "full_time",
 ]);
@@ -379,9 +394,27 @@ const RELATIONSHIP_CANON: Record<string, string> = {
 // sentinel, left untouched) to "other" rather than leaving a raw string the
 // website's exact-match checks would never recognize.
 export function normalizeOnboardingFieldValue(fieldName: string, value: unknown): unknown {
-  if (fieldName === "jobType" && typeof value === "string") {
-    const key = value.trim().toLowerCase().replace(/[\s_-]+/g, " ").trim();
-    return JOB_TYPE_CANON[key] ?? value;
+  // Job type is the wizard's MULTI-select ("select at least one" — matched
+  // 2026-10-11): one id or a list, each canonicalized; a list of one collapses
+  // to the string. Value-shape canonicalization of an extracted answer, not
+  // intent parsing (the model already resolved the field).
+  if (fieldName === "jobType" && (typeof value === "string" || Array.isArray(value))) {
+    const canonOne = (v: unknown): unknown => {
+      if (typeof v !== "string") return v;
+      const key = v.trim().toLowerCase().replace(/[\s_-]+/g, " ").trim();
+      return JOB_TYPE_CANON[key] ?? v;
+    };
+    if (typeof value === "string") {
+      // "part-time and full-time" / "occasional, part time" — a list typed as one string.
+      const parts = value.split(/\s*(?:,|\/|&|\band\b|\bor\b)\s*/i).map((x) => x.trim()).filter(Boolean);
+      const canonParts = parts.map(canonOne);
+      if (parts.length > 1 && canonParts.every((x) => typeof x === "string" && CAREGIVER_JOB_TYPES.has(x))) {
+        return Array.from(new Set(canonParts as string[]));
+      }
+      return canonOne(value);
+    }
+    const list = Array.from(new Set(value.map(canonOne).filter((v): v is string => typeof v === "string" && v.trim() !== "")));
+    return list.length === 1 ? list[0] : list;
   }
   if (fieldName === "relationship" && typeof value === "string") {
     const key = value.trim().toLowerCase();
@@ -466,6 +499,7 @@ export function caregiverJobTypesToWebIds(
     for (const v of jobTypes) if (typeof v === "string") raw.push(v);
   }
   if (typeof jobType === "string") raw.push(jobType);
+  if (Array.isArray(jobType)) for (const v of jobType) if (typeof v === "string") raw.push(v);
   const order = ["occasional", "part-time", "full-time"];
   const mapped = new Set<string>();
   for (const v of raw) {

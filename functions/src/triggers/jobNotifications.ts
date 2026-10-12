@@ -22,19 +22,24 @@ export async function createJobPost(
   try {
     let lat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat ?? null;
     let lng = intakeData.lng ?? intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng ?? null;
+    let geoPrecision: "street" | "zip" | "city" | null =
+      (intakeData.geoPrecision === "street" || intakeData.geoPrecision === "zip" || intakeData.geoPrecision === "city") ? intakeData.geoPrecision : null;
     const city = intakeData.city ?? intakeData.location?.city ?? undefined;
     const careTypes: string[] = intakeData.careTypes ?? [];
 
     // Geocode fallback (parity with buildAndSaveJobPost): an intake with only a
     // city/zip used to produce a coordless job here — radius notifications dead.
+    // One geocoder (utils/geocode.ts geocodeAddress): street first when the
+    // intake carries one, else ZIP, else city — marked on the post.
     if (lat == null || lng == null) {
-      const { geocodeCityOrZip } = await import("../utils/geocode");
-      const coords = await geocodeCityOrZip(
-        city as string | undefined,
-        (intakeData.zipCode ?? intakeData.location?.zipCode) as string | undefined,
-        (intakeData.state ?? intakeData.location?.state) as string | undefined,
-      ).catch(() => null);
-      if (coords) { lat = coords.lat; lng = coords.lng; }
+      const { geocodeAddress } = await import("../utils/geocode");
+      const point = await geocodeAddress({
+        street: (intakeData.streetAddress ?? intakeData.street ?? intakeData.location?.street) as string | undefined,
+        city: city as string | undefined,
+        zipCode: (intakeData.zipCode ?? intakeData.location?.zipCode) as string | undefined,
+        state: (intakeData.state ?? intakeData.location?.state) as string | undefined,
+      }).catch(() => null);
+      if (point) { lat = point.lat; lng = point.lng; geoPrecision = point.geoPrecision; }
     }
 
     // Web JobPost contract via the shared builder — the caregiver Job Board
@@ -62,6 +67,7 @@ export async function createJobPost(
       zipCode:     (intakeData.zipCode ?? undefined) as string | undefined,
       lat,
       lng,
+      geoPrecision,
       recipientsCount: Number(intakeData.recipientsCount ?? 0) || undefined,
       phone:       (intakeData.phone ?? undefined) as string | undefined,
       intakeId,

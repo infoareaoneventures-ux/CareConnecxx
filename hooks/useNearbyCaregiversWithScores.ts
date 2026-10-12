@@ -4,6 +4,32 @@ import { Caregiver } from '../types';
 import { hasValidTransportDocs } from '../utils/transportDocs';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
 
+/**
+ * Distance tiebreak with unknown LAST (2026-10-11): a caregiver without
+ * coordinates used to default to distance 0 and float to the top of every
+ * list as the "closest". Unknown is unknown — sorted after every known
+ * distance, and the card shows no "mi away". Evia's twin:
+ * functions/src/agents/caregiverMatchScoring.ts compareDistanceUnknownLast.
+ */
+export function compareDistanceUnknownLast(a: number | null | undefined, b: number | null | undefined): number {
+  const aKnown = typeof a === 'number' && Number.isFinite(a);
+  const bKnown = typeof b === 'number' && Number.isFinite(b);
+  if (aKnown && bKnown) return (a as number) - (b as number);
+  if (aKnown) return -1;
+  if (bKnown) return 1;
+  return 0;
+}
+
+/** Miles from the nearest client location, or undefined when either side has no coordinates. */
+export function nearestDistanceMiles(
+  cgLat: number | null | undefined, cgLng: number | null | undefined,
+  locs: { lat: number; lng: number }[],
+): number | undefined {
+  if (cgLat == null || cgLng == null || locs.length === 0) return undefined;
+  const d = Math.min(...locs.map(loc => haversineDistance(loc.lat, loc.lng, Number(cgLat), Number(cgLng))));
+  return Math.round(d * 10) / 10;
+}
+
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 3959;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -187,11 +213,8 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
 
           const cgLat: number | undefined = data.lat ?? data.latitude ?? data.location?.lat;
           const cgLng: number | undefined = data.lng ?? data.longitude ?? data.location?.lng;
-          let dist = 0;
-          if (cgLat != null && cgLng != null && locs.length > 0) {
-            dist = Math.min(...locs.map(loc => haversineDistance(loc.lat, loc.lng, cgLat, cgLng)));
-            dist = Math.round(dist * 10) / 10;
-          }
+          // undefined = unknown (no coords on one side) — never a fake 0 (2026-10-11).
+          const dist = nearestDistanceMiles(cgLat, cgLng, locs);
 
           const cgSkills: string[] = data.skills || data.specializations || [];
           const cgAvailability = data.weeklyAvailability || data.availability;
@@ -242,7 +265,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
         // ── 5. Hard filter: distance + caregiver's own serviceRadius ──
         const withinRange = locs.length > 0
           ? caregiverList.filter(c => {
-              if ((c as any).latitude == null || (c as any).longitude == null) return true;
+              if (c.distance == null) return true;
               if (c.distance > maxDistance) return false;
               const sr = (c as any).serviceRadius ?? (c as any).travelRadius;
               if (sr != null && sr > 0 && c.distance > sr) return false;
@@ -264,7 +287,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
             if (Math.abs(availDiff) > 0.01) return availDiff;
             const ratingDiff = (b.rating || 0) - (a.rating || 0);
             if (ratingDiff !== 0) return ratingDiff;
-            return (a.distance || 0) - (b.distance || 0);
+            return compareDistanceUnknownLast(a.distance, b.distance);
           })
           .slice(0, limit);
 

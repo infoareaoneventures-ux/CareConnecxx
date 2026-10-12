@@ -96,13 +96,37 @@ function verifyCheckrSignature(rawBody: Buffer, signature: unknown, secret: stri
 
 // Caregiver notifications for every Checkr outcome come from
 // notifications/caregiverAccountEvents.ts (2026-09-27): the record write below
-// is announced ONCE (bell + text, same words) by onCaregiverAccountChange, and
-// the three candidate.* notices that leave no record transition go through the
-// same module with the Checkr event id. Nothing is sent from this file.
-async function notifyCandidateNotice(caregiverUid: string, kind: "bgcheck_document_required", eventId: string): Promise<void> {
-  const { notifyCaregiverAccountEvent } = await import("./notifications/caregiverAccountEvents");
-  await notifyCaregiverAccountEvent(caregiverUid, kind, { eventId: `checkr:${eventId}` })
-    .catch((err) => console.error(`checkr candidate notice (${kind}) failed for ${caregiverUid}:`, err));
+// is announced ONCE (bell + text, same words) by onCaregiverAccountChange.
+// The candidate.* "Checkr needs a document" events used to be texted from here
+// by event id AS WELL as by the record transition to awaiting_documents — two
+// bells + two texts for one ask (caregiver sweep C18, 2026-10-11). They now
+// park the record on awaiting_documents like verification.created does, and
+// the edge-triggered transition announces it once. Nothing is sent from this file.
+
+/** Checkr event ordering (C14): the event's own clock, when the payload carries one. */
+export function checkrEventMs(event: Record<string, any> | undefined): number | null {
+  const raw = event?.created_at ?? event?.data?.object?.created_at;
+  const ms = Date.parse(String(raw ?? ""));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * A report event must never move a CLEARED caregiver backwards (C14): a late
+ * `report.updated` / `report.resumed` (status pending) that arrives after
+ * `report.completed` (clear) is an older state, not a new one — and any report
+ * event stamped BEFORE the clear is out of order. A genuine new result (consider /
+ * suspended / adverse action) stamped after the clear still lands.
+ */
+export function reportEventRegressesClear(
+  cg: Record<string, any> | undefined,
+  mapped: CheckrStatus,
+  eventMs: number | null,
+): "stale_event" | "pending_after_clear" | null {
+  if (!cg || cg.backgroundCheckStatus !== "clear") return null;
+  const clearedMs = Date.parse(String(cg.backgroundCheckData?.checkrClearedAt ?? ""));
+  if (eventMs !== null && Number.isFinite(clearedMs) && eventMs < clearedMs) return "stale_event";
+  if (mapped === "pending") return "pending_after_clear";
+  return null;
 }
 
 async function findCaregiverUidByCandidateId(candidateId: string): Promise<string | null> {
@@ -354,9 +378,11 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
     // slug (present from report.created onward) or a previously stored
     // mvrReportId. The signup bundled criminal+MVR report uses a DIFFERENT
     // package and intentionally flows through the core handling below.
+    let reportCg: Record<string, any> | undefined;
     if (type.startsWith("report.")) {
       const mvrOnlyPkg = (process.env.CHECKR_PACKAGE_MVR_ONLY || "").trim();
       const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+      reportCg = cgSnap.data() ?? undefined;
       const storedMvrReportId: string | undefined = cgSnap.data()?.mvrReportId;
       const isMvrReport =
         (!!mvrOnlyPkg && typeof payload.package === "string" && payload.package === mvrOnlyPkg) ||
@@ -370,13 +396,17 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
     }
 
     const updates: Record<string, any> = {};
-    let candidateNotice: "bgcheck_document_required" | null = null;
+    // Work that must run only AFTER the record is written (C14: the Evia session
+    // used to be advanced before caregivers/{uid} carried the clear, so the step
+    // handler and the lifecycle notice read a not-yet-cleared record).
+    let afterRecordWrite: (() => Promise<void>) | null = null;
 
     if (type === "candidate.driver_license_required" || type === "candidate.driver_abstract_required" || type === "candidate.id_required" || type === "candidate.deferred") {
-      // Checkr needs something from the caregiver by email; the record only
-      // goes back to pending, so this notice is sent by event id.
+      // Checkr needs something from the caregiver by email. The record parks on
+      // awaiting_documents (same as verification.created); the transition tells
+      // the caregiver once — not again for a second candidate.* of the same ask.
       updates["backgroundCheckData.status"] = "pending";
-      candidateNotice = "bgcheck_document_required";
+      updates["backgroundCheckData.invitationStatus"] = "awaiting_documents";
 
     } else if (
       type === "candidate.created" ||
@@ -443,6 +473,14 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
 
     } else if (type === "report.created") {
       updates["backgroundCheckData.checkrReportId"] = payload.id;
+      // Ordering guard (C14): a cleared record is never moved back to pending by a report event.
+      const regress = reportEventRegressesClear(reportCg, mapCheckrResult(payload), checkrEventMs(event));
+      if (regress) {
+        console.info(`checkrWebhook: ${type} for ${caregiverUid} ignored (${regress})`);
+        await settle("processed");
+        res.status(200).json({ received: true, ignored: regress });
+        return;
+      }
       updates["backgroundCheckData.status"] = mapCheckrResult(payload);
 
     } else if (
@@ -453,6 +491,15 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       type === "report.upgraded"
     ) {
       const status = mapCheckrResult(payload);
+      // Ordering guard (C14): never move a clear backwards — a late report.updated
+      // (pending) after the clear, or any report event stamped before it, is ignored.
+      const regress = reportEventRegressesClear(reportCg, status, checkrEventMs(event));
+      if (regress) {
+        console.info(`checkrWebhook: ${type} for ${caregiverUid} ignored (${regress})`);
+        await settle("processed");
+        res.status(200).json({ received: true, ignored: regress });
+        return;
+      }
       updates["backgroundCheckData.status"] = status;
       if (payload.id) updates["backgroundCheckData.checkrReportId"] = payload.id;
 
@@ -494,17 +541,24 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           if (cgPhone) {
             // The "approved" notice (bell + text) comes from the record change;
             // this only moves a session that is waiting on the check to the
-            // payouts step (the step handler ignores any other session).
-            const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
-            await advanceOnboardingStep(cgPhone, "background_check", "");
-            // Flag so any follow-up reply routes to qaAgent with BG-check context
-            await db.collection("agent_sessions").doc(cgPhone).update({
-              pendingBgCheckAck:      "clear",
-              pendingBgCheckAckSetAt: new Date().toISOString(),
-            }).catch(() => {});
+            // payouts step (the step handler ignores any other session). It runs
+            // AFTER the record write below (C14) so the step reads a cleared record.
+            afterRecordWrite = async () => {
+              try {
+                const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
+                await advanceOnboardingStep(cgPhone, "background_check", "");
+                // Flag so any follow-up reply routes to qaAgent with BG-check context
+                await db.collection("agent_sessions").doc(cgPhone).update({
+                  pendingBgCheckAck:      "clear",
+                  pendingBgCheckAckSetAt: new Date().toISOString(),
+                }).catch(() => {});
+              } catch (err) {
+                console.error("advanceOnboardingStep(background_check) error:", err);
+              }
+            };
           }
         } catch (err) {
-          console.error("advanceOnboardingStep(background_check) error:", err);
+          console.error("clear-result record prep error:", err);
         }
 
       } else if (status === "consider") {
@@ -574,6 +628,12 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       updates["backgroundCheckData.canceledAt"] = new Date().toISOString();
 
     } else if (type === "report.resumed") {
+      if (reportEventRegressesClear(reportCg, "pending", checkrEventMs(event))) {
+        console.info(`checkrWebhook: report.resumed for ${caregiverUid} ignored (cleared record)`);
+        await settle("processed");
+        res.status(200).json({ received: true, ignored: "pending_after_clear" });
+        return;
+      }
       updates["backgroundCheckData.status"] = "pending";
 
     } else if (type === "report.disputed") {
@@ -615,9 +675,8 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
     if (Object.keys(updates).length > 0) {
       await db.collection("caregivers").doc(caregiverUid).update(updates);
     }
-    if (candidateNotice) {
-      await notifyCandidateNotice(caregiverUid, candidateNotice, String(eventId ?? payload.id ?? type));
-    }
+    // Record first, then the session (C14).
+    if (afterRecordWrite) await afterRecordWrite();
 
     await settle("processed");
     res.status(200).json({ received: true });

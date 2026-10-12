@@ -133,8 +133,10 @@ export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/tran
 // Membership renewal timeline (2026-10-06): card reminder 7 days before; authorize reminder day 5 / lock day 7 after.
 export { renewalRefreshSweep } from './scheduled/renewalRefresh';
 
-// Shift generation: instant on acceptance + daily rolling window
-export { generateRollingShifts, onBookingAccepted, expireStaleShiftReplacements } from './scheduled/shiftGenerator';
+// Shift generation: instant on acceptance + daily rolling window + an accepted
+// schedule change (2026-10-11: the visits moved out of the browser — both doors
+// write only the acceptance, this trigger generates; deploys as v1-onBookingAmendmentAccepted)
+export { generateRollingShifts, onBookingAccepted, onBookingAmendmentAccepted, expireStaleShiftReplacements } from './scheduled/shiftGenerator';
 
 // Evia iMessage pivot — onboarding callables (+ the /stripe-refresh redirect
 // that re-mints expired single-use Connect account links)
@@ -223,6 +225,13 @@ export { mirrorCaregiverOptOut } from './triggers/caregiverOptOutMirror';
 // new public Cloud Functions) giving the website caregiver-response parity
 // with Evia's respond_to_interview_request (accept/decline/propose-a-time)
 export { processInterviewActionQueue } from './triggers/interviewActionQueue';
+
+// VISIT ACTION QUEUE — Firestore-trigger workaround (same wall): the website's
+// Start Shift / End / Cancel / Log Hours run the ONE server implementation in
+// shifts/visitActions.ts (gate, Start window, one visit at a time, 24h cancel)
+// that Evia's START / FINISH / CANCEL / LOG use — firestore.rules no longer
+// lets a caregiver write those statuses directly (2026-10-11)
+export { processVisitActionQueue } from './triggers/visitActionQueue';
 
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 export { aiProxy } from "./aiProxy";

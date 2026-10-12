@@ -17,7 +17,7 @@
 // text already reads live.
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
-import { isCaregiverMembershipActive } from "./caregiverAccessGate";
+import { isCaregiverMembershipActive, caregiverOffersTransportation } from "./caregiverAccessGate";
 import { caregiverAnnualDisplay } from "../config/pricing";
 import { DEFAULT_TZ } from "../utils/scheduledTime";
 
@@ -104,8 +104,8 @@ export function driverCardFor(cg: Record<string, unknown>, badgeLive: boolean): 
   if (cg.mvrStatus === "awaiting_consent") return "consent";
   const mvrPending = cg.mvrStatus === "pending" || (cg.mvrPaid === true && !isApprovedDriver && (cg.backgroundCheckData as Record<string, unknown> | undefined)?.mvrIncluded === true); // running only once consent stamped mvrIncluded (2026-10-07)
   if (mvrPending) return "pending";
-  const services = (Array.isArray(cg.services) ? cg.services : Array.isArray(cg.skills) ? cg.skills : []) as string[];
-  if (services.includes("Transportation")) return "included";
+  // ONE Transportation rule (= utils/transportDocs.ts: services when non-empty, else skills).
+  if (caregiverOffersTransportation(cg)) return "included";
   return "offer";
 }
 
@@ -142,7 +142,8 @@ export async function loadMembershipTab(caregiverId: string): Promise<Membership
   const { hasValidTransportDocs } = await import("./caregiverMatchScoring");
   return {
     status,
-    isActive: status === "active" || status === "trialing",
+    // The ONE membership rule on both doors (sweep C1, 2026-10-11): Stripe's retry state still counts as active.
+    isActive: isCaregiverMembershipActive({ ...user, ...cg }),
     periodEnd: toDate(sub?.current_period_end),
     cancelAtPeriodEnd: sub?.cancel_at_period_end === true,
     bg: bgCardFor(cg),

@@ -18,7 +18,7 @@
 import * as admin from "firebase-admin";
 import { randomUUID } from "crypto";
 import { recipientPlanKey } from "./careRecipients";
-import { geocodeStreetAddress, lookupZipPlace } from "../utils/geocode";
+import { geocodeAddress, lookupZipPlace, GeoPrecision } from "../utils/geocode";
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -60,6 +60,7 @@ export interface LocationEntry {
   street: string; city: string; state: string; zipCode: string;
   petsInHome?: boolean; petTypes?: string[]; petName?: string; smokingHousehold?: boolean;
   lat?: number; lng?: number;
+  geoPrecision?: GeoPrecision;   // 'street' when geocoded from the full address — a job post reuses that point as is
 }
 export interface LifestyleData {
   favoriteActivities: string[]; favoriteActivitiesOther: string;
@@ -277,9 +278,12 @@ export async function geocodeLocation(l: LocationEntry): Promise<LocationEntry> 
   if (l.smokingHousehold !== undefined) entry.smokingHousehold = l.smokingHousehold;
   if (l.petTypes?.length) entry.petTypes = l.petTypes;
   if (l.petName) entry.petName = l.petName;
-  const coords = await geocodeStreetAddress(l.street, l.city, l.state, l.zipCode).catch(() => null);
-  if (coords) { entry.lat = coords.lat; entry.lng = coords.lng; }
-  else if (l.lat != null && l.lng != null) { entry.lat = l.lat; entry.lng = l.lng; }
+  // One geocoder (utils/geocode.ts geocodeAddress): the street first, ZIP/city only as a
+  // fallback — and the entry says which it got, so a later job post can reuse a
+  // street-level point as is (jobPostCoords.ts) and a backfill can find the coarse ones.
+  const point = await geocodeAddress({ street: l.street, city: l.city, state: l.state, zipCode: l.zipCode }).catch(() => null);
+  if (point) { entry.lat = point.lat; entry.lng = point.lng; entry.geoPrecision = point.geoPrecision; }
+  else if (l.lat != null && l.lng != null) { entry.lat = l.lat; entry.lng = l.lng; if (l.geoPrecision) entry.geoPrecision = l.geoPrecision; }
   return entry;
 }
 

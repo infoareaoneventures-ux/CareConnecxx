@@ -112,6 +112,11 @@ const geocodeStreetAddress = vi.fn(async (..._a: unknown[]) => ({ lat: 37.3, lng
 vi.mock("../../utils/geocode", () => ({
   lookupZipPlace: (...a: unknown[]) => lookupZipPlace(...a),
   geocodeStreetAddress: (...a: unknown[]) => geocodeStreetAddress(...a),
+  // carePlanPage.ts geocodes through geocodeAddress (street first) since 2026-10-11 — same spy underneath.
+  geocodeAddress: async (addr: { street?: string; city?: string; state?: string; zipCode?: string }) => {
+    const hit = await geocodeStreetAddress(addr.street, addr.city, addr.state, addr.zipCode);
+    return hit ? { ...hit, geoPrecision: "street" } : null;
+  },
 }));
 
 // update_care_plan (careNeeds/emergencyContacts/accessCodes/lifestyle/careLocation
@@ -195,7 +200,7 @@ describe("update_care_plan — careLocation", () => {
     expect(r.success).toBe(true);
     const doc = hoisted.docState.get(`carePlans/${CLIENT}`);
     expect(doc.recipientPlans.jane_doe.locations).toEqual([
-      { street: "123 Main St", city: "San Jose", state: "CA", zipCode: "95130", lat: 37.3, lng: -121.9 },
+      { street: "123 Main St", city: "San Jose", state: "CA", zipCode: "95130", lat: 37.3, lng: -121.9, geoPrecision: "street" },
     ]);
     expect(doc.locationPool).toHaveLength(1);
     // Sibling field on the same recipient untouched.
@@ -289,7 +294,8 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     expect(plan.careNeeds).toEqual(["Meal Preparation", "Personal Care"]);
     expect(plan.careNeedDetails).toEqual({}); // sub-tasks left the page 2026-10-04 — a passed map is ignored
     expect(plan.notes).toBe("she likes to go shopping");
-    expect(plan.locations).toEqual([{ street: "4746 campbell ave", city: "San Jose", state: "CA", zipCode: "95130", lat: 37.3, lng: -121.9 }]);
+    // geoPrecision 'street' (2026-10-11): the page geocodes the full street — a job post reuses this point as is.
+    expect(plan.locations).toEqual([{ street: "4746 campbell ave", city: "San Jose", state: "CA", zipCode: "95130", lat: 37.3, lng: -121.9, geoPrecision: "street" }]);
     expect(plan.lifestyle.favoriteActivities).toEqual([]);
     expect(hoisted.docState.get(`carePlans/${CLIENT}`).locationPool).toHaveLength(1);
     expect(hoisted.docState.get(`senior_profiles/${CLIENT}`).needs).toEqual(["Meal Preparation", "Personal Care"]);

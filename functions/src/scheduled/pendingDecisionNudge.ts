@@ -14,9 +14,10 @@
 // accepting on the fourth; replacements: 2h, then every 12h with no cap — they
 // stop when the visit date passes); stops the moment it's answered or withdrawn
 // (the record is no longer pending). Each nudge is the same words
-// as the original notice, texted AND mirrored to the bell (idempotent per
-// window), and re-parks the decision so a plain ACCEPT / DECLINE reply runs the
-// page's button (agents/decisionNotices.ts).
+// as the original notice, texted AND THEN mirrored to the bell (idempotent per
+// window; bell ⇄ text in lockstep — see runPendingDecisionNudges), and re-parks
+// the decision so a plain ACCEPT / DECLINE reply runs the page's button
+// (agents/decisionNotices.ts).
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
@@ -147,36 +148,56 @@ export async function loadPendingItems(): Promise<PendingItem[]> {
   return out;
 }
 
-export async function runPendingDecisionNudges(nowMs = Date.now()): Promise<{ nudged: number; bellOnly: number; skipped: number }> {
-  const result = { nudged: 0, bellOnly: 0, skipped: 0 };
+export interface PendingDecisionNudgeResult {
+  /** texted, then the bell */
+  nudged: number;
+  /** STOP: bell only — the site is her only channel (the documented exception) */
+  bellKeptOptedOut: number;
+  /** the text did not go — no bell, the window is not stamped, the next run retries */
+  dropped: number;
+  skipped: number;
+}
+
+// Bell ⇄ text in lockstep (caregiver sweep C11, 2026-10-11): the text goes FIRST
+// and the website bell is written only when it actually went. A dropped text (no
+// Evia session, wait-tool, daily cap, dedup, blocked) writes no bell and does not
+// stamp the window — the next hourly run tries again, exactly as the family-side
+// nudges do (the send layer's dedup and daily cap keep that from becoming spam).
+// ONE exception: a caregiver who texted STOP keeps the bell (the site is then her
+// only channel) and her window is stamped like a sent nudge.
+export async function runPendingDecisionNudges(nowMs = Date.now()): Promise<PendingDecisionNudgeResult> {
+  const result: PendingDecisionNudgeResult = { nudged: 0, bellKeptOptedOut: 0, dropped: 0, skipped: 0 };
   const today = new Date(nowMs).toISOString().slice(0, 10);
   const items = await loadPendingItems();
   for (const it of items) {
     try {
       if (!shouldNudgePendingDecision({ createdMs: it.createdMs, lastNudgedMs: it.lastNudgedMs, nowMs, replacement: it.replacement, visitDate: it.visitDate, today, nudgeCount: it.nudgeCount })) { result.skipped++; continue; }
       const text = `${it.body} ${it.replyLine}`;
-      // Bell first (idempotent per nudge number), then the text with the same words.
-      await writeUserNotification({
-        sourcePath: `${it.collection}/${it.id}`, eventId: `decision-nudge-${it.nudgeCount + 1}`, recipientId: it.caregiverId,
-        transitionType: "decision_nudge", type: it.kind === "interview_request" ? "interview_request" : it.kind === "amendment" ? "amendment_request" : "booking_request",
-        title: "Still waiting on you", body: it.body, data: { [it.collection === "video_interviews" ? "interviewId" : it.collection === "booking_amendments" ? "amendmentId" : "bookingId"]: it.id },
-      }).catch((err) => console.error("[pendingDecisionNudge] bell failed:", it.collection, it.id, err));
 
       const phone = await resolveCaregiverPhone(it.caregiverId);
       const sessSnap = phone ? await db.collection("agent_sessions").doc(phone).get().catch(() => null) : null;
+      const optedOut = sessSnap?.exists === true && sessSnap.data()?.optedOut === true;
       let sent = false;
-      if (phone && sessSnap?.exists && !sessSnap.data()?.optedOut) {
+      if (phone && sessSnap?.exists && !optedOut) {
         // Re-park the decision so a plain ACCEPT / DECLINE reply runs the page's button.
         await db.collection("agent_sessions").doc(phone).set(
           { pendingDecision: parkedDecision(it.kind, it.id, it.label, "caregiver", nowMs, it.clientName) }, { merge: true },
         ).catch(() => {});
         sent = await sendViaInteractionAgent(phone, { content: text, urgency: "standard", sourceAgent: "pending_decision_nudge", canDrop: true });
       }
-      // Stamp the window either way — the bell went out; a dropped text is retried next window, never spammed.
+      if (!sent && !optedOut) { result.dropped++; continue; }
+
+      // The bell with the same words — only now that the text went (or STOP left the site as her channel). Idempotent per nudge number.
+      await writeUserNotification({
+        sourcePath: `${it.collection}/${it.id}`, eventId: `decision-nudge-${it.nudgeCount + 1}`, recipientId: it.caregiverId,
+        transitionType: "decision_nudge", type: it.kind === "interview_request" ? "interview_request" : it.kind === "amendment" ? "amendment_request" : "booking_request",
+        title: "Still waiting on you", body: it.body, data: { [it.collection === "video_interviews" ? "interviewId" : it.collection === "booking_amendments" ? "amendmentId" : "bookingId"]: it.id },
+      }).catch((err) => console.error("[pendingDecisionNudge] bell failed:", it.collection, it.id, err));
+
       await db.collection(it.collection).doc(it.id).update({
         decisionNudgeCount: it.nudgeCount + 1, decisionNudgedAt: new Date(nowMs).toISOString(),
       }).catch(() => {});
-      if (sent) result.nudged++; else result.bellOnly++;
+      if (sent) result.nudged++; else result.bellKeptOptedOut++;
     } catch (err) {
       console.error(`[pendingDecisionNudge] error for ${it.collection}/${it.id}:`, err);
     }

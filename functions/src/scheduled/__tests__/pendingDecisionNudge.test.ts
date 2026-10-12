@@ -9,6 +9,8 @@ const hoisted = vi.hoisted(() => ({
   sessionSets: [] as Array<{ phone: string; data: any }>,
   bells: [] as any[],
   sends: [] as any[],
+  /** "text" / "bell" in the order they happened — the lockstep proof */
+  order: [] as string[],
   sendResult: true,
 }));
 vi.mock("firebase-admin", () => {
@@ -32,8 +34,8 @@ vi.mock("firebase-admin", () => {
   return { __esModule: true, default: { firestore }, firestore };
 });
 vi.mock("firebase-functions/v1", () => ({ pubsub: { schedule: () => ({ onRun: (fn: any) => fn }) } }));
-vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async (phone: string, out: any) => { hoisted.sends.push({ phone, out }); return hoisted.sendResult; }) }));
-vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (n: any) => { hoisted.bells.push(n); return true; }) }));
+vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async (phone: string, out: any) => { hoisted.sends.push({ phone, out }); hoisted.order.push("text"); return hoisted.sendResult; }) }));
+vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (n: any) => { hoisted.bells.push(n); hoisted.order.push("bell"); return true; }) }));
 vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(async (id: string) => (id === "cg1" ? "+1408" : undefined)) }));
 
 import { shouldNudgePendingDecision, runPendingDecisionNudges, toMs, NUDGE_DELAY_MS, RENUDGE_COOLDOWN_MS, REPLACEMENT_DELAY_MS, REPLACEMENT_COOLDOWN_MS, MAX_NUDGES } from "../pendingDecisionNudge";
@@ -41,7 +43,7 @@ import { shouldNudgePendingDecision, runPendingDecisionNudges, toMs, NUDGE_DELAY
 const NOW = Date.parse("2099-03-10T18:00:00.000Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
 
-beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sessionSets.length = 0; hoisted.bells.length = 0; hoisted.sends.length = 0; hoisted.sendResult = true; hoisted.docs.set("agent_sessions/+1408", { caregiverId: "cg1" }); });
+beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sessionSets.length = 0; hoisted.bells.length = 0; hoisted.sends.length = 0; hoisted.order.length = 0; hoisted.sendResult = true; hoisted.docs.set("agent_sessions/+1408", { caregiverId: "cg1" }); });
 
 describe("shouldNudgePendingDecision", () => {
   it("24h after the request, then every 48h; replacements 2h then every 12h and never after the visit date", () => {
@@ -71,9 +73,11 @@ describe("runPendingDecisionNudges", () => {
   it("nudges an unanswered interview request with the notice's words, mirrors the bell, re-parks the decision, stamps the window", async () => {
     hoisted.docs.set("video_interviews/iv1", { status: "requested", caregiverId: "cg1", clientName: "Basra Yousuf", jobTitle: "Senior care in San Jose", scheduledTime: "2099-03-28T16:00:00.000Z", createdAt: ago(NUDGE_DELAY_MS + 60_000) });
     const r = await runPendingDecisionNudges(NOW);
-    expect(r).toEqual({ nudged: 1, bellOnly: 0, skipped: 0 });
+    expect(r).toEqual({ nudged: 1, bellKeptOptedOut: 0, dropped: 0, skipped: 0 });
     expect(hoisted.sends[0].out.content).toMatch(/^Basra Yousuf's interview request for "Senior care in San Jose" \(.+\) is still waiting on you\. Reply ACCEPT or DECLINE, or PROPOSE a different time\.$/);
     expect(hoisted.bells[0]).toMatchObject({ sourcePath: "video_interviews/iv1", eventId: "decision-nudge-1", recipientId: "cg1", title: "Still waiting on you", data: { interviewId: "iv1" } });
+    // Bell ⇄ text (C11): the text went first, the bell followed it.
+    expect(hoisted.order).toEqual(["text", "bell"]);
     expect(hoisted.sessionSets[0].data.pendingDecision).toMatchObject({ kind: "interview_request", recordId: "iv1" });
     expect(hoisted.updates[0]).toEqual({ path: "video_interviews/iv1", data: { decisionNudgeCount: 1, decisionNudgedAt: new Date(NOW).toISOString() } });
   });
@@ -94,7 +98,7 @@ describe("runPendingDecisionNudges", () => {
     hoisted.docs.set("booking_requests/fresh", { status: "pending", caregiverId: "cg1", clientName: "Fam C", createdAt: ago(60_000) });
     hoisted.docs.set("booking_amendments/am1", { status: "pending", caregiverId: "cg1", clientName: "Fam D", createdAt: ago(NUDGE_DELAY_MS + 1) });
     const r = await runPendingDecisionNudges(NOW);
-    expect(r).toEqual({ nudged: 3, bellOnly: 0, skipped: 1 });
+    expect(r).toEqual({ nudged: 3, bellKeptOptedOut: 0, dropped: 0, skipped: 1 });
     const texts = hoisted.sends.map((s) => s.out.content);
     expect(texts).toContain("Fam A's booking request is still waiting on you. Reply ACCEPT or DECLINE, or DETAILS to see the full request.");
     expect(texts.some((t) => t.startsWith("Fam B needs a replacement caregiver on ") && t.endsWith("— the request is still waiting on you. Reply ACCEPT or DECLINE, or DETAILS to see the full request."))).toBe(true);
@@ -102,13 +106,53 @@ describe("runPendingDecisionNudges", () => {
     expect(hoisted.sessionSets.map((s) => s.data.pendingDecision.kind).sort()).toEqual(["amendment", "booking_request", "booking_request"]);
   });
 
-  it("no Evia session → bell only; a dropped text still stamps the window (never a double bell)", async () => {
-    hoisted.docs.set("booking_requests/br1", { status: "pending", caregiverId: "cg2", clientName: "Fam", createdAt: ago(NUDGE_DELAY_MS + 1) });
+  // Bell ⇄ text in lockstep (caregiver sweep C11, 2026-10-11): the bell is written
+  // only when the text went. No bell-only path for a dropped text any more.
+  it("text dropped by the send layer (wait-tool / cap / dedup / block) → no bell, window not stamped, retried next run", async () => {
+    hoisted.sendResult = false;
+    hoisted.docs.set("booking_requests/br1", { status: "pending", caregiverId: "cg1", clientName: "Fam", createdAt: ago(NUDGE_DELAY_MS + 1) });
     const r1 = await runPendingDecisionNudges(NOW);
-    expect(r1).toEqual({ nudged: 0, bellOnly: 1, skipped: 0 });
+    expect(r1).toEqual({ nudged: 0, bellKeptOptedOut: 0, dropped: 1, skipped: 0 });
+    expect(hoisted.sends).toHaveLength(1);
+    expect(hoisted.bells).toHaveLength(0);
+    expect(hoisted.updates).toHaveLength(0);
+    // The next run tries again (same nudge number → the bell key is unchanged, so it can never double).
+    hoisted.sendResult = true;
+    const r2 = await runPendingDecisionNudges(NOW + 60 * 60_000);
+    expect(r2).toEqual({ nudged: 1, bellKeptOptedOut: 0, dropped: 0, skipped: 0 });
+    expect(hoisted.bells).toHaveLength(1);
+    expect(hoisted.bells[0].eventId).toBe("decision-nudge-1");
+    expect(hoisted.updates[0].data.decisionNudgeCount).toBe(1);
+  });
+
+  it("no Evia session (never texted Evia) → no text, no bell, nothing stamped", async () => {
+    hoisted.docs.set("booking_requests/br1", { status: "pending", caregiverId: "cg2", clientName: "Fam", createdAt: ago(NUDGE_DELAY_MS + 1) });
+    const r = await runPendingDecisionNudges(NOW);
+    expect(r).toEqual({ nudged: 0, bellKeptOptedOut: 0, dropped: 1, skipped: 0 });
+    expect(hoisted.sends).toHaveLength(0);
+    expect(hoisted.bells).toHaveLength(0);
+    expect(hoisted.updates).toHaveLength(0);
+  });
+
+  it("text sent → the bell is written after it and the window is stamped", async () => {
+    hoisted.docs.set("booking_requests/br1", { status: "pending", caregiverId: "cg1", clientName: "Fam", createdAt: ago(NUDGE_DELAY_MS + 1) });
+    const r = await runPendingDecisionNudges(NOW);
+    expect(r).toEqual({ nudged: 1, bellKeptOptedOut: 0, dropped: 0, skipped: 0 });
+    expect(hoisted.order).toEqual(["text", "bell"]);
+    expect(hoisted.bells[0]).toMatchObject({ sourcePath: "booking_requests/br1", eventId: "decision-nudge-1", recipientId: "cg1", type: "booking_request" });
+    expect(hoisted.updates[0]).toEqual({ path: "booking_requests/br1", data: { decisionNudgeCount: 1, decisionNudgedAt: new Date(NOW).toISOString() } });
+    const r2 = await runPendingDecisionNudges(NOW + 60_000);
+    expect(r2).toEqual({ nudged: 0, bellKeptOptedOut: 0, dropped: 0, skipped: 1 });
+  });
+
+  it("the one exception: a caregiver who texted STOP keeps the bell (the site is her only channel) and the window is stamped", async () => {
+    hoisted.docs.set("agent_sessions/+1408", { caregiverId: "cg1", optedOut: true });
+    hoisted.docs.set("booking_requests/br1", { status: "pending", caregiverId: "cg1", clientName: "Fam", createdAt: ago(NUDGE_DELAY_MS + 1) });
+    const r = await runPendingDecisionNudges(NOW);
+    expect(r).toEqual({ nudged: 0, bellKeptOptedOut: 1, dropped: 0, skipped: 0 });
+    expect(hoisted.sends).toHaveLength(0);
+    expect(hoisted.sessionSets).toHaveLength(0); // nothing parked on a STOPped session
     expect(hoisted.bells).toHaveLength(1);
     expect(hoisted.updates[0].data.decisionNudgeCount).toBe(1);
-    const r2 = await runPendingDecisionNudges(NOW + 60_000);
-    expect(r2).toEqual({ nudged: 0, bellOnly: 0, skipped: 1 });
   });
 });

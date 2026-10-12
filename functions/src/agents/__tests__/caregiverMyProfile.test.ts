@@ -69,7 +69,7 @@ describe("loadMyProfilePage + myProfileText — the page's sections in order", (
     expect(page.rates).toEqual([{ label: "1 Person", rate: 25 }, { label: "2 People", rate: 30 }]);
     expect(page.reviews.recommendPct).toBe(50);
     const t = myProfileText(page);
-    const order = ["My Profile", "Mahad · Verified", "4.5 (2 reviews)", "san jose, CA · $25/hr", "Photo: on file (reply PHOTO to change it)",
+    const order = ["My Profile", "Mahad · Background check complete", "4.5 (2 reviews)", "san jose, CA · $25/hr", "Photo: on file (reply PHOTO to change it)",
       "About Mahad", "I'm a great caregiver and happy to help anyone", "Languages: English", "Reply BIO to edit your bio, or LANGUAGES",
       "Care Services", "Companionship, Transportation, Medication Reminders Only", "Reply SERVICES",
       "Rates", "1 Person: $25/hr", "2 People: $30/hr", "3-5 years experience · Up to 1 client at once", "Reply RATES",
@@ -84,7 +84,7 @@ describe("loadMyProfilePage + myProfileText — the page's sections in order", (
   it("empty states read like the page", async () => {
     hoisted.docs.set("caregivers/cg1", { name: "New Caregiver" });
     const t = myProfileText(await loadMyProfilePage("cg1"));
-    expect(t).toContain("New Caregiver · Pending");
+    expect(t).toContain("New Caregiver · Background check pending");
     expect(t).toContain("No reviews yet");
     expect(t).toContain("Photo: none yet (reply PHOTO to add one)");
     expect(t).toContain("Add a bio to introduce yourself to families.");

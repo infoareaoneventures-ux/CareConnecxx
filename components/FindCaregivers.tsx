@@ -13,6 +13,7 @@ import { hasValidTransportDocs } from '../utils/transportDocs';
 import { formatExperience } from '../utils/experience';
 import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
+import { nearestDistanceMiles } from '../hooks/useNearbyCaregiversWithScores';
 import firebase from 'firebase/compat/app';
 import { AIMatchScore } from '../services/aiMatchingService';
 import { dbService } from '../services/api';
@@ -37,7 +38,8 @@ interface Caregiver {
   street?: string;
   verified: boolean;
   backgroundCheckStatus?: 'none' | 'pending' | 'clear' | 'flagged' | 'consider';
-  distance: number;
+  /** Miles from the nearest care location; undefined = unknown (no coords), never a fake 0. */
+  distance?: number;
   lat?: number;
   lng?: number;
   photoURL?: string;
@@ -75,16 +77,7 @@ const EXPERIENCE_TIERS = [
   { key: 10, label: '10+ years' },
 ];
 
-
-function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 3959; // Earth radius in miles
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+// Distance math lives in hooks/useNearbyCaregiversWithScores.ts (nearestDistanceMiles) — one rule for every family list.
 
 function formatLastActive(iso?: string): string {
   if (!iso) return 'active recently';
@@ -352,12 +345,9 @@ export default function FindCaregivers() {
         seen.add(doc.id);
         const cgLat: number | undefined = data.lat ?? data.latitude ?? data.location?.lat ?? data._geoloc?.lat;
         const cgLng: number | undefined = data.lng ?? data.longitude ?? data.location?.lng ?? data._geoloc?.lng;
-        // Minimum distance from any client care location to this caregiver's home
-        let minDist = 0;
-        if (cgLat != null && cgLng != null && clientLocs.length > 0) {
-          minDist = Math.min(...clientLocs.map(loc => haversineDistance(loc.lat, loc.lng, cgLat, cgLng)));
-          minDist = Math.round(minDist * 10) / 10;
-        }
+        // Minimum distance from any client care location to this caregiver's home;
+        // undefined = unknown (no coords on one side) — never a fake 0 (2026-10-11).
+        const minDist = nearestDistanceMiles(cgLat, cgLng, clientLocs);
         caregiverList.push({
           id: doc.id,
           firstName,
@@ -406,7 +396,7 @@ export default function FindCaregivers() {
             redFlags: pre.redFlags || [],
             confidence: pre.confidence,
             breakdown: { ruleBasedScore: pre.score, predictiveScore: pre.score },
-            factors: { distance: cg.distance, skillsMatch: pre.score, availability: 1, experience: cg.experience || 0, rating: cg.rating, retention: 0 },
+            factors: { distance: cg.distance ?? 0, skillsMatch: pre.score, availability: 1, experience: cg.experience || 0, rating: cg.rating, retention: 0 },
           } as AIMatchScore;
           return { ...cg, matchScore };
         });
@@ -512,7 +502,7 @@ export default function FindCaregivers() {
       if (blockedIds.has(cg.id)) return false;
       if (showFavoritesOnly && !favorites.includes(cg.id)) return false;
       // Distance filter — only applied when client has locations AND caregiver has coords
-      if (clientLocations.length > 0 && cg.lat != null && cg.lng != null) {
+      if (cg.distance != null) {
         if (cg.distance > maxDistance) return false;
         // Also respect caregiver's own travel radius — don't show if client is outside it
         if (cg.serviceRadius != null && cg.serviceRadius > 0 && cg.distance > cg.serviceRadius) return false;

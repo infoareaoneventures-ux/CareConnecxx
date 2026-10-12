@@ -16,6 +16,13 @@ import firebase from '../../lib/firebase';
 import { dbService } from '../../services/api';
 import { useInProgressVisits } from '../../hooks/useInProgressVisits';
 import { otherVisitInProgress, finishFirstText, FINISH_FIRST_LABEL } from '../../utils/shiftStart';
+// Start / End / ✕ / Cancel Booking / Log Hours are server writes (2026-10-11):
+// the request goes through the visit_action_requests queue and
+// functions/src/shifts/visitActions.ts — the same functions Evia's START /
+// FINISH / CANCEL / LOG use — checks the gate, the Start window, one visit at a
+// time and the 24h cancel rule, then writes. The button conditions below are
+// the same rule as a UI convenience; the server is the gate.
+import { submitVisitAction } from '../../services/visitActionQueue';
 
 type Tab = 'requests' | 'active' | 'past';
 
@@ -163,20 +170,6 @@ interface BookingAmendment {
 }
 
 const ALL_DAYS_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-// Returns the date string (YYYY-MM-DD) of the first occurrence of dayName on or after startDate
-function normDay(day: string): string {
-  const d = day.trim();
-  return d.charAt(0).toUpperCase() + d.slice(1, 3).toLowerCase();
-}
-function nextOccurrence(startDate: string, dayName: string): string {
-  const target = ALL_DAYS_ORDER.indexOf(normDay(dayName));
-  if (target === -1) return startDate;
-  const base = new Date(startDate + 'T12:00:00');
-  const diff = (target - base.getDay() + 7) % 7;
-  base.setDate(base.getDate() + diff);
-  return base.toISOString().split('T')[0];
-}
 
 function tsToDate(ts: any): Date | null {
   if (!ts) return null;
@@ -701,7 +694,7 @@ const BookingGroupCard: React.FC<{
 }> = ({ shifts, inProgressVisits, onCancel, schedulePaused, bookingNote, focusShiftId }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
-  const { setMembershipModalOpen } = useCareConnex();
+  const { setMembershipModalOpen, addToast } = useCareConnex();
   // The card reads its booking-level fields (schedule, note, care plan…) off the
   // group's LATEST-dated shift — the same shift the family's card reads
   // (ClientVisitsPage lists shifts date-desc). Our listener is date-asc, so
@@ -738,27 +731,36 @@ const BookingGroupCard: React.FC<{
   const [endNotesByShift, setEndNotesByShift] = useState<Record<string, string>>({});
   const [noteDraftByShift, setNoteDraftByShift] = useState<Record<string, string>>({});
 
+  // Start Shift → the server's startVisit ({status:'in-progress', startedAt, updatedAt} once the
+  // gate, the 15-minute window and one-visit-at-a-time pass). A refusal is shown in the server's words.
   const handleStart = async (shiftId: string) => {
-    if (!db) return;
+    const shift = shifts.find(s => s.id === shiftId);
+    if (!shift) return;
     setSubmitting(shiftId);
-    await db.collection('shifts').doc(shiftId).update({
-      status: 'in-progress',
-      startedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {}).finally(() => setSubmitting(null));
+    try {
+      const r = await submitVisitAction('start_visit', { caregiverId: shift.caregiverId, shiftId });
+      if (!r.ok) addToast(r.message, 'error');
+    } catch {
+      addToast('Could not start this shift. Please try again.', 'error');
+    } finally {
+      setSubmitting(null);
+    }
   };
 
+  // End → the server's endVisit ({status:'completed', completedAt, updatedAt, completionNotes?}).
   const handleEnd = async (shiftId: string, notes?: string) => {
-    if (!db) return;
+    const shift = shifts.find(s => s.id === shiftId);
+    if (!shift) return;
     setSubmitting(shiftId);
     setEndingShiftId(null);
-    const update: any = {
-      status: 'completed',
-      completedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    };
-    if (notes?.trim()) update.completionNotes = notes.trim();
-    await db.collection('shifts').doc(shiftId).update(update).catch(() => {}).finally(() => setSubmitting(null));
+    try {
+      const r = await submitVisitAction('end_visit', { caregiverId: shift.caregiverId, shiftId, closingNote: notes?.trim() || undefined });
+      if (!r.ok) addToast(r.message, 'error');
+    } catch {
+      addToast('Could not end this shift. Please try again.', 'error');
+    } finally {
+      setSubmitting(null);
+    }
   };
 
   // Visit notes log — append-only lines while the visit is in progress. Once a
@@ -775,19 +777,21 @@ const BookingGroupCard: React.FC<{
   };
 
   const handleCancelShift = async (shift: Shift) => {
-    if (!db || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
+    if (!window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
     setSubmitting(shift.id);
     // Within 24h of the shift starting, the family gets a fast replacement
     // picker instead of a plain cancellation — anything further out, they
-    // have time to just find/interview a new caregiver the normal way.
-    const startsAt = new Date(`${shift.date}T${shift.startTime}`);
-    const hoursUntilStart = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
-    const isUrgent = hoursUntilStart <= 24;
-    await db.collection('shifts').doc(shift.id).update({
-      status: isUrgent ? 'needs_replacement' : 'cancelled',
-      cancelledBy: 'caregiver',
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {}).finally(() => setSubmitting(null));
+    // have time to just find/interview a new caregiver the normal way. The
+    // server's cancelVisit applies that rule ({status: needs_replacement |
+    // cancelled, cancelledBy: 'caregiver', updatedAt}).
+    try {
+      const r = await submitVisitAction('cancel_visit', { caregiverId: shift.caregiverId, shiftId: shift.id });
+      if (!r.ok) addToast(r.message, 'error');
+    } catch {
+      addToast('Failed to cancel shift', 'error');
+    } finally {
+      setSubmitting(null);
+    }
   };
 
   // Reschedule the SAME shift in place — no cancel, no new doc. Mirrors the
@@ -2011,63 +2015,16 @@ export const CaregiverBookingsPage: React.FC = () => {
   };
 
   const handleCancelShift = async (id: string) => {
-    if (!db || !window.confirm('Cancel this shift and all future scheduled shifts for this booking?')) return;
+    if (!uid || !window.confirm('Cancel this shift and all future scheduled shifts for this booking?')) return;
     try {
-      const shiftSnap = await db.collection('shifts').doc(id).get();
-      const shiftData = shiftSnap.data() as any;
-      const bookingRequestId: string | undefined = shiftData?.bookingRequestId;
-
-      // Same-day/next-day shifts get the fast replacement flow (needs_replacement)
-      // instead of a plain cancel — mirrors the per-shift "X" handler above (and
-      // ClientVisitsPage's caregiver-side cancel) so the family isn't just dropped
-      // with no visit and no chance to find someone else.
-      const isShiftUrgent = (s: any): boolean => {
-        const startsAt = new Date(`${s.date}T${s.startTime}`);
-        const hoursUntilStart = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
-        return hoursUntilStart <= 24;
-      };
-
-      const batch = db.batch();
-      let anyUrgent = false;
-
-      const applyCancel = (ref: firebase.firestore.DocumentReference, s: any) => {
-        const urgent = isShiftUrgent(s);
-        if (urgent) anyUrgent = true;
-        batch.update(ref, {
-          status: urgent ? 'needs_replacement' : 'cancelled',
-          cancelledBy: 'caregiver',
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-      };
-
-      applyCancel(db.collection('shifts').doc(id), shiftData);
-
-      if (bookingRequestId) {
-        const futureSnap = await db.collection('shifts')
-          .where('bookingRequestId', '==', bookingRequestId)
-          .where('status', '==', 'scheduled')
-          .where('caregiverId', '==', uid)
-          .get();
-        futureSnap.docs.forEach(doc => {
-          if (doc.id !== id) applyCancel(doc.ref, doc.data());
-        });
-
-        await batch.commit();
-
-        // Only fully close out the booking relationship if nothing needs a
-        // replacement — an urgent shift stays "accepted" so the booking (and
-        // the family's needs_replacement prompt) remains live.
-        if (!anyUrgent) {
-          await db.collection('booking_requests').doc(bookingRequestId).update({
-            status: 'cancelled',
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          }).catch(() => {});
-        }
-      } else {
-        await batch.commit();
-      }
-
-      addToast(anyUrgent ? 'Cancelled — the family can pick a replacement for the urgent shift' : 'Booking cancelled', 'info');
+      // The server's cancelBooking: this shift + every future scheduled shift of
+      // the booking, each needs_replacement (starts within 24h) or cancelled,
+      // cancelledBy 'caregiver'; the booking itself is closed only when nothing
+      // needs a replacement — an urgent shift keeps the booking (and the family's
+      // needs_replacement prompt) live. Same rule as the per-shift ✕ above.
+      const r = await submitVisitAction('cancel_booking', { caregiverId: uid, shiftId: id });
+      if (!r.ok) { addToast(r.message, 'error'); return; }
+      addToast(r.anyUrgent ? 'Cancelled — the family can pick a replacement for the urgent shift' : 'Booking cancelled', 'info');
     } catch {
       addToast('Failed to cancel shift', 'error');
     }
@@ -2077,98 +2034,14 @@ export const CaregiverBookingsPage: React.FC = () => {
     const fdb = db;
     if (!fdb) return;
     try {
-      const addDaysLocal = (dateStr: string, days: number) => {
-        const d = new Date(dateStr + 'T12:00:00');
-        d.setDate(d.getDate() + days);
-        return d.toISOString().split('T')[0];
-      };
-      const _n = new Date();
-      const today = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`;
-      const generateFrom = amendment.startDate && amendment.startDate >= today ? amendment.startDate : today;
-      const generateTo = addDaysLocal(generateFrom, 27);
-
-      if (amendment.bookingRequestId) {
-        const bookingSnap = await fdb.collection('booking_requests').doc(amendment.bookingRequestId).get();
-        if (bookingSnap.exists) {
-          const booking = bookingSnap.data()!;
-          const currentDST: Record<string, Array<{ start: string; end: string }>> = booking.schedule?.dayShiftTimes || {};
-          // Only merge into the permanent schedule for ongoing amendments.
-          // Amendments with an end date are temporary — don't add them to
-          // dayShiftTimes or the shiftGenerator will keep recreating them.
-          const mergedDST: Record<string, Array<{ start: string; end: string }>> = amendment.ongoing
-            ? (() => {
-                const dst = { ...currentDST };
-                for (const [day, blocks] of Object.entries(amendment.newDays)) {
-                  if (!dst[day]) dst[day] = [];
-                  dst[day] = [...dst[day], ...(blocks as Array<{ start: string; end: string }>)];
-                }
-                return dst;
-              })()
-            : currentDST;
-          if (amendment.ongoing) {
-            await fdb.collection('booking_requests').doc(amendment.bookingRequestId).update({
-              'schedule.dayShiftTimes': mergedDST,
-              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            });
-          }
-          const endDate: string | null = amendment.ongoing
-            ? null
-            : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));
-          let cgPhotoURL: string | null = booking.caregiverPhotoURL || null;
-          if (!cgPhotoURL && amendment.caregiverId) {
-            const cgSnap = await fdb.collection('caregivers').doc(amendment.caregiverId).get().catch(() => null);
-            const cgData = cgSnap?.data() as any;
-            cgPhotoURL = cgData?.photo || cgData?.profilePhoto || cgData?.photoURL || cgData?.imageUrl || null;
-          }
-          const shiftBase = {
-            clientId: booking.clientId || amendment.clientId,
-            clientName: booking.clientName || amendment.clientName,
-            clientPhotoURL: booking.clientPhotoURL || null,
-            caregiverId: amendment.caregiverId,
-            caregiverName: booking.caregiverName || amendment.caregiverName,
-            caregiverPhotoURL: cgPhotoURL,
-            status: 'scheduled',
-            address: booking.address || '',
-            careNeeds: booking.careNeeds || [],
-            lifestylePreferences: booking.lifestylePreferences || [],
-            rate: booking.rate ?? null,
-            paymentMethod: booking.paymentMethod || null,
-            // The family's note on THIS request travels onto the visits it
-            // creates (falling back to the booking's general note) — it used
-            // to vanish the moment the request was accepted (2026-09-17).
-            notes: amendment.notes || booking.notes || '',
-            careRecipients: booking.careRecipients || [],
-            emergencyContact: booking.emergencyContact || null,
-            schedule: { ...(booking.schedule || {}), dayShiftTimes: mergedDST },
-            bookingRequestId: amendment.bookingRequestId,
-            recurringWeekly: true,
-            tasksCompleted: [],
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          };
-          const batch = fdb.batch();
-          let count = 0;
-          for (const [day, blocks] of Object.entries(amendment.newDays)) {
-            for (const block of blocks as Array<{ start: string; end: string }>) {
-              let dateStr = nextOccurrence(generateFrom, day);
-              while (dateStr <= generateTo && count < 490) {
-                if (endDate && dateStr > endDate) break;
-                batch.set(fdb.collection('shifts').doc(), {
-                  ...shiftBase,
-                  date: dateStr,
-                  startTime: block.start,
-                  endTime: block.end,
-                });
-                count++;
-                const d = new Date(dateStr + 'T12:00:00');
-                d.setDate(d.getDate() + 7);
-                dateStr = d.toISOString().split('T')[0];
-              }
-            }
-          }
-          if (count > 0) await batch.commit();
-          // Notification handled by onBookingAmendmentWrite Cloud Function
-        }
-      }
+      // ONE write: the acceptance. The visits (28-day window from the start
+      // date, an ongoing change merged into the booking's schedule, the
+      // request's note on each visit, the 490 cap) are generated server-side
+      // by onBookingAmendmentAccepted (functions/src/scheduled/shiftGenerator.ts)
+      // — the same trigger Evia's "accept" lands on — behind the membership +
+      // background gate. The rules no longer let a caregiver build shifts
+      // from the browser (2026-10-11). The family is told by
+      // onBookingAmendmentWrite.
       await fdb.collection('booking_amendments').doc(amendment.id).update({
         status: 'accepted',
         respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -2553,20 +2426,23 @@ export const CaregiverBookingsPage: React.FC = () => {
               <button
                 disabled={loggingHours || !logStartDate || !logStart || !logEndDate || !logEnd || !totalMins || totalMins <= 0}
                 onClick={async () => {
-                  if (!db || !logHoursShift || !logStart || !logEnd || !logStartDate || !logEndDate) return;
+                  if (!logHoursShift || !logStart || !logEnd || !logStartDate || !logEndDate) return;
                   setLoggingHours(true);
                   try {
                     const startedAt = new Date(`${logStartDate}T${logStart}:00`);
                     const completedAt = new Date(`${logEndDate}T${logEnd}:00`);
-                    await db.collection('shifts').doc(logHoursShift.id).update({
-                      status: 'completed',
-                      startedAt: firebase.firestore.Timestamp.fromDate(startedAt),
-                      completedAt: firebase.firestore.Timestamp.fromDate(completedAt),
-                      loggedManually: true,
+                    // The server's logHours writes the modal's patch ({status:'completed', startedAt,
+                    // completedAt, loggedManually, tasksCompleted, completionNotes?, updatedAt}) once it
+                    // has checked the visit is a missed one and the gate passes.
+                    const r = await submitVisitAction('log_hours', {
+                      caregiverId: logHoursShift.caregiverId,
+                      shiftId: logHoursShift.id,
+                      startedAt: startedAt.toISOString(),
+                      completedAt: completedAt.toISOString(),
                       tasksCompleted: logTasks,
-                      ...(logNote.trim() ? { completionNotes: logNote.trim() } : {}),
-                      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                      completionNotes: logNote.trim() || undefined,
                     });
+                    if (!r.ok) { addToast(r.message, 'error'); return; }
                     addToast('Hours logged successfully', 'success');
                     setLogHoursShift(null);
                   } catch {

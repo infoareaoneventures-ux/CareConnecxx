@@ -60,6 +60,14 @@ vi.mock("../../utils/caraMessage", () => ({
 const sendSpy = vi.fn(async (..._a: unknown[]) => true);
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unknown[]) => sendSpy(...a) }));
 
+// Bell ⇄ text in lockstep (C11, 2026-10-11): the website bell is written only
+// after the text went. `order` records which happened first.
+const bells: any[] = [];
+const order: string[] = [];
+vi.mock("../../notifications/userNotification", () => ({
+  writeUserNotification: vi.fn(async (n: any) => { bells.push(n); order.push("bell"); return true; }),
+}));
+
 import {
   sendInterviewFeedbackNudges,
   shouldNudgeInterviewFeedback,
@@ -195,7 +203,37 @@ describe("sendInterviewFeedbackNudges — only counts a nudge when it actually s
     store.bookings.clear();
     store.updates.length = 0;
     store.sessionUpdates.length = 0;
+    bells.length = 0;
+    order.length = 0;
     sendSpy.mockReset();
+    sendSpy.mockImplementation(async () => { order.push("text"); return true; });
+  });
+
+  // Bell ⇄ text in lockstep (C11, 2026-10-11).
+  it("text dropped → no bell", async () => {
+    sendSpy.mockResolvedValueOnce(false);
+    seedInterview("iv-no-bell");
+    seedSession("+15550000020");
+
+    await (sendInterviewFeedbackNudges as any)();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(bells).toHaveLength(0);
+  });
+
+  it("text sent → the bell follows it, in the Interviews tab's words (Send Booking / Not Selected), keyed per nudge number", async () => {
+    seedInterview("iv-bell", { feedbackNudgeCount: 1, fitLevel: "maybe" });
+    seedSession("+15550000021");
+
+    await (sendInterviewFeedbackNudges as any)();
+
+    expect(order).toEqual(["text", "bell"]);
+    expect(bells).toEqual([expect.objectContaining({
+      sourcePath: "video_interviews/iv-bell", eventId: "feedback-nudge-2", recipientId: "client-1",
+      transitionType: "interview_feedback_nudge", type: "interview_feedback_reminder",
+      title: "How did the interview go?", data: { interviewId: "iv-bell" },
+      body: "You're still deciding on Basra. Send Booking or Not Selected from your Interviews tab when you're ready.",
+    })]);
   });
 
   // 2026-09-27 live: booking sent AND accepted, family still nudged every 48h.

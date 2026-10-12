@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  ChevronLeft, CheckCircle, Loader2, Upload, Sparkles,
+  ChevronLeft, Loader2, Upload, Sparkles,
   User, Heart, ChevronDown, ChevronUp, Lightbulb, FileText, X,
 } from 'lucide-react';
-import { dbService } from '../../services/api';
-import { documentUploadService, DocumentType } from '../../services/documentUpload';
+import { dbService, uploadCaregiverProfilePhoto, CAREGIVER_PHOTO_FIELDS } from '../../services/api';
 import { blocksToWeeklySlots } from '../../services/availabilityService';
+import { geocodeAddress } from '../../utils/geocode';
+import { evaluateServiceArea, OUT_OF_AREA_MESSAGE } from '../../utils/serviceArea';
 import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
@@ -15,6 +16,8 @@ import {
   MAX_CLIENTS_OPTIONS,
   WRITING_IDEAS,
   EXAMPLE_BIO,
+  BIO_MIN_CHARS,
+  BIO_MAX_CHARS,
 } from './signup/constants';
 
 interface WizardProps {
@@ -57,6 +60,10 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const [isInitializing, setIsInitializing] = useState(true);
   const [emailOnRecord, setEmailOnRecord] = useState(false);
   const blobUrlsRef = useRef<Set<string>>(new Set());
+  // For the out-of-area waitlist lead (sweep C6, 2026-10-11) — the record's phone + name.
+  const [phoneOnRecord, setPhoneOnRecord] = useState('');
+  const [nameOnRecord, setNameOnRecord] = useState('');
+  const [waitlistState, setWaitlistState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   const [form, setForm] = useState<WizardForm>({
     locationStreet: '',
@@ -106,6 +113,8 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       if (mergedName) {
         dbService.updateUser('caregivers', uid, { name: mergedName } as any).catch(() => {});
       }
+      setNameOnRecord(mergedName || '');
+      setPhoneOnRecord(typeof p.phone === 'string' ? p.phone : '');
       setForm(prev => ({
         ...prev,
         locationStreet:      p.street        || '',
@@ -115,8 +124,10 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         email:               p.email         || '',
         bio:                 p.bio           || '',
         hourlyRate:          p.hourlyRate    ? String(p.hourlyRate)    : '',
-        rateFor2Seniors:     p.rateForTwo    ? String(p.rateForTwo)    : '',
-        rateFor3PlusSeniors: p.rateForThree  ? String(p.rateForThree)  : '',
+        // ONE field set (sweep C7, 2026-10-11): rateFor2Seniors / rateFor3PlusSeniors are the
+        // only names written anywhere on the site; the legacy rateForTwo / rateForThree are read as a fallback.
+        rateFor2Seniors:     (p.rateFor2Seniors || p.rateForTwo)        ? String(p.rateFor2Seniors || p.rateForTwo)        : '',
+        rateFor3PlusSeniors: (p.rateFor3PlusSeniors || p.rateForThree)  ? String(p.rateFor3PlusSeniors || p.rateForThree)  : '',
         maxClients:          p.maxClients    ? String(p.maxClients)    : '',
         serviceRadius:       p.serviceRadius ? String(p.serviceRadius) : '10',
         selectedServices:    loadedServices,
@@ -164,18 +175,35 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     if (!form.locationZip.trim() || form.locationZip.length < 5) { onShowToast('Please enter a valid zip code', 'error'); return; }
     if (!form.locationCity.trim()) { onShowToast('Please enter your city', 'error'); return; }
     if (!form.locationState.trim()) { onShowToast('Please enter your state', 'error'); return; }
+    // Launch is ONE county (founder, 2026-10-11) — the same Santa Clara County check the
+    // family wizard runs (ClientJobPostingWizard.tsx) and Evia runs by text; ZIP is authoritative.
+    if (evaluateServiceArea({ zip: form.locationZip, city: form.locationCity }) !== 'in') {
+      onShowToast(OUT_OF_AREA_MESSAGE, 'error'); return;
+    }
     setIsLoading(true);
     try {
+      const street = form.locationStreet.trim(), city = form.locationCity.trim(), state = form.locationState.trim(), zip = form.locationZip.trim();
+      // Geocode the way Settings' address editor does (CaregiverAccountSettings.tsx saveAddress) —
+      // same helper, same four fields — so distance ranking works from day one (sweep C7, 2026-10-11).
+      const point = await geocodeAddress({ street, city, state, zipCode: zip });
       await dbService.updateUser('caregivers', uid, cleanData({
-        street:     form.locationStreet.trim(),
-        city:       form.locationCity.trim(),
-        state:      form.locationState.trim(),
-        zipCode:    form.locationZip.trim(),
+        street, city, state, zipCode: zip,
+        // Only when geocoding succeeded — the server-side trigger fills it otherwise (same as Settings).
+        ...(point ? { lat: point.lat, lng: point.lng, latitude: point.lat, longitude: point.lng, geoPrecision: point.geoPrecision } : {}),
         wizardStep: emailOnRecord ? 'photo' : 'email',
       }) as any);
       next();
     } catch { onShowToast('Failed to save location. Please try again.', 'error'); }
     finally { setIsLoading(false); }
+  };
+
+  // The out-of-area waitlist lead — the family wizard's button, same write (dbService.joinWaitlist), role caregiver.
+  const handleJoinWaitlist = async () => {
+    setWaitlistState('saving');
+    try {
+      await dbService.joinWaitlist({ uid, phone: phoneOnRecord, name: nameOnRecord, city: form.locationCity.trim(), zipCode: form.locationZip.trim(), role: 'caregiver' });
+      setWaitlistState('saved');
+    } catch { setWaitlistState('error'); }
   };
 
   const handleSaveEmail = async () => {
@@ -202,8 +230,10 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     }
     setIsLoading(true);
     try {
-      const doc = await documentUploadService.uploadDocument(uid, form.profilePhoto.file, 'profilePhoto');
-      await dbService.updateUser('caregivers', uid, { photo: doc.url, wizardStep: 'availability' } as any);
+      // ONE photo path + ONE field set with the profile page and Evia (sweep C7, 2026-10-11):
+      // profile-photos/caregivers/{uid} → photo (+ photoURL / profilePhoto mirrors). No documents map.
+      const url = await uploadCaregiverProfilePhoto(uid, form.profilePhoto.file);
+      await dbService.updateUser('caregivers', uid, { ...CAREGIVER_PHOTO_FIELDS(url), wizardStep: 'availability' } as any);
       next();
     } catch (err: any) {
       onShowToast(err?.message || 'Failed to upload photo. Please try again.', 'error');
@@ -258,8 +288,10 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         serviceRadius: parseInt(form.serviceRadius) || 10,
         wizardStep: 'bio',
       };
-      if (form.rateFor2Seniors) rateData.rateForTwo = parseInt(form.rateFor2Seniors);
-      if (form.rateFor3PlusSeniors) rateData.rateForThree = parseInt(form.rateFor3PlusSeniors);
+      // The profile editor's names (components/CaregiverProfile.tsx Rates › Save) — the ONLY
+      // ones written on the site since 2026-10-11 (sweep C7); readers keep rateForTwo/-Three as a fallback.
+      if (form.rateFor2Seniors) rateData.rateFor2Seniors = parseInt(form.rateFor2Seniors);
+      if (form.rateFor3PlusSeniors) rateData.rateFor3PlusSeniors = parseInt(form.rateFor3PlusSeniors);
       if (form.maxClients) rateData.maxClients = parseInt(form.maxClients);
       await dbService.updateUser('caregivers', uid, rateData as any);
       next();
@@ -268,8 +300,8 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   };
 
   const handleSaveBio = async () => {
-    if (form.bio.length < 150) {
-      onShowToast(`Please write at least 150 characters (${150 - form.bio.length} more needed)`, 'error'); return;
+    if (form.bio.length < BIO_MIN_CHARS) {
+      onShowToast(`Please write at least ${BIO_MIN_CHARS} characters (${BIO_MIN_CHARS - form.bio.length} more needed)`, 'error'); return;
     }
     setIsLoading(true);
     try {
@@ -334,6 +366,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
           street={form.locationStreet} city={form.locationCity}
           state={form.locationState} zip={form.locationZip}
           onChange={updateField} onNext={handleSaveLocation} isLoading={isLoading}
+          waitlistState={waitlistState} onJoinWaitlist={handleJoinWaitlist}
         />;
 
       // ── Email ─────────────────────────────────────────────────────────────
@@ -391,14 +424,22 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
             <h2 className="text-2xl font-bold text-white">
               You're all set, {firstName || 'there'}!
             </h2>
+            {/* The truth after the bio (sweep C19, 2026-10-11): the dashboard's three cards, in
+                order — membership → background check → payouts. No "review" / "approved" wording. */}
             <p className="text-indigo-200 text-sm leading-relaxed">
-              Your profile has been submitted for review. Our team will verify your information within 1–2 business days.
+              Your profile is saved. Three steps left before families can find and book you — your dashboard walks you through them in order:
             </p>
-            <div className="w-full bg-white/15 rounded-2xl px-4 py-3 flex items-center gap-3">
-              <CheckCircle size={18} className="text-teal-300 shrink-0" />
-              <p className="text-white text-sm">
-                You'll receive an email once you're approved and can start accepting bookings.
-              </p>
+            <div className="w-full bg-white/15 rounded-2xl px-4 py-3 flex flex-col gap-2 text-left">
+              {[
+                'Activate your membership — one flat annual fee.',
+                'Authorize your background check — included in your membership.',
+                'Set up payouts through Stripe so you get paid for every visit.',
+              ].map((line, i) => (
+                <p key={i} className="text-white text-sm flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-teal-400/30 text-teal-200 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                  {line}
+                </p>
+              ))}
             </div>
             <button
               onClick={onComplete}
@@ -456,9 +497,15 @@ const LocationStep: React.FC<{
   onChange: (field: string, value: string) => void;
   onNext: () => void;
   isLoading: boolean;
-}> = ({ street, city, state, zip, onChange, onNext, isLoading }) => {
+  waitlistState: 'idle' | 'saving' | 'saved' | 'error';
+  onJoinWaitlist: () => void;
+}> = ({ street, city, state, zip, onChange, onNext, isLoading, waitlistState, onJoinWaitlist }) => {
   const [lookingUp, setLookingUp] = useState(false);
   const zipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Same Santa Clara County check as the family wizard (ClientJobPostingWizard.tsx): ZIP is
+  // authoritative; a full ZIP outside the county shows the message + the waitlist button and
+  // holds Next (sweep C6, 2026-10-11). Settings' address editor is not gated — neither side's is.
+  const outOfArea = zip.trim().length >= 5 && evaluateServiceArea({ zip, city }) === 'out';
 
   // Auto-populate city + state from zip — same api.zippopotam.us lookup the
   // client wizard (ClientJobPostingWizard.tsx) and the backend agent
@@ -529,9 +576,27 @@ const LocationStep: React.FC<{
         className={lineInput}
       />
 
+      {outOfArea && (
+        <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-3 space-y-2 mt-4" data-testid="out-of-area">
+          <p>{OUT_OF_AREA_MESSAGE}</p>
+          {waitlistState === 'saved' ? (
+            <p className="font-medium">Got it — we'll reach out when we're in your area.</p>
+          ) : (
+            <button
+              type="button"
+              disabled={waitlistState === 'saving'}
+              onClick={onJoinWaitlist}
+              className="text-sm font-semibold text-amber-900 underline hover:no-underline disabled:opacity-50"
+            >
+              {waitlistState === 'saving' ? 'Saving…' : waitlistState === 'error' ? "Couldn't save — try again" : 'Notify me when you reach my area'}
+            </button>
+          )}
+        </div>
+      )}
+
       <button
         onClick={onNext}
-        disabled={isLoading || !zip.trim() || !city.trim()}
+        disabled={isLoading || !zip.trim() || !city.trim() || outOfArea}
         className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2 mt-6"
       >
         {isLoading ? <><Loader2 size={16} className="animate-spin" />Saving…</> : 'Next'}
@@ -950,8 +1015,8 @@ const BioStep: React.FC<{
 }> = ({ bio, onChange, onNext, isLoading }) => {
   const [showIdeas, setShowIdeas] = useState(false);
   const [showExample, setShowExample] = useState(false);
-  const minChars = 150;
-  const maxChars = 2500;
+  const minChars = BIO_MIN_CHARS; // one bio rule with the profile editor (sweep C7, 2026-10-11)
+  const maxChars = BIO_MAX_CHARS;
   const count = bio.length;
 
   return (

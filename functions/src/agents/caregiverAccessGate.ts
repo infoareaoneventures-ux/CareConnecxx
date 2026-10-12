@@ -20,6 +20,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { appLink } from "../config/appUrl";
+import { isCaregiverMembershipActiveForFamilies } from "../utils/caregiverEligibility";
 
 const db = admin.firestore();
 
@@ -30,13 +31,27 @@ export type CaregiverGateResult =
 
 type Cg = Record<string, unknown> | null | undefined;
 
-// useCaregiverGate.tsx:89
+// useCaregiverGate.tsx:89 — THE ONE caregiver membership rule on Evia's side
+// (founder, 2026-10-11, sweep C1): active / trialing / past_due / payment_failed
+// count as active (no lock while Stripe retries — the lock lands when Stripe
+// cancels); with no status yet, the legacy membershipPaid flag. The single
+// implementation is utils/caregiverEligibility.ts (the pure leaf the family-
+// facing gate uses too); every membership check on the caregiver side —
+// messaging, the LATE relay, signup completeness, the site sync, the
+// Membership tab, the agent's account facts — calls this.
 export function isCaregiverMembershipActive(cg: Cg): boolean {
   if (!cg) return false;
-  // Stripe's retry state (past_due / payment_failed) still counts as active (founder, 2026-10-06: no lock while Stripe is retrying — the lock lands when Stripe gives up and cancels); canceled / unpaid / inactive do not.
-  const s = cg.membershipStatus;
-  return s === "active" || s === "trialing" || s === "past_due" || s === "payment_failed"
-    || (!s && cg.membershipPaid === true);
+  return isCaregiverMembershipActiveForFamilies(cg as { membershipStatus?: string; membershipPaid?: boolean });
+}
+
+// The Payments › Payouts page's "live" rule (CaregiverPayoutsPage / get_payout_status):
+// payouts AND charges enabled on the Stripe Connect account, read from the
+// private payout subdoc (caregiverPrivate.getCaregiverPayoutFields). The former
+// "payoutsEnabled OR stripeOnboardingComplete" shortcut said "done" for an
+// account Stripe had not finished (sweep C2, 2026-10-11).
+export function caregiverPayoutsLive(pay: Record<string, unknown> | null | undefined): boolean {
+  if (!pay) return false;
+  return pay.payoutsEnabled === true && pay.chargesEnabled === true;
 }
 
 // useCaregiverGate.tsx:90

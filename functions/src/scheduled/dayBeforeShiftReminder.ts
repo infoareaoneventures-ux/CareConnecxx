@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { writeUserNotification } from "../notifications/userNotification";
 import { businessTomorrowStr, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
@@ -59,12 +60,21 @@ export const sendDayBeforeShiftReminders = functions.pubsub
           `${startTime ? `, ${formatHHMMForDisplay(startTime)}${endTime ? ` – ${formatHHMMForDisplay(endTime)}` : ""}` : ""}` +
           `${address ? ` at ${address}` : ""}.`; // just the reminder — no cancel prompt (founder, 2026-09-29: "does it have to say cancel shift")
 
-        await sendViaInteractionAgent(cgPhone, {
+        const sent = await sendViaInteractionAgent(cgPhone, {
           content:     message,
           urgency:     "standard",
           sourceAgent: "day_before_shift_reminder",
           canDrop:     false,
+          fixedString: true, // the founder's plain wording — never rephrased (C12)
         });
+        // Bell ⇄ text in lockstep (C11): the same sentence on the site, only when the text went.
+        if (sent) {
+          await writeUserNotification({
+            sourcePath: `shifts/${apptId}`, eventId: "day-before-reminder", recipientId: caregiverId,
+            transitionType: "shift_tomorrow", type: "shift_tomorrow", title: "Visit tomorrow", body: message,
+            data: { shiftId: apptId },
+          }).catch((err) => console.error("[sendDayBeforeShiftReminders] bell failed:", apptId, err));
+        }
 
         await doc.ref.update({ dayBeforeConfirmSent: true }); // "reminder sent" marker (field name kept so already-reminded visits aren't re-sent)
       } catch (err) {

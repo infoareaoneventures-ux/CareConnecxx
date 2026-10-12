@@ -12,9 +12,13 @@
 //   • what: one text carrying the card's own lines (no link — they ask Evia),
 //     mirrored into the website bell (users/{uid}/notifications). No yes/no
 //     reply flow — they apply on the site or ask Evia, exactly as the page does.
+//   • how: through sendViaInteractionAgent like every other proactive caregiver
+//     text (caregiver sweep C13, 2026-10-11) — the session opt-out, dedup and the
+//     block-only review of a fixed string apply; canDrop false; the bell is
+//     written only when the text actually went (bell ⇄ text, C11).
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import { sendMessage } from "../linq/client";
+import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { writeUserNotification } from "../notifications/userNotification";
 import { findCaregiverSession, jobRequiresTransport } from "../agents/caregiverAccessGate";
 import { parkedDecision, parkDecision } from "../agents/decisionNotices";
@@ -35,10 +39,10 @@ export async function caregiverHasActiveFamilies(caregiverId: string): Promise<b
   return reqs.docs.some((r) => live.has(r.id));
 }
 
-export interface NewJobNoticeResult { notified: string[]; bellOnly: string[]; skipped: number }
+export interface NewJobNoticeResult { notified: string[]; /** the text did not go (no session / opted out / blocked) — no bell either */ dropped: string[]; skipped: number }
 
 export async function sendNewJobNotices(jobId: string, rawJob: Record<string, unknown>, eventId: string): Promise<NewJobNoticeResult> {
-  const result: NewJobNoticeResult = { notified: [], bellOnly: [], skipped: 0 };
+  const result: NewJobNoticeResult = { notified: [], dropped: [], skipped: 0 };
   const job = normalizeJobPost({ id: jobId, ...rawJob });
   if (job.status !== "open" || job.clientActive === false) return result;
 
@@ -61,6 +65,26 @@ export async function sendNewJobNotices(jobId: string, rawJob: Record<string, un
     const card = buildJobCard(job, cg, coords);
     const line = jobCardLine(card);
     const body = `New job near you: ${line}.`;
+
+    const sess = await findCaregiverSession(doc.id, cg.phone).catch(() => null);
+    if (!sess) { result.dropped.push(doc.id); continue; }
+    // Evia IS the second front door: no link — the caregiver asks her for the
+    // details or to apply, like tapping the card on the site.
+    let sent = false;
+    try {
+      sent = await sendViaInteractionAgent(sess.phone, {
+        content: `${body} Reply APPLY or DETAILS.`, urgency: "standard", sourceAgent: "new_job_notice", canDrop: false, fixedString: true,
+      });
+    } catch (err) { console.error("[newJobNotice] text failed:", doc.id, err); }
+    if (!sent) { result.dropped.push(doc.id); continue; }
+    result.notified.push(doc.id);
+    // "This job" in their next text resolves to this post (jobBoardText.resolveJobRef).
+    try {
+      await db.collection("agent_sessions").doc(sess.phone).set({
+        lastNoticedJobId: jobId, lastNoticedJobAt: new Date().toISOString(),
+        ...parkDecision(parkedDecision("new_job", jobId, "a new job near you", "caregiver")),
+      }, { merge: true });
+    } catch { /* best effort */ }
     await writeUserNotification({
       sourcePath: `job_posts/${jobId}`,
       eventId,
@@ -71,23 +95,6 @@ export async function sendNewJobNotices(jobId: string, rawJob: Record<string, un
       body,
       data: { jobId, link: `/caregiver/jobs?job=${jobId}` },
     }).catch((err) => console.error("[newJobNotice] bell write failed:", doc.id, err));
-
-    const sess = await findCaregiverSession(doc.id, cg.phone).catch(() => null);
-    if (!sess) { result.bellOnly.push(doc.id); continue; }
-    // Evia IS the second front door: no link — the caregiver asks her for the
-    // details or to apply, like tapping the card on the site.
-    await sendMessage(sess.chatId, `${body} Reply APPLY or DETAILS.`)
-      .then(async () => {
-        result.notified.push(doc.id);
-        // "This job" in their next text resolves to this post (jobBoardText.resolveJobRef).
-        try {
-          await db.collection("agent_sessions").doc(sess.phone).set({
-            lastNoticedJobId: jobId, lastNoticedJobAt: new Date().toISOString(),
-            ...parkDecision(parkedDecision("new_job", jobId, "a new job near you", "caregiver")),
-          }, { merge: true });
-        } catch { /* best effort */ }
-      })
-      .catch((err) => { console.error("[newJobNotice] text failed:", doc.id, err); result.bellOnly.push(doc.id); });
   }
   return result;
 }
@@ -106,5 +113,5 @@ export const onJobPostCreatedNotifyCaregivers = functions.firestore
     });
     if (!stamped) return;
     const res = await sendNewJobNotices(context.params.postId, data, context.eventId);
-    console.log(`[newJobNotice] job ${context.params.postId}: texted ${res.notified.length}, bell-only ${res.bellOnly.length}, skipped ${res.skipped}`);
+    console.log(`[newJobNotice] job ${context.params.postId}: texted ${res.notified.length}, dropped ${res.dropped.length}, skipped ${res.skipped}`);
   });

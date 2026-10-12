@@ -51,7 +51,7 @@ export async function absorbCaregiverFields(
       `"yearsExperience":number,` +
       `"specialties":["short care specialty like 'dementia' or 'mobility assistance'"],` +
       `"availability":{"days":["Monday"],"hours":"9am-5pm"},` +
-      `"jobType":"occasional | part_time | full_time",` +
+      `"jobType":"occasional | part_time | full_time — or a list of those when they name more than one",` +
       `"hourlyRate":number,` +
       `"serviceRadius":number of miles they're willing to travel — only if stated,` +
       `"email":"email address"}. ` +
@@ -95,8 +95,13 @@ export async function absorbCaregiverFields(
     const hours = typeof a.hours === "string" ? a.hours.trim() : "";
     if (days.length || hours) candidates.availability = { days, hours };
   }
+  // One or more job types (the wizard's multi-select): a list of one collapses to the string.
   if (typeof parsed.jobType === "string" && JOB_TYPES.has(parsed.jobType)) {
     candidates.jobType = parsed.jobType;
+  } else if (Array.isArray(parsed.jobType)) {
+    const ids = Array.from(new Set(parsed.jobType.filter((v): v is string => typeof v === "string" && JOB_TYPES.has(v))));
+    if (ids.length === 1) candidates.jobType = ids[0];
+    else if (ids.length > 1) candidates.jobType = ids;
   }
   // The rate is theirs to set — any amount above $0 (founder 2026-10-04); zero is never stored.
   if (typeof parsed.hourlyRate === "number" && parsed.hourlyRate > 0) {

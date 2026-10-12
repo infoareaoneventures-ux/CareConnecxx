@@ -637,7 +637,12 @@ export const runTriggerEngine = functions.pubsub
             sourceAgent: "trigger_engine",
           });
         }
-        if (trigger.bell?.recipientId) {
+        // Bell ⇄ text in lockstep (C11, 2026-10-11): the bell copy is written only
+        // when the text went. `false` = the send layer dropped it (opted out, DND /
+        // wait-tool, daily cap, dedup, blocked) → no bell; `null` = this branch
+        // delivered through its own sender (qa_retry) → the text another sender
+        // owns still earns its bell. A throw skips this block (caught below).
+        if (trigger.bell?.recipientId && delivered !== false) {
           const { writeUserNotification } = await import("../notifications/userNotification");
           await writeUserNotification({
             sourcePath:     `proactive_triggers/${doc.id}`,

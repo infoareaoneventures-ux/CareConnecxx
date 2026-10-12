@@ -21,12 +21,32 @@ import { dbService } from '../services/api';
 
 export type BlockReason = 'membership' | 'background' | 'transport' | null;
 
-/** hooks/useAccessGates-style membership rule for caregivers: active / trialing, or legacy membershipPaid with no status. */
+/**
+ * THE caregiver membership rule — the one every site surface reads (founder, 2026-10-11:
+ * "ONE membership rule everywhere"): the Jobs/Inbox gate, the dashboard progress card,
+ * Settings › Membership & verification and the membership checkout. Active / trialing,
+ * Stripe's retry state (past_due / payment_failed), or legacy membershipPaid with no status.
+ */
 export function caregiverMembershipActive(p: any): boolean {
   // Stripe's retry state (past_due / payment_failed) still counts as active (founder, 2026-10-06: no lock while Stripe is retrying — the lock lands when Stripe gives up and cancels); canceled / unpaid / inactive do not. Same rule in utils/caregiverEligibility.ts, agents/caregiverAccessGate.ts and firestore.rules.
   const s = p?.membershipStatus;
   return s === 'active' || s === 'trialing' || s === 'past_due' || s === 'payment_failed' || (!s && p?.membershipPaid === true);
 }
+
+/** Alias of caregiverMembershipActive — the name the 2026-10-11 sweep asked the cards to import. */
+export const isMembershipActive = caregiverMembershipActive;
+
+/**
+ * Stripe is retrying a failed renewal charge: the membership is still ACTIVE (rule above),
+ * so no wall and no second checkout — the cards show a "Payment failed — update your card"
+ * notice with the billing-portal button until Stripe either collects or cancels.
+ */
+export function caregiverMembershipPaymentFailed(p: any): boolean {
+  const s = p?.membershipStatus;
+  return s === 'past_due' || s === 'payment_failed';
+}
+
+export const MEMBERSHIP_PAYMENT_FAILED_NOTICE = "Payment failed — update your card. Your membership stays active while Stripe retries the charge.";
 
 /**
  * The Jobs page gate as a pure function of a caregiver record — the same rule

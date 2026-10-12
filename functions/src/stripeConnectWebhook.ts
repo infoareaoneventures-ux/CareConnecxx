@@ -14,6 +14,41 @@ const db = admin.firestore();
 const connectWebhookSecret = () =>
     functions.config().stripe?.connect_webhook_secret || process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
 
+// Bell ⇄ text in lockstep (caregiver sweep C11, 2026-10-11): the payout text goes
+// FIRST (sendSMSToUser — the caregiver's phone from caregivers/{uid} or
+// users/{uid}); the website bell is written, through writeUserNotification
+// (idempotent on the Stripe event id — a redelivered event never doubles it),
+// ONLY when that text actually went. A text sendSMS refused for an opt-out
+// (STOP) still earns the bell: the site is then her only channel. No phone,
+// circuit open, transport error → no bell either.
+// Exported for the webhook's tests.
+export async function payoutNotice(
+    caregiverId: string, eventId: string, payoutId: string,
+    kind: "payout_paid" | "payout_failed", title: string, body: string, text: string,
+): Promise<{ text: boolean; bell: boolean }> {
+    let sent = false;
+    let optedOut = false;
+    try {
+        const r = await import("./sms").then((m) => m.sendSMSToUser(caregiverId, text));
+        sent = r.success === true;
+        // sendSMS's own refusal strings ("Recipient has opted out…", "Chat is in OPTED_OUT state") — not user text.
+        optedOut = !sent && /opted.?out/i.test(r.error ?? "");
+    } catch (err) {
+        console.warn(`${kind} text failed`, err);
+    }
+    if (!sent && !optedOut) {
+        console.warn(`${kind}: text did not go for ${caregiverId} — no bell written (bell ⇄ text in lockstep)`);
+        return { text: false, bell: false };
+    }
+    const bell = await import("./notifications/userNotification")
+        .then((m) => m.writeUserNotification({
+            sourcePath: `caregivers/${caregiverId}`, eventId, recipientId: caregiverId, transitionType: kind,
+            type: kind, title, body, data: { payoutId },
+        }))
+        .catch((err) => { console.error(`${kind} bell failed for ${caregiverId}`, err); return false; });
+    return { text: sent, bell };
+}
+
 export const stripeConnectWebhook = functions
     .https.onRequest(async (req, res) => {
         const sig = req.headers["stripe-signature"];
@@ -174,27 +209,13 @@ export const stripeConnectWebhook = functions
                         if (stamped > 0) await batch.commit();
 
                         const paidBody = `Your ${isInstant ? "instant" : ""} payout of $${amountDollars} has been deposited to your bank account.`.replace("  ", " ");
-                        await db.collection("users").doc(caregiverId).collection("notifications").add({
-                            userId: caregiverId,
-                            type: "payout_paid",
-                            title: "Payout Arrived",
-                            body: paidBody,
-                            isRead: false,
-                            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                        });
                         // Same words over text — the Payouts page shows it as a bell; the caregiver hears it as it happens (2026-10-01).
-                        await import("./sms").then((m) => m.sendSMSToUser(caregiverId, `Evia: ${paidBody} It's under Payout history on your Payments page.`)).catch((err) => console.warn("payout.paid text failed", err));
+                        await payoutNotice(caregiverId, event.id, payout.id, "payout_paid", "Payout Arrived", paidBody,
+                            `Evia: ${paidBody} It's under Payout history on your Payments page.`);
                     } else {
                         const failedBody = `Your payout of $${amountDollars} could not be deposited. Please check your bank account details.`;
-                        await db.collection("users").doc(caregiverId).collection("notifications").add({
-                            userId: caregiverId,
-                            type: "payout_failed",
-                            title: "Payout Failed",
-                            body: failedBody,
-                            isRead: false,
-                            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                        });
-                        await import("./sms").then((m) => m.sendSMSToUser(caregiverId, `Evia: ${failedBody} Reply SETUP for your Stripe link to update them.`)).catch((err) => console.warn("payout.failed text failed", err));
+                        await payoutNotice(caregiverId, event.id, payout.id, "payout_failed", "Payout Failed", failedBody,
+                            `Evia: ${failedBody} Reply SETUP for your Stripe link to update them.`);
                     }
                 }
             } else {

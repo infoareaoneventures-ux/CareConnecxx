@@ -5,6 +5,7 @@ import { useCareConnex } from '../../../context/CareConnexContext';
 import { dbService } from '../../../services/api';
 import { db } from '../../../lib/firebase';
 import firebase from '../../../lib/firebase';
+import { geocodeAddress, streetPointOf, GeocodedPoint } from '../../../utils/geocode';
 
 const RELATIONSHIP_CHIPS = ['Parent', 'Spouse or Partner', 'Other'];
 
@@ -26,6 +27,8 @@ interface SavedLocation {
   source: 'job-primary' | 'job-saved' | 'careplan-pool' | 'careplan-recipient';
   petsInHome?: boolean;
   smokingHousehold?: boolean;
+  // The pool entry's saved street-level point (geoPrecision 'street'), when it has one.
+  point?: GeocodedPoint | null;
 }
 
 // 2026-09-27 (founder: editing an existing address + pets/smoking then Save
@@ -33,13 +36,16 @@ interface SavedLocation {
 // patched in place — the matching entry (by its ORIGINAL street + zip) gets
 // the new address and flags, every other entry keeps every field it had
 // (the Care Plan page's geocoded lat/lng included). A moved address drops its
-// stale coordinates. Absent entry → appended, so pets/smoking chosen for a
-// job_postings address persist where step 2 reads them back (the pool).
+// stale coordinates (and their geoPrecision). Absent entry → appended, so
+// pets/smoking chosen for a job_postings address persist where step 2 reads
+// them back (the pool). A `point` (street-level geocode, 2026-10-11) is written
+// onto the entry so the next post from this address reuses it as is.
 const poolKey = (street?: string, zip?: string) => `${(street || '').toLowerCase().trim()}|${zip || ''}`;
 async function upsertPoolLocation(
   uid: string,
   original: { street: string; zipCode: string },
   next: { street: string; city: string; state: string; zipCode: string; petsInHome: boolean; smokingHousehold: boolean },
+  point?: GeocodedPoint | null,
 ): Promise<void> {
   if (!db) return;
   const ref = db.collection('carePlans').doc(uid);
@@ -47,11 +53,16 @@ async function upsertPoolLocation(
   const pool: any[] = Array.isArray(snap?.data()?.locationPool) ? [...snap!.data()!.locationPool] : [];
   const idx = pool.findIndex(l => poolKey(l?.street, l?.zipCode) === poolKey(original.street, original.zipCode));
   const moved = poolKey(original.street, original.zipCode) !== poolKey(next.street, next.zipCode);
+  const pointFields = point ? { lat: point.lat, lng: point.lng, geoPrecision: point.geoPrecision } : {};
   if (idx >= 0) {
-    const { lat, lng, latitude, longitude, ...rest } = pool[idx] || {};
-    pool[idx] = { ...rest, ...next, ...(moved ? {} : { ...(lat != null ? { lat } : {}), ...(lng != null ? { lng } : {}), ...(latitude != null ? { latitude } : {}), ...(longitude != null ? { longitude } : {}) }) };
+    const { lat, lng, latitude, longitude, geoPrecision, ...rest } = pool[idx] || {};
+    pool[idx] = {
+      ...rest, ...next,
+      ...(moved ? {} : { ...(lat != null ? { lat } : {}), ...(lng != null ? { lng } : {}), ...(latitude != null ? { latitude } : {}), ...(longitude != null ? { longitude } : {}), ...(geoPrecision ? { geoPrecision } : {}) }),
+      ...pointFields,
+    };
   } else {
-    pool.push({ ...next });
+    pool.push({ ...next, ...pointFields });
   }
   try { await ref.update({ locationPool: pool }); }
   catch (e: any) { if (e?.code === 'not-found') await ref.set({ locationPool: pool }, { merge: true }); }
@@ -198,7 +209,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
           const addrKey = `${(loc.street || '').toLowerCase()}${loc.zipCode || ''}`;
           if (!seenAddresses.has(addrKey)) {
             seenAddresses.add(addrKey);
-            locations.push({ id: `cp-pool-${i}`, street: loc.street || '', city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode || '', source: 'careplan-pool', petsInHome: loc.petsInHome, smokingHousehold: loc.smokingHousehold });
+            locations.push({ id: `cp-pool-${i}`, street: loc.street || '', city: loc.city || '', state: loc.state || '', zipCode: loc.zipCode || '', source: 'careplan-pool', petsInHome: loc.petsInHome, smokingHousehold: loc.smokingHousehold, point: streetPointOf(loc) });
           }
         });
 
@@ -274,6 +285,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       streetAddress: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode,
       petsInHome: loc.petsInHome ?? false,
       smokingHousehold: loc.smokingHousehold ?? false,
+      locationPoint: loc.point ?? null,
     });
   };
 
@@ -311,19 +323,32 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
 
     // Select it immediately
     setSelectedLocationId(loc.id);
-    onChange({ streetAddress: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode, petsInHome: loc.petsInHome ?? false, smokingHousehold: loc.smokingHousehold ?? false });
+    onChange({ streetAddress: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode, petsInHome: loc.petsInHome ?? false, smokingHousehold: loc.smokingHousehold ?? false, locationPoint: null });
 
     // Save to the family's records: the address list, and the Care Plan's
-    // location pool (where pets/smoking live and are read back from).
+    // location pool (where pets/smoking live and are read back from) — with the
+    // street geocoded once, the way the Care Plan page saves a new address
+    // (CarePlan.tsx), so the post and every later one reuse that point.
     if (db && currentUser?.uid) {
-      db.collection('job_postings').doc(currentUser.uid).set(
+      const uid = currentUser.uid;
+      db.collection('job_postings').doc(uid).set(
         { savedLocations: firebase.firestore.FieldValue.arrayUnion({ street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode }) },
         { merge: true }
       ).catch(() => {});
-      upsertPoolLocation(currentUser.uid, { street: loc.street, zipCode: loc.zipCode }, {
-        street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode,
-        petsInHome: loc.petsInHome ?? false, smokingHousehold: loc.smokingHousehold ?? false,
-      }).catch(() => {});
+      geocodeAddress({ street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode })
+        .catch(() => null)
+        .then((point) => {
+          const streetPoint = point?.geoPrecision === 'street' ? point : null;
+          if (streetPoint) {
+            setSavedLocations(prev => prev.map(l => l.id === loc.id ? { ...l, point: streetPoint } : l));
+            onChange({ locationPoint: streetPoint });
+          }
+          return upsertPoolLocation(uid, { street: loc.street, zipCode: loc.zipCode }, {
+            street: loc.street, city: loc.city, state: loc.state, zipCode: loc.zipCode,
+            petsInHome: loc.petsInHome ?? false, smokingHousehold: loc.smokingHousehold ?? false,
+          }, point);
+        })
+        .catch(() => {});
     }
 
     setSavedLocations(prev => [...prev, loc]);
@@ -361,10 +386,12 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
 
     const loc = savedLocations.find(l => l.id === editingLocId);
     if (!loc) return;
-    const updated: SavedLocation = { ...loc, ...editingLocDraft, petsInHome: editingLocDraft.petsInHome, smokingHousehold: editingLocDraft.smokingHousehold };
+    // A moved address loses its saved point (the pool drops the stale coords too); PostJobFlow geocodes the new street at submit.
+    const moved = poolKey(loc.street, loc.zipCode) !== poolKey(editingLocDraft.street, editingLocDraft.zipCode);
+    const updated: SavedLocation = { ...loc, ...editingLocDraft, petsInHome: editingLocDraft.petsInHome, smokingHousehold: editingLocDraft.smokingHousehold, point: moved ? null : loc.point };
     const newList = savedLocations.map(l => l.id === editingLocId ? updated : l);
     setSavedLocations(newList);
-    if (selectedLocationId === editingLocId) onChange({ streetAddress: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode, petsInHome: updated.petsInHome ?? false, smokingHousehold: updated.smokingHousehold ?? false });
+    if (selectedLocationId === editingLocId) onChange({ streetAddress: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode, petsInHome: updated.petsInHome ?? false, smokingHousehold: updated.smokingHousehold ?? false, locationPoint: updated.point ?? null });
 
     if (db && currentUser?.uid) {
       if (loc.source === 'job-primary') {
@@ -389,7 +416,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     if (!loc) return;
     const newList = savedLocations.filter(l => l.id !== locId);
     setSavedLocations(newList);
-    if (selectedLocationId === locId) { setSelectedLocationId(''); onChange({ streetAddress: '', city: '', state: '', zipCode: '' }); }
+    if (selectedLocationId === locId) { setSelectedLocationId(''); onChange({ streetAddress: '', city: '', state: '', zipCode: '', locationPoint: null }); }
 
     if (db && currentUser?.uid) {
       const addrKey = `${loc.street.toLowerCase().trim()}|${loc.zipCode}`;

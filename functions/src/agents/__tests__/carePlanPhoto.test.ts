@@ -23,7 +23,7 @@ vi.mock("firebase-admin", () => ({
   }),
   storage: () => ({ bucket: () => ({ name: "test-bucket", file: () => ({ save: vi.fn(async () => undefined) }) }) }),
 }));
-vi.mock("../../utils/geocode", () => ({ geocodeStreetAddress: vi.fn(async () => null), lookupZipPlace: vi.fn(async () => null) }));
+vi.mock("../../utils/geocode", () => ({ geocodeStreetAddress: vi.fn(async () => null), geocodeAddress: vi.fn(async () => null), lookupZipPlace: vi.fn(async () => null) }));
 
 import { setRecipientPhoto } from "../carePlanPage";
 

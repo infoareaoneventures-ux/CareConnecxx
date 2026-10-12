@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { recipientPlanKey, resolveRecipientKey, normalizeAdditionalRecipients, allCareRecipients, CareRecipient } from "./careRecipients";
 import { buildWebJobPostDoc, defaultJobTitle } from "./jobPostContract";
-import { geocodeZip, geocodeCity } from "../utils/geocode";
+import { resolveJobPostPoint } from "./jobPostCoords";
 import { buildJobPostingsDoc, buildCarePlanLocationEntry, mapJobPostingsDocToOnboardingData } from "./clientJobPostingContract";
 
 const db = admin.firestore();
@@ -161,8 +161,17 @@ export async function buildAndSaveJobPost(params: {
   const title = ((jobData.jobTitle as string | undefined)?.trim()) || defaultJobTitle(city || null);
 
   const stateHint = (jobData.state ?? onboardingData.state ?? "") as string;
-  let coords = await geocodeZip(zipCode);
-  if (!coords) coords = await geocodeCity(city, stateHint);
+  // The post's point = the site's rule (jobPostCoords.ts): the Care Plan
+  // location's saved street-level coords, else the street geocoded now, else
+  // the ZIP centroid. The street itself never lands on job_posts. The care
+  // plan is read here (before the recipient-key resolution below reuses it)
+  // so the pool lookup and the write see the same snapshot.
+  const cpSnap = await db.collection("carePlans").doc(uid).get().catch(() => null);
+  const existingPoolForPoint = cpSnap?.exists ? (cpSnap.data() as Record<string, unknown>).locationPool : undefined;
+  const coords = await resolveJobPostPoint(existingPoolForPoint, {
+    street: (effectiveOnboarding.street ?? "") as string,
+    city, state: stateHint, zipCode,
+  });
 
   // ── job_postings/{uid} — client's own record, in the wizard's exact shape ──
   // (clientJobPostingContract.ts is the single definition both the web wizard
@@ -196,7 +205,6 @@ export async function buildAndSaveJobPost(params: {
   // real "first_last" key (e.g. the site's own "samira_m"), so the same
   // person showed up twice — once under each key — in any later recap or
   // pick list.
-  const cpSnap = await db.collection("carePlans").doc(uid).get().catch(() => null);
   const existingPlanKeys = Object.keys((cpSnap?.data()?.recipientPlans ?? {}) as Record<string, unknown>);
   const seniorFirstName = (seniorName || "").trim().split(/\s+/)[0] || seniorName;
   const seniorKeyRes = resolveRecipientKey(existingPlanKeys, seniorFirstName);
@@ -307,6 +315,7 @@ export async function buildAndSaveJobPost(params: {
     zipCode,
     lat:             coords?.lat ?? null,
     lng:             coords?.lng ?? null,
+    geoPrecision:    coords?.geoPrecision ?? null,
     recipientsCount,
     caregiversNeeded,
     petsInHome,

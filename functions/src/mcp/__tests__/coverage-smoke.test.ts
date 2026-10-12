@@ -279,7 +279,8 @@ describe("MCP tool smoke coverage", () => {
       email: "a@x.com", bio: "hi", photo: "https://x/p.jpg",
       membershipPaid: true,
       backgroundCheckData: { status: "clear" },
-      payoutsEnabled: true, stripeOnboardingComplete: true, stripeAccountId: "acct_1",
+      // payouts live = payouts AND charges enabled (the Payouts page's rule, sweep C2 2026-10-11)
+      payoutsEnabled: true, chargesEnabled: true, stripeOnboardingComplete: true, stripeAccountId: "acct_1",
       onboardingStatus: "profile_complete", status: "active",
     });
     const r = await handleToolCall("get_signup_completeness", { caregiverId: "cg1" }) as any;
@@ -287,6 +288,23 @@ describe("MCP tool smoke coverage", () => {
     expect(r.role).toBe("caregiver");
     expect(r.complete).toBe(true);
     expect(r.missing).toEqual([]);
+  });
+
+  it("get_signup_completeness: payouts without charges enabled is NOT live; a canceled membership with a stale paid flag is NOT active (C1/C2)", async () => {
+    hoisted.docState.set("caregivers/cg1", {
+      name: "Alice", city: "San Jose", hourlyRate: 28, yearsExperience: 5,
+      skills: ["Companionship"], availability: "weekday mornings", jobType: "part_time",
+      email: "a@x.com", bio: "hi", photo: "https://x/p.jpg",
+      membershipPaid: true, membershipStatus: "canceled",
+      backgroundCheckData: { status: "clear" },
+      payoutsEnabled: true, stripeOnboardingComplete: true, stripeAccountId: "acct_1",
+      onboardingStatus: "profile_complete", status: "active",
+    });
+    const r = await handleToolCall("get_signup_completeness", { caregiverId: "cg1" }) as any;
+    expect(r.complete).toBe(false);
+    expect(r.missing.map((m: any) => m.item)).toEqual(expect.arrayContaining(["membership payment", "payout setup"]));
+    expect(r.status.payoutsLive).toBe(false);
+    expect(r.status.membershipActive).toBe(false);
   });
 
   it("get_signup_completeness surfaces caregiver gaps (photo, payouts, bg check)", async () => {

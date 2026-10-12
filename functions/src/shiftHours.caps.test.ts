@@ -69,6 +69,13 @@ vi.mock("firebase-admin", () => {
 
   const firestore: any = () => ({
     collection: (name: string) => makeCollection(name),
+    // The auto-approve / auto-accept sweeps decide inside a transaction (C9) —
+    // serialized here; tx.get re-reads the live doc so a status changed since
+    // the query is seen.
+    runTransaction: async (fn: (tx: any) => Promise<any>) => fn({
+      get: async (ref: any) => ref.get(),
+      update: (ref: any, data: Record<string, any>) => { updates.push({ path: ref.path, data }); docs.set(ref.path, { ...(docs.get(ref.path) ?? {}), ...data }); },
+    }),
     batch: () => ({
       set: (ref: any, data: Record<string, any>) => { batchSets.push({ path: ref.path, data }); },
       update: (ref: any, data: Record<string, any>) => { updates.push({ path: ref.path, data }); },

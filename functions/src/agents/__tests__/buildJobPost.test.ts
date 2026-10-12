@@ -51,15 +51,16 @@ vi.mock("../../triggers/jobNotifications", () => ({
   notifyAreaCaregivers: vi.fn().mockResolvedValue(0),
 }));
 
+const geocodeAddress = vi.fn();
 vi.mock("../../utils/geocode", () => ({
-  geocodeZip: vi.fn().mockResolvedValue(null),
-  geocodeCity: vi.fn().mockResolvedValue(null),
+  geocodeAddress: (...a: unknown[]) => geocodeAddress(...a),
 }));
 
 import { buildAndSaveJobPost } from "../buildJobPost";
 
 beforeEach(() => {
   hoisted.reset();
+  geocodeAddress.mockReset().mockResolvedValue(null);
 });
 
 const BASE_ONBOARDING = {
@@ -205,5 +206,53 @@ describe("buildAndSaveJobPost — job_posts keying (2026-09-09 overwrite fix)", 
     expect(new Set(["client6", second, third]).size).toBe(3);
     expect(hoisted.docState.get(`job_posts/${second}`).title).toBe("Second");
     expect(hoisted.docState.get(`job_posts/${third}`).title).toBe("Third");
+  });
+});
+
+// 2026-10-11 ("Distance is ZIP-level"): the post's point follows the site's
+// rule (jobPostCoords.ts) — the Care Plan location's saved street-level coords,
+// else the street geocoded now through the one server geocoder, else the ZIP —
+// marked with geoPrecision. The street itself never lands on job_posts.
+describe("buildAndSaveJobPost — street-level point, street never stored", () => {
+  const JOB_WITH_STREET = { ...BASE_JOB_DATA, streetAddress: "123 Main St", city: "San Jose", state: "CA", zipCode: "95110" };
+
+  it("reuses the Care Plan location's street-level coords without geocoding, and marks the post 'street'", async () => {
+    hoisted.docState.set("carePlans/cp1", {
+      locationPool: [{ street: "123 main st", city: "San Jose", state: "CA", zipCode: "95110", lat: 37.3361, lng: -121.8905, geoPrecision: "street" }],
+    });
+    await buildAndSaveJobPost({ uid: "cp1", phone: "+15550007777", onboardingData: BASE_ONBOARDING, jobData: JOB_WITH_STREET });
+    const post = hoisted.docState.get("job_posts/cp1");
+    expect(post).toMatchObject({ lat: 37.3361, lng: -121.8905, geoPrecision: "street", city: "San Jose", zipCode: "95110" });
+    expect(post.streetAddress).toBeUndefined();
+    expect(geocodeAddress).not.toHaveBeenCalled();
+  });
+
+  it("geocodes the FULL street (not the ZIP) when the pool has no street-level point, and writes that point onto the pool entry too", async () => {
+    hoisted.docState.set("carePlans/cp2", {
+      locationPool: [{ street: "123 Main St", city: "San Jose", state: "CA", zipCode: "95110", lat: 37.33, lng: -121.89, geoPrecision: "zip" }],
+    });
+    geocodeAddress.mockResolvedValue({ lat: 37.3361, lng: -121.8905, geoPrecision: "street" });
+    await buildAndSaveJobPost({ uid: "cp2", phone: "+15550007778", onboardingData: BASE_ONBOARDING, jobData: JOB_WITH_STREET });
+    expect(geocodeAddress).toHaveBeenCalledWith({ street: "123 Main St", city: "San Jose", state: "CA", zipCode: "95110" });
+    const post = hoisted.docState.get("job_posts/cp2");
+    expect(post).toMatchObject({ lat: 37.3361, lng: -121.8905, geoPrecision: "street" });
+    expect(post.streetAddress).toBeUndefined();
+    const pool = hoisted.docState.get("carePlans/cp2").locationPool;
+    expect(pool).toHaveLength(1);
+    expect(pool[0]).toMatchObject({ street: "123 Main St", lat: 37.3361, lng: -121.8905, geoPrecision: "street" });
+  });
+
+  it("a ZIP-only fallback is marked 'zip' (the backfill's target), never 'street'", async () => {
+    geocodeAddress.mockResolvedValue({ lat: 37.29, lng: -121.9, geoPrecision: "zip" });
+    await buildAndSaveJobPost({ uid: "cp3", phone: "+15550007779", onboardingData: BASE_ONBOARDING, jobData: BASE_JOB_DATA });
+    const post = hoisted.docState.get("job_posts/cp3");
+    expect(post).toMatchObject({ lat: 37.29, lng: -121.9, geoPrecision: "zip" });
+  });
+
+  it("no point at all → no lat/lng/geoPrecision on the post (the server trigger fills the centroid later)", async () => {
+    await buildAndSaveJobPost({ uid: "cp4", phone: "+15550007780", onboardingData: BASE_ONBOARDING, jobData: BASE_JOB_DATA });
+    const post = hoisted.docState.get("job_posts/cp4");
+    expect(post.lat).toBeUndefined();
+    expect(post.geoPrecision).toBeUndefined();
   });
 });

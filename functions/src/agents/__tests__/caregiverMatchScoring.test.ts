@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   availabilityOverlap,
+  compareDistanceUnknownLast,
   hasValidTransportDocs,
   haversineDistanceMiles,
   scoreAndRankCaregivers,
@@ -155,5 +156,36 @@ describe("scoreAndRankCaregivers", () => {
       applyHardFilters: false, limit: 5,
     });
     expect(result).toHaveLength(5);
+  });
+});
+
+// 2026-10-11 ("Distance is ZIP-level" fix): a caregiver with no coordinates
+// used to score as distance 0 — the "closest" of all — in the dashboard's
+// Nearby Caregivers (hooks/useNearbyCaregiversWithScores.ts) and in this,
+// Evia's twin. Unknown is unknown: null, sorted after every known distance.
+describe("unknown distance (no coords) sorts LAST, never as 0", () => {
+  const clientLocations = [{ lat: 37.3382, lng: -121.8863 }];
+  const bookable = {
+    onboardingStatus: "profile_complete", verificationStatus: "approved", name: "x",
+    membershipStatus: "active", backgroundCheckStatus: "clear",
+  };
+
+  it("distance is null for a caregiver without coordinates and the known one ranks ahead at equal skills/availability/rating", () => {
+    const noCoords = { id: "no-coords", data: { ...bookable, rating: 5 } };
+    const far      = { id: "far",       data: { ...bookable, rating: 5, lat: 37.60, lng: -122.0 } };
+    const result = scoreAndRankCaregivers([noCoords, far], {
+      clientLocations, clientCareNeeds: [], clientSchedule: null, needsTransportation: false,
+      applyHardFilters: false,
+    });
+    expect(result.map((c) => c.id)).toEqual(["far", "no-coords"]);
+    expect(result.find((c) => c.id === "no-coords")!.distance).toBeNull();
+    expect(result.find((c) => c.id === "far")!.distance).toBeGreaterThan(0);
+  });
+
+  it("compareDistanceUnknownLast: known before unknown, unknowns equal", () => {
+    expect(compareDistanceUnknownLast(2, 5)).toBeLessThan(0);
+    expect(compareDistanceUnknownLast(null, 5)).toBeGreaterThan(0);
+    expect(compareDistanceUnknownLast(5, undefined)).toBeLessThan(0);
+    expect(compareDistanceUnknownLast(null, undefined)).toBe(0);
   });
 });

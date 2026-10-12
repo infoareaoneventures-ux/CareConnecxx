@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import type { GeoPrecision } from "../utils/geocode";
 
 // Evia ↔ Web job-post contract (client-side parity wave, 2026-07-10).
 //
@@ -47,6 +48,7 @@ export interface WebJobPostInput {
   zipCode?:         string;
   lat?:             number | null;
   lng?:             number | null;
+  geoPrecision?:    GeoPrecision | null;    // how lat/lng were derived (jobPostCoords.ts) — 'street' is the goal
   recipientsCount?: number;
   caregiversNeeded?: number;      // 1-4, how many caregivers this job is looking to hire — mirrors PostJobFlow.tsx exactly
   minHoursPerWeek?: number;
@@ -107,6 +109,7 @@ export function buildWebJobPostDoc(p: WebJobPostInput): Record<string, unknown> 
     ...(p.zipCode ? { zipCode: p.zipCode } : {}),
     ...(typeof p.lat === "number" ? { lat: p.lat } : {}),
     ...(typeof p.lng === "number" ? { lng: p.lng } : {}),
+    ...(typeof p.lat === "number" && typeof p.lng === "number" && p.geoPrecision ? { geoPrecision: p.geoPrecision } : {}),
     careTypes,
     requirements: careTypes,           // legacy mirror (jobMatchService keywords)
     ...(p.careLevel ? { careLevel: p.careLevel } : {}),
@@ -158,8 +161,13 @@ export async function mirrorJobPostRecipientsToWeb(params: {
   zipCode?: string;
   petsInHome?: boolean;
   smokingHousehold?: boolean;
+  // The post's resolved point (jobPostCoords.ts) — written onto the pool entry
+  // the way PostJobFlow.tsx writes the point it posted with, so the next post
+  // from this address reuses it instead of geocoding again.
+  point?: { lat: number; lng: number; geoPrecision: GeoPrecision } | null;
 }): Promise<void> {
-  const { uid, careRecipients, careTypes, description, streetAddress, city, state, zipCode, petsInHome, smokingHousehold } = params;
+  const { uid, careRecipients, careTypes, description, streetAddress, city, state, zipCode, petsInHome, smokingHousehold, point } = params;
+  const pointFields = point ? { lat: point.lat, lng: point.lng, geoPrecision: point.geoPrecision } : {};
   if (careRecipients.length === 0) return;
   const db = admin.firestore();
   try {
@@ -196,9 +204,9 @@ export async function mirrorJobPostRecipientsToWeb(params: {
       const pool: any[] = cpData.locationPool || [];
       const poolIdx = pool.findIndex((l: any) => l.street?.toLowerCase() === streetAddress.toLowerCase() && l.zipCode === zipCode);
       if (poolIdx >= 0) {
-        pool[poolIdx] = { ...pool[poolIdx], petsInHome: petsInHome ?? false, smokingHousehold: smokingHousehold ?? false };
+        pool[poolIdx] = { ...pool[poolIdx], petsInHome: petsInHome ?? false, smokingHousehold: smokingHousehold ?? false, ...pointFields };
       } else {
-        pool.push({ street: streetAddress, city, state, zipCode, petsInHome: petsInHome ?? false, smokingHousehold: smokingHousehold ?? false });
+        pool.push({ street: streetAddress, city, state, zipCode, petsInHome: petsInHome ?? false, smokingHousehold: smokingHousehold ?? false, ...pointFields });
       }
       try { await cpRef.set({ locationPool: pool }, { merge: true }); } catch { /* non-critical */ }
     }

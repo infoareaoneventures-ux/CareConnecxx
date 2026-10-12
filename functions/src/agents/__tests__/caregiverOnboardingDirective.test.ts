@@ -146,10 +146,19 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).not.toContain("motor vehicle record");
   });
 
-  it("has no minimum bio length on Evia's side (the website keeps its own separately)", () => {
+  it("bio = the website's BioStep rule on both doors: at least 150 characters, no skip (2026-10-11)", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
-    expect(d).toContain("no minimum length");
-    expect(d).not.toContain("at least 150 characters");
+    expect(d).toContain("at least 150 characters");
+    expect(d).toContain("no skip");
+    expect(d).not.toContain("no minimum length");
+  });
+
+  it("job type = the wizard's multi-select (one or more); the optional rates-step boxes are never their own question (2026-10-11)", () => {
+    const d = buildCaregiverOnboardingDirective({});
+    expect(d).toContain("one or more");
+    expect(d).not.toContain("ONE choice");
+    expect(d).toContain("rateFor2Seniors / rateFor3PlusSeniors");
+    expect(d).toContain("Never ask for them as their own question");
   });
 
   it("care services = the website's menu: the eight by name, only those, read back, no sweep (2026-10-04)", () => {
@@ -213,10 +222,10 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("5, 10, 15, 25, 50 miles?");
   });
 
-  it("job type is a single choice, like the wizard's picker", () => {
+  it("job type is one or more, like the wizard's multi-select (2026-10-11); the session field stays jobType", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
     expect(d).toContain("job type");
-    expect(d).toContain("one choice");
+    expect(d).toContain("one or more");
     expect(d).not.toContain("jobtypes");
   });
 

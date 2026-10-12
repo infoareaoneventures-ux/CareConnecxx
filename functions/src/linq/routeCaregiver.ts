@@ -38,6 +38,53 @@ const PARKED_FLOW_CANCEL_LINE: Partial<Record<ParkedFlow, string>> = {
   availabilityStep:  "Okay — your availability wasn't changed.",
 };
 
+// ── Parked question (sweep C20, 2026-10-11) ──────────────────────────────────
+// A page keyword fires only when no question is parked. The agent's last
+// outbound lives in agent_conversations/{phone}/messages (saveConversationTurn);
+// when it ended with a question inside the window and the caregiver answers
+// with ONE bare word that is also a page keyword ("today", "pending",
+// "settings" …), the reply is the ANSWER and goes to the agent — not to the
+// Calendar / Timesheets / Settings page that word opens. Live before this:
+// "Which day works — today or tomorrow?" → "today" printed the day's calendar.
+// Whether the bare word answers the question is a meaning judgment → the quick
+// model decides (YES/NO), only in this narrow case; the keyword set below is
+// the exact-word protocol the pages announce, not intent parsing.
+export const PARKED_QUESTION_WINDOW_MS = 2 * 60 * 60 * 1000;
+const PAGE_KEYWORDS: ReadonlySet<string> = new Set([
+  "CALENDAR", "TODAY", "TOMORROW", "WEEK", "MONTH",
+  "PAST", "VISITS", "FAMILIES",
+  "PROFILE", "PHOTO", "BIO", "ABOUT", "LANGUAGES", "LANGUAGE", "SERVICES", "RATES", "RATE", "AVAILABILITY", "SCHEDULE", "TRAVEL",
+  "SETTINGS", "ACCOUNT", "PAUSE", "REACTIVATE",
+  "MEMBERSHIP", "BILLING", "ACTIVATE", "AUTHORIZE",
+  "PAYOUTS", "PAYOUT", "SETUP", "MORE",
+  "TIMESHEETS", "PENDING", "HISTORY", "REPORT",
+  "LATE",
+]);
+
+/** The agent's last outbound, when it ended with a question inside the window; else null. */
+export async function lastParkedAgentQuestion(phone: string, nowMs: number = Date.now()): Promise<string | null> {
+  const snap = await db.collection("agent_conversations").doc(phone).collection("messages")
+    .orderBy("timestamp", "desc").limit(1).get();
+  const last = snap.docs[0]?.data();
+  if (!last || last.role !== "assistant") return null;
+  const content = String(last.content ?? "").trim();
+  const ts = Number(last.timestamp);
+  if (!content.endsWith("?")) return null;
+  if (!Number.isFinite(ts) || nowMs - ts > PARKED_QUESTION_WINDOW_MS || ts > nowMs) return null;
+  return content;
+}
+
+async function keywordAnswersParkedQuestion(question: string, reply: string): Promise<boolean> {
+  const raw = await quickComplete(
+    "Evia (a care-work assistant) asked the caregiver a question by text, and the caregiver replied with one word. " +
+      "That same word is also a command that opens a page (for example TODAY opens today's calendar, PENDING opens pending timesheets, SETTINGS opens account settings). " +
+      "Decide which it is: reply YES if the word is an answer to Evia's question; reply NO if it is the page command. Reply with exactly one word.",
+    `Evia asked: "${question.slice(-400)}"\nThe caregiver replied: "${reply.trim()}"`,
+    { maxTokens: 3 },
+  ).catch(() => "NO");
+  return raw.trim().toUpperCase().startsWith("YES");
+}
+
 function parkedFlowExpired(flow: ParkedFlow, session: AgentSession): boolean {
   if (flow === "pendingInstantPayoutConfirm") {
     // Parked with its own ISO stamp and a 10-minute life (no stateExpiresAt).
@@ -209,6 +256,12 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (vm === "handled") return "handled";
     }
 
+    // ── Parked question — a bare page keyword that answers the agent's own question goes to the agent (C20) ──
+    if (session.caregiverId && PAGE_KEYWORDS.has(norm)) {
+      const parked = await lastParkedAgentQuestion(phone).catch(() => null);
+      if (parked && await keywordAnswersParkedQuestion(parked, text)) return "fallthrough";
+    }
+
     // ── FAMILIES · PAST FAMILIES · FAMILY n — the My Families page (agents/caregiverFamilies.ts) ──
     if (session.caregiverId) {
       const { handleFamiliesKeyword } = await import("../agents/caregiverFamilies");
@@ -216,10 +269,12 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (fam === "handled") return "handled";
     }
 
-    // ── CALENDAR · TODAY · TOMORROW · WEEK · NEXT WEEK · MONTH · INTERVIEW n — the My Calendar page (agents/caregiverCalendar.ts) ──
+    // ── CALENDAR · SCHEDULE · TODAY · TOMORROW · WEEK · NEXT WEEK · MONTH · INTERVIEW n — the My Calendar page (agents/caregiverCalendar.ts) ──
+    // SCHEDULE / MY SCHEDULE show the page's Calendar (the schedule); AVAILABILITY stays the editor (C20).
     if (session.caregiverId) {
       const { handleCalendarKeyword } = await import("../agents/caregiverCalendar");
-      const cal = await handleCalendarKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      const calText = norm === "SCHEDULE" || norm === "MY SCHEDULE" ? "CALENDAR" : text;
+      const cal = await handleCalendarKeyword(phone, chatId, session.caregiverId, calText, session as unknown as Record<string, unknown>);
       if (cal === "handled") return "handled";
     }
 
@@ -308,17 +363,10 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         const { startInstantPayout } = await import("../agents/instantPayoutHandler");
         await startInstantPayout(session.caregiverId, phone, chatId);
       },
-      REACTIVATE: async () => {
-        if (!session.caregiverId) return;
-        await handleCaregiverProfileUpdate(
-          session.caregiverId,
-          phone,
-          text,
-          session as unknown as Record<string, unknown>,
-          chatId,
-          "reactivate",
-        );
-      },
+      // (REACTIVATE lived here too, but the Settings keywords above
+      // (caregiverSettings.handleSettingsKeyword) already answer REACTIVATE /
+      // REACTIVATE ACCOUNT / UNPAUSE first — this entry was dead. Removed
+      // 2026-10-11, sweep C20.)
     };
 
     // CANCEL is a carrier opt-out word on plain SMS (CTIA: STOP/END/CANCEL/UNSUBSCRIBE/QUIT), so the
@@ -362,7 +410,11 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // ── "running about 10 minutes late" in plain words → relayed verbatim ──
     // Only LATE is inferred here (2026-09-28): arriving / finishing a visit is
     // start_shift / complete_shift through the agent, and ISSUE is gone.
-    if (session.caregiverId) {
+    // The classifier runs only when being late is plausible — a visit today or
+    // one starting within hours (the LATE relay's own `shifts` lookup); any
+    // other text skips straight to the agent (sweep C21, 2026-10-11).
+    const { caregiverHasVisitSoon } = await import("../agents/familyRelay");
+    if (session.caregiverId && await caregiverHasVisitSoon(session.caregiverId).catch(() => false)) {
       const lateRaw = await quickComplete(
         "Classify this caregiver message: LATE if they are telling someone they're running late / delayed on the way to a visit " +
           "(e.g. 'running about 10 min late', 'stuck in traffic, be there by 2:15'). Anything else is NONE. Reply with exactly one word.",

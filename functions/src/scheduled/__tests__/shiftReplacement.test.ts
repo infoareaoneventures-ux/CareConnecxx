@@ -67,7 +67,7 @@ vi.mock("firebase-admin", () => ({
 
 vi.mock("firebase-functions/v1", () => {
   const builder: any = {
-    firestore: { document: () => ({ onWrite: (h: any) => h }) },
+    firestore: { document: () => ({ onWrite: (h: any) => h, onUpdate: (h: any) => h }) },
     pubsub: { schedule: () => ({ onRun: (h: any) => h }) },
   };
   return { __esModule: true, ...builder, default: builder };

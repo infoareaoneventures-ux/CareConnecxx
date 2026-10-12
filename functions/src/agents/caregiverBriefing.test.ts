@@ -19,11 +19,18 @@ const imran = {
   city: "Santa Clara",
 };
 
+describe("caregiverBriefing membership line = the ONE rule (sweep C1, 2026-10-11)", () => {
+  it("a canceled status with a stale membershipPaid flag reads NOT active; Stripe's retry state reads active", () => {
+    expect(renderCaregiverAccountStatus({ membershipPaid: true, membershipStatus: "canceled" })).toContain("Caregiver membership: not active");
+    expect(renderCaregiverAccountStatus({ membershipStatus: "past_due" })).toContain("Caregiver membership: active");
+  });
+});
+
 describe("caregiverBriefing (2026-07-22 smoke-test incident)", () => {
   it("renders the exact live facts Evia denied: name, paid, CLEARED check, payouts ready", () => {
     const s = renderCaregiverAccountStatus(imran);
     expect(s).toContain("Their name: Imran");
-    expect(s).toContain("Caregiver membership: PAID and active");
+    expect(s).toContain("Caregiver membership: active");
     expect(s).toContain("Background check: CLEARED");
     expect(s).toContain("never say it is pending or processing");
     expect(s).toContain("Payout account: connected and ready");
@@ -42,7 +49,7 @@ describe("caregiverBriefing (2026-07-22 smoke-test incident)", () => {
 
   it("renders honest negatives for an unstarted caregiver", () => {
     const s = renderCaregiverAccountStatus({});
-    expect(s).toContain("not paid yet");
+    expect(s).toContain("Caregiver membership: not active");
     expect(s).toContain("Background check: not started");
     expect(s).toContain("not set up yet");
     expect(s).not.toContain("Their name:");

@@ -1,9 +1,11 @@
 // One visit at a time (founder, 2026-10-07: "they shouldn't start two shifts at
 // the same time"). A caregiver with a visit IN PROGRESS cannot start another one
 // anywhere: the Bookings page, the Calendar, the home dashboard's today list and
-// Evia's START all read this rule (server twin: functions/src/agents/inShift.ts
-// startVisit, which refuses with the same words). Finish (or the family's
-// cancel) releases it.
+// Evia's START all read this rule. Since 2026-10-11 this file is a UI
+// convenience only — the rule is ENFORCED server-side in
+// functions/src/shifts/visitActions.ts startVisit (reached by the site through
+// services/visitActionQueue.ts and by Evia's START), which refuses with the same
+// words. Finish (or the family's cancel) releases it.
 
 export interface InProgressVisitLike { id: string; status?: string; clientName?: string }
 

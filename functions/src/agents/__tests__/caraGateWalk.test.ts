@@ -1070,28 +1070,30 @@ describe("finished-profile guard — Evia's record writers never re-open the sit
   // day) rule, so wizardStepForDraft would now say "availability".
   const OLD_DRAFT = { ...FULL_DATA, street: "1 Main St", state: "CA", hourlyRate: 24, availability: { days: ["Monday"], hours: "" } };
 
-  it("profileMirrorForExisting keeps a grid the site holds unless the availability answer changed (goal 5)", () => {
-    const answer = { days: ["Monday"], hours: "mornings" };
+  it("profileMirrorForExisting keeps a grid the site holds unless the availability answer changed THIS save (goal 5; merge rule C4 2026-10-11)", () => {
     const siteGrid = { monday: [{ start: "06:00", end: "12:00" }], friday: [{ start: "12:00", end: "18:00" }] };
-    const mirror = { availability: answer, weeklyAvailability: { monday: [{ start: "06:00", end: "12:00" }] } };
-    // same answer as before, the site added Friday afternoons → the mirror must not touch the grid
-    expect(profileMirrorForExisting(mirror, { availability: answer, weeklyAvailability: siteGrid })).toEqual({ availability: answer });
-    // the caregiver changed her answer → the re-derived grid flows
-    expect(profileMirrorForExisting(mirror, { availability: { days: ["Tuesday"], hours: "mornings" }, weeklyAvailability: siteGrid })).toEqual(mirror);
+    const mirror = { weeklyAvailability: { monday: [{ start: "06:00", end: "12:00" }] } };
+    // another field saved, the site added Friday afternoons → the mirror must not touch the grid
+    expect(profileMirrorForExisting(mirror, { weeklyAvailability: siteGrid }, ["bio"])).toEqual({});
+    // the caregiver changed her availability answer this save → the re-derived grid flows
+    expect(profileMirrorForExisting(mirror, { weeklyAvailability: siteGrid }, ["availability"])).toEqual(mirror);
     // no grid on the record yet → first write flows
-    expect(profileMirrorForExisting(mirror, { availability: answer })).toEqual(mirror);
+    expect(profileMirrorForExisting(mirror, {})).toEqual(mirror);
   });
 
-  it("profileMirrorForExisting drops wizardStep only for a profile_complete record", () => {
-    expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, FINISHED))
+  it("profileMirrorForExisting drops wizardStep for a profile_complete record and never moves it backwards", () => {
+    expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, FINISHED, ["bio"]))
       .toEqual({ bio: "x" });
     expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, { onboardingStatus: "in_progress" }))
       .toEqual({ bio: "x", wizardStep: "availability" });
     expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, {}))
       .toEqual({ bio: "x", wizardStep: "availability" });
+    // the site is already at rates → the text draft's earlier step never pulls it back
+    expect(profileMirrorForExisting({ bio: "x", wizardStep: "availability" }, { onboardingStatus: "in_progress", wizardStep: "rates" }))
+      .toEqual({ bio: "x" });
   });
 
-  it("ensureCaregiverDocForOnboarding re-linking a finished record keeps onboardingStatus/wizardStep/status and still mirrors the field values", async () => {
+  it("ensureCaregiverDocForOnboarding re-linking a finished record keeps onboardingStatus/wizardStep/status and fills only what the record lacks (C4: a site edit is never overwritten)", async () => {
     hoisted.docState.set("caregivers/cg-uid", { ...FINISHED });
     seed("caregiver_awaiting_membership", OLD_DRAFT); // no caregiverId on the session → re-link path
     const uid = await ensureCaregiverDocForOnboarding(PHONE);
@@ -1100,8 +1102,10 @@ describe("finished-profile guard — Evia's record writers never re-open the sit
     expect(cg.onboardingStatus).toBe("profile_complete");
     expect(cg.wizardStep).toBe("done");
     expect(cg.status).toBe("onboarding");
-    expect(cg.hourlyRate).toBe(24);          // values still flow
-    expect(cg.name).toBe("Maria Lopez");
+    expect(cg.hourlyRate).toBe(20);          // the record's value wins (the site may have edited it)
+    expect(cg.name).toBe("Old Name");
+    expect(cg.email).toBe("maria@example.com"); // missing on the record → filled from the draft
+    expect(cg.city).toBe("San Jose");
     expect(stored().caregiverId).toBe("cg-uid");
   });
 

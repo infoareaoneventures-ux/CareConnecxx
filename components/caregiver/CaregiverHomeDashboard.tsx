@@ -20,6 +20,9 @@ import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { CaregiverOnboardingDashboard, CaregiverProgressCard } from './CaregiverOnboardingDashboard';
 import { useInProgressVisits } from '../../hooks/useInProgressVisits';
 import { otherVisitInProgress, finishFirstText, FINISH_FIRST_LABEL } from '../../utils/shiftStart';
+// Start / End are server writes (2026-10-11) through the visit_action_requests queue —
+// functions/src/shifts/visitActions.ts, the same functions the Bookings page and Evia use.
+import { submitVisitAction } from '../../services/visitActionQueue';
 
 interface CaregiverHomeDashboardProps {
   profile: Caregiver;
@@ -432,15 +435,11 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                             </button>
                             <button
                               onClick={async () => {
-                                if (!db) return;
-                                // Same write as the Bookings page's End Shift (CaregiverBookingsPage.tsx handleEnd).
+                                if (!uid) return;
+                                // Same server write as the Bookings page's End Shift (endVisit).
                                 try {
-                                  await db.collection('shifts').doc(s.id).update({
-                                    status: 'completed',
-                                    completedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                                    ...(endNote.trim() ? { completionNotes: endNote.trim() } : {}),
-                                  });
+                                  const r = await submitVisitAction('end_visit', { caregiverId: uid, shiftId: s.id, closingNote: endNote.trim() || undefined });
+                                  if (!r.ok) { onShowToast?.(r.message, 'error'); return; }
                                   setEndingShift(null);
                                   setEndNote('');
                                 } catch {
@@ -476,16 +475,13 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                         ) : (
                           <button
                             onClick={async () => {
-                              if (!db || startingShift) return;
+                              if (!uid || startingShift) return;
                               setStartingShift(s.id);
                               try {
-                                // Same write as the Bookings page's Start Shift (CaregiverBookingsPage.tsx handleStart):
-                                // server clock, updatedAt stamped.
-                                await db.collection('shifts').doc(s.id).update({
-                                  status: 'in-progress',
-                                  startedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                                  updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                                });
+                                // Same server write as the Bookings page's Start Shift (startVisit: the gate, the
+                                // 15-minute window and one visit at a time are checked there; server clock, updatedAt stamped).
+                                const r = await submitVisitAction('start_visit', { caregiverId: uid, shiftId: s.id });
+                                if (!r.ok) onShowToast?.(r.message, 'error');
                               } catch {
                                 onShowToast?.('Could not start this shift. Please try again.', 'error');
                               } finally {

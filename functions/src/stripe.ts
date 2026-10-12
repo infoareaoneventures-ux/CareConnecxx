@@ -5,6 +5,8 @@ import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from 
 import { appLink } from './config/appUrl';
 import { createCaregiverMembershipCheckout, markCaregiverMembershipPaid, createCaregiverBillingPortalUrl, NoBillingAccountError, resolveCaregiverAnnualPriceId } from './caregiverMembershipBilling';
 import { businessTodayStr, DEFAULT_TZ, formatDateWithWeekday } from './utils/scheduledTime';
+import { resolveCaregiverPhone } from './utils/caregiverPhone';
+import { LIVE_SUBSCRIPTION_STATUSES, pickLiveSubscription } from './utils/liveSubscription';
 
 // Initialize Stripe with secret key
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
@@ -59,7 +61,12 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
   // the server-picked flat annual price, metadata the webhook reads from either origin.
   if (plan === 'caregiver_annual') {
     try {
-      const session = await createCaregiverMembershipCheckout(stripe, { uid: userId, successUrl, cancelUrl });
+      // The site's checkout carries the caregiver's phone too (caregiver sweep C5,
+      // 2026-10-11): the payment webhook reads it to run the SAME session advance
+      // an Evia-texted checkout runs (consent page by text, cursor past the
+      // membership gate). Resolved from the record — never a browser-sent value.
+      const phone = await resolveCaregiverPhone(userId).catch(() => undefined);
+      const session = await createCaregiverMembershipCheckout(stripe, { uid: userId, successUrl, cancelUrl, ...(phone ? { phone } : {}) });
       return { sessionId: session.id, url: session.url };
     } catch (error: any) {
       const stripeMsg = error?.raw?.message || error?.message || String(error);
@@ -192,19 +199,19 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
 
       case 'customer.subscription.created': {
         const subscription = event.data.object as Stripe.Subscription;
-        await handleSubscriptionCreated(subscription);
+        await handleSubscriptionCreated(await freshSubscription(subscription), event.created);
         break;
       }
 
       case 'customer.subscription.updated': {
         const subscription = event.data.object as Stripe.Subscription;
-        await handleSubscriptionUpdated(subscription);
+        await handleSubscriptionUpdated(await freshSubscription(subscription), event.created);
         break;
       }
 
       case 'customer.subscription.deleted': {
         const subscription = event.data.object as Stripe.Subscription;
-        await handleSubscriptionDeleted(subscription);
+        await handleSubscriptionDeleted(subscription, event.created);
         break;
       }
 
@@ -292,10 +299,17 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
-  // Evia iMessage onboarding — caregiver membership payment complete
-  if (session.metadata?.task === 'caregiver_membership' && session.metadata?.phone) {
+  // Caregiver membership payment complete — ONE path for both doors (C5): an
+  // Evia-texted checkout carries the phone in its metadata; a site checkout
+  // carries the uid (and, since 2026-10-11, the phone too) — when only the uid
+  // is there, the phone is resolved from the record so the Evia session gets
+  // the same advance. No phone resolvable → the uid-only path below.
+  const caregiverCheckoutPhone = session.metadata?.task === 'caregiver_membership'
+    ? (session.metadata.phone || (session.metadata.firebaseUID ? await resolveCaregiverPhone(session.metadata.firebaseUID).catch(() => undefined) : undefined))
+    : undefined;
+  if (session.metadata?.task === 'caregiver_membership' && caregiverCheckoutPhone) {
     try {
-      const phone = session.metadata.phone;
+      const phone = caregiverCheckoutPhone;
       const subscriptionId = typeof session.subscription === 'string'
         ? session.subscription
         : (session.subscription as any)?.id ?? '';
@@ -326,8 +340,14 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
             // Stamped BEFORE the record flips: onCaregiverAccountChange reads it to let
             // the step handler (not the lifecycle text) deliver the consent page —
             // one text per gate (notifications/caregiverAccountEvents.ts lifecycleTextOwnedByGate).
-            await admin.firestore().collection('agent_sessions').doc(phone)
-              .update({ membershipRecordedAt: new Date().toISOString() }).catch(() => {});
+            // Only when a session exists AND its membership step has not already run (a
+            // rejoin / renewal is idempotent there and would send nothing) — otherwise the
+            // lifecycle text is the one text.
+            const stepAlreadyRan = Array.isArray(sess.processedWebhookTasks) && (sess.processedWebhookTasks as string[]).includes('membership');
+            if (sessSnap.exists && !stepAlreadyRan) {
+              await admin.firestore().collection('agent_sessions').doc(phone)
+                .update({ membershipRecordedAt: new Date().toISOString() }).catch(() => {});
+            }
             await markCaregiverMembershipPaid(uid, { subscriptionId, customerId: customerId || null, phone });
           }
         } catch (err) {
@@ -405,6 +425,34 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     customerId: typeof session.customer === 'string' ? session.customer : (session.customer as any)?.id ?? null,
   });
   console.log(`Membership paid for caregiver ${userId} — awaiting background-check consent`);
+}
+
+/**
+ * The subscription's CURRENT state from Stripe (caregiver sweep C14, 2026-10-11):
+ * webhook deliveries are not ordered, so a handler that mirrors the PAYLOAD's
+ * status can write an older state over a newer one (an 'active' update arriving
+ * after the cancellation). Retrieving it gives the live status; a retrieve
+ * failure falls back to the payload, where the event-ordering guard below
+ * (subscriptionEventIsStale) still refuses to go backwards.
+ */
+async function freshSubscription(subscription: Stripe.Subscription): Promise<Stripe.Subscription> {
+  try {
+    const live = await stripe.subscriptions.retrieve(subscription.id);
+    if (live && typeof live === 'object' && (live as Stripe.Subscription).status) {
+      // Keep the identity metadata the payload carried if Stripe's copy lacks it (SMS checkouts).
+      return { ...(live as Stripe.Subscription), metadata: { ...(subscription.metadata ?? {}), ...((live as Stripe.Subscription).metadata ?? {}) } };
+    }
+  } catch (err) {
+    console.warn(`freshSubscription: retrieve failed for ${subscription.id}, using the webhook payload:`, err instanceof Error ? err.message : err);
+  }
+  return subscription;
+}
+
+/** Pure (C14): is this event older than the last subscription event already mirrored? */
+export function subscriptionEventIsStale(lastMirrored: unknown, eventCreated: number | undefined): boolean {
+  if (typeof eventCreated !== 'number' || !Number.isFinite(eventCreated)) return false;
+  const last = typeof lastMirrored === 'number' ? lastMirrored : Number(lastMirrored);
+  return Number.isFinite(last) && last > 0 && eventCreated < last;
 }
 
 /**
@@ -715,17 +763,18 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
 /**
  * Handle customer.subscription.created
  */
-async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
+async function handleSubscriptionCreated(subscription: Stripe.Subscription, eventCreated?: number) {
   const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
-  // Save subscription to Firestore
-  await admin.firestore()
-    .collection('customers')
-    .doc(userId)
-    .collection('subscriptions')
-    .doc(subscription.id)
-    .set({
+  // Save subscription to Firestore (set/merge — an 'updated' delivered first must not be overwritten by an older 'created').
+  const subRef = admin.firestore().collection('customers').doc(userId).collection('subscriptions').doc(subscription.id);
+  const prev = await subRef.get().catch(() => null);
+  if (subscriptionEventIsStale(prev?.data()?.lastEventCreated, eventCreated)) {
+    console.info(`handleSubscriptionCreated: stale event for ${subscription.id} (older than the last mirrored) — ignored`);
+    return;
+  }
+  await subRef.set({
       id: subscription.id,
       status: subscription.status,
       price_id: subscription.items.data[0]?.price.id,
@@ -734,8 +783,9 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
       created: new Date(subscription.created * 1000),
       cancel_at_period_end: subscription.cancel_at_period_end,
       metadata: subscription.metadata,
+      ...(typeof eventCreated === 'number' ? { lastEventCreated: eventCreated } : {}),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }, { merge: true });
 
   // Update user document. set/merge — the SMS path's users doc may not exist
   // yet when this event races checkout.session.completed.
@@ -759,7 +809,7 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
 /**
  * Handle customer.subscription.updated
  */
-async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
+async function handleSubscriptionUpdated(subscription: Stripe.Subscription, eventCreated?: number) {
   const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
@@ -768,6 +818,11 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   // flow's created-handler), and update() on a missing doc throws.
   const subRef = admin.firestore().collection('customers').doc(userId).collection('subscriptions').doc(subscription.id);
   const prevSnap = await subRef.get().catch(() => null);
+  // Ordering guard (C14): an event older than the last one mirrored is not applied.
+  if (subscriptionEventIsStale(prevSnap?.data()?.lastEventCreated, eventCreated)) {
+    console.info(`handleSubscriptionUpdated: stale event for ${subscription.id} (older than the last mirrored) — ignored`);
+    return;
+  }
   const prevCancelScheduled = prevSnap?.data()?.cancel_at_period_end === true;
   const hadRecord = !!prevSnap?.exists;
   await subRef
@@ -777,6 +832,7 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
       current_period_end: new Date(subscription.current_period_end * 1000),
       cancel_at_period_end: subscription.cancel_at_period_end,
       canceled_at: subscription.canceled_at ? new Date(subscription.canceled_at * 1000) : null,
+      ...(typeof eventCreated === 'number' ? { lastEventCreated: eventCreated } : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
@@ -872,11 +928,13 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
 /**
  * Handle customer.subscription.deleted
  */
-async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
+async function handleSubscriptionDeleted(subscription: Stripe.Subscription, eventCreated?: number) {
   const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
   // Update subscription in Firestore. set/merge — see handleSubscriptionUpdated.
+  // A deletion is terminal: it is mirrored even when an 'updated' with a later
+  // clock was seen (Stripe's canceled state is what a retrieve would return).
   await admin.firestore()
     .collection('customers')
     .doc(userId)
@@ -885,6 +943,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     .set({
       status: 'canceled',
       canceled_at: new Date(),
+      ...(typeof eventCreated === 'number' ? { lastEventCreated: eventCreated } : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
@@ -959,20 +1018,22 @@ export const getSubscriptionDetails = functions.https.onCall(async (data, contex
   const userId = context.auth.uid;
 
   try {
+    // The live record — ONE rule with the site's getSubscriptionStatus /
+    // listenToSubscriptionStatus and Evia's Membership section / page
+    // (utils/liveSubscription.ts, 2026-10-11): active, trialing AND Stripe's
+    // retry states past_due / payment_failed, most recent wins.
     const subscriptions = await admin.firestore()
       .collection('customers')
       .doc(userId)
       .collection('subscriptions')
-      .where('status', 'in', ['active', 'trialing'])
-      .limit(1)
+      .where('status', 'in', [...LIVE_SUBSCRIPTION_STATUSES])
       .get();
 
-    if (subscriptions.empty) {
+    const subscription = pickLiveSubscription(subscriptions.docs.map(d => d.data()));
+    if (!subscription) {
       return { hasSubscription: false };
     }
 
-    const subscription = subscriptions.docs[0].data();
-    
     return {
       hasSubscription: true,
       subscription: {
@@ -1051,12 +1112,16 @@ export const getPaymentMethodStatus = functions.https.onCall(async (data, contex
 // or from Evia.
 export interface CancelSubscriptionResult { alreadyCancelling?: boolean; cancelled?: boolean; periodEnd: string | null; subId?: string }
 export async function cancelSubscriptionForUser(userId: string): Promise<CancelSubscriptionResult> {
+  // The live record = the ONE rule (utils/liveSubscription.ts, 2026-10-11): a
+  // member whose payment Stripe is retrying (past_due / payment_failed) can
+  // still cancel — that subscription IS the live one.
   const subsSnap = await admin.firestore()
     .collection('customers').doc(userId).collection('subscriptions')
-    .where('status', 'in', ['active', 'trialing']).limit(1).get();
-  if (subsSnap.empty) throw new Error('No active subscription found');
-  const subDoc  = subsSnap.docs[0];
-  const subData = subDoc.data();
+    .where('status', 'in', [...LIVE_SUBSCRIPTION_STATUSES]).get();
+  const picked = pickLiveSubscription(subsSnap.docs.map((d) => ({ __id: d.id, ...d.data() })));
+  if (!picked) throw new Error('No active subscription found');
+  const subDoc  = { id: picked.__id as string };
+  const subData = picked as Record<string, unknown>;
   const periodEnd = (subData.current_period_end as admin.firestore.Timestamp | undefined)?.toDate?.()?.toISOString?.() ?? null;
   if (subData.cancel_at_period_end === true) return { alreadyCancelling: true, periodEnd };
   await stripe.subscriptions.update(subDoc.id, { cancel_at_period_end: true });

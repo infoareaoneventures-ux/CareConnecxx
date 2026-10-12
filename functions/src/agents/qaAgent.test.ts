@@ -621,7 +621,7 @@ describe("buildCaregiverCoreContext", () => {
     });
     expect(out).toContain("CAREGIVER NAME: Imran.");
     expect(out).toContain("background check CLEARED");
-    expect(out).toContain("caregiver membership PAID and active");
+    expect(out).toContain("caregiver membership active"); // the ONE rule (sweep C1): membershipPaid with no status
     expect(out).toContain("payout account connected");
   });
 

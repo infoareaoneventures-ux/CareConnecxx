@@ -17,25 +17,33 @@
 // (FINISH, not END: END is a carrier opt-out word — live 2026-09-28 a caregiver
 // texting END to close a visit was unsubscribed from Evia instead.) The family's
 // texts on start / end come from onShiftStatusChanged, same as the site.
+//
+// 2026-10-11: the checks and the writes behind Start and End live in
+// shifts/visitActions.ts — ONE server implementation the site reaches through
+// the visit_action_requests queue and Evia calls here. The gate (membership +
+// background), the 15-minute window, one visit at a time and the status
+// transitions are enforced THERE; this file keeps the texts, the "which
+// visit?" resolution and the keyword protocol.
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
-import { businessTodayStr, parseScheduledTimeMs, DEFAULT_TZ } from "../utils/scheduledTime";
+import { businessTodayStr, DEFAULT_TZ } from "../utils/scheduledTime";
 import { isShiftOverdue } from "./shiftReschedule";
-import { fmtDate, fmtTime, type CareRecipient } from "./caregiverBookingRequests";
+import { type CareRecipient } from "./caregiverBookingRequests";
 import { getAppUrl } from "../config/appUrl";
 import { answerMidFlow } from "./stepHandler";
+import { textCaregiverGateBlock } from "./caregiverAccessGate";
+import {
+  startVisit as startVisitShared, endVisit as endVisitShared,
+  START_WINDOW_MINUTES, startsInMinutes, visitLine, finishFirstText,
+} from "../shifts/visitActions";
 
 const db = admin.firestore();
-export const START_WINDOW_MINUTES = 15;
+export { START_WINDOW_MINUTES, startsInMinutes, visitLine, finishFirstText };
 
 // One visit at a time (founder, 2026-10-07: "they shouldn't start two shifts at the same time") — the twin of
-// utils/shiftStart.ts on the site's three Start Shift buttons. Same words.
+// utils/shiftStart.ts on the site's three Start Shift buttons. Same words (finishFirstText is the shared rule's).
 export const FINISH_FIRST_LINE = "Finish your current visit first (text FINISH), then START this one.";
-export function finishFirstText(other: { clientName?: unknown } | null): string {
-  const who = typeof other?.clientName === "string" ? other.clientName.trim() : "";
-  return who ? `Finish your visit with ${who} first.` : "Finish your current visit first.";
-}
 
 /** The real Bookings page opened at this visit (login required — the link carries no secret). */
 export const visitPageLink = (shiftId: string) => `${getAppUrl()}/caregiver/bookings?tab=active&visit=${encodeURIComponent(shiftId)}`;
@@ -107,13 +115,6 @@ export function noteLines(shift: Doc, bookingNote?: string | null): string[] {
 export function clock(ms: number): string {
   return new Date(ms).toLocaleTimeString("en-US", { timeZone: DEFAULT_TZ, hour: "numeric", minute: "2-digit" });
 }
-export function visitLine(shift: Doc): string {
-  return `${fmtDate(String(shift.date ?? ""))}, ${fmtTime(shift.startTime as string | undefined)}${shift.endTime ? ` – ${fmtTime(shift.endTime as string)}` : ""} with ${shift.clientName || "the family"}`;
-}
-export function startsInMinutes(shift: Doc, nowMs = Date.now()): number | null {
-  const ms = parseScheduledTimeMs(`${String(shift.date ?? "")}T${String(shift.startTime ?? "00:00").slice(0, 5)}:00`);
-  return Number.isFinite(ms) && ms > 0 ? (ms - nowMs) / 60000 : null;
-}
 
 export type VisitLoad = { ok: true; id: string; shift: Doc; ref: FirebaseFirestore.DocumentReference } | { ok: false; reason: "not_found" | "not_yours" | "none_today" | "ambiguous"; message: string; candidates?: Array<{ shiftId: string; line: string }> };
 
@@ -128,7 +129,8 @@ export async function resolveVisit(caregiverId: string, shiftId: unknown, want: 
     if (!snap.exists) return { ok: false, reason: "not_found", message: "I can't find that visit." };
     const shift = snap.data() as Doc;
     if (shift.caregiverId !== caregiverId) return { ok: false, reason: "not_yours", message: "That visit isn't yours." };
-    return { ok: true, id: snap.id, shift, ref: snap.ref };
+    // The id we were given IS the visit's id — the shared write (shifts/visitActions.ts) is keyed by it.
+    return { ok: true, id: snap.id || shiftId, shift, ref: snap.ref };
   }
   const today = businessTodayStr();
   const snap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("date", "==", today).get();
@@ -153,31 +155,29 @@ export async function resolveVisit(caregiverId: string, shiftId: unknown, want: 
 // ── Start Shift ──────────────────────────────────────────────────────────────
 export type StartResult =
   | { ok: true; shiftId: string; alreadyStarted: boolean; text: string; tasks: TaskItem[]; startedAt: string }
-  | { ok: false; reason: string; message: string; candidates?: Array<{ shiftId: string; line: string }> };
+  | { ok: false; reason: string; message: string; candidates?: Array<{ shiftId: string; line: string }>; gate?: "membership" | "background"; caregiver?: Doc };
 
+/**
+ * START: resolve which visit, then the shared startVisit (shifts/visitActions.ts)
+ * does every check and the write; this wraps its refusal in Evia's keyword hints.
+ */
 export async function startVisit(caregiverId: string, shiftId: unknown, nowMs = Date.now()): Promise<StartResult> {
   const v = await resolveVisit(caregiverId, shiftId, "start");
   if (!v.ok) return { ok: false, reason: v.reason, message: v.message + (v.candidates ? "\n" + v.candidates.map((c, i) => `${i + 1}. ${c.line}`).join("\n") : "") };
   const { shift } = v;
   const tasks = taskItems(shift);
-  if (shift.status === "in-progress") {
+  const r = await startVisitShared({ caregiverId, shiftId: v.id, nowMs });
+  if (!r.ok) {
+    if (r.reason === "another_in_progress" && r.other) {
+      return { ok: false, reason: r.reason, message: `${r.message} (${visitLine(r.other.shift)}) — text FINISH when it's over, then START this one.` };
+    }
+    if (r.reason === "too_early") return { ok: false, reason: r.reason, message: `${r.message} Text START then.` };
+    if (r.reason === "membership" || r.reason === "background") return { ok: false, reason: r.reason, message: r.message, gate: r.reason, caregiver: r.caregiver };
+    return { ok: false, reason: r.reason, message: r.message };
+  }
+  if (r.alreadyStarted) {
     return { ok: true, shiftId: v.id, alreadyStarted: true, startedAt: String(shift.startedAt ?? ""), tasks, text: `This visit is already in progress — ${visitLine(shift)}.` };
   }
-  if (shift.status !== "scheduled") return { ok: false, reason: "not_scheduled", message: `That visit is ${String(shift.status)}, so it can't be started.` };
-  // One visit at a time (2026-10-07): any other visit of this caregiver still in progress — any date — blocks the start.
-  const openSnap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "==", "in-progress").get();
-  const otherOpen = openSnap.docs.find((d) => d.id !== v.id);
-  if (otherOpen) {
-    const o = otherOpen.data() as Doc;
-    return { ok: false, reason: "another_in_progress", message: `${finishFirstText(o)} (${visitLine(o)}) — text FINISH when it's over, then START this one.` };
-  }
-  // The page's Start Shift button: never once the visit is overdue, and only from 15 minutes before the start.
-  if (isShiftOverdue(shift)) return { ok: false, reason: "overdue", message: `That visit's time has passed (${visitLine(shift)}) — it can't be started now.` };
-  const mins = startsInMinutes(shift, nowMs);
-  if (mins !== null && mins > START_WINDOW_MINUTES) {
-    return { ok: false, reason: "too_early", message: `Not yet — Start opens ${START_WINDOW_MINUTES} minutes before the visit (${fmtTime(shift.startTime as string | undefined)} on ${fmtDate(String(shift.date ?? ""))}). Text START then.` };
-  }
-  await v.ref.update({ status: "in-progress", startedAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
   const started = clock(nowMs);
   const bookingSnap = shift.bookingRequestId ? await db.collection("booking_requests").doc(String(shift.bookingRequestId)).get().catch(() => null) : null;
   const bookingNote = bookingSnap?.exists ? ((bookingSnap.data()?.notes as string | undefined) ?? null) : null;
@@ -239,17 +239,15 @@ export async function addVisitNote(caregiverId: string, shiftId: unknown, noteTe
 export type EndResult =
   | { ok: true; shiftId: string; alreadyCompleted: boolean; text: string; completedAt: string }
   | { ok: false; reason: string; message: string; candidates?: Array<{ shiftId: string; line: string }> };
+/** FINISH: resolve which visit, then the shared endVisit (shifts/visitActions.ts) checks and writes. */
 export async function endVisit(caregiverId: string, shiftId: unknown, closingNote: unknown, nowMs = Date.now()): Promise<EndResult> {
   const v = await resolveVisit(caregiverId, shiftId, "in_progress");
   if (!v.ok) return { ok: false, reason: v.reason, message: v.message, candidates: v.candidates };
   const { shift } = v;
-  if (shift.status === "completed") return { ok: true, shiftId: v.id, alreadyCompleted: true, completedAt: String(shift.completedAt ?? ""), text: `That visit is already ended — ${visitLine(shift)}.` };
-  if (shift.status !== "in-progress") return { ok: false, reason: "not_in_progress", message: `That visit hasn't been started (${String(shift.status)}) — only a visit in progress can be ended.` };
   const notes = String(closingNote ?? "").trim();
-  await v.ref.update({
-    status: "completed", completedAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    ...(notes ? { completionNotes: notes } : {}),
-  });
+  const r = await endVisitShared({ caregiverId, shiftId: v.id, closingNote: notes, nowMs });
+  if (!r.ok) return { ok: false, reason: r.reason, message: r.message };
+  if (r.alreadyCompleted) return { ok: true, shiftId: v.id, alreadyCompleted: true, completedAt: String(shift.completedAt ?? ""), text: `That visit is already ended — ${visitLine(shift)}.` };
   const items = taskItems(shift);
   const doneCount = items.filter((t) => t.done).length;
   return { ok: true, shiftId: v.id, alreadyCompleted: false, completedAt: new Date(nowMs).toISOString(), text: `Ended ${clock(nowMs)} — ${visitLine(shift)}.${items.length ? ` Tasks ${doneCount}/${items.length}.` : ""}${notes ? " Your closing note is on the visit." : ""} Thank you. Reply SUBMIT to submit your hours.` };
@@ -340,8 +338,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
   if (upper === "START" || upper === "ARRIVED") {
     const v = await resolveVisit(caregiverId, undefined, "start");
     if (!v.ok && v.reason === "ambiguous" && v.candidates) { await parkVisitChoice(phone, v.candidates, "START"); await say(whichVisitPrompt(v.candidates)); return "handled"; }
-    const r = await startVisit(caregiverId, v.ok ? v.id : undefined);
-    await say(r.ok ? r.text : r.message);
+    await sayStartResult(phone, chatId, await startVisit(caregiverId, v.ok ? v.id : undefined), say);
     return "handled";
   }
   // FINISH (or "end shift" / "finish shift" / "end visit") — never the bare word END, which is the SMS opt-out keyword.
@@ -393,13 +390,24 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
 }
 
 export const whichVisitPrompt = (candidates: Array<{ line: string }>) => `Which visit? ${candidates.map((c, i) => `Reply ${i + 1} for ${c.line}`).join(", ")}.`;
+
+/**
+ * The start text, or the refusal. A gate refusal (membership / background —
+ * the server's rule, since 2026-10-11 also behind the texted START) is the
+ * site's modal over SMS: its copy + its CTA link (textCaregiverGateBlock), the
+ * same as every other gated action by text.
+ */
+async function sayStartResult(phone: string, chatId: string, r: StartResult, say: (m: string) => Promise<unknown>): Promise<void> {
+  if (!r.ok && r.gate) { await textCaregiverGateBlock(phone, chatId, r.gate, r.caregiver ?? {}); return; }
+  await say(r.ok ? r.text : r.message);
+}
 async function parkVisitChoice(phone: string, candidates: Array<{ shiftId: string; line: string }>, keyword: string): Promise<void> {
   await db.collection("agent_sessions").doc(phone).set({ pendingVisitChoice: { candidates, keyword, at: new Date().toISOString() }, stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString() }, { merge: true }).catch(() => {});
 }
 /** The keyword the caregiver texted, run against the visit they then picked. */
 async function runKeywordOnShift(phone: string, chatId: string, caregiverId: string, keyword: string, shiftId: string, say: (m: string) => Promise<unknown>): Promise<void> {
   const upper = keyword.trim().toUpperCase();
-  if (upper === "START") { const r = await startVisit(caregiverId, shiftId); await say(r.ok ? r.text : r.message); return; }
+  if (upper === "START") { await sayStartResult(phone, chatId, await startVisit(caregiverId, shiftId), say); return; }
   if (upper === "FINISH") {
     await parkShiftEnd(phone, shiftId);
     await say(END_PROMPT); return;

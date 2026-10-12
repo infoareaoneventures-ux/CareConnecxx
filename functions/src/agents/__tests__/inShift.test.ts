@@ -16,7 +16,7 @@ vi.mock("firebase-admin", () => {
     collection: (name: string) => ({
       doc: (id: string) => ({
         get: vi.fn(async () => ({ exists: hoisted.docs.has(`${name}/${id}`), id, data: () => hoisted.docs.get(`${name}/${id}`), ref: { update: async (d: any) => { hoisted.updates.push({ path: `${name}/${id}`, data: d }); hoisted.docs.set(`${name}/${id}`, { ...hoisted.docs.get(`${name}/${id}`), ...d }); } } })),
-        update: vi.fn(async (d: any) => { hoisted.updates.push({ path: `${name}/${id}`, data: d }); if (name === "agent_sessions") hoisted.sessionWrites.push(d); }),
+        update: vi.fn(async (d: any) => { hoisted.updates.push({ path: `${name}/${id}`, data: d }); if (name === "agent_sessions") hoisted.sessionWrites.push(d); else if (hoisted.docs.has(`${name}/${id}`)) hoisted.docs.set(`${name}/${id}`, { ...hoisted.docs.get(`${name}/${id}`), ...d }); }),
         set: vi.fn(async (d: any) => { if (name === "agent_sessions") hoisted.sessionWrites.push(d); }),
       }),
       where: (f: string, _o: string, v: any) => ({ where: (f2: string, _o2: string, v2: any) => ({
@@ -32,6 +32,8 @@ vi.mock("firebase-admin", () => {
 });
 vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async (_c: string, m: string) => { hoisted.sent.push(m); return { message_id: "m" }; }) }));
 vi.mock("../../utils/openaiClient", () => ({ quickComplete: (...a: any[]) => (hoisted.quick as any)(...a) }));
+// The gate block's CTA link (textCaregiverGateBlock → sendOnboardingLink) — stubbed so the test never loads onboardingConversation.
+vi.mock("../onboardingConversation", () => ({ sendOnboardingLink: vi.fn(async () => ({ success: true })) }));
 
 import { taskItems, startVisit, checkTasks, addVisitNote, endVisit, resolveVisit, handleInShiftKeyword, END_PROMPT, PENDING_END_TTL_MS } from "../inShift";
 import { businessTodayStr } from "../../utils/scheduledTime";
@@ -40,7 +42,8 @@ const la = (d: Date) => { const p: Record<string, string> = {}; for (const x of 
 const RECIPIENTS = [{ name: "Mai", relationship: "Mother", notes: "Likes her tea at 3.", careNeeds: ["Companionship", "Mobility Assistance"], careNeedDetails: { "Mobility Assistance": ["Transfer Assist", "Walking"] } }];
 const shift = (id: string, over: Record<string, unknown>) => hoisted.docs.set(`shifts/${id}`, { caregiverId: "cg1", clientId: "c1", clientName: "Basra Yousuf", status: "scheduled", date: "2099-09-28", startTime: "11:00", endTime: "14:00", careRecipients: RECIPIENTS, tasksCompleted: [], ...over });
 
-beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sessionWrites.length = 0; hoisted.sent.length = 0; hoisted.quick.mockReset(); hoisted.quick.mockResolvedValue("NOTE"); });
+// Start is gated server-side since 2026-10-11 (shifts/visitActions.ts: membership active + background cleared) — the fixture caregiver passes it.
+beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sessionWrites.length = 0; hoisted.sent.length = 0; hoisted.quick.mockReset(); hoisted.quick.mockResolvedValue("NOTE"); hoisted.docs.set("caregivers/cg1", { membershipStatus: "active", verified: true }); });
 
 describe("two care recipients — one block each, numbers run across (DONE n stays unambiguous)", () => {
   it("groups tasks under each recipient with their note; a check-off names the recipient", async () => {
@@ -91,6 +94,25 @@ describe("startVisit — the Start Shift button", () => {
     // Starting the open visit itself still reads "already in progress" (it is not "another" visit).
     const same = await startVisit("cg1", "open");
     expect(same.ok && same.alreadyStarted).toBe(true);
+  });
+
+  it("the gate (2026-10-11, server-side behind START too): membership not active → the site's modal copy, nothing written; the START keyword texts the gate block + its link", async () => {
+    const { date, time } = la(new Date(Date.now() + 5 * 60 * 1000));
+    shift("s1", { date, startTime: time, endTime: "23:59" });
+    hoisted.docs.set("caregivers/cg1", { membershipStatus: "canceled", verified: true });
+    const r = await startVisit("cg1", "s1");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe("membership");
+    expect(r.message).toMatch(/^Membership required/);
+    expect(hoisted.updates).toHaveLength(0);
+    hoisted.docs.set("shifts/s1", { ...hoisted.docs.get("shifts/s1"), date: businessTodayStr() });
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "START", {})).toBe("handled");
+    expect(hoisted.sent[0]).toMatch(/^Membership required/);
+    expect(hoisted.updates.filter((u) => u.path.startsWith("shifts/"))).toHaveLength(0);
+    hoisted.docs.set("caregivers/cg1", { membershipStatus: "active", verified: false });
+    const b = await startVisit("cg1", "s1");
+    expect(!b.ok && b.reason).toBe("background");
   });
 
   it("too early → told when Start opens; nothing written", async () => {

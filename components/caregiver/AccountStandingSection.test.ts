@@ -2,7 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../BackgroundCheckModal', () => ({ BackgroundCheckModal: () => null }));
 vi.mock('../../services/stripeService', () => ({ getSubscriptionStatus: vi.fn(), getCaregiverBillingPortalUrl: vi.fn() }));
-vi.mock('../../hooks/useCaregiverGate', () => ({ caregiverMembershipActive: (p: any) => p?.membershipStatus === 'active' }));
+vi.mock('../../hooks/useCaregiverGate', () => ({
+  caregiverMembershipActive: (p: any) => ['active', 'trialing', 'past_due', 'payment_failed'].includes(p?.membershipStatus),
+  caregiverMembershipPaymentFailed: (p: any) => ['past_due', 'payment_failed'].includes(p?.membershipStatus),
+  MEMBERSHIP_PAYMENT_FAILED_NOTICE: 'notice',
+  ADD_TRANSPORTATION_PATH: '/caregiver/profile?edit=services',
+}));
 
 import { backgroundCheckState, driverCardFor, DRIVER_CARD_TEXT } from './AccountStandingSection';
 

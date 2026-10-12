@@ -4895,6 +4895,16 @@ async function executeToolCall(
       // a city from free text.
       const { lookupZipPlace } = await import("../utils/geocode");
       const place = await lookupZipPlace(zipCode as string);
+      // The post's point = the site's rule (jobPostCoords.ts): the Care Plan
+      // location's street-level coords, else the street geocoded now, else the
+      // ZIP centroid — the street itself never lands on job_posts.
+      const { resolveJobPostPoint } = await import("../agents/jobPostCoords");
+      const poolSnap = await db.collection("carePlans").doc(clientId as string).get().catch(() => null);
+      const point = await resolveJobPostPoint(poolSnap?.data()?.locationPool, {
+        street: typeof streetAddress === "string" ? streetAddress : undefined,
+        city: place?.city, state: place?.state, zipCode: zipCode as string,
+      }).catch(() => null)
+        ?? (typeof place?.lat === "number" && typeof place?.lng === "number" ? { lat: place.lat, lng: place.lng, geoPrecision: "zip" as const } : null);
       const ref = db.collection("job_posts").doc();
       // Web JobPost contract via the shared builder — the caregiver Job Board
       // renders title/location-string/rate; the old hand-rolled shape here
@@ -4915,8 +4925,9 @@ async function executeToolCall(
         zipCode:       zipCode as string,
         city:          place?.city,
         state:         place?.state,
-        lat:           place?.lat,
-        lng:           place?.lng,
+        lat:           point?.lat,
+        lng:           point?.lng,
+        geoPrecision:  point?.geoPrecision,
         careLevel:     (careLevel ?? undefined) as string | undefined,
         minHoursPerWeek: typeof minHoursPerWeek === "number" ? minHoursPerWeek : undefined,
         caregiversNeeded: typeof caregiversNeeded === "number" ? Math.min(4, Math.max(1, caregiversNeeded)) : undefined,
@@ -4942,6 +4953,7 @@ async function executeToolCall(
           city:            place?.city,
           state:           place?.state,
           zipCode:         zipCode as string,
+          point,
         }).catch(() => {});
       }
       logAudit({ eventType: "job_post_created", userId: clientId as string, data: { source: "mcp:create_job_post", jobId: ref.id } }).catch(() => {});
@@ -5196,8 +5208,9 @@ async function executeToolCall(
           return toolError(ar.reason === "not_found" ? "NOT_FOUND" : "INVALID_INPUT", msg);
         }
         if (sess) await (await import("../linq/client")).sendMessage(sess.chatId, ar.toast);
-        logAudit({ eventType: ar.status === "accepted" ? "amendment_accepted" : "amendment_declined", userId: caregiverId as string, data: { source: "mcp:respond_to_booking_request", amendmentId: resolved, shiftsCreated: ar.shiftsCreated } }).catch(() => {});
-        return { success: true, responded: true, decision, amendmentId: resolved, status: ar.status, shiftsCreated: ar.shiftsCreated, note: sess ? "The toast was texted — send nothing else this turn." : `Schedule change ${ar.status}.` };
+        // The visits for an accepted change are generated server-side (onBookingAmendmentAccepted) — same as the page's Accept.
+        logAudit({ eventType: ar.status === "accepted" ? "amendment_accepted" : "amendment_declined", userId: caregiverId as string, data: { source: "mcp:respond_to_booking_request", amendmentId: resolved } }).catch(() => {});
+        return { success: true, responded: true, decision, amendmentId: resolved, status: ar.status, note: sess ? "The toast was texted — send nothing else this turn." : `Schedule change ${ar.status}.` };
       }
       const r = await respondToBookingRequest(caregiverId as string, resolved, decision);
       if (!r.ok) {
@@ -5771,11 +5784,9 @@ async function executeToolCall(
       const cgGateData = cgGateSnap.data() ?? {};
       // Mirrors useCaregiverGate's gateMembership() — InboxView.tsx blocks a
       // caregiver with an inactive membership from sending in the composer;
-      // Evia must apply the same lower-stakes membership-only check.
-      const cgMembershipActive = cgGateData.membershipStatus === "active"
-        || cgGateData.membershipStatus === "trialing"
-        || (!cgGateData.membershipStatus && cgGateData.membershipPaid === true);
-      if (!cgMembershipActive) {
+      // the ONE membership rule (caregiverAccessGate, sweep C1 2026-10-11).
+      const { isCaregiverMembershipActive: cgMembershipRule } = await import("../agents/caregiverAccessGate");
+      if (!cgMembershipRule(cgGateData)) {
         return toolError("MEMBERSHIP_REQUIRED", "This caregiver's membership isn't active — they need an active membership before messaging a family.");
       }
       let resolvedClientId = clientIdInput as string | undefined;
@@ -6046,8 +6057,9 @@ async function executeToolCall(
       // The page's rule (CaregiverPaymentsPage fullyEnabled): "Bank account connected" only when
       // payouts AND charges are enabled; an account id alone is "Setup incomplete" (2026-10-01 —
       // this used to say "active" on payoutsEnabled OR onboardingComplete and never read chargesEnabled).
+      const { caregiverPayoutsLive: payoutsLiveRule } = await import("../agents/caregiverAccessGate");
       let summary: string;
-      if (payoutsEnabled && chargesEnabled)     summary = "active";        // Bank account connected
+      if (payoutsLiveRule(pay as Record<string, unknown>)) summary = "active"; // Bank account connected (the one rule, sweep C2)
       else if (!hasStripeAccount)               summary = "not_started";   // link never opened
       else if (detailsSubmitted)                summary = "under_review";  // Stripe has details, still finishing
       else                                      summary = "incomplete";    // started but Stripe's form unfinished
@@ -6106,8 +6118,9 @@ async function executeToolCall(
         for (const [item, ok, fix] of profileChecks) {
           if (!ok) missing.push({ item: `profile: ${item}`, detail: `The ${item} field on their profile is empty.`, fix });
         }
-        if (!filled(cg.bio) && cg.bioSkipped !== true) {
-          optionalGaps.push("bio (they can add a short intro anytime — families like it, but it's optional)");
+        // The bio is a required wizard step on both doors (≥150 characters, no skip — 2026-10-11).
+        if (!filled(cg.bio)) {
+          missing.push({ item: "profile: bio", detail: "Their bio is empty — the wizard needs at least 150 characters, in their own words.", fix: "ask for it and save with update_caregiver_profile" });
         }
         if (!filled(cg.photo) && !filled(cg.profilePhoto) && !filled(cg.photoURL)) {
           missing.push({
@@ -6120,8 +6133,10 @@ async function executeToolCall(
         // removed 2026-09-27. Transportation is the service + the driving record, nothing
         // to suggest here.)
 
-        // Gates
-        const membershipActive = cg.membershipPaid === true || user.membershipStatus === "active" || user.subscriptionActive === true;
+        // Gates — the ONE membership rule, on the record the site reads
+        // (dbService.getUser spreads users then caregivers — the caregiver doc wins; sweep C1 2026-10-11).
+        const { isCaregiverMembershipActive, caregiverPayoutsLive } = await import("../agents/caregiverAccessGate");
+        const membershipActive = isCaregiverMembershipActive({ ...user, ...cg });
         if (!membershipActive) {
           missing.push({
             item: "membership payment",
@@ -6144,7 +6159,8 @@ async function executeToolCall(
         }
         const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
         const pay = await getCaregiverPayoutFields(caregiverId as string, cg);
-        const payoutsLive = pay.payoutsEnabled === true || pay.stripeOnboardingComplete === true;
+        // The Payouts page's rule: payouts AND charges enabled (sweep C2, 2026-10-11).
+        const payoutsLive = caregiverPayoutsLive(pay as Record<string, unknown>);
         if (!payoutsLive) {
           missing.push({
             item: "payout setup",
@@ -6583,7 +6599,7 @@ async function executeToolCall(
           `${allowedFieldNamesForRole(role).join(", ")}. (Smoking → smokingHousehold, pets → petsInHome, the note/description for caregivers → ${role === "client" ? "jobDescription" : "bio"}.)`,
         );
       }
-      if (fieldValue === undefined || fieldValue === null || (fieldValue === "" && !(role === "caregiver" && fieldName === "bio"))) {
+      if (fieldValue === undefined || fieldValue === null || fieldValue === "") {
         return toolError("INVALID_INPUT", "fieldValue is required");
       }
       // Numeric fields (daysPerWeek/hoursPerDay/age) must coerce to an in-range
@@ -6597,11 +6613,12 @@ async function executeToolCall(
           guidance: `"${String(fieldValue)}" isn't a valid ${fieldName} value — it must be a number. Re-read their message; if it doesn't actually answer ${fieldName}, save it to the right field instead and ask for ${fieldName} naturally.`,
         };
       }
-      // Recovery email must actually look like an email — it's the sole
-      // account-recovery channel if the phone is ever lost, so a malformed
-      // save here can't be allowed to silently count as "collected" the way
-      // an ordinary free-text field would.
-      if (role === "client" && fieldName === "email" && typeof fieldValue === "string" && !/^\S+@\S+\.\S+$/.test(fieldValue.trim())) {
+      // The email must actually look like an email — for a family it's the sole
+      // account-recovery channel if the phone is ever lost; for a caregiver it's
+      // where Checkr and Stripe write (the wizard checks the same shape). A
+      // malformed save can't silently count as "collected" (both roles since
+      // 2026-10-11; format validation, not intent parsing).
+      if (fieldName === "email" && typeof fieldValue === "string" && !/^\S+@\S+\.\S+$/.test(fieldValue.trim())) {
         return {
           ok: true,
           saved: false,
@@ -6839,14 +6856,41 @@ async function executeToolCall(
       }
       // Wizard value rules for the caregiver profile (CaregiverOnboardingWizard.tsx,
       // 2026-09-25): experience is one of five buckets; travel distance one of
-      // five options; photo/documents never typed. Bio has NO minimum length on
-      // Evia's side (founder, 2026-09-26) — the website's own BioStep keeps its
-      // separate 150-char minChars (CaregiverOnboardingWizard.tsx:1073), an
-      // independent hardcoded value, not this constant, so this is a deliberate,
-      // scoped divergence, not an accidental one.
+      // five options; photo never typed. The bio is the wizard's BioStep rule on
+      // BOTH doors (founder, 2026-10-11): at least BIO_MIN_CHARS characters, no
+      // skip — a shorter one is not saved and the model asks for a little more.
       if (role === "caregiver" && fieldName === "bio") {
+        const { BIO_MIN_CHARS } = await import("../agents/onboardingContract");
         const bioText = typeof fieldValue === "string" ? fieldValue.trim() : "";
+        if (bioText.length < BIO_MIN_CHARS) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `Their bio is ${bioText.length} characters; the profile needs at least ${BIO_MIN_CHARS} (the same rule as the website's bio step). Warmly ask them to add a bit more — a line or two about their experience and what families can expect — then save the whole bio again. Never write it for them.`,
+          };
+        }
         onboardingDataPatch = { bio: bioText };
+      }
+      // The wizard's rates step: the optional rate for two seniors / three or
+      // more (a dollar amount, 0 = not offered) and "max clients at once"
+      // ("1" | "2" | "3+") — saved only when offered, never asked on their own.
+      if (role === "caregiver" && (fieldName === "rateFor2Seniors" || fieldName === "rateFor3PlusSeniors")) {
+        const { coerceClientRate } = await import("../agents/onboardingContract");
+        const n = coerceClientRate(fieldValue);
+        if (n === null || n < 0) {
+          return { ok: true, saved: false, invalidValue: true, guidance: `"${String(fieldValue)}" isn't a dollar amount — ${fieldName} takes a number (or 0 if they don't offer it). This field is optional: if they didn't actually give one, save nothing and move on.` };
+        }
+        onboardingDataPatch = { [fieldName]: n };
+      }
+      if (role === "caregiver" && fieldName === "maxClients") {
+        const { toMaxClients } = await import("../agents/caregiverProfileMirror");
+        const { MAX_CLIENTS_OPTIONS } = await import("../agents/onboardingContract");
+        const v = toMaxClients(fieldValue);
+        if (!v) {
+          return { ok: true, saved: false, invalidValue: true, guidance: `maxClients must be one of ${MAX_CLIENTS_OPTIONS.join(" / ")} (clients at once). This field is optional: if they didn't actually say, save nothing and move on.` };
+        }
+        onboardingDataPatch = { maxClients: v };
       }
       if (role === "caregiver" && fieldName === "yearsExperience") {
         const { toExperienceBucket, EXPERIENCE_BUCKETS } = await import("../agents/onboardingContract");
@@ -6921,6 +6965,25 @@ async function executeToolCall(
       // would orphan from the completion record). See onboardingContract notes.
       const snap = await ref.get();
       const data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+      // Caregiver: the record is the site's wizard, which saves EVERY step to
+      // caregivers/{uid} immediately — so does this (sweep C3, 2026-10-11):
+      // the field just saved lands on the record through the one mirror (site
+      // field names, wizardStep never backwards, nothing else overwritten).
+      // Before this the record only caught up when something else called
+      // mergeOnboardingData, so a bio saved last could be missing from a
+      // profile_complete record. Non-fatal.
+      if (role === "caregiver") {
+        const sessDoc = (snap.data() ?? {}) as Record<string, unknown>;
+        const cgUid = (sessDoc.caregiverId ?? (sessDoc.userType === "caregiver" ? sessDoc.userId : undefined)) as string | undefined;
+        if (cgUid) {
+          try {
+            const { mirrorCaregiverDraftToRecord } = await import("../agents/caregiverProfileMirror");
+            await mirrorCaregiverDraftToRecord(cgUid, data, Object.keys(onboardingDataPatch));
+          } catch (err) {
+            console.error("save_onboarding_field: caregiver record mirror failed (non-fatal):", err);
+          }
+        }
+      }
       // NOTE: client collection fields are intentionally NOT mirrored to
       // job_postings/senior_profiles/carePlans as each one is saved — matching
       // the web wizard, which writes nothing until its final step. The real

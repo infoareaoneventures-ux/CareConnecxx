@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { writeUserNotification } from "../notifications/userNotification";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { jobTitle } from "../agents/situationSnapshot";
 import { gateOptionalSend } from "./engineGate";
@@ -134,14 +135,29 @@ export const sendStaleApplicantNudges = functions.pubsub
           maxTokens: 100,
         });
 
-        await sendViaInteractionAgent(phone, {
+        const sent = await sendViaInteractionAgent(phone, {
           content:     message,
           urgency:     "standard",
           sourceAgent: "stale_applicant_nudge",
           canDrop:     true,
         });
 
-        await jobDoc.ref.update({ staleApplicantNudgedAt: new Date().toISOString() }).catch(() => {});
+        // Bell ⇄ text in lockstep (C11, 2026-10-11): the site's copy, in the
+        // Posts page's words (no text keywords), written only when the text
+        // actually went — a dropped text (cap / wait-tool / opt-out) writes no bell.
+        // Typed like the applicant alert so it opens the Posts page; idempotent per job per run day.
+        if (sent) {
+          await writeUserNotification({
+            sourcePath: `job_posts/${jobDoc.id}`, eventId: `stale-applicant-nudge-${new Date(nowMs).toISOString().slice(0, 10)}`, recipientId: clientId,
+            transitionType: "stale_applicant_nudge", type: "job_application", title: "Caregivers waiting to hear back",
+            body: `${count} caregiver${count === 1 ? " is" : "s are"} still waiting to hear back on your ${label} post. Review them on your Posts page.`,
+            data: { jobId: jobDoc.id },
+          }).catch((err) => console.error("[sendStaleApplicantNudges] bell failed:", jobDoc.id, err));
+        }
+
+        // The cooldown is stamped only when the text went — a dropped text
+        // retries on the next run instead of losing the nudge for the cooldown.
+        if (sent) await jobDoc.ref.update({ staleApplicantNudgedAt: new Date().toISOString() }).catch(() => {});
         nudgedClients.add(clientId);
       } catch (err) {
         console.error(`[sendStaleApplicantNudges] error for job ${jobDoc.id}:`, err);

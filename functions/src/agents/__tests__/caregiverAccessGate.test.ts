@@ -11,7 +11,34 @@ import {
   isCaregiverBackgroundApproved,
   jobRequiresTransport,
   caregiverGateText,
+  caregiverPayoutsLive,
 } from "../caregiverAccessGate";
+import { isCaregiverMembershipActiveForFamilies } from "../../utils/caregiverEligibility";
+
+describe("the ONE caregiver membership rule (sweep C1, 2026-10-11)", () => {
+  it("active / trialing / past_due / payment_failed = active; canceled, unpaid, inactive are not; the legacy paid flag only with no status", () => {
+    for (const s of ["active", "trialing", "past_due", "payment_failed"]) expect(isCaregiverMembershipActive({ membershipStatus: s })).toBe(true);
+    for (const s of ["canceled", "unpaid", "inactive", "incomplete_expired"]) expect(isCaregiverMembershipActive({ membershipStatus: s, membershipPaid: true })).toBe(false);
+    expect(isCaregiverMembershipActive({ membershipPaid: true })).toBe(true);
+    expect(isCaregiverMembershipActive({})).toBe(false);
+    expect(isCaregiverMembershipActive(null)).toBe(false);
+  });
+  it("is the same implementation the family-facing gate uses (utils/caregiverEligibility)", () => {
+    for (const cg of [{ membershipStatus: "past_due" }, { membershipStatus: "canceled", membershipPaid: true }, { membershipPaid: true }, {}]) {
+      expect(isCaregiverMembershipActive(cg)).toBe(isCaregiverMembershipActiveForFamilies(cg));
+    }
+  });
+});
+
+describe("caregiverPayoutsLive — the Payouts page's rule (sweep C2, 2026-10-11)", () => {
+  it("payouts AND charges enabled; onboarding-complete or payouts alone are not live", () => {
+    expect(caregiverPayoutsLive({ payoutsEnabled: true, chargesEnabled: true })).toBe(true);
+    expect(caregiverPayoutsLive({ payoutsEnabled: true })).toBe(false);
+    expect(caregiverPayoutsLive({ chargesEnabled: true, stripeOnboardingComplete: true })).toBe(false);
+    expect(caregiverPayoutsLive({ stripeOnboardingComplete: true })).toBe(false);
+    expect(caregiverPayoutsLive(undefined)).toBe(false);
+  });
+});
 
 const PAID = { membershipStatus: "active" };
 const CLEAR = { ...PAID, backgroundCheckStatus: "clear" };

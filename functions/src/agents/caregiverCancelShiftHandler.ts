@@ -2,9 +2,12 @@ import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
-import { businessTodayStr, parseScheduledTimeMs } from "../utils/scheduledTime";
+import { businessTodayStr } from "../utils/scheduledTime";
 import { fmtDate, fmtTime } from "./caregiverBookingRequests";
 import { isShiftOverdue } from "./shiftReschedule";
+// The two writes are the shared server rule's (shifts/visitActions.ts, 2026-10-11): the same cancelVisit /
+// cancelBooking the site's ✕ and Cancel Booking reach through the visit_action_requests queue.
+import { cancelVisit, cancelBooking } from "../shifts/visitActions";
 
 const db = admin.firestore();
 
@@ -115,57 +118,30 @@ export async function loadCancelOptions(caregiverId: string): Promise<CancelOpti
   return out;
 }
 
-const urgent = (s: FirebaseFirestore.DocumentData): boolean => {
-  const startsMs = parseScheduledTimeMs(`${String(s.date ?? "")}T${String(s.startTime ?? "00:00").slice(0, 5)}:00`);
-  return Number.isFinite(startsMs) && startsMs > 0 ? (startsMs - Date.now()) / (1000 * 60 * 60) <= 24 : false;
-};
-
-/** The ✕'s write (CaregiverBookingsPage BookingGroupCard.handleCancelShift). */
-export async function cancelShiftLikeThePage(shiftId: string, cancelledBy: "caregiver" | "system" = "caregiver"): Promise<{ ok: true; status: "needs_replacement" | "cancelled" } | { ok: false; reason: "not_found" | "not_scheduled"; status?: string }> {
-  const ref = db.collection("shifts").doc(shiftId);
-  const snap = await ref.get();
-  if (!snap.exists) return { ok: false, reason: "not_found" };
-  const shift = snap.data() ?? {};
-  if (shift.status !== "scheduled") return { ok: false, reason: "not_scheduled", status: String(shift.status ?? "") };
-  const status = urgent(shift) ? "needs_replacement" as const : "cancelled" as const;
-  await ref.update({ status, cancelledBy, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, status };
+/**
+ * The ✕'s write (CaregiverBookingsPage BookingGroupCard.handleCancelShift) —
+ * shifts/visitActions.ts cancelVisit. `caregiverId` enforces ownership (Evia's
+ * CANCEL flow); the system path (`cancelledBy: 'system'`, the membership lock in
+ * triggers/caregiverAccountEvents.ts) passes none.
+ */
+export async function cancelShiftLikeThePage(shiftId: string, cancelledBy: "caregiver" | "system" = "caregiver", caregiverId: string | null = null): Promise<{ ok: true; status: "needs_replacement" | "cancelled" } | { ok: false; reason: "not_found" | "not_scheduled" | "not_yours"; status?: string }> {
+  const r = await cancelVisit({ caregiverId, shiftId, cancelledBy });
+  if (r.ok) return { ok: true, status: r.status };
+  if (r.reason === "not_scheduled") return { ok: false, reason: "not_scheduled", status: r.status };
+  if (r.reason === "not_yours") return { ok: false, reason: "not_yours" };
+  return { ok: false, reason: "not_found" };
 }
 
-/** The Cancel Booking button's write (CaregiverBookingsPage.handleCancelShift): this shift + every future scheduled shift of the booking, then the booking itself when none was urgent. */
-export async function cancelBookingLikeThePage(caregiverId: string, shiftId: string): Promise<{ ok: true; anyUrgent: boolean; count: number; toast: string } | { ok: false; reason: "not_found" | "not_scheduled"; status?: string }> {
-  const ref = db.collection("shifts").doc(shiftId);
-  const snap = await ref.get();
-  if (!snap.exists) return { ok: false, reason: "not_found" };
-  const shift = snap.data() ?? {};
-  if (shift.status !== "scheduled") return { ok: false, reason: "not_scheduled", status: String(shift.status ?? "") };
-  const bookingRequestId = shift.bookingRequestId as string | undefined;
-  const batch = db.batch();
-  let anyUrgent = false;
-  let count = 0;
-  const applyCancel = (r: FirebaseFirestore.DocumentReference, s: FirebaseFirestore.DocumentData) => {
-    const u = urgent(s);
-    if (u) anyUrgent = true;
-    count += 1;
-    batch.update(r, { status: u ? "needs_replacement" : "cancelled", cancelledBy: "caregiver", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-  };
-  applyCancel(ref, shift);
-  if (bookingRequestId) {
-    const future = await db.collection("shifts")
-      .where("bookingRequestId", "==", bookingRequestId)
-      .where("status", "==", "scheduled")
-      .where("caregiverId", "==", caregiverId)
-      .get();
-    future.docs.forEach((d) => { if (d.id !== shiftId && d.data().status === "scheduled" && d.data().caregiverId === caregiverId) applyCancel(d.ref, d.data()); });
-    await batch.commit();
-    if (!anyUrgent) {
-      await db.collection("booking_requests").doc(bookingRequestId).update({ status: "cancelled", updatedAt: admin.firestore.FieldValue.serverTimestamp() }).catch(() => {});
-    }
-  } else {
-    await batch.commit();
+/** The Cancel Booking button's write (CaregiverBookingsPage.handleCancelShift) — shifts/visitActions.ts cancelBooking, plus the page's toast. */
+export async function cancelBookingLikeThePage(caregiverId: string, shiftId: string): Promise<{ ok: true; anyUrgent: boolean; count: number; toast: string } | { ok: false; reason: "not_found" | "not_scheduled" | "not_yours"; status?: string }> {
+  const r = await cancelBooking({ caregiverId, shiftId });
+  if (!r.ok) {
+    if (r.reason === "not_scheduled") return { ok: false, reason: "not_scheduled", status: r.status };
+    if (r.reason === "not_yours") return { ok: false, reason: "not_yours" };
+    return { ok: false, reason: "not_found" };
   }
   // The page's toasts.
-  return { ok: true, anyUrgent, count, toast: anyUrgent ? "Cancelled — the family can pick a replacement for the urgent shift" : "Booking cancelled" };
+  return { ok: true, anyUrgent: r.anyUrgent, count: r.count, toast: r.anyUrgent ? "Cancelled — the family can pick a replacement for the urgent shift" : "Booking cancelled" };
 }
 
 /** "cancel tomorrow's shift" / "cancel the booking with Basra" → the option it names, else null. */
@@ -253,7 +229,7 @@ export async function handleCaregiverCancelShift(
           await sendMessage(chatId, `${r.toast} — ${chosen.clientName}, ${r.count} visit${r.count === 1 ? "" : "s"}. The family has been notified.`);
           return;
         }
-        const r = await cancelShiftLikeThePage(chosen.id);
+        const r = await cancelShiftLikeThePage(chosen.id, "caregiver", caregiverId);
         if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That shift is already ${r.status} — nothing to cancel.` : "That shift isn't on your bookings any more."); return; }
         await sendMessage(chatId, r.status === "needs_replacement"
           ? `Cancelled — ${optionLine(chosen)}. It starts within 24 hours, so the family is being offered a replacement caregiver.`

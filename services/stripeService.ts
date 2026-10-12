@@ -1,6 +1,7 @@
 import { loadStripe, Stripe } from '@stripe/stripe-js';
 import { auth, db } from '../lib/firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { LIVE_SUBSCRIPTION_STATUSES, pickLiveSubscription } from '../utils/liveSubscription';
 
 const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
 
@@ -123,17 +124,24 @@ export const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
       return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
     }
 
-    // The live (active/trialing) record first — a re-subscribed member also has an
-    // old canceled record, and limit(1) alone could show its date (2026-10-03). Same
-    // rule as listenToSubscriptionStatus, v1-getSubscriptionDetails and Evia's tab.
+    // The live record first — a re-subscribed member also has an old canceled
+    // record, and limit(1) alone could show its date (2026-10-03). "Live" is the
+    // ONE rule in utils/liveSubscription.ts (2026-10-11: active, trialing AND
+    // Stripe's retry states past_due / payment_failed — the record that is
+    // actually retrying is the one "Renews on" / "Payment failed" must read;
+    // most recent wins). Same rule as listenToSubscriptionStatus,
+    // v1-getSubscriptionDetails and Evia's Membership section / page.
     const coll = fdb.collection('customers').doc(user.uid).collection('subscriptions');
-    let doc = await coll.where('status', 'in', ['active', 'trialing']).limit(1).get();
-    if (doc.empty) doc = await coll.limit(1).get();
-    if (doc.empty) {
+    const liveSnap = await coll.where('status', 'in', [...LIVE_SUBSCRIPTION_STATUSES]).get();
+    let subscription = pickLiveSubscription(liveSnap.docs.map(d => d.data()));
+    if (!subscription) {
+      const anySnap = await coll.limit(1).get();
+      subscription = anySnap.empty ? null : anySnap.docs[0].data();
+    }
+    if (!subscription) {
       return { status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null };
     }
 
-    const subscription = doc.docs[0].data();
     return {
       status: subscription.status,
       currentPeriodEnd: subscription.current_period_end ? new Date(subscription.current_period_end.seconds * 1000) : null,
@@ -149,19 +157,19 @@ export const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
 // Listen to subscription changes in real-time
 export const listenToSubscriptionStatus = (userId: string, callback: (status: SubscriptionStatus) => void) => {
   if (!db) return () => {};
+  // Same "live record" rule as getSubscriptionStatus (utils/liveSubscription.ts).
   return db
     .collection('customers')
     .doc(userId)
     .collection('subscriptions')
-    .where('status', 'in', ['active', 'trialing'])
-    .limit(1)
+    .where('status', 'in', [...LIVE_SUBSCRIPTION_STATUSES])
     .onSnapshot((snapshot) => {
-      if (snapshot.empty) {
+      const subscription = pickLiveSubscription(snapshot.docs.map(d => d.data()));
+      if (!subscription) {
         callback({ status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false, priceId: null });
         return;
       }
 
-      const subscription = snapshot.docs[0].data();
       callback({
         status: subscription.status,
         currentPeriodEnd: subscription.current_period_end ? new Date(subscription.current_period_end.seconds * 1000) : null,

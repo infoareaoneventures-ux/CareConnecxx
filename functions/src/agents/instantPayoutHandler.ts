@@ -120,9 +120,10 @@ export async function handleInstantPayoutConfirm(caregiverId: string, phone: str
 
   // The page pays the CURRENT instant balance (the modal has no amount input); so do we.
   try {
-    const result = await executeInstantPayout({ caregiverId, source: "cara_sms" });
-    // The page's success toast.
-    await sendMessage(chatId, `Instant payout of ${money(result.amountCents)} initiated (after Stripe's ${money(result.feeCents)} instant fee) — arrives in ~30 minutes!`);
+    // The page's success line (bell + text) is sent by the shared payout path
+    // itself (payoutCommon.executeInstantPayout — bell ⇄ text in lockstep, C11);
+    // a second copy from here read as two confirmations for one payout.
+    await executeInstantPayout({ caregiverId, source: "cara_sms" });
   } catch (err) {
     if (err instanceof InstantPayoutError) {
       if (err.code === "DUPLICATE") { await sendMessage(chatId, "Looks like that payout was already sent a moment ago — it's on its way to your bank."); return; }

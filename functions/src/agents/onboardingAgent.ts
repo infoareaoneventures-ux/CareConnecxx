@@ -82,7 +82,11 @@ function refreshFallbackHtml(title: string, body: string): string {
 // so a client-side Storage write is always rejected by storage.rules — the
 // signed onboarding JWT is the auth here, and the Admin SDK performs the write.
 // Advances onboarding in the same call (no separate markTaskComplete needed).
-const UPLOAD_MAX_BYTES = 6 * 1024 * 1024; // callable body caps at 10MB; base64 inflates ~1.37x
+// The site's limit (documentUpload.ts MAX_FILE_SIZE_MB / the wizard's PhotoStep): 5 MB (sweep C19, 2026-10-11).
+export const UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
+export const UPLOAD_MAX_LABEL = "5MB";
+/** The profile page's Storage path for a caregiver's photo (components/ui/AvatarUpload.tsx, storageFolder "caregivers") — the ONE path both doors write (2026-10-11). */
+export const CAREGIVER_PROFILE_PHOTO_PATH = (uid: string) => `profile-photos/caregivers/${uid}`;
 const UPLOAD_EXT: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -171,22 +175,23 @@ export const uploadOnboardingFile = functions
     const buf = Buffer.from(dataBase64, "base64");
     if (!buf.length) throw new functions.https.HttpsError("invalid-argument", "file data empty or unreadable");
     if (buf.length > UPLOAD_MAX_BYTES) {
-      throw new functions.https.HttpsError("invalid-argument", "file too large (6MB max)");
+      throw new functions.https.HttpsError("invalid-argument", `file too large (${UPLOAD_MAX_LABEL} max)`);
     }
 
-    // Same record the site writes: the file lives under the caregiver's own
-    // folder (services/documentUpload.ts) and the photo url lands on
-    // caregivers/{uid}.photo in the site's shape. The caregiver doc exists
-    // from the first "Hey Evia" (ensureCaregiverDocForOnboarding).
+    // Same record AND same path the site writes: the profile page's
+    // AvatarUpload stores the photo at profile-photos/caregivers/{uid} (one
+    // object, overwritten on a new upload) and writes caregivers/{uid}.photo —
+    // the ONE photo path for both doors (sweep C7, 2026-10-11; the old
+    // caregivers/{uid}/documents/profilePhoto_* file + `documents` map are
+    // gone). The caregiver doc exists from the first "Hey Evia"
+    // (ensureCaregiverDocForOnboarding).
     const { ensureCaregiverDocForOnboarding } = await import("./onboardingConversation");
     const uid = await ensureCaregiverDocForOnboarding(payload.phone);
     if (!uid) throw new functions.https.HttpsError("failed-precondition", "caregiver account not ready — text Evia and try the link again");
 
     const ext    = UPLOAD_EXT[contentType] ?? "jpg";
-    const type   = "profilePhoto";
-    const stamp  = Date.now();
-    const safeName = (fileName || `${type}.${ext}`).replace(/[^a-zA-Z0-9.-]/g, "_");
-    const path   = `caregivers/${uid}/documents/${type}_${stamp}_${safeName}`;
+    const safeName = (fileName || `profilePhoto.${ext}`).replace(/[^a-zA-Z0-9.-]/g, "_");
+    const path   = CAREGIVER_PROFILE_PHOTO_PATH(uid);
 
     // Download-token URL: readable regardless of storage.rules, no IAM signBlob needed.
     const downloadToken = randomUUID();
@@ -196,8 +201,7 @@ export const uploadOnboardingFile = functions
       metadata: {
         metadata: {
           firebaseStorageDownloadTokens: downloadToken,
-          uploadedBy: uid, documentType: type, uploadTime: new Date().toISOString(),
-          originalName: safeName, status: "pending",
+          uploadedBy: uid, uploadTime: new Date().toISOString(), originalName: safeName,
         },
       },
     });
@@ -205,18 +209,17 @@ export const uploadOnboardingFile = functions
       `https://firebasestorage.googleapis.com/v0/b/${bucket.name}` +
       `/o/${encodeURIComponent(path)}?alt=media&token=${downloadToken}`;
 
-    const documentData = {
-      url, path, uploadedAt: new Date().toISOString(), status: "pending",
-      fileName: safeName, fileType: contentType,
-    };
+    // `photo` is what the profile page writes; photoURL / profilePhoto are the
+    // readers' mirrors (caregiverProfileMirror.ts writes the same three from the
+    // session on the advance below).
     const db = admin.firestore();
     await db.collection("caregivers").doc(uid).set(
-      { documents: { [type]: documentData }, photo: url },
+      { photo: url, photoURL: url, profilePhoto: url },
       { merge: true },
     );
 
     const { advanceOnboardingStep } = await import("./onboardingConversation");
     await advanceOnboardingStep(payload.phone, payload.task, url);
 
-    return { status: "ok", url, type };
+    return { status: "ok", url, type: "profilePhoto" };
   });

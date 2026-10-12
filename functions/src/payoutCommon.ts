@@ -301,14 +301,26 @@ export async function executeInstantPayout(opts: {
         ...(feeDebitError ? { feeDebitError } : {}),
     });
 
-    await db.collection("users").doc(caregiverId).collection("notifications").add({
-        userId: caregiverId,
-        type: "payout_initiated",
-        title: "Instant Payout Initiated",
-        body: `Your instant payout is on its way — $${(netCents / 100).toFixed(2)} after Stripe's $${(feeCents / 100).toFixed(2)} instant fee (1%, min $0.50). It arrives within about 30 minutes.`,
-        isRead: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => { /* notification is best-effort; the payout already succeeded */ });
+    // Bell ⇄ text in lockstep (caregiver sweep C11, 2026-10-11) on the ONE shared
+    // path both doors call (the site's modal, Evia's Cash Out, the MCP tool): the
+    // page's success line goes by text first and the bell is written only when it
+    // went. The Evia flow no longer sends its own copy of this line.
+    const body = `Your instant payout is on its way — $${(netCents / 100).toFixed(2)} after Stripe's $${(feeCents / 100).toFixed(2)} instant fee (1%, min $0.50). It arrives within about 30 minutes.`;
+    let told = false;
+    try {
+        const [{ resolveCaregiverPhone }, { sendViaInteractionAgent }] = await Promise.all([import("./utils/caregiverPhone"), import("./agents/caraAgent")]);
+        const phone = await resolveCaregiverPhone(caregiverId);
+        if (phone) told = await sendViaInteractionAgent(phone, { content: body, urgency: "immediate", sourceAgent: "instant_payout", canDrop: false, fixedString: true });
+    } catch (err) {
+        console.warn("[instantPayout] payout text failed (no bell written):", err instanceof Error ? err.message : err);
+    }
+    if (told) {
+        const { writeUserNotification } = await import("./notifications/userNotification");
+        await writeUserNotification({
+            sourcePath: `payouts/${payoutRef.id}`, eventId: String(payout.id), recipientId: caregiverId, transitionType: "payout_initiated",
+            type: "payout_initiated", title: "Instant Payout Initiated", body, data: { payoutDocId: payoutRef.id, stripePayoutId: payout.id },
+        }).catch(() => { /* notification is best-effort; the payout already succeeded */ });
+    }
 
     return {
         payoutDocId: payoutRef.id,

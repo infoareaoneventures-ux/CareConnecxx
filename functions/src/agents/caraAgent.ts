@@ -2,7 +2,7 @@ import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { AgentSession, sendMessage, LinqMessage, LinqService } from "../linq/client";
 import { getPreferences, isInDND, isActiveHour, validatedTz, CaraPreferences } from "../memory/preferences";
-import { supervise } from "../safety/supervisor";
+import { supervise, reviewFixedString } from "../safety/supervisor";
 import { logAudit } from "../observability/auditLog";
 import { buildConsentAuditRecord } from "../observability/consentAudit";
 import { claimOutboundSend } from "../utils/outboundLedger";
@@ -37,6 +37,21 @@ export interface AgentOutput {
   // for any caller with its own idempotent outer retry so a transport failure
   // throws back to it instead, leaving exactly one system owning retry.
   noQueueOnFailure?: boolean;
+  /**
+   * The content is a FIXED string — a lifecycle notice, a reminder, a page's own
+   * sentence (the founder's words, caregiver sweep C12, 2026-10-11). Two effects:
+   * the safety reviewer may block it but never rephrases it (safety/supervisor.ts
+   * reviewFixedString), and the LLM SEND/WAIT judgment is skipped (DND, active
+   * hours and the daily cap still apply when canDrop is true). A blocked send
+   * resolves false, so a caller writing a bell in lockstep writes none.
+   */
+  fixedString?: boolean;
+}
+
+/** Who the session belongs to — the SEND/WAIT judge and the reviewer are told (C12). */
+export function sessionRole(session: Record<string, unknown> | undefined): "client" | "caregiver" {
+  if (!session) return "client";
+  return session.userType === "caregiver" || typeof session.caregiverId === "string" ? "caregiver" : "client";
 }
 
 // ── Wait tool — decides whether to send a non-immediate message ───────────────
@@ -57,6 +72,10 @@ async function shouldSend(
     if (minutesSinceLast < 5 && output.urgency === "low") return false;
   }
 
+  // A fixed string (a reminder, a page's own sentence) is a factual report of
+  // page data — there is nothing for a model to judge (C12, 2026-10-11).
+  if (output.fixedString) return true;
+
   // LLM judgment for standard urgency
   if (output.urgency === "standard") {
     try {
@@ -74,13 +93,17 @@ async function shouldSend(
       const localTime = new Intl.DateTimeFormat("en-US", {
         hour: "2-digit", minute: "2-digit", hour12: true, timeZone: tz,
       }).format(new Date());
+      // Role-aware (C12): the prompt used to say "to a family" for every send,
+      // so a caregiver's nudge was judged as if it were a family care update.
+      const role = sessionRole(session);
+      const who = role === "caregiver" ? "a caregiver (about their own jobs, visits, timesheets, pay or account)" : "a family";
       const raw = await quickComplete(
-        "You decide if a care update should be sent to a family right now.\n" +
+        `You decide if a message from a care coordinator should be sent to ${who} right now.\n` +
           "Consider: Is this new info? Is it timely? Would a human coordinator send this now?\n" +
           "Reply SEND or WAIT — one word only.",
         `Message: "${output.content.slice(0, 200)}"\n` +
           `Last sent: ${lastSentAt ?? "never"}\n` +
-          `Current local time for this family: ${localTime} (${tz})`,
+          `Current local time for this ${role === "caregiver" ? "caregiver" : "family"}: ${localTime} (${tz})`,
         { maxTokens: 5, signal: controller.signal },
       );
       clearTimeout(timer);
@@ -273,7 +296,22 @@ export async function sendViaInteractionAgent(
   // we fail-open (send unsupervised) so Evia doesn't go dark — but record an
   // admin_alert so a sustained supervisor outage gets noticed instead of just
   // showing up in logs.
-  const safe = await supervise(output.content, { phone }).catch((err) => {
+  // Fixed strings (C12): the reviewer may block, never rephrase. A block means
+  // no send — and resolves false so a lockstep caller writes no bell either.
+  if (output.fixedString) {
+    const allowed = await reviewFixedString(output.content, { phone, role: sessionRole(session as Record<string, unknown>), fixedString: true })
+      .catch(() => true); // reviewer outage: a founder-worded notice is never lost to a model hiccup
+    if (!allowed) {
+      logAudit({
+        eventType: "message_sent",
+        userId:    phone,
+        phone,
+        data: { suppressed: true, reason: "fixed_string_blocked", sourceAgent: output.sourceAgent, preview: output.content.slice(0, 50) },
+      }).catch(() => {});
+      return false;
+    }
+  }
+  const safe = output.fixedString ? output.content : await supervise(output.content, { phone, role: sessionRole(session as Record<string, unknown>) }).catch((err) => {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error("caraAgent: supervisor threw, sending message unsupervised", errMsg);
     const minuteBucket = new Date().toISOString().slice(0, 16);

@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { writeUserNotification } from "../notifications/userNotification";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTodayStr, formatDateWithWeekday } from "../utils/scheduledTime";
 import { serviceFeeCentsFor } from "../billing/shiftBillingAmounts";
@@ -151,14 +152,33 @@ export const sendPendingTimesheetNudges = functions.pubsub
           maxTokens: 100,
         });
 
-        await sendViaInteractionAgent(phone, {
+        const sent = await sendViaInteractionAgent(phone, {
           content:     message,
           urgency:     "standard",
           sourceAgent: "pending_timesheet_nudge",
           canDrop:     true,
         });
 
-        await sessionDoc.ref.update({ pendingTimesheetNudgedAt: new Date().toISOString() }).catch(() => {});
+        // Bell ⇄ text in lockstep (C11, 2026-10-11): the site's copy, in the
+        // Payments page's words (no text keywords), written only when the text
+        // actually went — a dropped text (cap / wait-tool / opt-out) writes no bell.
+        // Idempotent per family per run day (the cooldown is 48h).
+        if (sent) {
+          await writeUserNotification({
+            sourcePath: `shiftHours/${docs[0].id}`, eventId: `pending-timesheet-nudge-${new Date(nowMs).toISOString().slice(0, 10)}`, recipientId: clientId,
+            transitionType: "pending_timesheet_nudge", type: "shift_hours_pending_reminder", title: "Hours waiting for your approval",
+            body: isCounter && count === 1
+              ? `${cgName}'s counter on their hours${amount ? ` (${amount})` : ""} is waiting for your answer on your Payments page.`
+              : count === 1
+                ? `${cgName}'s hours from ${dateLabel}${amount ? ` (${amount})` : ""} are waiting for your approval — approving pays them.`
+                : `You have ${count} timesheets waiting for your approval (oldest: ${cgName}, ${dateLabel}) — approving pays your caregivers.`,
+            data: { shiftHoursId: docs[0].id },
+          }).catch((err) => console.error("[sendPendingTimesheetNudges] bell failed:", clientId, err));
+        }
+
+        // The cooldown is stamped only when the text went — a dropped text
+        // retries on the next run instead of losing the nudge for 48h.
+        if (sent) await sessionDoc.ref.update({ pendingTimesheetNudgedAt: new Date().toISOString() }).catch(() => {});
       } catch (err) {
         console.error(`[sendPendingTimesheetNudges] error for client ${clientId}:`, err);
       }

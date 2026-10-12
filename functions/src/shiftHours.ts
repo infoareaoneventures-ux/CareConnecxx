@@ -9,7 +9,7 @@ import { claimShiftPaymentOperation, shiftPaymentOperationKey, updateShiftPaymen
 import { resolveShiftBillableAmount, sanitizeShiftLineItems, ShiftLineItem, serviceFeeCentsFor } from './billing/shiftBillingAmounts';
 import { formatClockTime } from './utils/scheduledTime';
 import { resetShiftPaymentForRetry } from './billing/shiftPaymentRetry';
-import { fmtHours, fmtDay, resolveBillableOrHttpsError, pushNotification, notifyAdmins, reviewShiftHoursAs, textCaregiver } from './billing/reviewShiftHours';
+import { fmtHours, fmtDay, resolveBillableOrHttpsError, pushNotification, notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
 // One review path for the website's callable and Evia's review_shift_hours tool (2026-09-17).
 export { notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
 
@@ -26,6 +26,24 @@ async function textClient(clientId: string, message: string): Promise<void> {
 }
 
 export { sanitizeShiftLineItems } from './billing/shiftBillingAmounts';
+
+// Bell ⇄ text in lockstep for the caregiver (caregiver sweep C11, 2026-10-11):
+// the text goes first (the same words as the Timesheets row); the bell is
+// written only when it actually went. The family's pairs keep their order (the
+// bell is the page the family would otherwise see the fact on).
+async function tellCaregiver(caregiverId: string, type: string, title: string, bellBody: string, text: string, data: Record<string, unknown>): Promise<boolean> {
+  if (!caregiverId) return false;
+  let sent = false;
+  try {
+    const { sendSMSToUser } = await import('./sms');
+    sent = (await sendSMSToUser(caregiverId, `Evia: ${text}`)).success === true;
+  } catch (err) {
+    console.warn('shiftHours: caregiver text failed (no bell written)', err instanceof Error ? err.message : err);
+  }
+  if (!sent) return false;
+  await pushNotification(caregiverId, type, title, bellBody, data).catch((err) => console.warn('shiftHours: caregiver bell failed', err instanceof Error ? err.message : err));
+  return true;
+}
 
 const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY, {
   timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't run a payment handler to the function deadline
@@ -409,13 +427,9 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
     }),
   });
 
-  await pushNotification(
-    shift.caregiverId,
-    'shift_hours_approved',
-    'Admin resolved your dispute',
-    `Final: ${fmtHours(finalAmount.totalHours)}.`,
-    { appointmentId }
-  );
+  await tellCaregiver(shift.caregiverId, 'shift_hours_approved', 'Admin resolved your dispute', `Final: ${fmtHours(finalAmount.totalHours)}.`,
+    `Our team resolved the dispute over your hours${fmtDay(shift.submittedStartTime) ? ` for ${fmtDay(shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'}. Final: ${fmtHours(finalAmount.totalHours)} — $${finalAmount.grossPay.toFixed(2)}. Payment is being processed.`,
+    { appointmentId });
   await pushNotification(
     shift.clientId,
     'shift_hours_approved',
@@ -425,8 +439,6 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
   );
   await textClient(shift.clientId,
     `our team resolved the dispute over ${shift.caregiverName || 'your caregiver'}'s hours. Final: ${fmtHours(finalAmount.totalHours)}. The charge is on your Timesheets page.`);
-  await textCaregiver(shift.caregiverId,
-    `Our team resolved the dispute over your hours${fmtDay(shift.submittedStartTime) ? ` for ${fmtDay(shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'}. Final: ${fmtHours(finalAmount.totalHours)} — $${finalAmount.grossPay.toFixed(2)}. Payment is being processed.`);
 
   return { success: true };
 });
@@ -485,30 +497,47 @@ export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').
     .get();
 
   for (const doc of snap.docs) {
-    const shift = doc.data();
-    if (shift.approvalNoticeState !== 'delivered' || shift.requiresExplicitApproval === true) {
+    if (doc.data().approvalNoticeState !== 'delivered' || doc.data().requiresExplicitApproval === true) {
       continue;
     }
-    const autoBasePay        = Math.round(shift.submittedTotalHours * shift.payRate * 100) / 100;
-    const autoLineItems      = Array.isArray(shift.lineItems) ? shift.lineItems : [];
-    const autoLineItemsTotal = Math.round(autoLineItems.reduce((s: number, li: any) => s + (Number(li.amount) || 0), 0) * 100) / 100;
-    const autoGrossPay       = shift.grossPay ?? Math.round((autoBasePay + autoLineItemsTotal) * 100) / 100;
-    await doc.ref.update({
-      status: 'auto_approved',
-      finalStartTime: shift.submittedStartTime,
-      finalEndTime: shift.submittedEndTime,
-      finalTotalHours: shift.submittedTotalHours,
-      basePay: autoBasePay,
-      lineItems: autoLineItems,
-      lineItemsTotal: autoLineItemsTotal,
-      grossPay: autoGrossPay,
-      resolvedAt: now,
-      resolvedBy: 'system_auto_approve',
-      updatedAt: now,
+    // Re-read INSIDE the write (caregiver sweep C9, 2026-10-11 — mirrors
+    // billing/approvalNoticeDispatcher.ts): the query's snapshot is stale by the
+    // time this row is reached; a family approval / correction or a caregiver
+    // counter landing in the same window changes the status, and this write
+    // used to overwrite it. Only a row STILL pending_client_review (and still
+    // past its autoApproveAt, notice delivered, no explicit approval required)
+    // is auto-approved; the amounts come from the fresh record.
+    const applied = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(doc.ref);
+      if (!fresh.exists) return null;
+      const s = fresh.data()!;
+      if (s.status !== 'pending_client_review' || s.approvalNoticeState !== 'delivered' || s.requiresExplicitApproval === true) return null;
+      if (typeof s.autoApproveAt !== 'string' || s.autoApproveAt > now) return null;
+      const autoBasePay        = Math.round(s.submittedTotalHours * s.payRate * 100) / 100;
+      const autoLineItems      = Array.isArray(s.lineItems) ? s.lineItems : [];
+      const autoLineItemsTotal = Math.round(autoLineItems.reduce((acc: number, li: any) => acc + (Number(li.amount) || 0), 0) * 100) / 100;
+      const autoGrossPay       = s.grossPay ?? Math.round((autoBasePay + autoLineItemsTotal) * 100) / 100;
+      tx.update(doc.ref, {
+        status: 'auto_approved',
+        finalStartTime: s.submittedStartTime,
+        finalEndTime: s.submittedEndTime,
+        finalTotalHours: s.submittedTotalHours,
+        basePay: autoBasePay,
+        lineItems: autoLineItems,
+        lineItemsTotal: autoLineItemsTotal,
+        grossPay: autoGrossPay,
+        resolvedAt: now,
+        resolvedBy: 'system_auto_approve',
+        updatedAt: now,
+      });
+      return { shift: s, autoGrossPay };
     });
+    if (!applied) { console.info(`[autoApproveShiftHours] ${doc.id} changed since the sweep read — left alone`); continue; }
+    const { shift, autoGrossPay } = applied;
 
-    await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in ${TIMESHEET_AUTO_APPROVE_HOURS}h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
-    await textCaregiver(shift.caregiverId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so your ${fmtHours(shift.submittedTotalHours)} for ${shift.clientName ?? 'the family'} were auto-approved — $${Number(autoGrossPay).toFixed(2)}. Payment is being processed.`);
+    await tellCaregiver(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in ${TIMESHEET_AUTO_APPROVE_HOURS}h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`,
+      `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so your ${fmtHours(shift.submittedTotalHours)} for ${shift.clientName ?? 'the family'} were auto-approved — $${Number(autoGrossPay).toFixed(2)}. Payment is being processed.`,
+      { appointmentId: doc.id });
     await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The ${TIMESHEET_AUTO_APPROVE_HOURS}h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
     await textClient(shift.clientId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so ${shift.caregiverName ?? 'your caregiver'}'s ${fmtHours(shift.submittedTotalHours)} were auto-approved ($${Number(autoGrossPay).toFixed(2)} to them) and your card is being charged $${((Math.round(Number(autoGrossPay) * 100) + serviceFeeCentsFor(Math.round(Number(autoGrossPay) * 100))) / 100).toFixed(2)} (incl. the 9% service fee).`);
   }
@@ -528,35 +557,80 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
     .get();
 
   for (const doc of snap.docs) {
-    const shift = doc.data();
-    let autoFinal: ReturnType<typeof resolveShiftBillableAmount> | null = null;
-    let billingReviewReason: string | null = null;
-    try {
-      autoFinal = resolveShiftBillableAmount({
-        startTime: shift.proposedStartTime,
-        endTime: shift.proposedEndTime,
-        bookedRateDollars: Number(shift.payRate),
-        lineItems: shift.proposedLineItems ?? shift.lineItems,
-      });
-      if (autoFinal.requiresExplicitApproval || shift.requiresExplicitApproval === true) {
-        billingReviewReason = 'Correction exceeds the automatic approval threshold';
+    // Re-read INSIDE the write (C9, mirrors billing/approvalNoticeDispatcher.ts):
+    // a caregiver answer (accept / counter) or a family change landing in the
+    // same window moves the row off correction_proposed; the sweep's snapshot
+    // must never overwrite it. The fresh record decides and supplies the amounts.
+    const decided = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(doc.ref);
+      if (!fresh.exists) return null;
+      const s = fresh.data()!;
+      if (s.status !== 'correction_proposed') return null;
+      if (typeof s.correctionRespondByAt !== 'string' || s.correctionRespondByAt > now) return null;
+      let final: ReturnType<typeof resolveShiftBillableAmount> | null = null;
+      let reason: string | null = null;
+      try {
+        final = resolveShiftBillableAmount({
+          startTime: s.proposedStartTime,
+          endTime: s.proposedEndTime,
+          bookedRateDollars: Number(s.payRate),
+          lineItems: s.proposedLineItems ?? s.lineItems,
+        });
+        if (final.requiresExplicitApproval || s.requiresExplicitApproval === true) {
+          reason = 'Correction exceeds the automatic approval threshold';
+        }
+      } catch (error) {
+        reason = error instanceof Error ? error.message : 'Correction failed billing validation';
       }
-    } catch (error) {
-      billingReviewReason = error instanceof Error ? error.message : 'Correction failed billing validation';
-    }
-
-    if (!autoFinal || billingReviewReason) {
-      await doc.ref.update({
-        status: 'disputed_admin_review',
-        billingReviewReason,
+      if (!final || reason) {
+        tx.update(doc.ref, {
+          status: 'disputed_admin_review',
+          billingReviewReason: reason,
+          updatedAt: now,
+          correctionHistory: admin.firestore.FieldValue.arrayUnion({
+            by: 'system',
+            action: 'auto_accept_blocked',
+            at: now,
+            note: reason,
+          }),
+        });
+        return { shift: s, autoFinal: null as ReturnType<typeof resolveShiftBillableAmount> | null, billingReviewReason: reason };
+      }
+      tx.update(doc.ref, {
+        status: 'approved',
+        finalStartTime: s.proposedStartTime,
+        finalEndTime: s.proposedEndTime,
+        finalTotalHours: final.totalHours,
+        lineItems: final.lineItems,
+        lineItemsTotal: final.lineItemsTotal,
+        basePay: final.basePay,
+        grossPay: final.grossPay,
+        amountCents: final.grossPayCents,
+        serviceFeeCents: final.serviceFeeCents,
+        totalChargeCents: final.totalChargeCents,
+        requiresExplicitApproval: false,
+        resolvedAt: now,
+        resolvedBy: 'system_auto_accept',
         updatedAt: now,
         correctionHistory: admin.firestore.FieldValue.arrayUnion({
           by: 'system',
-          action: 'auto_accept_blocked',
+          action: 'accepted',
           at: now,
-          note: billingReviewReason,
+          startTime: s.proposedStartTime,
+          endTime: s.proposedEndTime,
+          hours: final.totalHours,
+          lineItems: final.lineItems,
+          lineItemsTotal: final.lineItemsTotal,
+          basePay: final.basePay,
+          grossPay: final.grossPay,
         }),
       });
+      return { shift: s, autoFinal: final, billingReviewReason: null as string | null };
+    });
+    if (!decided) { console.info(`[autoAcceptCorrection] ${doc.id} changed since the sweep read — left alone`); continue; }
+    const { shift, autoFinal, billingReviewReason } = decided;
+
+    if (!autoFinal || billingReviewReason) {
       await notifyAdmins(
         'shift_hours_billing_review',
         'Correction needs billing review',
@@ -566,46 +640,18 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
       // Both Timesheets rows now read "Admin reviewing" — tell both sides (bell + text), 2026-10-01.
       {
         const day = fmtDay(shift.submittedStartTime);
-        await pushNotification(shift.caregiverId, 'shift_hours_admin_review', "Correction needs our team's review", `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`, { appointmentId: doc.id });
+        await tellCaregiver(shift.caregiverId, 'shift_hours_admin_review', "Correction needs our team's review", `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`,
+          `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. Nothing is paid until they decide; we'll text you the outcome.`,
+          { appointmentId: doc.id });
         await pushNotification(shift.clientId, 'shift_hours_admin_review', "Correction needs our team's review", `Your correction on ${shift.caregiverName ?? 'your caregiver'}'s hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`, { appointmentId: doc.id });
-        await textCaregiver(shift.caregiverId, `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. Nothing is paid until they decide; we'll text you the outcome.`);
         await textClient(shift.clientId, `your correction on ${shift.caregiverName ?? 'your caregiver'}'s hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. We'll text you the outcome.`);
       }
       continue;
     }
 
-    await doc.ref.update({
-      status: 'approved',
-      finalStartTime: shift.proposedStartTime,
-      finalEndTime: shift.proposedEndTime,
-      finalTotalHours: autoFinal.totalHours,
-      lineItems: autoFinal.lineItems,
-      lineItemsTotal: autoFinal.lineItemsTotal,
-      basePay: autoFinal.basePay,
-      grossPay: autoFinal.grossPay,
-      amountCents: autoFinal.grossPayCents,
-      serviceFeeCents: autoFinal.serviceFeeCents,
-      totalChargeCents: autoFinal.totalChargeCents,
-      requiresExplicitApproval: false,
-      resolvedAt: now,
-      resolvedBy: 'system_auto_accept',
-      updatedAt: now,
-      correctionHistory: admin.firestore.FieldValue.arrayUnion({
-        by: 'system',
-        action: 'accepted',
-        at: now,
-        startTime: shift.proposedStartTime,
-        endTime: shift.proposedEndTime,
-        hours: autoFinal.totalHours,
-        lineItems: autoFinal.lineItems,
-        lineItemsTotal: autoFinal.lineItemsTotal,
-        basePay: autoFinal.basePay,
-        grossPay: autoFinal.grossPay,
-      }),
-    });
-
-    await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${fmtHours(autoFinal.totalHours)} proposal was accepted.`, { appointmentId: doc.id });
-    await textCaregiver(shift.caregiverId, `You didn't respond to ${shift.clientName ?? 'the family'}'s correction in 24 hours, so their ${fmtHours(autoFinal.totalHours)} proposal is final — $${autoFinal.grossPay.toFixed(2)}.`);
+    await tellCaregiver(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${fmtHours(autoFinal.totalHours)} proposal was accepted.`,
+      `You didn't respond to ${shift.clientName ?? 'the family'}'s correction in 24 hours, so their ${fmtHours(autoFinal.totalHours)} proposal is final — $${autoFinal.grossPay.toFixed(2)}.`,
+      { appointmentId: doc.id });
     await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Caregiver did not respond; your proposed ${fmtHours(autoFinal.totalHours)} is final.`, { appointmentId: doc.id });
     await textClient(shift.clientId, `${shift.caregiverName ?? 'Your caregiver'} didn't respond to your correction in 24 hours, so your proposed ${fmtHours(autoFinal.totalHours)} ($${autoFinal.grossPay.toFixed(2)} to them) is final and your card is being charged $${(autoFinal.totalChargeCents / 100).toFixed(2)} (incl. the $${(autoFinal.serviceFeeCents / 100).toFixed(2)} service fee).`);
   }
@@ -832,8 +878,10 @@ export async function settleShiftTransfer(
     updatedAt: now,
   });
 
-  await pushNotification(shift.caregiverId, 'shift_hours_paid', 'Payment sent', `${(grossCents / 100).toFixed(2)} is on its way.`, { appointmentId });
-  await textCaregiver(shift.caregiverId, `$${(grossCents / 100).toFixed(2)} for your visit with ${shift.clientName ?? 'the family'} is on its way to your bank. It's marked Paid on your Timesheets.`);
+  // The bell said "20.00 is on its way" — no "$" (C18).
+  await tellCaregiver(shift.caregiverId, 'shift_hours_paid', 'Payment sent', `$${(grossCents / 100).toFixed(2)} is on its way.`,
+    `$${(grossCents / 100).toFixed(2)} for your visit with ${shift.clientName ?? 'the family'} is on its way to your bank. It's marked Paid on your Timesheets.`,
+    { appointmentId });
   // The family's Timesheets card flips to Paid on this write — tell them over
   // text too (client-notified-of-everything, founder 2026-09-23). Amount = what
   // the card was actually charged (stored at approval), not the caregiver gross.
@@ -1096,8 +1144,9 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
       await Promise.all([
         pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment needs review', 'We could not complete this visit payment. Evia support is reviewing it.', { appointmentId }),
         textClient(shift.clientId, `We couldn't complete the payment for ${shift.caregiverName ?? 'your caregiver'}'s visit. Please check the card on file (say "update my card" and I'll send the link), then tell me to retry the payment.`),
-        pushNotification(shift.caregiverId, 'shift_hours_payment_failed', 'Payment needs review', 'This visit payment could not be completed automatically. Evia support is reviewing it.', { appointmentId }),
-        textCaregiver(shift.caregiverId, `The payment for your visit${fmtDay(shift.finalStartTime ?? shift.submittedStartTime) ? ` on ${fmtDay(shift.finalStartTime ?? shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'} couldn't be completed automatically. Our team is reviewing it; we'll text you when it's resolved.`),
+        tellCaregiver(shift.caregiverId, 'shift_hours_payment_failed', 'Payment needs review', 'This visit payment could not be completed automatically. Evia support is reviewing it.',
+          `The payment for your visit${fmtDay(shift.finalStartTime ?? shift.submittedStartTime) ? ` on ${fmtDay(shift.finalStartTime ?? shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'} couldn't be completed automatically. Our team is reviewing it; we'll text you when it's resolved.`,
+          { appointmentId }),
       ]);
     }
 

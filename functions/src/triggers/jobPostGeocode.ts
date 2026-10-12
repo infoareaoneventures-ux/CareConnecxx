@@ -1,37 +1,16 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import * as https from "https";
+import { geocodeAddress } from "../utils/geocode";
 
 const db = admin.firestore();
 
-async function nominatimGeocode(query: string): Promise<{ lat: number; lng: number } | null> {
-  return new Promise((resolve) => {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&countrycodes=us`;
-    const options = {
-      headers: {
-        "User-Agent": "Evia/1.0 (eviacares.com)",
-        "Accept-Language": "en",
-      },
-    };
-    https.get(url, options, (res) => {
-      let body = "";
-      res.on("data", (chunk) => (body += chunk));
-      res.on("end", () => {
-        try {
-          const data = JSON.parse(body);
-          if (Array.isArray(data) && data.length > 0) {
-            resolve({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) });
-          } else {
-            resolve(null);
-          }
-        } catch {
-          resolve(null);
-        }
-      });
-    }).on("error", () => resolve(null));
-  });
-}
-
+// Safety net only (2026-10-11): every writer of job_posts (the site's
+// createJobPost, Evia's buildAndSaveJobPost, the MCP create_job_post tool)
+// resolves street-level coords from the family's Care Plan location BEFORE the
+// write. A post that still lands without coords gets the ZIP/city centroid
+// here — the public post never carries the street, so this can only ever be
+// coarse — and is marked `geoPrecision: 'zip' | 'city'` for the backfill
+// (scripts/backfill-job-post-coords.mjs) to re-derive from the Care Plan.
 export const geocodeJobPost = functions.firestore
   .document("job_posts/{postId}")
   .onWrite(async (change, context) => {
@@ -41,21 +20,28 @@ export const geocodeJobPost = functions.firestore
     // Skip if coords already present
     if (data.lat != null && data.lng != null) return;
 
-    const query = [data.streetAddress, data.city, data.state, data.zipCode]
-      .filter(Boolean)
-      .join(", ") as string || (data.location as string) || "";
+    const city = (data.city ?? "") as string;
+    const state = (data.state ?? "") as string;
+    const zipCode = (data.zipCode ?? "") as string;
+    // Legacy docs only: the WhatsNext auto-post once stored streetAddress on
+    // the post (createJobPost strips it since 2026-10-11).
+    const street = (data.streetAddress ?? "") as string;
+    if (!street && !city && !zipCode && !data.location) return;
 
-    if (!query) return;
-
-    const coords = await nominatimGeocode(query);
-    if (!coords) {
-      console.warn(`geocodeJobPost: Nominatim returned null for postId=${context.params.postId} query="${query}"`);
+    // Oldest docs only carry the display string "City, ST, ZIP" (buildWebJobPostDoc's locationStr).
+    const [locCity = "", locState = "", locZip = ""] = typeof data.location === "string"
+      ? data.location.split(",").map((s) => s.trim()) : [];
+    const point = await geocodeAddress({ street, city, state, zipCode })
+      ?? (locCity || locZip ? await geocodeAddress({ city: locCity, state: locState, zipCode: locZip }) : null);
+    if (!point) {
+      console.warn(`geocodeJobPost: geocoding returned null for postId=${context.params.postId} city="${city}" zip="${zipCode}"`);
       return;
     }
 
     await db.collection("job_posts").doc(context.params.postId).update({
-      lat: coords.lat,
-      lng: coords.lng,
+      lat: point.lat,
+      lng: point.lng,
+      geoPrecision: point.geoPrecision,
     });
-    console.log(`geocodeJobPost: postId=${context.params.postId} geocoded to ${coords.lat},${coords.lng}`);
+    console.log(`geocodeJobPost: postId=${context.params.postId} geocoded (${point.geoPrecision}) to ${point.lat},${point.lng}`);
   });

@@ -24,8 +24,42 @@ import { sendMessage } from "../linq/client";
 import { relayIntoSharedChatThread } from "../utils/chatThread";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { isQuestionOrOther, answerMidFlow } from "./stepHandler";
+import { isCaregiverMembershipActive } from "./caregiverAccessGate";
 
 const db = admin.firestore();
+
+const addDays = (iso: string, n: number): string => {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/**
+ * Is "running late" even plausible right now? True when the caregiver has a
+ * visit today (scheduled or in progress — the same `shifts` lookup the LATE
+ * relay picks the family from), or one tomorrow starting within `hours` of now
+ * (an overnight edge). The LATE classifier runs only then (sweep C21,
+ * 2026-10-11) — before this it was an LLM call on nearly every caregiver text.
+ */
+export async function caregiverHasVisitSoon(caregiverId: string, hours = 6): Promise<boolean> {
+  const today = businessTodayStr();
+  const live = (s: FirebaseFirestore.DocumentData) => s.caregiverId === caregiverId && (s.status === "in-progress" || s.status === "scheduled");
+  const todaySnap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("date", "==", today).get();
+  if (todaySnap.docs.some((d) => live(d.data()))) return true;
+  const tomorrow = addDays(today, 1);
+  const tmSnap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("date", "==", tomorrow).get();
+  const nowLocal = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", timeZone: "America/Los_Angeles" });
+  const [nh, nm] = nowLocal.split(":").map(Number);
+  const nowMin = (Number.isFinite(nh) ? nh : 0) * 60 + (Number.isFinite(nm) ? nm : 0);
+  return tmSnap.docs.some((d) => {
+    const s = d.data();
+    if (!live(s)) return false;
+    const [h, m] = String(s.startTime ?? "").split(":").map(Number);
+    if (!Number.isFinite(h)) return false;
+    const startMin = 24 * 60 + h * 60 + (Number.isFinite(m) ? m : 0);
+    return startMin - nowMin <= hours * 60;
+  });
+}
 
 export interface FamilyRef { clientId: string; clientName: string }
 export interface FamilyPick { pick: FamilyRef | null; candidates: FamilyRef[] }
@@ -72,9 +106,8 @@ export async function relayCaregiverMessageToFamily(caregiverId: string, text: u
   if (!body) return { ok: false, reason: "empty", message: "What should I send?" };
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   const cg = cgSnap.data() ?? {};
-  // InboxView blocks the composer without an active membership — same gate as send_client_message.
-  const membershipActive = cg.membershipStatus === "active" || cg.membershipStatus === "trialing" || (!cg.membershipStatus && cg.membershipPaid === true);
-  if (!membershipActive) return { ok: false, reason: "membership", message: "Your membership isn't active, so messages to families are paused until it's renewed." };
+  // InboxView blocks the composer without an active membership — the ONE rule (caregiverAccessGate), same as send_client_message.
+  if (!isCaregiverMembershipActive(cg)) return { ok: false, reason: "membership", message: "Your membership isn't active, so messages to families are paused until it's renewed." };
   let fam = family ?? null;
   if (!fam) {
     const found = await familyCandidatesForCaregiver(caregiverId);
@@ -195,8 +228,7 @@ export async function relayLateSentence(phone: string, chatId: string, caregiver
   const body = text.trim();
   if (!body) { await sendMessage(chatId, "What should I send?"); return false; }
   const cg = (await db.collection("caregivers").doc(caregiverId).get()).data() ?? {};
-  const membershipActive = cg.membershipStatus === "active" || cg.membershipStatus === "trialing" || (!cg.membershipStatus && cg.membershipPaid === true);
-  if (!membershipActive) { await sendMessage(chatId, "Your membership isn't active, so messages to families are paused until it's renewed."); return false; }
+  if (!isCaregiverMembershipActive(cg)) { await sendMessage(chatId, "Your membership isn't active, so messages to families are paused until it's renewed."); return false; }
   const found = await familyCandidatesForCaregiver(caregiverId);
   if (!found.pick && found.candidates.length > 1) {
     await db.collection("agent_sessions").doc(phone).set({ pendingFamilyChoice: { candidates: found.candidates, text: body }, stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() }, { merge: true });

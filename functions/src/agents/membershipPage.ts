@@ -10,6 +10,7 @@
 import * as admin from "firebase-admin";
 import { businessTodayStr, DEFAULT_TZ, formatDateWithWeekday } from "../utils/scheduledTime";
 import { clientMonthlyDisplay } from "../config/pricing";
+import { LIVE_SUBSCRIPTION_STATUSES, pickLiveSubscription } from "../utils/liveSubscription";
 
 const db = admin.firestore();
 
@@ -74,11 +75,11 @@ export function shapeMembershipPage(sub: Record<string, unknown> | null): Member
   };
 }
 
-/** Same lookup as the page: the live (active/trialing) record first, else whatever record exists. */
+/** Same lookup as the page: the live record first (utils/liveSubscription.ts — active / trialing / Stripe's retry states, most recent wins), else whatever record exists. */
 export async function readMembershipPage(userId: string): Promise<MembershipPage> {
   const coll = db.collection("customers").doc(userId).collection("subscriptions");
-  const live = await coll.where("status", "in", ["active", "trialing"]).limit(1).get();
-  let sub: Record<string, unknown> | null = live.empty ? null : (live.docs[0].data() as Record<string, unknown>);
+  const liveSnap = await coll.where("status", "in", [...LIVE_SUBSCRIPTION_STATUSES]).get();
+  let sub: Record<string, unknown> | null = pickLiveSubscription(liveSnap.docs.map((d) => d.data() as Record<string, unknown>));
   if (!sub) {
     const any = await coll.limit(1).get();
     sub = any.empty ? null : (any.docs[0].data() as Record<string, unknown>);

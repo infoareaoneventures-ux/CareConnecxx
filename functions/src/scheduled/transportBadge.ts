@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
+import { caregiverOffersTransportation } from '../agents/caregiverAccessGate';
 
 const db = admin.firestore();
 
@@ -9,9 +10,13 @@ const db = admin.firestore();
 // were removed. The stored `transportationBadge` flag is a projection of the live
 // rule (utils/transportDocs.ts hasValidTransportDocs); announcements come from
 // onCaregiverAccountChange, not from here.
-function transportationLive(data: Record<string, any>): boolean {
-  const services: string[] = data.services || data.skills || [];
-  return services.includes('Transportation') && data.isApprovedDriver === true;
+// ONE rule with the site (caregiver sweep C16, 2026-10-11): "offers Transportation"
+// = services when it has entries, else skills — utils/transportDocs.ts
+// offersTransportation, mirrored by caregiverAccessGate.caregiverOffersTransportation.
+// The old  took an EMPTY services array as the answer and never
+// fell back to skills, so the nightly job and the trigger disagreed on that record.
+export function transportationLive(data: Record<string, any>): boolean {
+  return caregiverOffersTransportation(data) && data.isApprovedDriver === true;
 }
 
 /** Daily (00:05 Pacific) — keeps every caregiver's stored flag in step with the rule; also the config/public heartbeat. */

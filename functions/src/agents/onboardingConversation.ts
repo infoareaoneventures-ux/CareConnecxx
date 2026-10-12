@@ -21,7 +21,7 @@ import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from 
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
 import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
 import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
-import { geocodeCityOrZip } from "../utils/geocode";
+import { geocodeAddress, GeoPrecision } from "../utils/geocode";
 import { paymentMethodLabel } from "../billing/paymentMethods";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { getMarketRateText } from "../utils/marketRateRange";
@@ -44,7 +44,6 @@ import { isQuestionOrOther as stepIsQuestionOrOther, classifyAwaitingReply } fro
 import { buildClientSteps } from "./onboardingSteps.client";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
-import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKeyForFullName, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
 import {
   buildClientDraftMirror, buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields,
@@ -53,8 +52,10 @@ import {
 import { coerceClientRate } from "./onboardingContract";
 import { businessTodayStr, formatDateForDisplay } from "../utils/scheduledTime";
 import { canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "./careNeedsTaxonomy";
-import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, toExperienceBucket, offersTransportation, availabilityComplete } from "./onboardingContract";
+import { collectionStepsForRole, missingRequiredFields, firstGateStep, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, offersTransportation } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
+import { isCaregiverMembershipActive } from "./caregiverAccessGate";
+import { consentAlreadyRequested } from "./caregiverSiteSync";
 import { describeSharedProfile } from "./profileBriefing";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import {
@@ -224,22 +225,17 @@ export async function mergeOnboardingData(phone: string, data: Record<string, un
   });
 
   // Incremental profile persistence: once the uid-keyed caregivers doc exists
-  // (created at the gate handoff / bg-check pre-create), keep it in sync with
-  // every onboarding merge. Before this, the FULL profile was written only at
-  // the final Stripe Connect step — a caregiver who stalled anywhere mid-flow
-  // had an empty webapp account. Non-fatal: profile mirroring must never break
-  // the conversation turn. Visibility gates are untouched (status /
-  // onboardingStatus stay wherever the step machinery put them).
+  // (created at /start's OTP or the gate handoff), every onboarding merge lands
+  // on it the way the site's wizard saves each step — ONLY the fields this save
+  // collected are rewritten; anything else the record holds (a later site edit)
+  // is left alone, and missing fields are filled (caregiverProfileMirror.ts,
+  // sweep C3/C4 2026-10-11). Non-fatal: mirroring must never break the turn.
+  // Visibility gates are untouched (status / onboardingStatus stay wherever the
+  // step machinery put them).
   const caregiverId = sess.caregiverId as string | undefined;
   if (caregiverId && sess.userType === "caregiver") {
-    const cgRef   = db.collection("caregivers").doc(caregiverId);
-    const current = (await cgRef.get().catch(() => null))?.data() ?? {};
-    const mirror  = profileMirrorForExisting(buildCaregiverProfileMirror(merged), current);
-    if (Object.keys(mirror).length > 0) {
-      await cgRef
-        .set(mirror, { merge: true })
-        .catch((err) => console.error("mergeOnboardingData: caregiver profile mirror failed (non-fatal):", err));
-    }
+    const { mirrorCaregiverDraftToRecord } = await import("./caregiverProfileMirror");
+    await mirrorCaregiverDraftToRecord(caregiverId, merged, Object.keys(data));
   }
 
   // 2026-09-20 (founder: one questionnaire, two doors): a FAMILY's answers land on
@@ -258,200 +254,45 @@ export async function mergeOnboardingData(phone: string, data: Record<string, un
   }
 }
 
-// A finished questionnaire stays finished: once the record carries the site
-// wizard's completion stamp (onboardingStatus 'profile_complete' — App.tsx
-// hides the setup wizard on it), Evia's mirror must not move the wizard cursor
-// back. Without this, an older record whose availability predates the two-part
-// rule was re-stamped wizardStep 'availability' on every later merge, and any
-// re-link of the record also rewrote onboardingStatus 'in_progress', so the
-// site re-opened the wizard for a caregiver who had finished it (found live
-// 2026-09-26 after an admin revoke). Field VALUES still flow — that is the
-// mirror's job.
-export function profileMirrorForExisting(
-  mirror: Record<string, unknown>,
-  existing: Record<string, unknown>,
-): Record<string, unknown> {
-  // weeklyAvailability (2026-09-30, founder goal 5 "updates flow both ways"):
-  // the Calendar / Profile grid on the site writes this same field. Once the
-  // record has a grid, the mirror re-derives it ONLY when the availability
-  // answer itself changed this save — otherwise a caregiver who fixed her grid
-  // on the site had it silently reverted on her next text.
-  const hasGrid = existing.weeklyAvailability && typeof existing.weeklyAvailability === "object"
-    && Object.values(existing.weeklyAvailability as Record<string, unknown>).some((v) => Array.isArray(v) && v.length > 0);
-  const answerUnchanged = JSON.stringify(mirror.availability ?? null) === JSON.stringify(existing.availability ?? null);
-  const guarded = hasGrid && answerUnchanged ? (({ weeklyAvailability: _keep, ...rest }) => rest)(mirror) : mirror;
-  if (existing.onboardingStatus !== "profile_complete") return guarded;
-  const { wizardStep: _finished, ...rest } = guarded;
-  return rest;
-}
+// The caregiver record mirror (buildCaregiverProfileMirror, wizardStepForDraft,
+// profileMirrorForExisting) lives in ./caregiverProfileMirror — a leaf the MCP
+// save tool and the inbound absorber share, so every field saved by text lands
+// on caregivers/{uid} the moment it is saved (caregiver sweep C3/C4, 2026-10-11).
+// Re-exported here for the callers and tests that import them from this file.
+import { buildCaregiverProfileMirror, wizardStepForDraft, profileMirrorForExisting } from "./caregiverProfileMirror";
+export { buildCaregiverProfileMirror, wizardStepForDraft, profileMirrorForExisting };
 
-// The caregiver-doc field mapping for everything collected over SMS — shared by
-// the incremental mirror above, the gate-handoff doc creation, and the final
-// Stripe Connect finalization, so the three can never drift apart again (the
-// firstName-vs-name class of bug). Only DEFINED values are included: a merge
-// with this object can never blank a field another path already set. The
-// gating fields (status, onboardingStatus, verificationStatus,
-// membershipSubscriptionId) are deliberately NOT here — they belong to the
-// step machinery exclusively.
-export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const copy = (key: string, v: unknown): void => {
-    if (v !== undefined && v !== null && v !== "") out[key] = v;
-  };
+// Caregiver coords have ONE owner (2026-10-11): triggers/caregiverGeocode.ts
+// geocodes the full street address (street first, ZIP/city fallback) on every
+// caregivers/{uid} write that changes the address or lacks coords, and stamps
+// `geoPrecision`. The text draft no longer geocodes the ZIP into
+// onboardingData.lat/lng (the former ensureCaregiverCoords) and the record
+// mirror writes no coords — the site's wizard/Settings street-level write and
+// Evia's address mirror both end in that same trigger.
 
-  copy("name",    d.name);
-  // 2026-09-06: phone was previously written ONLY at initial doc creation
-  // (the caller's own docRef.set below), never re-checked afterward — a
-  // caregiver whose account predates that write, or hit any edge case that
-  // skipped it, was left with a permanently missing caregivers/{uid}.phone
-  // even though agent_sessions/{phone}.onboardingData.phone had the number
-  // the whole time (found live: interviewLinkTrigger.ts's "missing_phone"
-  // delivery status on an account with a fully populated session). Copying
-  // it here means every future onboarding-data update self-heals this
-  // instead of leaving it silently wrong forever.
-  copy("phone",   d.phone);
-  // Wizard location step (2026-09-25): street + state alongside city/zip.
-  copy("street",  d.street);
-  copy("state",   d.state);
-  copy("city",    d.city);
-  copy("zipCode", d.zipCode);
-  // Coords — from a shared location pin OR geocoded from city/zip (see
-  // ensureCaregiverCoords). latitude/longitude is what the Jobs board radius rule
-  // and caregiverJobMatch actually read (cg.latitude ?? cg.location?.lat).
-  // NEVER write `location` as a {lat,lng} OBJECT here: the webapp renders
-  // caregiver `location` as a display string, and an object crashes the page
-  // (React #31, seen live 2026-07-15). Server readers only use location?.lat
-  // as a legacy fallback — the top-level fields written here always win.
-  if (typeof d.lat === "number" && typeof d.lng === "number") {
-    out.lat       = d.lat;
-    out.lng       = d.lng;
-    out.latitude  = d.lat;
-    out.longitude = d.lng;
-  }
-  // Profile photo + uploaded credentials (web upload OR texted to Evia).
-  // `photo` is the webapp's canonical Caregiver field (types.ts) — the
-  // caregiver-facing profile page, user menu, and public profile read it;
-  // without it Evia-onboarded caregivers see a blank avatar.
-  if (d.profilePhoto) {
-    out.profilePhoto = d.profilePhoto;
-    out.photoURL     = d.profilePhoto;
-    out.photo        = d.profilePhoto;
-  }
-  // No documents are mirrored: transport documents were retired 2026-10-06
-  // (Transportation = the service + the driving record); the old
-  // certifications URL array is gone too — the site never had it.
-  // Experience is the wizard's bucket string on BOTH fields the site writes.
-  const expBucket = toExperienceBucket(d.yearsExperience);
-  if (expBucket) {
-    out.yearsExperience = expBucket;
-    out.experience      = expBucket;
-  }
-  // specialties = the caregiver's RAW words (profile flavor). skills/services =
-  // the CANONICAL care-services enum the webapp checkboxes + matching engine read
-  // (canonicalized at save time; see caregiverServices.ts). Prefer the canonical
-  // skills; fall back to raw specialties only for legacy docs saved before
-  // canonicalization existed (the backfill migration rewrites those).
-  if (Array.isArray(d.specialties) && d.specialties.length) out.specialties = d.specialties;
-  const skills = Array.from(new Set([
-    ...(Array.isArray(d.skills)       ? d.skills       as string[] : []),
-    ...(Array.isArray(d.services)     ? d.services     as string[] : []),
-    // legacy fallback only when no canonical skills/services were saved
-    ...((!Array.isArray(d.skills) || !d.skills.length) &&
-        (!Array.isArray(d.services) || !d.services.length) &&
-        Array.isArray(d.specialties) ? d.specialties as string[] : []),
-  ]));
-  if (skills.length) {
-    out.skills = skills;
-    // The webapp reads services || skills; write both so the checkboxes light
-    // regardless of which field the profile page prefers.
-    out.services = skills;
-    // The wizard's services step also writes primaryServices [{name, yearsExperience}].
-    if (expBucket) out.primaryServices = skills.map((name) => ({ name, yearsExperience: expBucket }));
-  }
-  copy("availability", d.availability);
-  // Structured map read by ai/scoring.ts availabilityOverlap and the web
-  // profile grid. Derived only once BOTH halves are stated — a partial answer
-  // ("Monday" alone) must not paint parts of the day the caregiver never chose
-  // onto the website grid (live 2026-09-26).
-  if (availabilityComplete(d.availability)) {
-    const weekly = deriveWeeklyAvailability(d.availability);
-    if (weekly) out.weeklyAvailability = weekly;
-  }
-  copy("hourlyRate", d.hourlyRate);
-  // Wizard rates step: travel distance (5/10/15/25/50 miles).
-  if (typeof d.serviceRadius === "number" && d.serviceRadius > 0) out.serviceRadius = d.serviceRadius;
-  copy("email",      d.email);
-  copy("bio",        d.bio);
-  copy("jobType",    d.jobType);
-  // Webapp display parity: the profile "Looking for" pills read jobTypes (array
-  // of hyphenated ids), which nothing server-side reads — matching uses jobType.
-  const jobTypes = caregiverJobTypesToWebIds(d.jobType, undefined);
-  if (jobTypes.length) out.jobTypes = jobTypes;
-  copy("stripeAccountId", d.stripeAccountId);
-  // The site's wizard resumes from `wizardStep`; stamp where Evia's collection
-  // stands so a caregiver who opens the site mid-text lands on the right step.
-  const wizardStep = wizardStepForDraft(d);
-  if (wizardStep) out.wizardStep = wizardStep;
-  return out;
-}
-
-/** The wizard step id the caregiver would resume at, from what Evia has collected so far (mirrors the wizard's step list). */
-export function wizardStepForDraft(d: Record<string, unknown>): string | null {
-  const has = (k: string) => isFieldFilled(d[k]);
-  if (!(has("street") && has("zipCode") && has("city") && has("state"))) return "location";
-  if (!has("profilePhoto")) return "photo";
-  if (!(has("jobType") && availabilityComplete(d.availability))) return "availability";
-  if (!(has("specialties") && has("yearsExperience"))) return "services";
-  if (!(has("hourlyRate") && has("serviceRadius"))) return "rates";
-  if (!has("bio")) return "bio";
-  return "done";
-}
-
-// Geocode a caregiver's typed city/zip into onboardingData lat/lng (no-op when
-// coords already exist, e.g. from a shared location pin, or when geocoding
-// fails). Persisting into onboardingData — not straight onto the caregiver
-// doc — lets buildCaregiverProfileMirror carry the coords through EVERY doc
-// write (incremental merge, gate pre-create, finalization) so they can never
-// be dropped by a later mirror. Without this, SMS-onboarded caregivers had no
-// coordinates at all and radius matching silently skipped them (found live
-// 2026-07-14: the one caregiver actually IN the job's city was never texted).
-async function ensureCaregiverCoords(
-  phone: string, d: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  if (typeof d.lat === "number" && typeof d.lng === "number") return d;
-  const coords = await geocodeCityOrZip(
-    d.city as string | undefined,
-    d.zipCode as string | undefined,
-    d.state as string | undefined,
-  ).catch(() => null);
-  if (!coords) return d;
-  await db.collection("agent_sessions").doc(phone).update({
-    "onboardingData.lat": coords.lat,
-    "onboardingData.lng": coords.lng,
-  }).catch((err) => console.error("ensureCaregiverCoords: session persist failed (non-fatal):", err));
-  return { ...d, lat: coords.lat, lng: coords.lng };
-}
-
-// Client-side twin of ensureCaregiverCoords — SMS clients type a city/zip and
-// (unlike a shared pin) never had coordinates persisted anywhere, so
-// carePlans.locationPool and the caregiver-preview scoring had no real
-// distance to work with. Geocodes the CARE address (falls back to the home
-// address) once and persists it the same way, so both the care-plan write and
-// the caregiver preview downstream benefit from the same coordinates.
+// SMS clients type a street + zip and (unlike a shared pin) never had
+// coordinates persisted anywhere, so carePlans.locationPool and the
+// caregiver-preview scoring had no real distance to work with. Geocodes the
+// CARE address (falls back to the home address) once — street first, like the
+// site's wizard (services/api.ts createJobPosting), then ZIP — persists it on
+// the session with its `geoPrecision`, so both the care-plan write and the
+// caregiver preview downstream use the same street-level point.
 async function ensureClientCoords(
   phone: string, d: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   if (typeof d.lat === "number" && typeof d.lng === "number") return d;
+  const street  = (d.street as string | undefined)   || (d.homeStreet as string | undefined);
   const city    = (d.city as string | undefined)    || (d.homeCity as string | undefined);
   const zipCode = (d.zipCode as string | undefined)  || (d.homeZipCode as string | undefined);
   const state   = (d.state as string | undefined)    || (d.homeState as string | undefined);
-  const coords = await geocodeCityOrZip(city, zipCode, state).catch(() => null);
-  if (!coords) return d;
+  const point = await geocodeAddress({ street, city, zipCode, state }).catch(() => null);
+  if (!point) return d;
   await db.collection("agent_sessions").doc(phone).update({
-    "onboardingData.lat": coords.lat,
-    "onboardingData.lng": coords.lng,
+    "onboardingData.lat": point.lat,
+    "onboardingData.lng": point.lng,
+    "onboardingData.geoPrecision": point.geoPrecision,
   }).catch((err) => console.error("ensureClientCoords: session persist failed (non-fatal):", err));
-  return { ...d, lat: coords.lat, lng: coords.lng };
+  return { ...d, lat: point.lat, lng: point.lng, geoPrecision: point.geoPrecision };
 }
 
 // Live current location for an established client, read the same way the
@@ -571,9 +412,9 @@ export async function ensureCaregiverDocForOnboarding(phone: string): Promise<st
   const sess = (snap.data() ?? {}) as Record<string, unknown>;
   if (sess.caregiverId) return sess.caregiverId as string;
 
-  const d = await ensureCaregiverCoords(
-    phone, (sess.onboardingData ?? {}) as Record<string, unknown>,
-  );
+  // No coords here: the caregivers/{uid} write below carries the street
+  // fields and triggers/caregiverGeocode.ts derives the point from them.
+  const d = (sess.onboardingData ?? {}) as Record<string, unknown>;
   const authUid = await createFirebaseAuthAccount(phone, (d.name ?? "") as string).catch(() => null);
   // No random-ID fallback here: without a uid the bg-check pre-create and the
   // finalization migration still cover doc creation later, on their own terms.
@@ -1386,7 +1227,7 @@ export async function handleOnboardingStep(
     case "caregiver_awaiting_membership":
       await handleCaregiverResendMembership(phone, chatId, session, text);
       return;
-    case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session);
+    case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session, text);
     case "caregiver_awaiting_bgcheck_consent":
       await handleCaregiverResendBgcheckConsent(phone, chatId, session, text);
       return;
@@ -1720,9 +1561,9 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
         audience: "caregiver",
         context: `${knownName} just said they're a caregiver looking for work, and you already know their name is ${knownName}. ` +
           `You ALREADY introduced yourself — never say "I'm Evia" or re-introduce yourself. ` +
-          `Warmly acknowledge them BY NAME — do NOT ask their name again — let them know setup takes about 5 minutes right here, ` +
+          `Warmly acknowledge them BY NAME — do NOT ask their name again — let them know setup takes about 3 minutes right here, ` +
           `then ask the first question — their street address, city, and zip code (families only ever see the city).`,
-        fallback: `Great, ${knownName}! Setup takes about 5 minutes, all right here. What's your street address, city, and zip code? (Families only ever see the city.)`,
+        fallback: `Great, ${knownName}! Setup takes about 3 minutes, all right here. What's your street address, city, and zip code? (Families only ever see the city.)`,
         maxTokens: 90,
         emotionalDirective,
       });
@@ -1733,9 +1574,9 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     const msg2 = await generateCaraMessage({
       audience: "caregiver",
       context: "A new caregiver just said they're looking for work. You ALREADY introduced yourself in the previous " +
-        "message — do NOT say your name or re-introduce yourself. Let them know profile setup takes about 5 minutes " +
+        "message — do NOT say your name or re-introduce yourself. Let them know profile setup takes about 3 minutes " +
         "and everything happens right here over text. Then ask their first and last name (once).",
-      fallback: "Great — let's get your profile set up. Takes about 5 minutes and everything happens right here.\n\nWhat's your first and last name?",
+      fallback: "Great — let's get your profile set up. Takes about 3 minutes and everything happens right here.\n\nWhat's your first and last name?",
       maxTokens: 80,
       emotionalDirective,
     });
@@ -2296,6 +2137,8 @@ export async function persistClientCareRecords(
   const lat = typeof d.lat === "number" ? d.lat as number : undefined;
   const lng = typeof d.lng === "number" ? d.lng as number : undefined;
   const hasCoords = lat !== undefined && lng !== undefined;
+  const geoPrecision = (d.geoPrecision === "street" || d.geoPrecision === "zip" || d.geoPrecision === "city")
+    ? d.geoPrecision as GeoPrecision : undefined;
 
   const seniorName   = (d.seniorName   ?? "") as string;
   const city         = (d.city         ?? "") as string;
@@ -2369,7 +2212,7 @@ export async function persistClientCareRecords(
   const existingPool = cpSnap?.exists ? (cpSnap.data() as Record<string, unknown>).locationPool : undefined;
   const locationPool = upsertCarePlanLocationPool(
     existingPool,
-    buildCarePlanLocationEntry(d, hasCoords ? { lat: lat as number, lng: lng as number } : undefined),
+    buildCarePlanLocationEntry(d, hasCoords ? { lat: lat as number, lng: lng as number, geoPrecision } : undefined),
   );
 
   await cpRef.set({
@@ -2447,7 +2290,7 @@ export async function persistClientCareRecords(
       ...buildJobPostingsDoc(uid, phone, d),
       // createJobPosting's final write: geocoded care-address coords, and the
       // per-step draft cursor cleared now that the questionnaire is complete.
-      ...(hasCoords ? { lat, lng } : {}),
+      ...(hasCoords ? { lat, lng, ...(geoPrecision ? { geoPrecision } : {}) } : {}),
       draftStep:      admin.firestore.FieldValue.delete(),
       draftUpdatedAt: admin.firestore.FieldValue.delete(),
     };
@@ -3321,6 +3164,15 @@ async function handleCaregiverResendMembership(
     const snap = await db.collection("agent_sessions").doc(phone).get();
     freshMembershipData = snap.data() as Record<string, unknown> | undefined;
     membershipPaid = !!((freshMembershipData as any)?.caregiverSubscriptionId);
+    // A membership paid on the SITE never stamps the session's subscription id
+    // — the record carries it (the ONE rule, caregiverAccessGate; sweep C5).
+    if (!membershipPaid) {
+      const cgId = ((freshMembershipData as any)?.caregiverId ?? (freshMembershipData as any)?.userId ?? session.caregiverId ?? session.userId) as string | undefined;
+      if (cgId) {
+        const cg = (await db.collection("caregivers").doc(cgId).get().catch(() => null))?.data() as Record<string, unknown> | undefined;
+        membershipPaid = isCaregiverMembershipActive(cg);
+      }
+    }
   } catch { /* fail-soft: treat as not paid → resend link as before */ }
   if (membershipPaid) {
     // Payment landed — confirm it, never re-blast the checkout link or jump
@@ -3516,7 +3368,38 @@ async function cancelStaleBgcheckInvitation(session: AgentSession): Promise<void
   }
 }
 
-async function handleCaregiverSendBgcheck(phone: string, chatId: string, session: AgentSession): Promise<void> {
+async function handleCaregiverSendBgcheck(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
+  // An inbound TEXT at this cursor (sweep C5, 2026-10-11): the site sync moved
+  // the cursor here after a membership paid on the SITE, or the webhook send
+  // already ran. If the consent ask is already out — the site's payment
+  // webhook parked the record on "authorize your background check" and the
+  // membership_paid notice carried the link, or Evia texted it inside the
+  // cooldown window — the caregiver's words are READ like at every other gate
+  // (ack / question / profile addition / the agent), never met with a second
+  // consent link blindly. Only when no ask is out yet is the link still owed.
+  if (text) {
+    let fresh: Record<string, unknown> | undefined;
+    try { fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as Record<string, unknown> | undefined; } catch { /* fail-open */ }
+    const inCooldown = gateLinkCooldownMinutes(fresh, "caregiver_awaiting_bgcheck_consent") !== null;
+    let askedOnRecord = false;
+    const cgId = (session.caregiverId ?? session.userId) as string | undefined;
+    if (cgId) {
+      const cg = (await db.collection("caregivers").doc(cgId).get().catch(() => null))?.data() as Record<string, unknown> | undefined;
+      askedOnRecord = consentAlreadyRequested(cg);
+    }
+    if (inCooldown || askedOnRecord) {
+      await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck_consent" });
+      await handleCaregiverResendBgcheckConsent(phone, chatId, { ...session, onboardingStep: "caregiver_awaiting_bgcheck_consent" } as AgentSession, text);
+      return;
+    }
+    // No ask out yet: a question is answered first (with the step's facts and
+    // tools), then the owed link follows below; an ack / anything else just
+    // gets the link.
+    const kind = await classifyAwaitingReply(text, "review and authorize their background check via the link Evia is about to send");
+    if (kind === "question") {
+      await dispatchGateTurnToQaAgent(phone, chatId, text, session, "caregiver_send_bgcheck");
+    }
+  }
   // Re-send path (resendStuckStep / repeat webhook): the caregiver already
   // authorized on the consent page and a Checkr invitation exists — resend THAT
   // link instead of POSTing a new /v1/invitations (a second candidate would
@@ -3570,6 +3453,9 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
   // v1-uploadPageMeta OG rewrite, so a link part renders a branded
   // "Authorize your background check — Evia" card instead of the raw token URL.
   await sendMessage(chatId, { parts: [{ type: "link", value: consentUrl }] });
+  // Opens the consent step's resend window (gateLinkCooldown): the next text
+  // inside it is read, not answered with the link again (sweep C5).
+  await stampGateLinkResent(phone, "caregiver_awaiting_bgcheck_consent").catch(() => {});
   resolveCommitment(phone, "link", "link_sent").catch(() => {});
 }
 
@@ -3585,12 +3471,25 @@ async function handleCaregiverResendBgcheckConsent(phone: string, chatId: string
         "Sounds good — I'm here when it's done!");
       return;
     }
-    // An explicit "link doesn't work / send it again" gets the consent page again.
+    // An explicit "link doesn't work / send it again" gets the consent page
+    // again — under the same resend window every other gate step keeps
+    // (gateLinkCooldown, sweep C5): inside it the deterministic in-cooldown
+    // copy IS the reply, outside it a real resend opens the window.
     if (await wantsGateLinkResend(text)) {
+      let fresh: Record<string, unknown> | undefined;
+      try { fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as Record<string, unknown> | undefined; } catch { /* fail-open */ }
+      const mins = gateLinkCooldownMinutes(fresh, "caregiver_awaiting_bgcheck_consent");
+      if (mins !== null) {
+        // Truthful deterministic copy — no "reply LINK" promise here (the consent
+        // step has no LINK hatch; the bare word is not announced for it).
+        await sendMessage(chatId, gateLinkBypassSpentCopy(mins, gateLinkCooldownResetMinutes(fresh, "caregiver_awaiting_bgcheck_consent")));
+        return;
+      }
       const token      = generateToken({ phone, task: "bgcheck_consent" });
       const consentUrl = `${APP_URL}/bgcheck?t=${token}`;
       await sendMessage(chatId, "Review & authorize your background check here:");
       await sendMessage(chatId, { parts: [{ type: "link", value: consentUrl }] });
+      await stampGateLinkResent(phone, "caregiver_awaiting_bgcheck_consent").catch(() => {});
       return;
     }
     if (kind !== "question" && await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
@@ -4555,12 +4454,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // creation) — only the gating fields are finalization-specific. The
       // mirror omits absent fields instead of writing nulls, so this merge can
       // never blank a field another path already set.
-      // Coords safety net: geocode city/zip if the gate-handoff pre-create
-      // didn't (legacy sessions, bg-check pre-create path) — the caregiver is
-      // about to go active, and radius matching needs lat/lng.
-      const d = await ensureCaregiverCoords(
-        phone, (session.onboardingData ?? {}) as Record<string, unknown>,
-      );
+      // No coords safety net here (2026-10-11): the record's address fields
+      // go through triggers/caregiverGeocode.ts, the one owner of caregiver
+      // lat/lng (street-level), which also fills a record that lacks them.
+      const d = (session.onboardingData ?? {}) as Record<string, unknown>;
       const profileData = {
         phone,
         ...buildCaregiverProfileMirror(d),
@@ -4596,7 +4493,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           ? { verificationStatus: "submitted" }
           : {};
         // The questionnaire finished long before payouts — never move the site
-        // wizard's cursor back from 'done' here (profileMirrorForExisting).
+        // wizard's cursor back here, and MERGE: with no changed keys the mirror is
+        // fill-only, so a field the caregiver edited on the site since (bio, rate,
+        // availability grid…) is never overwritten by the older text draft
+        // (sweep C4, 2026-10-11). Only the gating fields are finalization's own.
         const finalizeData = profileMirrorForExisting(profileData, existingData);
         if (authUid && session.caregiverId !== authUid) {
           // Legacy random-ID doc (pre-created before uid-keying landed) — migrate
@@ -4611,8 +4511,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           if (existingSnap.exists) await existingSnap.ref.delete().catch(() => {});
           caregiverId = authUid;
         } else {
-          // Doc was pre-created during bg check — update it with full profile.
-          await db.collection("caregivers").doc(session.caregiverId).update({ ...finalizeData, ...vStatusPatch });
+          // Doc was pre-created earlier — fill what it lacks (never an empty update: Firestore rejects it).
+          const finalizePatch = { ...finalizeData, ...vStatusPatch };
+          if (Object.keys(finalizePatch).length > 0) {
+            await db.collection("caregivers").doc(session.caregiverId).set(finalizePatch, { merge: true });
+          }
           caregiverId = session.caregiverId;
         }
       } else if (authUid) {
@@ -4728,7 +4631,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // Setup is finished here, exactly where the website's progress bar
       // completes. Nothing is announced from this step (2026-09-27: the old
       // "you're approved" celebration, money note and capability note were
-      // Evia-only) — "Payouts set up" and, once bookable, "You're approved"
+      // Evia-only) — "Payouts set up" and, once bookable, "You're all set"
       // reach the caregiver as bell + text from onCaregiverAccountChange, the
       // same way every other progress-bar change does.
       await db.collection("agent_sessions").doc(phone).update({

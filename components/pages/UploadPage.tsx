@@ -10,7 +10,7 @@ import { functions } from '../../lib/firebase';
 // cleared driving record (MVR).
 // The old certification upload (/upload/document) is gone — the site never had it.
 
-const MAX_BYTES  = 6 * 1024 * 1024; // must match uploadOnboardingFile server cap
+const MAX_BYTES  = 5 * 1024 * 1024; // must match uploadOnboardingFile server cap (= the profile page, 5 MB)
 
 const readAsDataURL = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -54,7 +54,7 @@ async function uploadFile(file: File, isPhoto: boolean): Promise<void> {
   const token = new URLSearchParams(window.location.search).get('t') ?? '';
   if (!token) throw Object.assign(new Error('no token'), { code: 'unauthenticated' });
   if (file.size > MAX_BYTES * 2) {
-    throw Object.assign(new Error('That file is too large — 6MB max. A photo straight from your camera works great.'), { code: 'invalid-argument' });
+    throw Object.assign(new Error('That file is too large — 5MB max. A photo straight from your camera works great.'), { code: 'invalid-argument' });
   }
   let payload = file.type.startsWith('image/') ? await compressImage(file) : null;
   if (!payload) {

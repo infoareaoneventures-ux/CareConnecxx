@@ -69,15 +69,17 @@ export function correctionText(row: FirebaseFirestore.DocumentData, respondByMs:
 }
 
 async function notify(opts: { caregiverId: string; text: string; bellBody: string; sourcePath: string; eventId: string; type: string; title: string; data: Record<string, unknown>; sourceAgent: string }): Promise<boolean> {
-  // Bell first (idempotent per source + event), then the text with the same words.
+  // Text first; the bell (same fact, the page's words) only when the text actually went (bell ⇄ text, C11).
+  const phone = await resolveCaregiverPhone(opts.caregiverId);
+  const sess = phone ? await db.collection("agent_sessions").doc(phone).get().catch(() => null) : null;
+  if (!phone || !sess?.exists || sess.data()?.optedOut) return false;
+  const sent = await sendViaInteractionAgent(phone, { content: opts.text, urgency: "standard", sourceAgent: opts.sourceAgent, canDrop: false, fixedString: true });
+  if (!sent) return false;
   await writeUserNotification({
     sourcePath: opts.sourcePath, eventId: opts.eventId, recipientId: opts.caregiverId,
     transitionType: opts.type, type: opts.type, title: opts.title, body: opts.bellBody, data: opts.data,
   }).catch((err) => console.error("[caregiverTimesheetReminders] bell failed:", opts.sourcePath, err));
-  const phone = await resolveCaregiverPhone(opts.caregiverId);
-  const sess = phone ? await db.collection("agent_sessions").doc(phone).get().catch(() => null) : null;
-  if (!phone || !sess?.exists || sess.data()?.optedOut) return false;
-  return sendViaInteractionAgent(phone, { content: opts.text, urgency: "standard", sourceAgent: opts.sourceAgent, canDrop: false });
+  return true;
 }
 
 export async function runCaregiverTimesheetReminders(nowMs = Date.now()): Promise<{ unsubmitted: number; corrections: number; skipped: number }> {

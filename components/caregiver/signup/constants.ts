@@ -85,3 +85,8 @@ I have my own transportation and am flexible with scheduling. In my free time, I
 
 // Max clients dropdown options
 export const MAX_CLIENTS_OPTIONS = ['1', '2', '3+'] as const;
+
+// ONE bio rule for the caregiver (sweep C7, 2026-10-11): the onboarding wizard's
+// 150-character minimum is also the profile editor's; Evia's text step holds the same.
+export const BIO_MIN_CHARS = 150;
+export const BIO_MAX_CHARS = 2500;

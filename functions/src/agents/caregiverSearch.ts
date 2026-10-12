@@ -72,7 +72,8 @@ export interface CaregiverCard {
   city:          string;
   stateCode:     string | null;
   zipCode:       string | null;
-  distance:      number;
+  /** Miles to the nearest care location; null = unknown (no coords on one side), never a fake 0. */
+  distance:      number | null;
   hourlyRate:    number;
   skills:        string[];
   languages:     string[];
@@ -175,7 +176,7 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
     if (!firstName && !lastName && !nameStr) continue;
     const cgLat = (data.lat ?? data.latitude ?? (data.location as { lat?: unknown } | undefined)?.lat ?? (data._geoloc as { lat?: unknown } | undefined)?.lat) as number | undefined;
     const cgLng = (data.lng ?? data.longitude ?? (data.location as { lng?: unknown } | undefined)?.lng ?? (data._geoloc as { lng?: unknown } | undefined)?.lng) as number | undefined;
-    let distance = 0;
+    let distance: number | null = null;
     if (cgLat != null && cgLng != null && locs.length > 0) {
       distance = Math.min(...locs.map((l) => haversineDistanceMiles(l.lat, l.lng, Number(cgLat), Number(cgLng))));
       distance = Math.round(distance * 10) / 10;
@@ -220,7 +221,7 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
     const raw = cg as unknown as Record<string, unknown>;
     if (blocked.has(cg.id)) return false;
     if (filters.favoritesOnly && !cg.isFavorite) return false;
-    if (locs.length > 0 && raw._lat != null && raw._lng != null) {
+    if (cg.distance != null) {
       if (cg.distance > filters.maxDistanceMiles) return false;
       const sr = raw._serviceRadius as number | undefined;
       if (sr != null && sr > 0 && cg.distance > sr) return false;

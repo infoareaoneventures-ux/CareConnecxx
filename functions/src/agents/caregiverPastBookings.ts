@@ -33,6 +33,9 @@ import { shiftDisplayStatus } from "./shiftReschedule";
 import { fmtDate, fmtTime } from "./caregiverBookingRequests";
 import { taskItems, recipientBlocks, type TaskItem } from "./inShift";
 import { checkCaregiverAccess, textCaregiverGateBlock } from "./caregiverAccessGate";
+// The modal's write is the shared server rule's (shifts/visitActions.ts logHours, 2026-10-11): owner, missed visit,
+// the gate, end after start — the same function the site's Log Hours button reaches through the queue.
+import { logHours as logHoursShared } from "../shifts/visitActions";
 
 const db = admin.firestore();
 export const PAGE_SIZE = 2;
@@ -372,20 +375,16 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     }
     const startMs = parseScheduledTimeMs(`${data.startDate}T${data.startAt}:00`);
     const endMs = parseScheduledTimeMs(`${data.endDate}T${data.endAt}:00`);
-    const shiftRef = db.collection("shifts").doc(data.shiftId);
-    const cur = (await shiftRef.get()).data() as Doc | undefined;
+    const caregiverId = String((session as unknown as Record<string, unknown>).caregiverId ?? "");
     await clear();
-    if (!cur || cur.status !== "scheduled") { await sendMessage(chatId, `That visit is already ${String(cur?.status ?? "gone")} — nothing to log.`); return; }
-    // The modal's write, field for field.
-    await shiftRef.update({
-      status: "completed",
-      startedAt: admin.firestore.Timestamp.fromMillis(startMs),
-      completedAt: admin.firestore.Timestamp.fromMillis(endMs),
-      loggedManually: true,
-      tasksCompleted: data.tasks ?? [],
-      ...(data.note ? { completionNotes: data.note } : {}),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    // The modal's write, field for field — the shared server function (also the site's Log Hours, via the queue).
+    const r = await logHoursShared({ caregiverId, shiftId: data.shiftId, startedAtMs: startMs, completedAtMs: endMs, tasksCompleted: data.tasks ?? [], completionNotes: data.note });
+    if (!r.ok) {
+      if (r.reason === "membership" || r.reason === "background") { await textCaregiverGateBlock(phone, chatId, r.reason, (r.caregiver ?? {}) as Record<string, unknown>); return; }
+      if (r.reason === "not_found") { await sendMessage(chatId, "That visit is already gone — nothing to log."); return; }
+      await sendMessage(chatId, r.message);
+      return;
+    }
     await sendMessage(chatId, "Hours logged successfully. Reply SUBMIT to submit them for payment."); // the page's toast + the Timesheets tab's next step
     return;
   }

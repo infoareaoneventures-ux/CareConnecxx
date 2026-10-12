@@ -94,10 +94,11 @@ describe("the run", () => {
     const again = await runCaregiverTimesheetReminders(NOW + 3_600_000);
     expect(again.corrections).toBe(0);
   });
-  it("writes the bell but sends no text when the caregiver has no Evia session or opted out", async () => {
+  it("no Evia session (or opted out) → no text, and so no bell either (bell ⇄ text, C11); the visit is still stamped", async () => {
     shift("s1", { caregiverId: "cg2" });
     const r = await runCaregiverTimesheetReminders(NOW);
     expect(r.unsubmitted).toBe(1);
-    expect(hoisted.bells).toHaveLength(1); expect(hoisted.sends).toHaveLength(0);
+    expect(hoisted.bells).toHaveLength(0);
+    expect(hoisted.sends).toHaveLength(0);
   });
 });

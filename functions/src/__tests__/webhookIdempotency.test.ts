@@ -406,3 +406,107 @@ describe("stripeConnectWebhook — exactly-once", () => {
     expect(hoisted.updates.filter((u) => u.path === "caregivers/cg1").length).toBe(updatesAfterFirst);
   });
 });
+
+// ── Caregiver sweep C14 (2026-10-11): ordering guards ──────────────────────────
+// Checkr: the record is written BEFORE the Evia session is advanced; a late
+// report.updated (pending) after the clear, or any report event stamped before
+// the clear, never moves a cleared caregiver backwards.
+// Stripe: the subscription mirror never applies an event older than the last one
+// mirrored (lastEventCreated), and reads the live subscription when it can.
+const c14 = vi.hoisted(() => ({ advanceCalls: [] as Array<{ phone: string; task: string; recordAtCall: any }> }));
+vi.mock("../agents/onboardingConversation", () => ({
+  advanceOnboardingStep: vi.fn(async (phone: string, task: string) => {
+    c14.advanceCalls.push({ phone, task, recordAtCall: { ...(hoisted.docs.get("caregivers/cg14") ?? {}) } });
+  }),
+}));
+
+import { checkrEventMs, reportEventRegressesClear } from "../checkr";
+import { subscriptionEventIsStale } from "../stripe";
+
+function seedCg14(data: Record<string, any>) {
+  const doc = { id: "cg14", backgroundCheckData: { checkrCandidateId: "cand14" }, ...data };
+  hoisted.collState.set("caregivers", [doc]);
+  hoisted.docs.set("caregivers/cg14", doc);
+}
+const reportEvt = (id: string, type: string, result: string, created_at?: string) => ({
+  id, type, ...(created_at ? { created_at } : {}),
+  data: { object: { id: "rep14", candidate_id: "cand14", package: "criminal_basic", result, assessment: result, status: result === "pending" ? "pending" : "complete" } },
+});
+
+describe("checkrWebhook — record first, then the session; never backwards (C14)", () => {
+  beforeEach(() => { c14.advanceCalls.length = 0; });
+
+  it("report.completed clear: caregivers/{uid} carries the clear BEFORE advanceOnboardingStep runs", async () => {
+    seedCg14({ phone: "+15550009999", verified: false, verificationStatus: "submitted", backgroundCheckStatus: "pending" });
+    await (checkrWebhook as any)(checkrReq(reportEvt("evt_c14_clear", "report.completed", "clear")), makeRes());
+    expect(c14.advanceCalls).toHaveLength(1);
+    expect(c14.advanceCalls[0]).toMatchObject({ phone: "+15550009999", task: "background_check" });
+    expect(c14.advanceCalls[0].recordAtCall).toMatchObject({ verified: true, backgroundCheckStatus: "clear", verificationStatus: "approved" });
+  });
+
+  it("a late report.updated (pending) after the clear is ignored — the record stays cleared", async () => {
+    seedCg14({ verified: true, verificationStatus: "approved", backgroundCheckStatus: "clear", backgroundCheckData: { checkrCandidateId: "cand14", status: "clear", checkrClearedAt: "2026-10-10T10:00:00.000Z" } });
+    const res = makeRes();
+    await (checkrWebhook as any)(checkrReq(reportEvt("evt_c14_late", "report.updated", "pending")), res);
+    expect(res.json).toHaveBeenCalledWith({ received: true, ignored: "pending_after_clear" });
+    expect(hoisted.docs.get("caregivers/cg14")).toMatchObject({ verified: true, backgroundCheckStatus: "clear" });
+    expect(hoisted.updates.filter((u) => u.path === "caregivers/cg14")).toHaveLength(0);
+  });
+
+  it("a report event stamped BEFORE the clear is stale and ignored, even a 'consider'; one stamped after it still lands", async () => {
+    seedCg14({ verified: true, verificationStatus: "approved", backgroundCheckStatus: "clear", backgroundCheckData: { checkrCandidateId: "cand14", status: "clear", checkrClearedAt: "2026-10-10T10:00:00.000Z" } });
+    const stale = makeRes();
+    await (checkrWebhook as any)(checkrReq(reportEvt("evt_c14_stale", "report.updated", "consider", "2026-10-10T09:00:00.000Z")), stale);
+    expect(stale.json).toHaveBeenCalledWith({ received: true, ignored: "stale_event" });
+    expect(hoisted.docs.get("caregivers/cg14").verified).toBe(true);
+    const fresh = makeRes();
+    await (checkrWebhook as any)(checkrReq(reportEvt("evt_c14_fresh", "report.updated", "consider", "2026-10-10T11:00:00.000Z")), fresh);
+    expect(fresh.json).toHaveBeenCalledWith({ received: true });
+    expect(hoisted.docs.get("caregivers/cg14")).toMatchObject({ verified: false, backgroundCheckStatus: "consider" });
+  });
+
+  it("pure guards", () => {
+    expect(checkrEventMs({ created_at: "2026-10-10T10:00:00.000Z" })).toBe(Date.parse("2026-10-10T10:00:00.000Z"));
+    expect(checkrEventMs({})).toBeNull();
+    const cleared = { backgroundCheckStatus: "clear", backgroundCheckData: { checkrClearedAt: "2026-10-10T10:00:00.000Z" } };
+    expect(reportEventRegressesClear(cleared, "pending", null)).toBe("pending_after_clear");
+    expect(reportEventRegressesClear(cleared, "consider", Date.parse("2026-10-10T09:59:00.000Z"))).toBe("stale_event");
+    expect(reportEventRegressesClear(cleared, "consider", Date.parse("2026-10-10T10:01:00.000Z"))).toBeNull();
+    expect(reportEventRegressesClear({ backgroundCheckStatus: "pending" }, "pending", null)).toBeNull();
+    expect(reportEventRegressesClear(undefined, "pending", null)).toBeNull();
+  });
+
+  it("C18: a candidate.* document request parks the record on awaiting_documents (ONE announce path) instead of texting by event id", async () => {
+    seedCg14({ phone: "+15550009999", backgroundCheckData: { checkrCandidateId: "cand14", invitationStatus: "sent" } });
+    const evt = { id: "evt_c18_doc", type: "candidate.id_required", data: { object: { id: "cand14" } } };
+    await (checkrWebhook as any)(checkrReq(evt), makeRes());
+    expect(hoisted.docs.get("caregivers/cg14")).toMatchObject({ "backgroundCheckData.invitationStatus": "awaiting_documents", "backgroundCheckData.status": "pending" });
+  });
+});
+
+describe("stripeWebhook — subscription events never go backwards (C14)", () => {
+  const subEvent = (id: string, status: string, created: number) => ({
+    id, created,
+    type: "customer.subscription.updated",
+    data: { object: { id: "sub_c14", status, metadata: { firebaseUID: "user14" }, current_period_start: 1750000000, current_period_end: 1752000000, cancel_at_period_end: false, canceled_at: null } },
+  });
+
+  it("an older 'active' arriving after a newer 'past_due' is ignored; the newer state stands", async () => {
+    await (stripeWebhook as any)(stripeReq(subEvent("evt_c14_new", "past_due", 2_000_000_000)), makeRes());
+    expect(hoisted.docs.get("users/user14")).toMatchObject({ membershipStatus: "past_due" });
+    expect(hoisted.docs.get("customers/user14/subscriptions/sub_c14")).toMatchObject({ lastEventCreated: 2_000_000_000 });
+    const res = makeRes();
+    await (stripeWebhook as any)(stripeReq(subEvent("evt_c14_old", "active", 1_999_999_000)), res);
+    expect(res.json).toHaveBeenCalledWith({ received: true });
+    expect(hoisted.docs.get("users/user14")).toMatchObject({ membershipStatus: "past_due" });
+    expect(hoisted.docs.get("customers/user14/subscriptions/sub_c14")).toMatchObject({ status: "past_due", lastEventCreated: 2_000_000_000 });
+  });
+
+  it("pure guard", () => {
+    expect(subscriptionEventIsStale(200, 100)).toBe(true);
+    expect(subscriptionEventIsStale(200, 200)).toBe(false);
+    expect(subscriptionEventIsStale(200, 300)).toBe(false);
+    expect(subscriptionEventIsStale(undefined, 100)).toBe(false);
+    expect(subscriptionEventIsStale(200, undefined)).toBe(false);
+  });
+});

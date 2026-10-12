@@ -849,10 +849,14 @@ service cloud.firestore {
     // SHIFTS (GPS Clock In/Out)
     // ==========================================
     match /shifts/{shiftId} {
-      // Caregiver can create (clock in or accepted booking)
+      // Caregiver: only a 'scheduled' visit of their own (2026-10-11 — the
+      // accepted-schedule-change visits moved to the server, see
+      // onBookingAmendmentAccepted in functions/src/scheduled/shiftGenerator.ts;
+      // every other status is written by the server as admin).
       // Client can create a pending extra-visit request (createdBy == 'client')
       allow create: if isAuthenticated() && (
-        request.resource.data.caregiverId == request.auth.uid ||
+        (request.resource.data.caregiverId == request.auth.uid &&
+         request.resource.data.status == 'scheduled') ||
         (request.resource.data.clientId == request.auth.uid &&
          request.resource.data.status == 'pending' &&
          request.resource.data.createdBy == 'client')
@@ -865,12 +869,29 @@ service cloud.firestore {
         isAdmin()
       );
 
-      // Caregiver: update active/scheduled/in-progress shifts AND pending extra-visit requests
-      // Client: cancel their own scheduled or pending shifts
+      // Caregiver (2026-10-11, founder: "3 fix. not leaving it for later"): the
+      // status transitions Start / End / Cancel / Log Hours make — in-progress,
+      // completed, cancelled, needs_replacement — are NO LONGER client writes.
+      // They go through visit_action_requests (below) and the server
+      // (functions/src/shifts/visitActions.ts, the same functions Evia's START /
+      // FINISH / CANCEL / LOG use) enforces the membership + background gate,
+      // the 15-minute Start window, one visit at a time and the 24-hour cancel
+      // rule, then writes as admin. What stays a direct caregiver write:
+      //   in-progress   → ONLY the Tasks checklist (tasksCompleted) and the
+      //                   visit-notes log (notesLog), plus updatedAt
+      //   scheduled / active / pending → anything that keeps the status out of
+      //                   the four server-owned values (reschedule proposals,
+      //                   accepting a pending extra-visit request → scheduled)
+      // Client: cancel their own scheduled or pending shifts (unchanged).
       allow update: if isAuthenticated() && (
-        (resource.data.caregiverId == request.auth.uid &&
-          (resource.data.status == 'active' || resource.data.status == 'scheduled' ||
-           resource.data.status == 'in-progress' || resource.data.status == 'pending')) ||
+        (resource.data.caregiverId == request.auth.uid && (
+          (resource.data.status == 'in-progress' &&
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['tasksCompleted', 'notesLog', 'updatedAt'])) ||
+          ((resource.data.status == 'active' || resource.data.status == 'scheduled' ||
+            resource.data.status == 'pending') &&
+            !(request.resource.data.status in ['in-progress', 'completed', 'cancelled', 'needs_replacement']))
+        )) ||
         (resource.data.clientId == request.auth.uid &&
           (resource.data.status == 'scheduled' || resource.data.status == 'pending' ||
            resource.data.status == 'needs_replacement')) ||
@@ -894,9 +915,17 @@ service cloud.firestore {
         isAdmin()
       );
 
-      // Caregiver can accept/decline; client can retract (set to declined) their own pending request
+      // Caregiver: accept / decline their own PENDING request — exactly the
+      // two buttons' write ({status, respondedAt}); the visits an acceptance
+      // creates and the stamp the server leaves (shiftsGeneratedAt) come from
+      // onBookingAmendmentAccepted as admin (2026-10-11).
+      // Client can retract (cancel) their own pending request.
       allow update: if isAuthenticated() && (
-        resource.data.caregiverId == request.auth.uid ||
+        (resource.data.caregiverId == request.auth.uid &&
+         resource.data.status == 'pending' &&
+         request.resource.data.status in ['accepted', 'declined'] &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['status', 'respondedAt'])) ||
         (resource.data.clientId == request.auth.uid && resource.data.status == 'pending') ||
         isAdmin()
       );
@@ -1456,6 +1485,27 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(
           ['type', 'status', 'createdAt', 'caregiverId', 'interviewId', 'decision', 'proposedDate', 'proposedTime', 'message']
         )
+        && request.auth != null && request.auth.uid == request.resource.data.caregiverId;
+      allow update, delete: if false; // server-side only (Admin SDK trigger)
+    }
+
+    // Same Firestore-trigger-queue pattern — the caregiver's Start Shift / End /
+    // ✕ / Cancel Booking / Log Hours buttons (2026-10-11). The site writes the
+    // request; functions/src/triggers/visitActionQueue.ts runs the ONE server
+    // implementation (functions/src/shifts/visitActions.ts) as admin and settles
+    // the doc. Caller must be signed in as the caregiver named on the request;
+    // only that caregiver reads it back (requests carry visit notes / tasks —
+    // this is why it is not an action set on world-readable
+    // account_action_requests).
+    match /visit_action_requests/{requestId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.caregiverId;
+      allow create: if request.resource.data.type in ['start_visit', 'end_visit', 'cancel_visit', 'cancel_booking', 'log_hours']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.keys().hasOnly(
+          ['type', 'status', 'createdAt', 'caregiverId', 'shiftId',
+           'closingNote', 'startedAt', 'completedAt', 'tasksCompleted', 'completionNotes']
+        )
+        && request.resource.data.shiftId is string
         && request.auth != null && request.auth.uid == request.resource.data.caregiverId;
       allow update, delete: if false; // server-side only (Admin SDK trigger)
     }

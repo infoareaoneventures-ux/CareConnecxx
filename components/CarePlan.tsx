@@ -10,7 +10,7 @@ import {
 import { ViewType, AddToastFunction, CarePlan as CarePlanType } from '../types';
 import { dbService, authService } from '../services/api';
 import { db, storage } from '../lib/firebase';
-import { geocodeToLatLng } from '../utils/geocode';
+import { geocodeAddress, GeoPrecision } from '../utils/geocode';
 import firebase from '../lib/firebase';
 import { ClientNavigation } from './client/ClientNavigation';
 
@@ -45,7 +45,8 @@ const ENTERTAINMENT = ['Music', 'Movies', 'TV Shows', 'Theater', 'Other'];
 const FREQ_OPTIONS = ['Daily', 'Weekly', 'Monthly', 'Occasionally'];
 const PET_TYPES = ['Dog', 'Cat', 'Fish', 'Other'];
 
-interface LocationEntry { street: string; city: string; state: string; zipCode: string; petsInHome?: boolean; petTypes?: string[]; petName?: string; smokingHousehold?: boolean; lat?: number; lng?: number; }
+// geoPrecision (2026-10-11): 'street' when lat/lng came from the full street address — the point a job post reuses as is.
+interface LocationEntry { street: string; city: string; state: string; zipCode: string; petsInHome?: boolean; petTypes?: string[]; petName?: string; smokingHousehold?: boolean; lat?: number; lng?: number; geoPrecision?: GeoPrecision; }
 
 interface LifestyleData {
   favoriteActivities: string[]; favoriteActivitiesOther: string;
@@ -471,10 +472,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       if (l.smokingHousehold !== undefined) entry.smokingHousehold = l.smokingHousehold;
       if (l.petTypes?.length) entry.petTypes = l.petTypes;
       if (l.petName) entry.petName = l.petName;
-      // Always geocode on save; fall back to existing coords if Nominatim fails
-      const coords = await geocodeToLatLng(l.street, l.city, l.state, l.zipCode);
-      if (coords) { entry.lat = coords.lat; entry.lng = coords.lng; }
-      else if (l.lat != null && l.lng != null) { entry.lat = l.lat; entry.lng = l.lng; }
+      // Always geocode on save (street first — one geocoder, utils/geocode.ts); fall back to existing coords if Nominatim fails
+      const point = await geocodeAddress({ street: l.street, city: l.city, state: l.state, zipCode: l.zipCode });
+      if (point) { entry.lat = point.lat; entry.lng = point.lng; entry.geoPrecision = point.geoPrecision; }
+      else if (l.lat != null && l.lng != null) { entry.lat = l.lat; entry.lng = l.lng; if (l.geoPrecision) entry.geoPrecision = l.geoPrecision; }
       return entry;
     }));
     try {
@@ -635,9 +636,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     if (newLocEditIdx === null || !newLocEditDraft || !db || !currentPlanId) return;
     if (!newLocEditDraft.street.trim()) { onShowToast('Street address is required', 'error'); return; }
     // Geocode the edited address before saving
-    const coords = await geocodeToLatLng(newLocEditDraft.street, newLocEditDraft.city, newLocEditDraft.state, newLocEditDraft.zipCode);
-    const geocodedDraft: LocationEntry = coords
-      ? { ...newLocEditDraft, lat: coords.lat, lng: coords.lng }
+    const point = await geocodeAddress({ street: newLocEditDraft.street, city: newLocEditDraft.city, state: newLocEditDraft.state, zipCode: newLocEditDraft.zipCode });
+    const geocodedDraft: LocationEntry = point
+      ? { ...newLocEditDraft, lat: point.lat, lng: point.lng, geoPrecision: point.geoPrecision }
       : newLocEditDraft;
     const base = locationPool.length > 0 ? [...locationPool] : [...wizardLocations];
     const newPool = base.map((l, i) => i === newLocEditIdx ? geocodedDraft : l);
@@ -701,8 +702,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         const locKey = `${newLoc.street?.toLowerCase()}${newLoc.zipCode}`;
         const alreadyInPool = currentPool.some(l => `${l.street?.toLowerCase()}${l.zipCode}` === locKey);
         if (!alreadyInPool) {
-          const coords = await geocodeToLatLng(newLoc.street, newLoc.city, newLoc.state, newLoc.zipCode);
-          const geocodedLoc = coords ? { ...newLoc, lat: coords.lat, lng: coords.lng } : newLoc;
+          const point = await geocodeAddress({ street: newLoc.street, city: newLoc.city, state: newLoc.state, zipCode: newLoc.zipCode });
+          const geocodedLoc = point ? { ...newLoc, lat: point.lat, lng: point.lng, geoPrecision: point.geoPrecision } : newLoc;
           updatedPool = [...currentPool, geocodedLoc];
         }
       }

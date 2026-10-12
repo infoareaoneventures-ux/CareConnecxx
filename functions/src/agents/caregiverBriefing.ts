@@ -15,11 +15,14 @@
 // a Firestore blip never breaks an answer path.
 
 import * as admin from "firebase-admin";
+// The one caregiver membership rule (caregiverAccessGate.isCaregiverMembershipActive delegates to this pure leaf).
+import { isCaregiverMembershipActiveForFamilies as isCaregiverMembershipActive } from "../utils/caregiverEligibility";
 
 /** Deterministic rendering of the live fields — pure, unit-testable. */
 export function renderCaregiverAccountStatus(cg: {
   name?: string;
   membershipPaid?: boolean;
+  membershipStatus?: string;
   backgroundCheckStatus?: string;
   stripeAccountId?: string;
   payoutsEnabled?: boolean;
@@ -32,7 +35,8 @@ export function renderCaregiverAccountStatus(cg: {
   const lines: string[] = [];
   if (cg.name) lines.push(`- Their name: ${cg.name}`);
   lines.push(`- Role: professional CAREGIVER on the Evia platform (they are NOT a family member or care client — never describe them as caring for "their loved one")`);
-  lines.push(`- Caregiver membership: ${cg.membershipPaid === true ? "PAID and active" : "not paid yet"}`);
+  // The ONE membership rule (caregiverAccessGate, sweep C1 2026-10-11) — never the paid flag alone.
+  lines.push(`- Caregiver membership: ${isCaregiverMembershipActive(cg as Record<string, unknown>) ? "active" : "not active"}`);
 
   const bg = (cg.backgroundCheckStatus ?? "").toLowerCase();
   if (bg === "clear") {

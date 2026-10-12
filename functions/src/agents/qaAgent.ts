@@ -39,6 +39,7 @@ import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData } from "./clientJobPostingContract";
+import { isCaregiverMembershipActive } from "./caregiverAccessGate";
 import { mapCaregiversDocToOnboardingData } from "./caregiverDraftSync";
 import { describeWhoIsWho } from "./careRecipients";
 import { describeSharedProfile } from "./profileBriefing";
@@ -686,7 +687,9 @@ export function buildCaregiverCoreContext(caregiver: any): string {
         : `background check ${bgStatus}`,
     );
   }
-  if (caregiver.membershipPaid === true) accountBits.push("caregiver membership PAID and active");
+  // The ONE membership rule (caregiverAccessGate, sweep C1 2026-10-11) — never the paid flag alone.
+  if (isCaregiverMembershipActive(caregiver)) accountBits.push("caregiver membership active");
+  else if (caregiver.membershipStatus || caregiver.membershipPaid !== undefined) accountBits.push(`caregiver membership NOT active (status: ${caregiver.membershipStatus ?? "none"})`);
   if (caregiver.payoutsEnabled === true && caregiver.chargesEnabled === true) accountBits.push("payout account connected");
   else if (caregiver.stripeAccountId) accountBits.push("payout setup started, not finished");
   if (caregiver.onboardingStatus) accountBits.push(`onboarding ${caregiver.onboardingStatus}`);
@@ -2556,7 +2559,11 @@ export async function runQaAgent(params: {
         const cgSnap = await db.collection("caregivers").doc(caregiverUidForSync as string).get();
         const liveData = mapCaregiversDocToOnboardingData(cgSnap.exists ? cgSnap.data() : undefined);
         if (Object.keys(liveData).length > 0) {
-          effectiveOnboardingData = { ...liveData, ...(draftOnboardingData ?? {}) };
+          // The RECORD wins where it has a value (sweep C4, 2026-10-11): every
+          // text save mirrors to it the moment it lands, so anything the record
+          // holds that differs is a LATER site edit — the directive must show
+          // that, not the older text draft. The draft fills what the record lacks.
+          effectiveOnboardingData = { ...(draftOnboardingData ?? {}), ...liveData };
         }
       } catch (err) {
         console.error("onboarding: live caregivers-doc sync failed (non-fatal, using draft only):", err);

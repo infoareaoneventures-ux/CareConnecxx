@@ -139,7 +139,7 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
     const change = { before: { data: () => ({ backgroundCheckStatus: "pending", onboardingStatus: "profile_complete", verificationStatus: "submitted" }) }, after: { data: () => ({ backgroundCheckStatus: "clear", onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" }) } };
     await (onCaregiverAccountChange as any)(change, { params: { uid: "cg1" }, eventId: "fs-evt-1" });
     expect(hoisted.bells.map((b) => b.transitionType)).toEqual(["bgcheck_clear", "now_bookable"]);
-    expect(hoisted.sent.map((s) => s.content)).toEqual(["Great news — your background check came back clear.", "You're approved — families can now find and book you."]);
+    expect(hoisted.sent.map((s) => s.content)).toEqual(["Great news — your background check came back clear.", "You're all set — families can now find and book you."]);
     // A retried invocation of the same event sends nothing more.
     await (onCaregiverAccountChange as any)(change, { params: { uid: "cg1" }, eventId: "fs-evt-1" });
     expect(hoisted.sent).toHaveLength(2);

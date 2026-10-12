@@ -3,7 +3,7 @@
 //
 // Same reads as the page: dbService.getUser (users + caregivers, caregiver doc
 // wins) and the reviews subscription (reviews where caregiverId ==). Same
-// sections in the same order — hero (photo, Verified/Pending, name, stars,
+// sections in the same order — hero (photo, background check complete/pending, name, stars,
 // city, rate, Transportation chip), About (bio + languages), Care Services,
 // Rates (1 / 2 / 3+ people, experience, max clients), Weekly Availability
 // (Looking for + the grid), Location & Travel, Reviews — and every Edit button
@@ -37,8 +37,8 @@ export const JOB_TYPE_OPTIONS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "part-time", label: "Part-time" },
   { id: "full-time", label: "Full-time" },
 ];
-/** signup/constants.ts MAX_CLIENTS_OPTIONS — Rates › "Max clients at once". */
-export const MAX_CLIENTS_OPTIONS: readonly string[] = ["1", "2", "3+"];
+/** signup/constants.ts MAX_CLIENTS_OPTIONS — Rates › "Max clients at once" (defined in the onboardingContract leaf; the record mirror reads it too). */
+export { MAX_CLIENTS_OPTIONS } from "./onboardingContract";
 /** The Location & Travel pills, in miles. */
 export const TRAVEL_OPTIONS: readonly number[] = [5, 10, 15, 25, 50];
 
@@ -108,7 +108,7 @@ export async function loadMyProfilePage(caregiverId: string): Promise<MyProfileP
     return vals.length ? { label, avg: vals.reduce((a, b) => a + b, 0) / vals.length } : null;
   }).filter((c): c is { label: string; avg: number } => c !== null);
 
-  const services = (Array.isArray(p.services) ? p.services : Array.isArray(p.skills) ? p.skills : []) as string[];
+  const services = (Array.isArray(p.services) && (p.services as unknown[]).length ? p.services : Array.isArray(p.skills) ? p.skills : []) as string[]; // services when non-empty, else skills (one rule with the site)
   const city = str(p.city); const state = str(p.state);
   const location = city && state ? `${city}, ${state}` : city || str(p.location);
   const hourlyRate = num(p.hourlyRate);
@@ -147,7 +147,7 @@ export async function loadMyProfilePage(caregiverId: string): Promise<MyProfileP
 export function myProfileText(page: MyProfilePage): string {
   const first = page.name.split(" ")[0] || "you";
   const lines: string[] = ["My Profile", ""];
-  lines.push(`${page.name || "—"} · ${page.verified ? "Verified" : "Pending"}`);
+  lines.push(`${page.name || "—"} · ${page.verified ? "Background check complete" : "Background check pending"}`);
   lines.push(page.ratingLabel);
   // No Transportation chip in the hero line (2026-10-06): it is a service, listed under Care Services once live.
   lines.push([page.location, page.hourlyRate > 0 ? `$${page.hourlyRate}/hr` : ""].filter(Boolean).join(" · ") || "—");
@@ -220,7 +220,8 @@ const KEYWORD_EDITS: Record<string, MyProfileEdit> = {
   "SERVICES": "services", "MY SERVICES": "services", "EDIT SERVICES": "services", "CARE SERVICES": "services",
   "RATES": "rates", "MY RATES": "rates", "EDIT RATES": "rates", "RATE": "rates", "MY RATE": "rates",
   "LOOKING FOR": "jobtype", "JOB TYPE": "jobtype",
-  "AVAILABILITY": "availability", "MY AVAILABILITY": "availability", "EDIT AVAILABILITY": "availability", "SCHEDULE": "availability", "MY SCHEDULE": "availability",
+  // (SCHEDULE / MY SCHEDULE show the Calendar — the page's schedule view — in routeCaregiver, not this editor; sweep C20 2026-10-11.)
+  "AVAILABILITY": "availability", "MY AVAILABILITY": "availability", "EDIT AVAILABILITY": "availability",
   "TRAVEL": "travel", "TRAVEL DISTANCE": "travel", "MY TRAVEL": "travel",
 };
 

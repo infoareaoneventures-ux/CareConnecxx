@@ -61,14 +61,20 @@ export function mapCaregiversDocToOnboardingData(
     : undefined;
   if (Array.isArray(skills) && skills.length) out.specialties = skills;
 
-  // jobTypes (array, hyphenated ids, wizard is single-select despite the array
-  // type) → jobType (Evia's singular, underscored field). Reverse of
-  // onboardingContract.ts's caregiverJobTypesToWebIds.
+  // jobTypes (the wizard's MULTI-select, hyphenated ids) → jobType (Evia's
+  // session field: one underscored id, or the list when several were picked).
+  // Reverse of onboardingContract.ts's caregiverJobTypesToWebIds.
   if (Array.isArray(d.jobTypes) && d.jobTypes.length) {
-    const first = String(d.jobTypes[0] ?? "").trim().toLowerCase();
-    const jobType = WEB_ID_TO_JOB_TYPE[first];
-    if (jobType) out.jobType = jobType;
+    const ids = Array.from(new Set(
+      d.jobTypes.map((v) => WEB_ID_TO_JOB_TYPE[String(v ?? "").trim().toLowerCase()]).filter((v): v is string => !!v),
+    ));
+    if (ids.length === 1) out.jobType = ids[0];
+    else if (ids.length > 1) out.jobType = ids;
   }
+  // The rates step's optional inputs, under the profile page's names.
+  if (typeof d.rateFor2Seniors === "number") out.rateFor2Seniors = d.rateFor2Seniors;
+  if (typeof d.rateFor3PlusSeniors === "number") out.rateFor3PlusSeniors = d.rateFor3PlusSeniors;
+  copy("maxClients", d.maxClients);
 
   // weeklyAvailability (structured block map) → availability (Evia's own
   // conversational {days, hours} shape). Best-effort, for context only — this

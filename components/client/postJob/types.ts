@@ -1,4 +1,5 @@
 import { JobTimeOfDay, JobCareLevel, JobPaymentMethod } from '../../../types';
+import type { GeocodedPoint } from '../../../utils/geocode';
 
 export interface CareRecipientEntry {
   id?: string;
@@ -29,6 +30,10 @@ export interface JobPostFormData {
   state: string;
   zipCode: string;
   neighborhood: string;
+  // The selected care location's saved STREET-level point (carePlans.locationPool
+  // entry with geoPrecision 'street'), when it has one — the post reuses it as is;
+  // otherwise PostJobFlow geocodes the street once at submit (2026-10-11).
+  locationPoint: GeocodedPoint | null;
 
   // Step 2: Who & Where (home environment — tied to address)
   petsInHome: boolean;
@@ -68,6 +73,7 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
   state: 'CA',
   zipCode: '',
   neighborhood: '',
+  locationPoint: null,
 
   careTypes: [],
   careNeedDetails: {},

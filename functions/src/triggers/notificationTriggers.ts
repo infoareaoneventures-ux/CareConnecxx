@@ -5,19 +5,54 @@ import { sendViaInteractionAgent } from '../agents/caraAgent';
 import { formatDateForDisplay, formatHHMMForDisplay } from '../utils/scheduledTime';
 import { recordVisitProgress, buildVisitCompletionText, buildFamilyUpdateText, queuedItems } from './familyVisitUpdates';
 import { isFirstCompletedVisit, firstVisitReviewPromptLine, firstVisitReviewNotification, setReviewPromptAnchor } from '../agents/reviewPrompt';
+import { writeUserNotification } from '../notifications/userNotification';
 
 const db = admin.firestore();
 
+type Bell = { type: string; title: string; body: string; data?: Record<string, any> };
+
+// Bell ⇄ text in lockstep (caregiver sweep C11, 2026-10-11): every bell in this
+// file is written through writeUserNotification (idempotent on the source doc +
+// the trigger's eventId + recipient + transition) and ONLY after its text went —
+// `tell` sends first and writes the bell on success. A text another sender owns
+// (an Evia tool that already texted and stamped the doc, the Meet-link trigger)
+// still earns the bell: the text did go, through that sender. A dropped text
+// (no phone, opted out, blocked) writes no bell.
 async function addNotification(
   userId: string,
-  notification: { type: string; title: string; body: string; data?: Record<string, any> }
-) {
-  await db.collection('users').doc(userId).collection('notifications').add({
-    userId,
-    ...notification,
-    isRead: false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  notification: Bell,
+  key: { sourcePath: string; eventId?: string; transitionType?: string },
+): Promise<boolean> {
+  return writeUserNotification({
+    sourcePath: key.sourcePath,
+    eventId: key.eventId || `no-event:${Date.now()}`,
+    recipientId: userId,
+    transitionType: key.transitionType || notification.type,
+    type: notification.type,
+    title: notification.title,
+    body: notification.body,
+    ...(notification.data ? { data: notification.data } : {}),
+  }).catch((err) => { console.error(`[notificationTriggers] bell (${notification.type}) failed for ${userId}:`, err); return false; });
+}
+
+async function tell(
+  who: 'caregiver' | 'client',
+  userId: string,
+  bell: Bell,
+  text: string | null,
+  key: { sourcePath: string; eventId?: string; transitionType?: string },
+  opts: { stamp?: Record<string, unknown>; textOwnedElsewhere?: boolean } = {},
+): Promise<{ bell: boolean; text: boolean }> {
+  if (!userId) return { bell: false, text: false };
+  let sent = false;
+  if (opts.textOwnedElsewhere || text === null) {
+    sent = true; // the text goes (or went) through another sender — the bell still belongs beside it
+  } else {
+    sent = who === 'caregiver' ? await textCaregiverSent(userId, text, opts.stamp) : await textClientSent(userId, text, opts.stamp);
+  }
+  if (!sent) return { bell: false, text: false };
+  const wrote = await addNotification(userId, bell, key);
+  return { bell: wrote, text: !(opts.textOwnedElsewhere || text === null) };
 }
 
 // Single source of truth for "tell the other party by text" on the
@@ -71,32 +106,56 @@ function bookingRequestText(id: string, doc: Record<string, unknown>, lead: stri
   return `${lead}\n\n${lines.join("\n").replace(/\n{3,}/g, "\n\n")}\n\nReply ACCEPT or DECLINE.`;
 }
 
-async function sendTransactionalText(phone: string, message: string, sourceAgent: string, stamp?: Record<string, unknown>): Promise<void> {
+// Resolves true only when the text actually went (handed to the transport or to
+// our durable queue, which delivers it and pages ops if it cannot) — the bell
+// beside it is written on that answer (C11).
+async function sendTransactionalText(phone: string, message: string, sourceAgent: string, stamp?: Record<string, unknown>): Promise<boolean> {
   const sessSnap = await db.collection('agent_sessions').doc(phone).get().catch(() => null);
+  const went = (outcome: unknown) => outcome === 'sent' || outcome === 'queued';
   if (sessSnap?.exists) {
     await stampSession(phone, stamp);
-    await sendViaInteractionAgent(phone, {
-      content: message, urgency: 'immediate', sourceAgent, canDrop: false,
-    }).catch(() => sendToPhone(phone, message)).catch((err) =>
-      console.error(`[notificationTriggers] ${sourceAgent} failed:`, err));
-    return;
+    try {
+      // These are the pages' own sentences (fixed strings): reviewed for a block, never rephrased (C12).
+      return await sendViaInteractionAgent(phone, {
+        content: message, urgency: 'immediate', sourceAgent, canDrop: false, fixedString: true,
+      });
+    } catch (err) {
+      try { return went(await sendToPhone(phone, message)); } catch (err2) {
+        console.error(`[notificationTriggers] ${sourceAgent} failed:`, err, err2);
+        return false;
+      }
+    }
   }
-  await sendToPhone(phone, message).catch((err) =>
-    console.error(`[notificationTriggers] ${sourceAgent} failed (no agent session):`, err));
+  try { return went(await sendToPhone(phone, message)); } catch (err) {
+    console.error(`[notificationTriggers] ${sourceAgent} failed (no agent session):`, err);
+    return false;
+  }
 }
 
-export async function notifyCaregiverByText(caregiverId: string, message: string, stamp?: Record<string, unknown>): Promise<void> {
+/** Text the caregiver; resolves whether it went (the lockstep answer). */
+export async function textCaregiverSent(caregiverId: string, message: string, stamp?: Record<string, unknown>): Promise<boolean> {
   const snap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
   const phone = snap?.data()?.phone as string | undefined;
-  if (!phone) return;
-  await sendTransactionalText(phone, message, 'notification_trigger', stamp);
+  if (!phone) return false;
+  return sendTransactionalText(phone, message, 'notification_trigger', stamp);
+}
+
+/** Text the family; resolves whether it went. */
+export async function textClientSent(clientId: string, message: string, stamp?: Record<string, unknown>): Promise<boolean> {
+  const snap = await db.collection('users').doc(clientId).get().catch(() => null);
+  const phone = snap?.data()?.phone as string | undefined;
+  if (!phone) return false;
+  return sendTransactionalText(phone, message, 'notification_trigger', stamp);
+}
+
+// Fire-and-forget shape kept for the callers that pass these as a Sender
+// (familyVisitUpdates, membershipLapse, flushFamilyVisitUpdates, index.ts).
+export async function notifyCaregiverByText(caregiverId: string, message: string, stamp?: Record<string, unknown>): Promise<void> {
+  await textCaregiverSent(caregiverId, message, stamp);
 }
 
 export async function notifyClientByText(clientId: string, message: string, stamp?: Record<string, unknown>): Promise<void> {
-  const snap = await db.collection('users').doc(clientId).get().catch(() => null);
-  const phone = snap?.data()?.phone as string | undefined;
-  if (!phone) return;
-  await sendTransactionalText(phone, message, 'notification_trigger', stamp);
+  await textClientSent(clientId, message, stamp);
 }
 
 
@@ -112,6 +171,7 @@ export const onVideoInterviewWrite = functions.firestore
 
     const statusBefore = before?.status;
     const statusAfter  = after.status;
+    const iv = { sourcePath: `video_interviews/${context.params.interviewId}`, eventId: context.eventId as string | undefined };
 
     try {
       // New interview created → notify caregiver. Parse scheduledTime tz-aware
@@ -130,16 +190,15 @@ export const onVideoInterviewWrite = functions.firestore
         const forJob = after.jobTitle ? ` for "${after.jobTitle}"` : '';
         const note = typeof after.notes === 'string' && after.notes.trim() ? ` Note: "${after.notes.trim()}"` : '';
         const body = `${after.clientName || 'A family'} requested an interview with you${forJob} on ${displayTime} (${ivType}).${note}`;
-        await addNotification(after.caregiverId, {
+        await tell('caregiver', after.caregiverId, {
           type: 'interview_request',
           title: 'New Interview Request',
           body,
           data: { interviewId: context.params.interviewId },
-        });
-        await notifyCaregiverByText(after.caregiverId, `${body} Reply ACCEPT or DECLINE, or PROPOSE a different time.`, {
+        }, `${body} Reply ACCEPT or DECLINE, or PROPOSE a different time.`, iv, { stamp: {
           ...noticedInterview(context.params.interviewId),
           ...parkDecision(parkedDecision("interview_request", context.params.interviewId, `an interview request from ${after.clientName || 'a family'}`, "caregiver")),
-        });
+        } });
         return;
       }
 
@@ -165,33 +224,27 @@ export const onVideoInterviewWrite = functions.firestore
           hour: '2-digit', minute: '2-digit',
         });
         if (after.rescheduledBy === 'caregiver' && after.clientId) {
-          await addNotification(after.clientId, {
+          // reschedule_interview (mcp/server.ts) already texts this direction
+          // itself and stamps rescheduledViaAgent — skip to avoid a double text.
+          await tell('client', after.clientId, {
             type: 'interview_rescheduled',
             title: 'New Time Proposed',
             body: `${after.caregiverName || 'Your caregiver'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
-          });
-          // reschedule_interview (mcp/server.ts) already texts this direction
-          // itself and stamps rescheduledViaAgent — skip to avoid a double text.
-          if (!after.rescheduledViaAgent) {
-            await notifyClientByText(after.clientId,
-              `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply CONFIRM, or suggest another time.`,
-              { ...noticedInterview(context.params.interviewId),
-                ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.caregiverName || 'your caregiver'} proposed (${displayTime})`, "client")) });
-          }
+          }, `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply CONFIRM, or suggest another time.`,
+          { ...iv, transitionType: `interview_proposed:${after.reschedulePendingTime}` },
+          { textOwnedElsewhere: !!after.rescheduledViaAgent, stamp: { ...noticedInterview(context.params.interviewId),
+            ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.caregiverName || 'your caregiver'} proposed (${displayTime})`, "client")) } });
         } else if (after.caregiverId) {
-          await addNotification(after.caregiverId, {
+          await tell('caregiver', after.caregiverId, {
             type: 'interview_rescheduled',
             title: 'New Time Proposed',
             body: `${after.clientName || 'The family'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
-          });
-          if (!after.rescheduledViaAgent) {
-            await notifyCaregiverByText(after.caregiverId,
-              `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply CONFIRM, or PROPOSE another time.`,
-              { ...noticedInterview(context.params.interviewId),
-                ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.clientName || 'the family'} proposed (${displayTime})`, "caregiver")) });
-          }
+          }, `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply CONFIRM, or PROPOSE another time.`,
+          { ...iv, transitionType: `interview_proposed:${after.reschedulePendingTime}` },
+          { textOwnedElsewhere: !!after.rescheduledViaAgent, stamp: { ...noticedInterview(context.params.interviewId),
+            ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.clientName || 'the family'} proposed (${displayTime})`, "caregiver")) } });
         }
         return;
       }
@@ -212,32 +265,26 @@ export const onVideoInterviewWrite = functions.firestore
           weekday: 'short', month: 'short', day: 'numeric',
           hour: '2-digit', minute: '2-digit',
         });
+        // accept_interview_reschedule (mcp/server.ts) already texts this
+        // direction itself and stamps acceptedRescheduleViaAgent — skip to
+        // avoid a double text. rescheduledViaAgent itself is already
+        // cleared by the accept write, so it can't be checked here.
         if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
-          await addNotification(after.caregiverId, {
+          await tell('caregiver', after.caregiverId, {
             type: 'interview_rescheduled',
             title: 'Time Confirmed',
             body: `${after.clientName || 'The family'} confirmed the new interview time: ${displayTime}.`,
             data: { interviewId: context.params.interviewId },
-          });
-          // accept_interview_reschedule (mcp/server.ts) already texts this
-          // direction itself and stamps acceptedRescheduleViaAgent — skip to
-          // avoid a double text. rescheduledViaAgent itself is already
-          // cleared by the accept write, so it can't be checked here.
-          if (!after.acceptedRescheduleViaAgent) {
-            await notifyCaregiverByText(after.caregiverId,
-              `${after.clientName || 'The family'} confirmed the new interview time: ${displayTime}.`);
-          }
+          }, `${after.clientName || 'The family'} confirmed the new interview time: ${displayTime}.`,
+          { ...iv, transitionType: `interview_time_confirmed:${after.scheduledTime}` }, { textOwnedElsewhere: !!after.acceptedRescheduleViaAgent });
         } else if (after.clientId) {
-          await addNotification(after.clientId, {
+          await tell('client', after.clientId, {
             type: 'interview_rescheduled',
             title: 'Time Confirmed',
             body: `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`,
             data: { interviewId: context.params.interviewId },
-          });
-          if (!after.acceptedRescheduleViaAgent) {
-            await notifyClientByText(after.clientId,
-              `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`);
-          }
+          }, `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`,
+          { ...iv, transitionType: `interview_time_confirmed:${after.scheduledTime}` }, { textOwnedElsewhere: !!after.acceptedRescheduleViaAgent });
         }
         return;
       }
@@ -246,77 +293,67 @@ export const onVideoInterviewWrite = functions.firestore
 
       // Accepted → notify client
       if (statusAfter === 'accepted' && after.clientId) {
-        await addNotification(after.clientId, {
+        // The family's ONE text for this event is the confirmed-time + Meet link
+        // message from interviewLinkTrigger.ts (it fires on the same accept and
+        // retries until delivered). Texting here too made it two or three.
+        await tell('client', after.clientId, {
           type: 'interview_accepted',
           title: 'Interview Accepted',
           body: `${after.caregiverName} accepted your interview request.`,
           data: { interviewId: context.params.interviewId },
-        });
-        // The family's ONE text for this event is the confirmed-time + Meet link
-        // message from interviewLinkTrigger.ts (it fires on the same accept and
-        // retries until delivered). Texting here too made it two or three.
+        }, null, { ...iv, transitionType: 'interview_accepted' }, { textOwnedElsewhere: true });
       }
 
       // Declined — direction depends on who declined
       if (statusAfter === 'declined') {
         if (after.declinedBy === 'client' && after.caregiverId) {
-          // Client marked "Not Selected" → notify caregiver
-          await addNotification(after.caregiverId, {
-            type: 'hire_decision',
-            title: 'Interview Update',
-            body: `${after.clientName || 'A client'} has decided not to move forward at this time.`,
-            data: { interviewId: context.params.interviewId },
-          });
+          // Client marked "Not Selected" → notify caregiver.
           // "Not Selected" fires from both the website button and Evia's
           // submit_interview_feedback (fitLevel:'no') — neither path texts the
           // caregiver today, unlike the 'strong' path (which does), so a
           // caregiver waiting to hear back had nothing but a bell icon.
           // Found 2026-09-06, same gap class as the decline-direction fix above.
-          await notifyCaregiverByText(after.caregiverId, `${after.clientName || 'The family'} has decided not to move forward at this time.`);
-        } else if (after.clientId) {
-          // Caregiver declined → notify client
-          await addNotification(after.clientId, {
-            type: 'interview_declined',
-            title: 'Interview Declined',
-            body: `${after.caregiverName} is unable to make the scheduled interview.`,
+          await tell('caregiver', after.caregiverId, {
+            type: 'hire_decision',
+            title: 'Interview Update',
+            body: `${after.clientName || 'A client'} has decided not to move forward at this time.`,
             data: { interviewId: context.params.interviewId },
-          });
+          }, `${after.clientName || 'The family'} has decided not to move forward at this time.`, { ...iv, transitionType: 'hire_decision' });
+        } else if (after.clientId) {
+          // Caregiver declined → notify client.
           // respond_to_interview_request (mcp/server.ts) already texts this
           // direction itself and stamps respondedViaAgent — skip to avoid a
           // double text. A website-button decline has nothing else telling
           // the client by phone, unlike accept (interviewLinkTrigger) and
           // cancel (below) — found 2026-09-06, this SMS never existed.
-          if (!after.respondedViaAgent) {
-            await notifyClientByText(after.clientId, `${after.caregiverName || 'Your caregiver'} isn't able to make the scheduled interview.`);
-          }
+          await tell('client', after.clientId, {
+            type: 'interview_declined',
+            title: 'Interview Declined',
+            body: `${after.caregiverName} is unable to make the scheduled interview.`,
+            data: { interviewId: context.params.interviewId },
+          }, `${after.caregiverName || 'Your caregiver'} isn't able to make the scheduled interview.`, { ...iv, transitionType: 'interview_declined' }, { textOwnedElsewhere: !!after.respondedViaAgent });
         }
       }
 
       // Cancelled — direction depends on who cancelled
       if (statusAfter === 'cancelled') {
+        // cancel_interview (mcp/server.ts) already texts the other party itself
+        // and stamps cancelledViaAgent — the bell still goes beside that text.
         if (after.cancelledBy === 'caregiver' && after.clientId) {
-          await addNotification(after.clientId, {
+          await tell('client', after.clientId, {
             type: 'interview_cancelled',
             title: 'Interview Cancelled',
             body: `${after.caregiverName} cancelled the scheduled interview.`,
             data: { interviewId: context.params.interviewId },
-          });
-          // cancel_interview (mcp/server.ts) already texts this direction
-          // itself and stamps cancelledViaAgent — skip to avoid a double text.
-          if (!after.cancelledViaAgent) {
-            await notifyClientByText(after.clientId, `${after.caregiverName || 'Your caregiver'} cancelled the scheduled interview.`);
-          }
+          }, `${after.caregiverName || 'Your caregiver'} cancelled the scheduled interview.`, { ...iv, transitionType: 'interview_cancelled' }, { textOwnedElsewhere: !!after.cancelledViaAgent });
         } else if (after.caregiverId) {
           // Client cancelled (or unknown)
-          await addNotification(after.caregiverId, {
+          await tell('caregiver', after.caregiverId, {
             type: 'interview_cancelled',
             title: 'Interview Cancelled',
             body: `${after.clientName || 'A client'} cancelled the scheduled interview.`,
             data: { interviewId: context.params.interviewId },
-          });
-          if (!after.cancelledViaAgent) {
-            await notifyCaregiverByText(after.caregiverId, `${after.clientName || 'A client'} cancelled the scheduled interview.`);
-          }
+          }, `${after.clientName || 'A client'} cancelled the scheduled interview.`, { ...iv, transitionType: 'interview_cancelled' }, { textOwnedElsewhere: !!after.cancelledViaAgent });
         }
       }
     } catch (err) {
@@ -332,21 +369,20 @@ export const onJobApplicationCreate = functions.firestore
     const data = snap.data();
     if (!data?.clientId) return;
     try {
-      await addNotification(data.clientId, {
-        type: 'job_application',
-        title: 'New Applicant',
-        body: `${data.caregiverName} applied to your post: "${data.jobTitle}".`,
-        data: { applicationId: context.params.applicationId, jobId: data.jobId },
-      });
       // The ONE text for this event (same words as the bell). The Apply flow
       // (agents/caregiverJobFlows.ts) deliberately does not send its own, and the second
       // LLM-worded trigger that used to fire on the same create was removed.
       // The applicant row's buttons as the reply words, parked so a one-word reply runs the page's own action
       // (decisionNotices.ts) — never the agent's guess, and never another prompt's interceptor (2026-10-07).
       const applicantName = String(data.caregiverName || 'A caregiver');
-      await notifyClientByText(data.clientId,
-        `${applicantName} applied to your post: "${data.jobTitle || 'your care request'}". Reply VIEW for their profile, INTERVIEW to request an interview, or DECLINE.`,
-        parkDecision(parkedDecision("job_application", context.params.applicationId, `${applicantName}'s application to "${data.jobTitle || 'your post'}"`, "client", Date.now(), applicantName)));
+      await tell('client', data.clientId, {
+        type: 'job_application',
+        title: 'New Applicant',
+        body: `${data.caregiverName} applied to your post: "${data.jobTitle}".`,
+        data: { applicationId: context.params.applicationId, jobId: data.jobId },
+      }, `${applicantName} applied to your post: "${data.jobTitle || 'your care request'}". Reply VIEW for their profile, INTERVIEW to request an interview, or DECLINE.`,
+      { sourcePath: `job_applications/${context.params.applicationId}`, eventId: context.eventId as string | undefined, transitionType: 'job_application_created' },
+      { stamp: parkDecision(parkedDecision("job_application", context.params.applicationId, `${applicantName}'s application to "${data.jobTitle || 'your post'}"`, "client", Date.now(), applicantName)) });
     } catch (err) {
       console.error('[onJobApplicationCreate] error:', err);
     }
@@ -374,8 +410,8 @@ export const onJobApplicationStatusChange = functions.firestore
     }
     if (!bell) return;
     try {
-      await addNotification(after.caregiverId, { ...bell, data: { applicationId: context.params.applicationId, jobId: after.jobId } });
-      await notifyCaregiverByText(after.caregiverId, bell.body);
+      await tell('caregiver', after.caregiverId, { ...bell, data: { applicationId: context.params.applicationId, jobId: after.jobId } }, bell.body,
+        { sourcePath: `job_applications/${context.params.applicationId}`, eventId: context.eventId as string | undefined, transitionType: bell.type });
     } catch (err) {
       console.error('[onJobApplicationStatusChange] error:', err);
     }
@@ -397,26 +433,26 @@ export const onBookingRequestWrite = functions.firestore
 
     const statusBefore = before?.status;
     const statusAfter  = after.status;
+    const br = { sourcePath: `booking_requests/${context.params.bookingId}`, eventId: context.eventId as string | undefined };
 
     try {
       // New booking request created → notify caregiver
       if (!before && statusAfter === 'pending' && after.caregiverId) {
         const isResend = after.isResend === true;
-        await addNotification(after.caregiverId, {
+        // agentTaskId only exists on legacy docs from the retired Evia-only
+        // booking pipeline (removed 2026-09-17), which texted the caregiver its
+        // own YES/NO offer. Every booking created now — website or Evia — is a
+        // plain booking_requests doc and gets this one text. A legacy doc gets
+        // no text — and so no bell either (bell ⇄ text, C11).
+        if (after.agentTaskId) return;
+        await tell('caregiver', after.caregiverId, {
           type: 'booking_request',
           title: isResend ? 'Booking Request Resent' : 'New Booking Request',
           body: `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request.`,
           data: { bookingId: context.params.bookingId },
-        });
-        // agentTaskId only exists on legacy docs from the retired Evia-only
-        // booking pipeline (removed 2026-09-17), which texted the caregiver its
-        // own YES/NO offer. Every booking created now — website or Evia — is a
-        // plain booking_requests doc and gets this one text.
-        if (!after.agentTaskId) {
-          await notifyCaregiverByText(after.caregiverId,
-            bookingRequestText(context.params.bookingId, after as Record<string, unknown>, `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request.`),
-            parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)));
-        }
+        }, bookingRequestText(context.params.bookingId, after as Record<string, unknown>, `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request.`),
+        { ...br, transitionType: 'booking_request_created' },
+        { stamp: parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)) });
         return;
       }
 
@@ -427,17 +463,15 @@ export const onBookingRequestWrite = functions.firestore
       // updates the existing doc, so it never hit the "new doc" branch above
       // — the caregiver was never told. Same wording as a resent new doc.
       if (statusAfter === 'pending' && after.isResend === true && after.caregiverId) {
-        await addNotification(after.caregiverId, {
+        if (after.agentTaskId) return; // legacy pipeline doc: no text, no bell
+        await tell('caregiver', after.caregiverId, {
           type: 'booking_request',
           title: 'Booking Request Resent',
           body: `${after.clientName || 'A client'} resent their booking request.`,
           data: { bookingId: context.params.bookingId },
-        });
-        if (!after.agentTaskId) {
-          await notifyCaregiverByText(after.caregiverId,
-            bookingRequestText(context.params.bookingId, after as Record<string, unknown>, `${after.clientName || 'A client'} resent their booking request.`),
-            parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)));
-        }
+        }, bookingRequestText(context.params.bookingId, after as Record<string, unknown>, `${after.clientName || 'A client'} resent their booking request.`),
+        { ...br, transitionType: 'booking_request_resent' },
+        { stamp: parkDecision(parkedDecision("booking_request", context.params.bookingId, `a booking request from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)) });
         return;
       }
 
@@ -450,33 +484,26 @@ export const onBookingRequestWrite = functions.firestore
           `${after.caregiverName || 'Your caregiver'} accepted your booking request — the visits are on your My Bookings page.`);
       }
 
-      // Declined → notify client
-      if (statusAfter === 'declined' && after.clientId) {
-        await addNotification(after.clientId, {
+      // Declined → notify client. Same reasoning as above — an Evia-negotiated
+      // decline (legacy agentTaskId) was texted by the retired shiftOffer.ts; no text, no bell.
+      if (statusAfter === 'declined' && after.clientId && !after.agentTaskId) {
+        await tell('client', after.clientId, {
           type: 'booking_declined',
           title: 'Booking Declined',
           body: `${after.caregiverName || 'Your caregiver'} is unable to accept your booking request.`,
           data: { bookingId: context.params.bookingId },
-        });
-        // Same reasoning as above — an Evia-negotiated decline already texts
-        // the family from the retired shiftOffer.ts (removed 2026-09-28).
-        if (!after.agentTaskId) {
-          await notifyClientByText(after.clientId,
-            `${after.caregiverName || 'Your caregiver'} isn't able to accept that booking request.`);
-        }
+        }, `${after.caregiverName || 'Your caregiver'} isn't able to accept that booking request.`, { ...br, transitionType: 'booking_declined' });
       }
 
       // Cancelled → notify caregiver
       if (statusAfter === 'cancelled' && after.caregiverId) {
         const noun = statusBefore === 'accepted' ? 'booking' : 'booking request';
-        await addNotification(after.caregiverId, {
+        await tell('caregiver', after.caregiverId, {
           type: 'booking_cancelled',
           title: 'Booking Cancelled',
           body: `${after.clientName || 'A client'} cancelled their ${noun}.`,
           data: { bookingId: context.params.bookingId },
-        });
-        await notifyCaregiverByText(after.caregiverId,
-          `${after.clientName || 'A client'} cancelled their ${noun}. Sorry for the inconvenience.`);
+        }, `${after.clientName || 'A client'} cancelled their ${noun}. Sorry for the inconvenience.`, { ...br, transitionType: 'booking_cancelled' });
       }
     } catch (err) {
       console.error('[onBookingRequestWrite] error:', err);
@@ -497,31 +524,31 @@ export const onBookingAmendmentWrite = functions.firestore
 
     const statusBefore = before?.status;
     const statusAfter  = after.status;
+    const am = { sourcePath: `booking_amendments/${context.params.amendmentId}`, eventId: context.eventId as string | undefined };
 
     try {
       // New amendment created → notify caregiver
       if (!before && after.caregiverId) {
         const days = Object.keys(after.newDays || {}).join(', ');
         const isOneDay = !after.ongoing && after.startDate && after.endDate && after.startDate === after.endDate;
-        await addNotification(after.caregiverId, {
+        // Single source of truth for this text — request_schedule_amendment
+        // (mcp/server.ts) deliberately does not also send it, to avoid a
+        // double text when a family requests this through Evia.
+        // The tab's schedule-change card, whole, in the notice (same rule as booking requests).
+        await tell('caregiver', after.caregiverId, {
           type: 'amendment_request',
           title: isOneDay ? 'Extra Visit Requested' : 'Schedule Change Requested',
           body: isOneDay
             ? `${after.clientName || 'Your client'} requested an extra visit on ${new Date(after.startDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}.`
             : `${after.clientName || 'Your client'} wants to add ${days} to your regular schedule.`,
           data: { amendmentId: context.params.amendmentId },
-        });
-        // Single source of truth for this text — request_schedule_amendment
-        // (mcp/server.ts) deliberately does not also send it, to avoid a
-        // double text when a family requests this through Evia.
-        // The tab's schedule-change card, whole, in the notice (same rule as booking requests).
-        await notifyCaregiverByText(after.caregiverId,
-          `${isOneDay
+        }, `${isOneDay
             ? `${after.clientName || 'A family'} would like to add a visit on ${formatDateForDisplay(after.startDate)}.`
             : `${after.clientName || 'A family'} would like to add ${days} to your regular schedule.`}\n\n${
             amendmentCardLines({ ...(after as Record<string, unknown>), id: context.params.amendmentId } as Parameters<typeof amendmentCardLines>[0]).join("\n")
           }\n\nReply ACCEPT or DECLINE.`,
-          parkDecision(parkedDecision("amendment", context.params.amendmentId, `a schedule change from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)));
+        { ...am, transitionType: 'amendment_request_created' },
+        { stamp: parkDecision(parkedDecision("amendment", context.params.amendmentId, `a schedule change from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)) });
         return;
       }
 
@@ -530,38 +557,34 @@ export const onBookingAmendmentWrite = functions.firestore
       // Accepted → notify client
       if (statusAfter === 'accepted' && after.clientId) {
         const days = Object.keys(after.newDays || {}).join(', ');
-        await addNotification(after.clientId, {
+        await tell('client', after.clientId, {
           type: 'amendment_accepted',
           title: 'Schedule Change Accepted',
           body: `${after.caregiverName} accepted your request to add ${days} to your regular schedule.`,
           data: { amendmentId: context.params.amendmentId },
-        });
-        await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} accepted your request to add ${days} to the schedule.`);
+        }, `${after.caregiverName || 'Your caregiver'} accepted your request to add ${days} to the schedule.`, { ...am, transitionType: 'amendment_accepted' });
       }
 
       // Declined → notify client
       if (statusAfter === 'declined' && after.clientId) {
-        await addNotification(after.clientId, {
+        await tell('client', after.clientId, {
           type: 'amendment_declined',
           title: 'Schedule Change Declined',
           body: `${after.caregiverName || 'Your caregiver'} is unable to accept your schedule change request.`,
           data: { amendmentId: context.params.amendmentId },
-        });
-        await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} isn't able to accept that schedule change request.`);
+        }, `${after.caregiverName || 'Your caregiver'} isn't able to accept that schedule change request.`, { ...am, transitionType: 'amendment_declined' });
       }
 
-      // Cancelled → notify caregiver
+      // Cancelled (the family withdrew it) → notify caregiver — ONE sentence for
+      // the bell and the text (C18: they used to differ).
       if (statusAfter === 'cancelled' && after.caregiverId) {
-        await addNotification(after.caregiverId, {
+        const withdrawn = `${after.clientName || 'A client'} withdrew their schedule change request — no need to respond.`;
+        await tell('caregiver', after.caregiverId, {
           type: 'amendment_cancelled',
-          title: 'Change Request Cancelled',
-          body: `${after.clientName || 'A client'} cancelled their change request.`,
+          title: 'Change Request Withdrawn',
+          body: withdrawn,
           data: { amendmentId: context.params.amendmentId },
-        });
-        await notifyCaregiverByText(after.caregiverId,
-          `${after.clientName || 'A client'} withdrew that schedule-change request — no need to respond.`);
+        }, withdrawn, { ...am, transitionType: 'amendment_cancelled' });
       }
     } catch (err) {
       console.error('[onBookingAmendmentWrite] error:', err);
@@ -588,6 +611,7 @@ export const onShiftStatusChanged = functions.firestore
     const after  = change.after.data();
 
     const shiftId = context.params.shiftId;
+    const sh = { sourcePath: `shifts/${shiftId}`, eventId: context.eventId as string | undefined };
 
     // In-progress activity — tasks checked off / visit notes added on the
     // caregiver's pages — reaches the family as ONE grouped text per burst
@@ -613,24 +637,21 @@ export const onShiftStatusChanged = functions.firestore
       const displayTime = new Date(after.reschedulePendingDate + 'T12:00:00').toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric',
       }) + `, ${formatHHMMForDisplay(after.reschedulePendingStartTime)}${after.reschedulePendingEndTime ? `–${formatHHMMForDisplay(after.reschedulePendingEndTime)}` : ''}`;
+      const proposedKey = { ...sh, transitionType: `shift_proposed:${after.reschedulePendingDate}:${after.reschedulePendingStartTime ?? ''}` };
       if (after.rescheduledBy === 'caregiver' && after.clientId) {
-        await addNotification(after.clientId, {
+        await tell('client', after.clientId, {
           type: 'shift_rescheduled',
           title: 'New Time Proposed',
           body: `${after.caregiverName || 'Your caregiver'} proposed moving this visit to ${displayTime}. Please confirm.`,
           data: { shiftId },
-        });
-        await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`);
+        }, `${after.caregiverName || 'Your caregiver'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`, proposedKey);
       } else if (after.rescheduledBy === 'client' && after.caregiverId) {
-        await addNotification(after.caregiverId, {
+        await tell('caregiver', after.caregiverId, {
           type: 'shift_rescheduled',
           title: 'New Time Proposed',
           body: `${after.clientName || 'The family'} proposed moving this visit to ${displayTime}. Please confirm.`,
           data: { shiftId },
-        });
-        await notifyCaregiverByText(after.caregiverId,
-          `${after.clientName || 'The family'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`);
+        }, `${after.clientName || 'The family'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`, proposedKey);
       }
       return;
     }
@@ -647,24 +668,21 @@ export const onShiftStatusChanged = functions.firestore
       const displayTime = new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric',
       }) + `, ${formatHHMMForDisplay(after.startTime)}${after.endTime ? `–${formatHHMMForDisplay(after.endTime)}` : ''}`;
+      const confirmedKey = { ...sh, transitionType: `shift_time_confirmed:${after.date}:${after.startTime ?? ''}` };
       if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
-        await addNotification(after.caregiverId, {
+        await tell('caregiver', after.caregiverId, {
           type: 'shift_rescheduled',
           title: 'Time Confirmed',
           body: `${after.clientName || 'The family'} confirmed the new visit time: ${displayTime}.`,
           data: { shiftId },
-        });
-        await notifyCaregiverByText(after.caregiverId,
-          `${after.clientName || 'The family'} confirmed the new visit time: ${displayTime}.`);
+        }, `${after.clientName || 'The family'} confirmed the new visit time: ${displayTime}.`, confirmedKey);
       } else if (before.rescheduledBy === 'client' && after.clientId) {
-        await addNotification(after.clientId, {
+        await tell('client', after.clientId, {
           type: 'shift_rescheduled',
           title: 'Time Confirmed',
           body: `${after.caregiverName || 'Your caregiver'} confirmed the new visit time: ${displayTime}.`,
           data: { shiftId },
-        });
-        await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} confirmed the new visit time: ${displayTime}.`);
+        }, `${after.caregiverName || 'Your caregiver'} confirmed the new visit time: ${displayTime}.`, confirmedKey);
       }
       return;
     }
@@ -683,24 +701,21 @@ export const onShiftStatusChanged = functions.firestore
       const displayTime = new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric',
       }) + `, ${formatHHMMForDisplay(after.startTime)}${after.endTime ? `–${formatHHMMForDisplay(after.endTime)}` : ''}`;
+      const declinedKey = { ...sh, transitionType: `shift_time_declined:${before.reschedulePendingDate}:${before.reschedulePendingStartTime ?? ''}` };
       if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
-        await addNotification(after.caregiverId, {
+        await tell('caregiver', after.caregiverId, {
           type: 'shift_rescheduled',
           title: 'Time Change Declined',
           body: `${after.clientName || 'The family'} kept the original visit time: ${displayTime}.`,
           data: { shiftId },
-        });
-        await notifyCaregiverByText(after.caregiverId,
-          `${after.clientName || 'The family'} isn't able to move the visit — it's staying at ${displayTime}.`);
+        }, `${after.clientName || 'The family'} isn't able to move the visit — it's staying at ${displayTime}.`, declinedKey);
       } else if (before.rescheduledBy === 'client' && after.clientId) {
-        await addNotification(after.clientId, {
+        await tell('client', after.clientId, {
           type: 'shift_rescheduled',
           title: 'Time Change Declined',
           body: `${after.caregiverName || 'Your caregiver'} kept the original visit time: ${displayTime}.`,
           data: { shiftId },
-        });
-        await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} isn't able to move the visit — it's staying at ${displayTime}.`);
+        }, `${after.caregiverName || 'Your caregiver'} isn't able to move the visit — it's staying at ${displayTime}.`, declinedKey);
       }
       return;
     }
@@ -720,23 +735,16 @@ export const onShiftStatusChanged = functions.firestore
       // was removed 2026-09-28: nothing creates a pending shift any more;
       // Request Visit writes a booking_amendments doc instead.)
       if (after.status === 'in-progress' && after.clientId) {
-        await addNotification(after.clientId, {
+        // The Start button has no location check on either side — the system knows
+        // the visit started, not that anyone arrived (2026-09-17).
+        await tell('client', after.clientId, {
           type: 'shift_started',
           title: 'Shift Started',
           body: `${after.caregiverName || 'Your caregiver'} has started your visit.`,
           data: { shiftId: context.params.shiftId },
-        });
-        // The Start button has no location check on either side — the system knows
-        // the visit started, not that anyone arrived (2026-09-17).
-        await notifyClientByText(after.clientId, `${after.caregiverName || 'Your caregiver'} started the visit.`);
+        }, `${after.caregiverName || 'Your caregiver'} started the visit.`, { ...sh, transitionType: 'shift_started' });
       } else if (after.status === 'completed' && after.clientId) {
-        // Caregiver ended shift → notify client
-        await addNotification(after.clientId, {
-          type: 'shift_completed',
-          title: 'Shift Completed',
-          body: `${after.caregiverName || 'Your caregiver'} has completed your visit.`,
-          data: { shiftId: context.params.shiftId },
-        });
+        // Caregiver ended shift → notify client (text first, then the bell — below).
         // The Past Booking card in words (tasks done / not done per recipient,
         // the visit log, the closing note, what happens next). Anything still
         // waiting in the grouped-update window rides along first. (The old
@@ -748,12 +756,18 @@ export const onShiftStatusChanged = functions.firestore
         // review prompt (founder, 2026-09-19): dashboard card + bell on the site,
         // one closing line here; a star reply starts reviewFlow.ts. Never again
         // for the same caregiver — the button stays on the profile page.
-        if (after.caregiverId && await isFirstCompletedVisit(after.clientId, after.caregiverId, context.params.shiftId).catch(() => false)) {
-          completionText += '\n\n' + firstVisitReviewPromptLine(after.caregiverName);
-          await addNotification(after.clientId, firstVisitReviewNotification(after.caregiverName, after.caregiverId, context.params.shiftId));
+        const firstVisit = !!after.caregiverId && await isFirstCompletedVisit(after.clientId, after.caregiverId, context.params.shiftId).catch(() => false);
+        if (firstVisit) completionText += '\n\n' + firstVisitReviewPromptLine(after.caregiverName);
+        const told = await tell('client', after.clientId, {
+          type: 'shift_completed',
+          title: 'Shift Completed',
+          body: `${after.caregiverName || 'Your caregiver'} has completed your visit.`,
+          data: { shiftId: context.params.shiftId },
+        }, completionText, { ...sh, transitionType: 'shift_completed' });
+        if (firstVisit && told.text) {
+          await addNotification(after.clientId, firstVisitReviewNotification(after.caregiverName, after.caregiverId, context.params.shiftId), { ...sh, transitionType: 'review_prompt' });
           await setReviewPromptAnchor(after.clientId, after.caregiverId, String(after.caregiverName || '')).catch(() => {});
         }
-        await notifyClientByText(after.clientId, completionText);
         if (pendingItems.length || after.familyUpdateQueuedAt) {
           await change.after.ref.update({
             familyUpdateQueue: admin.firestore.FieldValue.delete(),
@@ -768,14 +782,23 @@ export const onShiftStatusChanged = functions.firestore
         // Bookings page. Family gets a text pointing at the same replacement
         // flow (get_callout_backups/select_callout_backup) instead of silence.
         const whenText = fmtDate || ' for an upcoming date';
-        await addNotification(after.clientId, {
+        // A 'system' release (the caregiver got locked — renewal lock, membership
+        // canceled; triggers/caregiverAccountEvents.ts releaseUpcomingVisitsOnLock,
+        // C8): the family is told the visit is released and offered the same
+        // replacement — the caregiver didn't cancel it and the reason is never stated.
+        const released = after.cancelledBy === 'system';
+        const cg = after.caregiverName || 'Your caregiver';
+        await tell('client', after.clientId, {
           type: 'shift_needs_replacement',
           title: 'Visit Needs a Replacement',
-          body: `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText} — find a replacement or skip it.`,
+          body: released
+            ? `${cg} isn't available for the visit${whenText} — find a replacement or skip it.`
+            : `${cg} cancelled the visit${whenText} — find a replacement or skip it.`,
           data: { shiftId: context.params.shiftId },
-        });
-        await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}. Text me to find a replacement, or to skip that visit.`);
+        }, released
+          ? `${cg} isn't available for the visit${whenText}. Text me to find a replacement, or to skip that visit.`
+          : `${cg} cancelled the visit${whenText}. Text me to find a replacement, or to skip that visit.`,
+        { ...sh, transitionType: 'shift_needs_replacement' });
         // ONE candidate list for both surfaces (founder, 2026-10-04): the server
         // computes it here with the full rules — busy that hour, blocked, gate,
         // Transportation, radius — which the browser cannot (other families'
@@ -805,28 +828,40 @@ export const onShiftStatusChanged = functions.firestore
         // Cancelled — direction depends on who cancelled. (fmtDate is hoisted
         // above and already includes the " on <date>" prefix, or '' if no date.)
         const whenText = fmtDate || ' for an upcoming date';
+        const key = { ...sh, transitionType: 'shift_cancelled' };
 
-        if (after.cancelledBy === 'caregiver' && after.clientId) {
+        if (after.cancelledBy === 'system' && after.clientId) {
+          // The caregiver got LOCKED (renewal lock / membership canceled) and the
+          // visit was released to the family through the page's cancel write
+          // (releaseUpcomingVisitsOnLock, cancelledBy 'system') — C8. Before this
+          // the branch below read it as a client cancellation: the CAREGIVER was
+          // texted "a client cancelled… sorry" and the family heard nothing. The
+          // family is told the visit is released and offered another caregiver;
+          // the reason is never stated; the caregiver is not texted.
+          const cg = after.caregiverName || 'Your caregiver';
+          await tell('client', after.clientId, {
+            type: 'shift_cancelled',
+            title: 'Visit Released',
+            body: `${cg} isn't available for the visit${whenText} — it's been released. Book another caregiver or skip it.`,
+            data: { shiftId: context.params.shiftId },
+          }, `${cg} isn't available for the visit${whenText}, so it's been released. Text me to find another caregiver for that day, or to skip it.`, key);
+        } else if (after.cancelledBy === 'caregiver' && after.clientId) {
           // Caregiver cancelled, but with enough notice (site rule: > 24h) that
           // no replacement is needed — a plain heads-up, no call to action.
-          await addNotification(after.clientId, {
+          await tell('client', after.clientId, {
             type: 'shift_cancelled',
             title: 'Shift Cancelled',
             body: `${after.caregiverName || 'Your caregiver'} cancelled the shift${whenText}.`,
             data: { shiftId: context.params.shiftId },
-          });
-          await notifyClientByText(after.clientId,
-            `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}.`);
-        } else if (after.caregiverId) {
+          }, `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}.`, key);
+        } else if (after.cancelledBy !== 'system' && after.caregiverId) {
           // Client cancelled → notify caregiver
-          await addNotification(after.caregiverId, {
+          await tell('caregiver', after.caregiverId, {
             type: 'shift_cancelled',
             title: 'Shift Cancelled',
             body: `${after.clientName || 'A client'} cancelled the shift${whenText}.`,
             data: { shiftId: context.params.shiftId },
-          });
-          await notifyCaregiverByText(after.caregiverId,
-            `${after.clientName || 'A client'} cancelled the visit${whenText}. Sorry for the inconvenience.`);
+          }, `${after.clientName || 'A client'} cancelled the visit${whenText}. Sorry for the inconvenience.`, key);
         }
       }
     } catch (err) {

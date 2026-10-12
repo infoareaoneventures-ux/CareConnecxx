@@ -9,8 +9,10 @@
 // by their Stripe handlers through the same module.
 import * as functions from "firebase-functions/v1";
 import { notifyCaregiverAccountEvent, CaregiverAccountEventKind, CaregiverAccountEventContext } from "../notifications/caregiverAccountEvents";
-import { isCaregiverBookable, isCaregiverMembershipActiveForFamilies } from "../utils/caregiverEligibility";
+import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { canWork, lockedNow } from "../utils/caregiverCanWork";
 import * as admin from "firebase-admin";
+export { canWork, lockedNow };
 
 type Doc = Record<string, any>;
 
@@ -89,25 +91,18 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
   return out;
 }
 
-/** Pure: can this caregiver work right now — membership active (incl. Stripe retries) AND background cleared. */
-export function canWork(d: Doc | undefined): boolean {
-  if (!d) return false;
-  const bgOk = d.verified === true || d.backgroundCheckStatus === "clear" || d.backgroundCheckComplete === true;
-  return bgOk && isCaregiverMembershipActiveForFamilies(d);
-}
-/** Pure: did this change lock the caregiver (working → not working)? */
-export function lockedNow(before: Doc | undefined, after: Doc | undefined): boolean {
-  return canWork(before) && !canWork(after);
-}
+// canWork / lockedNow live in utils/caregiverCanWork.ts (re-exported above).
 
 /**
  * Founder, 2026-10-06: when a caregiver gets locked (Stripe gave up on the renewal, the
  * yearly refresh wasn't authorized in time or came back not clear, admin Revoked), the
  * family must not find out by a no-show. Every upcoming scheduled visit goes through the
- * SAME write the caregiver's own ✕ makes (cancelShiftLikeThePage) — the family gets the
- * usual "cancelled the visit… find a replacement or skip it" text and the Needs
- * Replacement card from onShiftStatusChanged; the reason is never stated. The team gets
- * one alert with the count.
+ * SAME write the caregiver's own ✕ makes (cancelShiftLikeThePage, cancelledBy 'system').
+ * onShiftStatusChanged reads that 'system' mark (caregiver sweep C8, 2026-10-11): the
+ * family is told the visit is released — "<caregiver> isn't available for the visit…
+ * find a replacement / another caregiver, or skip it" (bell + text) and, within 24h,
+ * the Needs Replacement card; the reason is never stated; the caregiver is NOT texted
+ * "a client cancelled". The team gets one alert with the count.
  */
 export async function releaseUpcomingVisitsOnLock(uid: string): Promise<number> {
   const db = admin.firestore();

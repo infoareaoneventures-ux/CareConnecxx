@@ -44,15 +44,30 @@ export function toMs(v: unknown): number | null {
   const ms = Date.parse(String(v)); return Number.isFinite(ms) ? ms : null;
 }
 
-/** Day 7: the lock — the same reset the old renewal did on the anniversary, now only for someone who never authorized. */
-export async function lockUnauthorizedRefresh(uid: string): Promise<void> {
+/**
+ * Day 7: the lock — the same reset the old renewal did on the anniversary, now only for someone who never authorized.
+ * Decided INSIDE the write (caregiver sweep C15, 2026-10-11): the sweep's snapshot is minutes old by the time this
+ * runs; a consent given meanwhile flips renewalRefresh.status to "running" (backgroundCheckConsent.ts) and a clear to
+ * "cleared" — the transaction re-reads the record and locks only while the refresh is STILL awaiting consent and
+ * still past day 7. Returns false when nothing was locked.
+ */
+export async function lockUnauthorizedRefresh(uid: string, now = Date.now()): Promise<boolean> {
   const ref = db.collection("caregivers").doc(uid);
-  await ref.set({
-    verified: false, backgroundCheckStatus: "pending", backgroundCheckComplete: false, verificationStatus: "submitted",
-    backgroundCheckData: { status: "pending", checkrClearedAt: null },
-    renewalRefresh: { status: "locked", lockedAt: new Date().toISOString() },
-  }, { merge: true });
-  await db.collection("users").doc(uid).set({ verificationStatus: "submitted" }, { merge: true }).catch(() => {});
+  const locked = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const fresh = (snap.data() ?? {}) as Record<string, any>;
+    if (renewalRefreshDecision(fresh.renewalRefresh, now) !== "lock") return false; // consent / clear landed since the sweep read
+    if (fresh.backgroundCheckData?.consentGiven === true && Date.parse(String(fresh.backgroundCheckData?.consentGivenAt ?? "")) >= Date.parse(String(fresh.renewalRefresh?.requestedAt ?? ""))) return false;
+    tx.set(ref, {
+      verified: false, backgroundCheckStatus: "pending", backgroundCheckComplete: false, verificationStatus: "submitted",
+      backgroundCheckData: { status: "pending", checkrClearedAt: null },
+      renewalRefresh: { status: "locked", lockedAt: new Date(now).toISOString() },
+    }, { merge: true });
+    return true;
+  });
+  if (locked) await db.collection("users").doc(uid).set({ verificationStatus: "submitted" }, { merge: true }).catch(() => {});
+  return locked;
 }
 
 export const renewalRefreshSweep = functions.pubsub
@@ -72,7 +87,8 @@ export const renewalRefreshSweep = functions.pubsub
         await doc.ref.set({ renewalRefresh: { remindedAt: new Date(now).toISOString() } }, { merge: true });
         await notifyCaregiverAccountEvent(doc.id, "renewal_refresh_reminder", { eventId: `renewal-remind:${doc.id}:${today}` }).catch((err) => console.error("renewal reminder failed", doc.id, err));
       } else if (decision === "lock") {
-        await lockUnauthorizedRefresh(doc.id);
+        const locked = await lockUnauthorizedRefresh(doc.id, now);
+        if (!locked) { console.info(`renewalRefreshSweep: ${doc.id} authorized or cleared during the sweep — not locked`); continue; }
         await notifyCaregiverAccountEvent(doc.id, "renewal_refresh_locked", { eventId: `renewal-lock:${doc.id}:${today}` }).catch((err) => console.error("renewal lock notice failed", doc.id, err));
         await db.collection("admin_alerts").add({
           type: "renewal_refresh_locked", severity: "high", resolved: false, caregiverId: doc.id,

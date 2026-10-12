@@ -28,13 +28,14 @@ import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
 import { fmtTime } from "./caregiverBookingRequests";
-import {
-  START_WINDOW_MINUTES, END_PROMPT, taskItems, startsInMinutes, checkTasks, addVisitNote, parkShiftEnd,
-  visitLine, clock, type TaskItem,
-} from "./inShift";
+import { END_PROMPT, taskItems, checkTasks, addVisitNote, parkShiftEnd, visitLine, clock, type TaskItem } from "./inShift";
+// The one-visit read and the Start window are the shared server rule's (shifts/visitActions.ts, 2026-10-11) — the
+// same functions the site's queue and inShift's START run; nothing here re-derives them.
+import { START_WINDOW_MINUTES, startsInMinutes, loadInProgressVisits } from "../shifts/visitActions";
 
 const db = admin.firestore();
 type Doc = Record<string, unknown>;
+export { loadInProgressVisits };
 
 export interface VisitClassification {
   kind: "task_done" | "task_undo" | "note" | "finish" | "question" | "ambiguous" | "other";
@@ -46,12 +47,6 @@ export interface VisitClassification {
   recipient?: string | null;
   /** question: is it about THIS visit (answerable from its record) or outside it? */
   scope?: "visit" | "outside";
-}
-
-/** The caregiver's in-progress visits (any date). */
-export async function loadInProgressVisits(caregiverId: string): Promise<Array<{ id: string; shift: Doc; ref: FirebaseFirestore.DocumentReference }>> {
-  const snap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("status", "==", "in-progress").get();
-  return snap.docs.map((d) => ({ id: d.id, shift: d.data() as Doc, ref: d.ref }));
 }
 
 function recipientNames(shift: Doc): string[] {

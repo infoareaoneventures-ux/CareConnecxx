@@ -100,3 +100,31 @@ export async function geocodeStreetAddress(
     return null;
   }
 }
+
+// ── ONE geocoding rule, street-level first (2026-10-11) ─────────────────────
+// Distance between a family's post/visit and a caregiver is a haversine
+// between stored points, so both ends must be the STREET, not the ZIP
+// centroid. Every server writer of a point (the caregiver geocode trigger,
+// Evia's job post, the Care Plan location pool, the client intake) resolves it
+// here: the full street address via Nominatim when a street is known, else the
+// ZIP centroid, else the city — and says which one it got (`geoPrecision`), so
+// a backfill can target the coarse points later.
+export type GeoPrecision = "street" | "zip" | "city";
+export interface GeocodedPoint { lat: number; lng: number; geoPrecision: GeoPrecision }
+export interface GeocodeAddressInput { street?: string | null; city?: string | null; state?: string | null; zipCode?: string | null }
+
+export async function geocodeAddress(addr: GeocodeAddressInput): Promise<GeocodedPoint | null> {
+  const street  = (addr.street  ?? "").toString().trim();
+  const city    = (addr.city    ?? "").toString().trim();
+  const state   = (addr.state   ?? "").toString().trim();
+  const zipCode = (addr.zipCode ?? "").toString().trim();
+  if (street) {
+    const hit = await geocodeStreetAddress(street, city, state, zipCode).catch(() => null);
+    if (hit) return { ...hit, geoPrecision: "street" };
+  }
+  const zipHit = await geocodeZip(zipCode).catch(() => null);
+  if (zipHit) return { ...zipHit, geoPrecision: "zip" };
+  const cityHit = await geocodeCity(city, state || undefined).catch(() => null);
+  if (cityHit) return { ...cityHit, geoPrecision: "city" };
+  return null;
+}

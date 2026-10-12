@@ -7,6 +7,7 @@ import { useCareConnex } from '../../../context/CareConnexContext';
 import { dbService } from '../../../services/api';
 import { db } from '../../../lib/firebase';
 import firebase from '../../../lib/firebase';
+import { geocodeAddress } from '../../../utils/geocode';
 import { Step1Schedule } from './Step1Schedule';
 import { Step2WhoWhere } from './Step2WhoWhere';
 import { Step3CareNeeds } from './Step3CareNeeds';
@@ -44,6 +45,13 @@ export const PostJobFlow: React.FC = () => {
     }
     setIsSubmitting(true);
     try {
+      // The post's point (ONE rule, 2026-10-11 — Evia's buildJobPost.ts follows it
+      // through jobPostCoords.ts): the selected Care Plan location's saved
+      // street-level point, else the street geocoded once here. The street
+      // itself is never sent to the post; only lat/lng (+ geoPrecision) are.
+      const point = data.locationPoint?.geoPrecision === 'street'
+        ? data.locationPoint
+        : await geocodeAddress({ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode }).catch(() => null);
       const payload = {
         title: data.title.trim(),
         description: data.description.trim(),
@@ -64,6 +72,7 @@ export const PostJobFlow: React.FC = () => {
         city: data.city.trim(),
         state: data.state.trim(),
         zipCode: data.zipCode.trim(),
+        ...(point ? { lat: point.lat, lng: point.lng, geoPrecision: point.geoPrecision } : {}),
 
         careTypes: data.careTypes,
         careLevel: data.careLevel || undefined,
@@ -75,7 +84,7 @@ export const PostJobFlow: React.FC = () => {
       setSubmittedPostId(typeof id === 'string' ? id : 'posted');
       addToast('Job posted! Caregivers can now apply.', 'success');
 
-      // Note: geocoding is handled inside createJobPost — no separate geocoding needed here.
+      // Note: createJobPost stores the point passed above (and only geocodes itself when none was).
 
       // Save recipients to job_postings (for care plan recipient tabs) and
       // save per-recipient care data to carePlans/{uid}.recipientPlans
@@ -118,14 +127,16 @@ export const PostJobFlow: React.FC = () => {
             ? [{ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode, petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false }]
             : [];
 
-          // Sync pets/smoking to the matching locationPool entry
+          // Sync pets/smoking (and the point this post was geocoded with, so the
+          // next post from this address reuses it) to the matching locationPool entry
           if (data.streetAddress) {
             const pool: any[] = cpData.locationPool || [];
             const poolIdx = pool.findIndex((l: any) => l.street?.toLowerCase() === data.streetAddress.toLowerCase() && l.zipCode === data.zipCode);
+            const pointFields = point ? { lat: point.lat, lng: point.lng, geoPrecision: point.geoPrecision } : {};
             if (poolIdx >= 0) {
-              pool[poolIdx] = { ...pool[poolIdx], petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false };
+              pool[poolIdx] = { ...pool[poolIdx], petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false, ...pointFields };
             } else {
-              pool.push({ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode, petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false });
+              pool.push({ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode, petsInHome: data.petsInHome ?? false, smokingHousehold: data.smokingHousehold ?? false, ...pointFields });
             }
             try { await cpRef.set({ locationPool: pool }, { merge: true }); } catch { /* non-critical */ }
           }

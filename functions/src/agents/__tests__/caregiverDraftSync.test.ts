@@ -55,12 +55,18 @@ describe("mapCaregiversDocToOnboardingData", () => {
       .toEqual(["Companionship"]);
   });
 
-  it("maps jobTypes (wizard, hyphenated, single-select array) onto jobType (Evia, underscored)", () => {
+  it("maps jobTypes (the wizard's multi-select, hyphenated) onto jobType (Evia, underscored — one id or the list)", () => {
     expect(mapCaregiversDocToOnboardingData({ jobTypes: ["part-time"] }).jobType).toBe("part_time");
     expect(mapCaregiversDocToOnboardingData({ jobTypes: ["full-time"] }).jobType).toBe("full_time");
     expect(mapCaregiversDocToOnboardingData({ jobTypes: ["occasional"] }).jobType).toBe("occasional");
+    expect(mapCaregiversDocToOnboardingData({ jobTypes: ["occasional", "part-time"] }).jobType).toEqual(["occasional", "part_time"]);
     expect(mapCaregiversDocToOnboardingData({ jobTypes: [] }).jobType).toBeUndefined();
     expect(mapCaregiversDocToOnboardingData({ jobTypes: ["not-a-real-id"] }).jobType).toBeUndefined();
+  });
+
+  it("reads the rates step's optional inputs back under the profile page's names (2026-10-11)", () => {
+    expect(mapCaregiversDocToOnboardingData({ rateFor2Seniors: 30, rateFor3PlusSeniors: 35, maxClients: "3+" }))
+      .toMatchObject({ rateFor2Seniors: 30, rateFor3PlusSeniors: 35, maxClients: "3+" });
   });
 
   it("maps weeklyAvailability (wizard's block grid) onto availability ({days, hours}), best-effort", () => {

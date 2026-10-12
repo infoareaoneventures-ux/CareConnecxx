@@ -119,7 +119,8 @@ describe("handleInstantPayoutConfirm — the modal's two buttons", () => {
     park();
     await handleInstantPayoutConfirm(CG, PHONE, "cash out", CHAT);
     expect(hoisted.executeInstantPayout).toHaveBeenCalledWith({ caregiverId: CG, source: "cara_sms" });
-    expect(hoisted.sent.at(-1)).toBe("Instant payout of $49.00 initiated (after Stripe's $0.50 instant fee) — arrives in ~30 minutes!");
+    // The success line (bell + text) is sent by the shared payout path itself (C11) — not a second copy from here.
+    expect(hoisted.sent.some((m: string) => /initiated/.test(m))).toBe(false);
     expect(session().pendingInstantPayoutConfirm).toBe("__delete__");
     expect(session().pendingInstantPayoutAmount).toBe("__delete__");
   });

@@ -103,6 +103,9 @@ vi.mock("../triggerEngine", () => ({
   cancelTriggersByRef: cancelTriggersByRefMock,
 }));
 vi.mock("../../observability/caraOpsAlerts", () => ({ createCaraOpsAlert: opsAlert }));
+// C11: the caregiver's confirmed-interview + Meet-link text now has a bell, written only when the text went.
+const bells = vi.hoisted(() => [] as any[]);
+vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (n: any) => { bells.push(n); return true; }) }));
 
 import { onVideoInterviewLinkEnsure } from "../interviewLinkTrigger";
 import { parseScheduledTimeMs } from "../../utils/scheduledTime";
@@ -204,6 +207,19 @@ describe("onVideoInterviewLinkEnsure", () => {
     // The caregiver's reminder names the family, like the family's names the caregiver.
     const cgReminder = scheduleTriggerMock.mock.calls.find((c) => c[0].userId === "cg1")![0];
     expect(cgReminder.message).toBe("Interview in an hour with The Nguyen Family — https://meet.google.com/abc-defg-hij Reply if you need to reschedule.");
+    // C11: the caregiver's bell beside the confirmed + link text (the family's bell for this accept is interview_accepted, written by onVideoInterviewWrite).
+    expect(bells).toHaveLength(1);
+    expect(bells[0]).toMatchObject({ sourcePath: "video_interviews/iv2", eventId: "confirmed-link", recipientId: "cg1", transitionType: "interview_confirmed_link", type: "interview_confirmed", title: "Interview confirmed", data: { interviewId: "iv2" } });
+    expect(bells[0].body).toContain('Note: "testing for interview" Join from your Interviews tab: https://meet.google.com/abc-defg-hij');
+  });
+
+  it("C11: no bell for the caregiver when the link text did not go (opted out)", async () => {
+    bells.length = 0;
+    trySendMock.mockResolvedValue({ sent: false, reason: "recipient_opted_out" });
+    hoisted.docState.set("video_interviews/iv3", { status: "accepted", clientId: "cl1", caregiverId: "cg1", clientName: "The Nguyen Family", caregiverName: "Maria", scheduledTime: FUTURE_ISO });
+    await fire("iv3", { status: "requested" });
+    expect(hoisted.docState.get("video_interviews/iv3").linkDelivery.caregiver.status).toBe("skipped_opt_out");
+    expect(bells).toHaveLength(0);
   });
 
   // 2026-09-27: a reschedule accepted on the SITE clears remindersScheduledAt

@@ -15,6 +15,7 @@
 import { allCareRecipients, normalizeAdditionalRecipients, toWebsiteRelationship } from "./careRecipients";
 import { coerceClientRate } from "./onboardingContract";
 import { businessTodayStr } from "../utils/scheduledTime";
+import type { GeoPrecision } from "../utils/geocode";
 
 // ── Care level ────────────────────────────────────────────────────────────────
 // Used ONLY by the later Post-a-Job flow (jobPostingFlow.ts → job_posts). The
@@ -222,11 +223,14 @@ export interface CarePlanLocationEntry {
   street?: string; city?: string; state?: string; zipCode?: string;
   petsInHome: boolean; smokingHousehold: boolean;
   lat?: number; lng?: number;
+  // 'street' = geocoded from the full street address (the point a job post may reuse as is);
+  // 'zip' / 'city' = a centroid, re-derived at the next post (jobPostCoords.ts).
+  geoPrecision?: GeoPrecision;
 }
 
 export function buildCarePlanLocationEntry(
   d: Record<string, unknown>,
-  coords?: { lat: number; lng: number },
+  coords?: { lat: number; lng: number; geoPrecision?: GeoPrecision },
 ): CarePlanLocationEntry {
   return {
     street: (d.street as string) || undefined,
@@ -235,7 +239,7 @@ export function buildCarePlanLocationEntry(
     zipCode: (d.zipCode as string) || undefined,
     petsInHome: d.petsInHome === true,
     smokingHousehold: d.smokingHousehold === true,
-    ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
+    ...(coords ? { lat: coords.lat, lng: coords.lng, ...(coords.geoPrecision ? { geoPrecision: coords.geoPrecision } : {}) } : {}),
   };
 }
 
@@ -255,7 +259,9 @@ export function upsertCarePlanLocationPool(
   const idx = pool.findIndex((l) =>
     String(l.street ?? "").toLowerCase() === String(entry.street).toLowerCase() &&
     String(l.zipCode ?? "") === String(entry.zipCode ?? ""));
-  const coords = entry.lat !== undefined && entry.lng !== undefined ? { lat: entry.lat, lng: entry.lng } : {};
+  const coords = entry.lat !== undefined && entry.lng !== undefined
+    ? { lat: entry.lat, lng: entry.lng, ...(entry.geoPrecision ? { geoPrecision: entry.geoPrecision } : {}) }
+    : {};
   if (idx >= 0) {
     return pool.map((l, i) => (i === idx
       ? { ...l, petsInHome: entry.petsInHome, smokingHousehold: entry.smokingHousehold, ...coords }

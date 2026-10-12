@@ -2,9 +2,21 @@
 // date, and the buttons the family sees in that state.
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("firebase-admin", () => ({ firestore: () => ({ collection: () => ({ doc: () => ({ collection: () => ({}) }) }) }) }));
+const hoisted = vi.hoisted(() => ({ subs: [] as Array<Record<string, unknown>> }));
+vi.mock("firebase-admin", () => {
+  // customers/{uid}/subscriptions: `where('status','in', [...])` filters by what the code passes; `limit(1)` keeps the first.
+  const q = (statuses: string[] | null, limit = Infinity): any => ({
+    where: (_f: string, _op: string, v: string[]) => q(v, limit),
+    limit: (n: number) => q(statuses, n),
+    get: async () => {
+      const rows = (statuses ? hoisted.subs.filter((s) => statuses.includes(String(s.status))) : hoisted.subs).slice(0, limit);
+      return { empty: rows.length === 0, docs: rows.map((d) => ({ data: () => d })) };
+    },
+  });
+  return { firestore: () => ({ collection: () => ({ doc: () => ({ collection: () => q(null) }) }) }) };
+});
 
-import { shapeMembershipPage } from "../membershipPage";
+import { shapeMembershipPage, readMembershipPage } from "../membershipPage";
 
 const END = { seconds: Math.floor(Date.parse("2026-10-17T07:00:00.000Z") / 1000) }; // Oct 17, 2026 Pacific
 
@@ -35,4 +47,21 @@ describe("shapeMembershipPage", () => {
     expect(p.summary).toContain("past due");
   });
 
+});
+
+describe("readMembershipPage — the page's lookup (the ONE live-record rule, utils/liveSubscription.ts)", () => {
+  it("no record → the plan card; a retrying record (past_due) beside an old canceled one IS the live record; the most recent live record wins", async () => {
+    hoisted.subs.length = 0;
+    expect((await readMembershipPage("u1")).hasMembership).toBe(false);
+    hoisted.subs.push({ status: "canceled", current_period_end: { seconds: 1 }, created: new Date("2025-01-01") });
+    hoisted.subs.push({ status: "past_due", current_period_end: END, created: new Date("2026-01-01") });
+    const p = await readMembershipPage("u1");
+    expect(p.status).toBe("past_due");
+    expect(p.periodEnd).toBe("2026-10-17");
+    hoisted.subs.push({ status: "active", current_period_end: END, created: new Date("2026-06-01"), price_id: "price_new" });
+    expect((await readMembershipPage("u1")).priceId).toBe("price_new");
+    hoisted.subs.length = 0;
+    hoisted.subs.push({ status: "canceled", current_period_end: END, price_id: "price_old" });
+    expect(await readMembershipPage("u1")).toMatchObject({ status: "canceled", priceId: "price_old" }); // else whatever exists
+  });
 });

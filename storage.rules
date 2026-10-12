@@ -80,8 +80,21 @@ service firebase.storage {
     }
 
     // ==========================================
-    // PROFILE PHOTOS
+    // PROFILE PHOTOS — the ONE path (caregiver sweep C7, 2026-10-11):
+    // profile-photos/caregivers/{uid} is written by the site wizard, the
+    // profile page (AvatarUpload) and Evia's tokened upload (Admin SDK);
+    // profile-photos/clients/{uid} by the family's AvatarUpload. One object
+    // per user, overwritten. Same limits as every other photo rule.
     // ==========================================
+    match /profile-photos/{folder}/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId)
+        && (folder == 'caregivers' || folder == 'clients')
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Legacy path (older uploads still render from stored download URLs).
     match /profile_photos/{userId}/{filename} {
       // Was `if true` (anonymous, enumerable). Rendering uses stored
       // getDownloadURL() tokens (bypass rules), so requiring auth closes

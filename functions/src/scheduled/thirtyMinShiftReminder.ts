@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { writeUserNotification } from "../notifications/userNotification";
 import { businessTodayStr, parseScheduledTimeMs, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { visitPageLink } from "../agents/inShift";
 import { queryVisits, visitSeniorName } from "../utils/visitQuery";
@@ -58,12 +59,23 @@ export const sendThirtyMinShiftReminders = functions.pubsub
           `Running behind? Text LATE and I'll send your message to the family. ` +
           `Or open it here: ${visitPageLink(apptId)}`;
 
-        await sendViaInteractionAgent(cgPhone, {
+        const sent = await sendViaInteractionAgent(cgPhone, {
           content:     message,
           urgency:     "standard",
           sourceAgent: "thirty_min_shift_reminder",
           canDrop:     false,
+          fixedString: true, // the founder's plain wording — never rephrased (C12)
         });
+        // Bell ⇄ text in lockstep (C11): the site's copy, in the page's words (no
+        // text keywords), written only when the text actually went.
+        if (sent) {
+          await writeUserNotification({
+            sourcePath: `shifts/${apptId}`, eventId: "thirty-min-reminder", recipientId: caregiverId,
+            transitionType: "shift_starting_soon", type: "shift_starting_soon", title: "Visit starting soon",
+            body: `${seniorName}'s visit starts at ${formatHHMMForDisplay(startTime)}${endTime ? ` – ${formatHHMMForDisplay(endTime)}` : ""}${address ? ` at ${address}` : ""}. Start it from your Bookings page.`,
+            data: { shiftId: apptId },
+          }).catch((err) => console.error("[sendThirtyMinShiftReminders] bell failed:", apptId, err));
+        }
 
         await doc.ref.update({ caraThirtyMinReminderSent: true });
       } catch (err) {

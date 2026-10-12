@@ -751,3 +751,59 @@ describe("save_onboarding_field client care needs + field-name aliases (2026-09-
     expect(onboardingData().favoriteColor).toBeUndefined();
   });
 });
+
+// ── Caregiver sweep C3 / C7 (2026-10-11): every text-saved field lands on the
+// record at save time (the site's wizard saves per step), under the site's
+// names; the bio keeps the wizard's 150-character rule; the email is checked
+// for caregivers too.
+describe("save_onboarding_field mirrors each caregiver field to caregivers/{uid} at save time (C3)", () => {
+  const PHONE = "+15555550090";
+  const UID = "cg-mirror-1";
+  const BIO = "I have cared for seniors for six years, mostly with memory loss, and families say I am patient, warm and reliable in their home every single day of the week.";
+  beforeEach(() => {
+    hoisted.reset();
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: "c", userType: "caregiver", caregiverId: UID, onboardingStep: "caregiver_ask_bio", onboardingData: { name: "Maria", street: "1 Main St", zipCode: "95110", city: "San Jose", state: "CA" } });
+    hoisted.docState.set(`caregivers/${UID}`, { name: "Maria", wizardStep: "rates", hourlyRate: 40, bio: "" });
+  });
+  const record = () => hoisted.docState.get(`caregivers/${UID}`) ?? {};
+
+  it("a bio saved by text is on the record immediately — and only the bio moves (hourlyRate the site set stays)", async () => {
+    const r = await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "bio", fieldValue: BIO }) as any;
+    expect(r.saved).toBe(true);
+    expect(record().bio).toBe(BIO);
+    expect(record().hourlyRate).toBe(40);
+    expect(record().wizardStep).toBe("rates"); // the draft computes "photo"; the record is further along → never backwards
+  });
+
+  it("job types land as the site's jobTypes array (one or many), never a singular jobType on the record", async () => {
+    await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "jobTypes", fieldValue: ["part-time", "Full time"] });
+    expect(record().jobTypes).toEqual(["part-time", "full-time"]);
+    expect(record()).not.toHaveProperty("jobType");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).onboardingData.jobType).toEqual(["part_time", "full_time"]);
+  });
+
+  it("the optional rates-step boxes save under the canonical names; max clients is the site's select", async () => {
+    await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "rateForTwo", fieldValue: "$30" });
+    await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "maxClients", fieldValue: "3" });
+    expect(record().rateFor2Seniors).toBe(30);
+    expect(record().maxClients).toBe("3+");
+    expect(record()).not.toHaveProperty("rateForTwo");
+  });
+
+  it("a bio under 150 characters is NOT saved — the wizard's minimum on both doors (C7)", async () => {
+    const r = await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "bio", fieldValue: "I love helping seniors." }) as any;
+    expect(r.saved).toBe(false);
+    expect(r.invalidValue).toBe(true);
+    expect(r.guidance).toMatch(/at least 150/);
+    expect(record().bio).toBe("");
+  });
+
+  it("a caregiver's email is format-checked like a family's (C7)", async () => {
+    const bad = await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "email", fieldValue: "maria at example" }) as any;
+    expect(bad.saved).toBe(false);
+    expect(bad.invalidValue).toBe(true);
+    const ok = await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "email", fieldValue: "maria@example.com" }) as any;
+    expect(ok.saved).toBe(true);
+    expect(record().email).toBe("maria@example.com");
+  });
+});

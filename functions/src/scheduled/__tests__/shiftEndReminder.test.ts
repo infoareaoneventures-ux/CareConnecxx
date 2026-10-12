@@ -82,14 +82,31 @@ describe("the run", () => {
     expect(hoisted.bells).toHaveLength(0);
   });
 
-  it("an opted-out caregiver gets the bell only; a visit whose end passed more than a day ago is left alone", async () => {
+  it("an opted-out caregiver gets no text and therefore no bell (bell ⇄ text, C11), still stamped; a visit whose end passed more than a day ago is left alone", async () => {
     hoisted.docs.set("agent_sessions/+1408", { caregiverId: "cg1", optedOut: true });
     shift("running", { status: "in-progress" });
     shift("old", { status: "in-progress", date: "2099-02-01" });
     const r = await runShiftEndReminders(END + GRACE_MS);
     expect(r).toEqual({ running: 1, missed: 0, skipped: 1 });
     expect(hoisted.sends).toHaveLength(0);
-    expect(hoisted.bells).toHaveLength(1);
+    expect(hoisted.bells).toHaveLength(0);
     expect(hoisted.updates.map((u) => u.path)).toEqual(["shifts/running"]);
+  });
+
+  it("the missed bell is the page's wording (Past Bookings › Log Hours), never the LOG keyword (C18); fixed strings are sent as such (C12)", async () => {
+    shift("missed", { status: "scheduled" });
+    await runShiftEndReminders(END + GRACE_MS + 60_000);
+    expect(hoisted.bells[0].body).toBe("Your 7:30 PM visit with Basra Yousuf wasn't started. If you did the visit, log the hours from Past Bookings › Log Hours. If not, no action needed.");
+    expect(hoisted.bells[0].body).not.toMatch(/reply LOG/i);
+    expect(hoisted.sends[0].out.fixedString).toBe(true);
+  });
+
+  it("a text the send layer dropped (blocked / suppressed) writes no bell but still stamps the visit", async () => {
+    const { sendViaInteractionAgent } = await import("../../agents/caraAgent");
+    (sendViaInteractionAgent as any).mockResolvedValueOnce(false);
+    shift("missed", { status: "scheduled" });
+    await runShiftEndReminders(END + GRACE_MS + 60_000);
+    expect(hoisted.bells).toHaveLength(0);
+    expect(hoisted.updates.map((u) => u.path)).toEqual(["shifts/missed"]);
   });
 });

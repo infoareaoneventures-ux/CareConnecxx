@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { writeUserNotification } from "../notifications/userNotification";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
 
@@ -158,6 +159,16 @@ export const sendInterviewCompletionNudges = functions.pubsub
           completionNudgeCount: nudgeCount + 1,
           completionNudgedAt:   new Date(nowMs).toISOString(),
         }).catch(() => {});
+
+        // Bell ⇄ text in lockstep (C11, 2026-10-11): the site's copy, in the
+        // Interviews tab's words (its Mark as Completed button, no text
+        // keywords), written only because the text went. Idempotent per nudge number.
+        await writeUserNotification({
+          sourcePath: `video_interviews/${doc.id}`, eventId: `completion-nudge-${nudgeCount + 1}`, recipientId: clientId,
+          transitionType: "interview_completion_nudge", type: "interview_completion_reminder", title: "Did your interview happen?",
+          body: `Your interview with ${caregiverName} was scheduled for ${scheduledLabel}. Mark it completed — or reschedule it — from your Interviews tab.`,
+          data: { interviewId: doc.id },
+        }).catch((err) => console.error("[sendInterviewCompletionNudges] bell failed:", doc.id, err));
 
         // 2026-09-13 live incident: without this, a reply like "reschedule
         // it" had nothing to anchor to — the agent had to guess which

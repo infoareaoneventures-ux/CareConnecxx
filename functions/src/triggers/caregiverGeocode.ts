@@ -1,29 +1,18 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import * as https from "https";
-import { geocodeCityOrZip } from "../utils/geocode";
+import { geocodeAddress } from "../utils/geocode";
 
 const db = admin.firestore();
 
-async function nominatimFullAddress(query: string): Promise<{ lat: number; lng: number } | null> {
-  return new Promise((resolve) => {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&countrycodes=us`;
-    https.get(url, { headers: { "User-Agent": "Evia/1.0 (eviacares.com)", "Accept-Language": "en" } }, (res) => {
-      let body = "";
-      res.on("data", (chunk) => (body += chunk));
-      res.on("end", () => {
-        try {
-          const data = JSON.parse(body);
-          resolve(Array.isArray(data) && data.length > 0 ? { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : null);
-        } catch { resolve(null); }
-      });
-    }).on("error", () => resolve(null));
-  });
-}
-
-// Geocode caregiver address server-side whenever city/state/zip changes or coords are missing.
-// Tries full street address (Nominatim) first for precision, falls back to ZIP → city.
-// Writes all four coord fields so every read path agrees.
+// THE owner of a caregiver's coordinates (2026-10-11). Runs on every write of
+// caregivers/{uid} and (re)geocodes whenever the address fields change or the
+// coords are missing — street first, then ZIP, then city (utils/geocode.ts
+// geocodeAddress, the one server geocoder), stamping `geoPrecision` so a
+// backfill can find the ZIP-level points. Evia's text onboarding writes NO
+// coords of its own any more (the ZIP-level ensureCaregiverCoords is gone);
+// the site's Settings / wizard writes are street-level and re-derived here
+// identically on the same write. Writes all four coord fields so every read
+// path (lat/lng and latitude/longitude) agrees.
 export const geocodeCaregiverDoc = functions.firestore
   .document("caregivers/{uid}")
   .onWrite(async (change, context) => {
@@ -48,21 +37,19 @@ export const geocodeCaregiverDoc = functions.firestore
 
     if (!city && !zipCode) return;
 
-    // Try full street address first (most precise), fall back to ZIP → city centroid
-    const fullQuery = [street, city, state, zipCode].filter(Boolean).join(", ");
-    const coords = (fullQuery ? await nominatimFullAddress(fullQuery) : null)
-      ?? await geocodeCityOrZip(city, zipCode, state);
+    const point = await geocodeAddress({ street, city, state, zipCode });
 
-    if (!coords) {
-      console.warn(`geocodeCaregiverDoc: geocoding returned null for uid=${context.params.uid} query="${fullQuery}"`);
+    if (!point) {
+      console.warn(`geocodeCaregiverDoc: geocoding returned null for uid=${context.params.uid} street=${street ? "yes" : "no"} zip="${zipCode}"`);
       return;
     }
 
     await db.collection("caregivers").doc(context.params.uid).update({
-      lat: coords.lat,
-      lng: coords.lng,
-      latitude: coords.lat,
-      longitude: coords.lng,
+      lat: point.lat,
+      lng: point.lng,
+      latitude: point.lat,
+      longitude: point.lng,
+      geoPrecision: point.geoPrecision,
     });
-    console.log(`geocodeCaregiverDoc: uid=${context.params.uid} geocoded to ${coords.lat},${coords.lng}`);
+    console.log(`geocodeCaregiverDoc: uid=${context.params.uid} geocoded (${point.geoPrecision}) to ${point.lat},${point.lng}`);
   });

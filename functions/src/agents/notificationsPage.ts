@@ -38,12 +38,43 @@ export function routeForNotification(n: RoutableNotification, role: Notification
     if (t.includes("payment")) return "/client/payments";
     return "/client/dashboard";
   }
-  if (t.startsWith("account")) return "/caregiver/settings";
+  // ── Caregiver: the page the bell's body names (caregiver sweep C10, 2026-10-11) ──
+  // Before this, new_job / application outcomes landed on the dashboard, membership
+  // on Payments, bgcheck / MVR / renewal on the dashboard, and every shift, booking
+  // and amendment on the Requests tab (the Bookings page's default).
+  return caregiverRoute(t, tt, data);
+}
+
+// Mirror of utils/notificationRoutes.ts caregiverRoute — keep in lockstep (the
+// parity test compiles the site file and runs both over every known type).
+function caregiverRoute(t: string, tt: string, data: Record<string, unknown>): string {
+  const shiftId = typeof data.shiftId === "string" && data.shiftId ? data.shiftId : "";
+  const active = shiftId ? `/caregiver/bookings?tab=active&visit=${shiftId}` : "/caregiver/bookings?tab=active";
+
+  // Jobs page — the job card itself, My Applications, Interviews.
+  if (t === "new_job") return typeof data.jobId === "string" && data.jobId ? `/caregiver/jobs?job=${data.jobId}` : "/caregiver/jobs";
+  if (t.startsWith("job_application")) return "/caregiver/jobs?tab=applications";
   if (t.startsWith("interview") || t === "hire_decision") return "/caregiver/jobs?tab=interviews";
-  if (t.startsWith("shift_hours")) return "/caregiver/payments?tab=timesheets"; // Timesheets events (approved / correction / paid) live on Payments
-  if (t.startsWith("booking") || t.startsWith("amendment") || t.startsWith("shift")) return "/caregiver/bookings";
-  if (t.includes("payment") || t.includes("payout") || t.includes("membership")) return "/caregiver/payments";
-  if (t === "review_received") return "/caregiver/profile?section=reviews"; // the profile's Reviews card (2026-10-07)
+
+  // Payments — Timesheets events (submitted / approved / correction / paid / reminders) and payouts.
+  if (t.startsWith("shift_hours")) return "/caregiver/payments?tab=timesheets";
+  if (t.includes("payout")) return "/caregiver/payments?tab=payouts";
+
+  // Bookings — a request waiting on the caregiver (or withdrawn) → Requests; a finished or
+  // unfinished-past visit → Past (Log Hours lives there); every live-visit event → Active.
+  if (t.startsWith("booking") || t.startsWith("amendment")) return "/caregiver/bookings?tab=requests";
+  if (t === "shift_completed" || t === "shift_missed") return "/caregiver/bookings?tab=past";
+  if (t.startsWith("shift")) return active;
+  if (t === "alert" && (tt.startsWith("shift") || data.appointmentId || data.recurringGroupId)) return active;
+
+  // Settings › Membership & verification — membership, background check, driving record,
+  // renewal refresh, Transportation live/removed, account standing (the cards moved there 2026-10-04).
+  if (t.includes("membership") || t.includes("bgcheck") || t.includes("mvr") || t.includes("renewal") || t.includes("transport_badge") || t.startsWith("account")) return "/caregiver/settings";
+  // "You're all set — families can now find and book you" → the Jobs page.
+  if (t === "caregiver_now_bookable") return "/caregiver/jobs";
+  // A new review lives on the caregiver's own profile page (Reviews card) — it used to fall through to the dashboard (2026-10-07).
+  if (t === "review_received") return "/caregiver/profile?section=reviews";
+  // onboarding_reminder ("pick up on your dashboard") and anything unknown → the dashboard.
   return "/caregiver/dashboard";
 }
 
@@ -63,9 +94,9 @@ export function pageLabelFor(path: string): string {
     "/client/dashboard": "Dashboard",
     "/client/account": "Account Settings",
     "/caregiver/settings": "Account Settings",
-    "/caregiver/jobs": "Jobs › Interviews",
-    "/caregiver/bookings": "My Bookings",
-    "/caregiver/payments": tab === "timesheets" ? "Payments › Timesheets" : "Payments",
+    "/caregiver/jobs": tab === "interviews" ? "Jobs › Interviews" : tab === "applications" ? "Jobs › My Applications" : "Jobs",
+    "/caregiver/bookings": tab === "requests" ? "My Bookings › Requests" : tab === "past" ? "My Bookings › Past Bookings" : tab === "active" ? "My Bookings › Active Bookings" : "My Bookings",
+    "/caregiver/payments": tab === "timesheets" ? "Payments › Timesheets" : tab === "payouts" ? "Payments › Payouts" : "Payments",
     "/caregiver/profile": section === "reviews" ? "My Profile › Reviews" : "My Profile",
     "/caregiver/dashboard": "Dashboard",
   };

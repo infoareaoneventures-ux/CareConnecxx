@@ -5,10 +5,12 @@ import {
 } from 'lucide-react';
 import {
   createCaregiverCheckoutSession,
+  openCaregiverBillingPortal,
   CAREGIVER_ANNUAL_PRICE,
 } from '../../services/stripeService';
 import { authService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
+import { caregiverMembershipActive, caregiverMembershipPaymentFailed, MEMBERSHIP_PAYMENT_FAILED_NOTICE } from '../../hooks/useCaregiverGate';
 
 interface CaregiverMembershipProps {
   onNavigate: (view: any) => void;
@@ -54,11 +56,31 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   const hasTransportation = (p?.services || p?.skills || []).includes('Transportation');
   const [loading, setLoading] = useState(false);
   const annualPrice = CAREGIVER_ANNUAL_PRICE;
+  // "Already active" check (sweep C1, 2026-10-11) — the SAME rule as the gate, the dashboard
+  // card and Settings: an active membership (incl. Stripe's retry state) never gets a second
+  // checkout; the only action is the billing portal (v1-createCaregiverBillingPortalSession).
+  const alreadyActive = caregiverMembershipActive(p);
+  const paymentFailed = caregiverMembershipPaymentFailed(p);
+
+  const handleManage = async () => {
+    setLoading(true);
+    try {
+      await openCaregiverBillingPortal(`${window.location.origin}/caregiver/settings`);
+    } catch {
+      onShowToast?.('Unable to open billing portal. Please try again.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCheckout = async () => {
     const user = authService.getCurrentUser();
     if (!user) {
       onShowToast?.('Please log in to purchase a membership', 'error');
+      return;
+    }
+    if (alreadyActive) {
+      onShowToast?.('Your membership is already active.', 'info');
       return;
     }
 
@@ -163,7 +185,8 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Included in your membership</p>
             <div className="flex items-start gap-2.5 text-sm text-slate-700">
               <ShieldCheck className="w-4 h-4 text-primary-600 flex-shrink-0 mt-0.5" />
-              <span>Criminal background check through Checkr, plus your verified badge.</span>
+              {/* Marketplace wording (founder, 2026-10-04): state the requirement — no "verified badge". */}
+              <span>Criminal background check — required before families can find and book you.</span>
             </div>
             <div className="flex items-start gap-2.5 text-sm text-slate-700">
               <Car className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
@@ -186,15 +209,36 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             </div>
           </div>
 
-          {/* CTA */}
-          <button
-            onClick={handleCheckout}
-            disabled={loading}
-            className="w-full py-4 bg-primary-500 hover:bg-primary-600 text-white font-bold text-sm rounded-2xl transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-60"
-          >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
-            {loading ? 'Redirecting to checkout…' : 'Start membership →'}
-          </button>
+          {/* CTA — one rule: an active membership gets the billing portal, never a second checkout */}
+          {alreadyActive ? (
+            <div className="space-y-3" data-testid="membership-already-active">
+              <div className={`rounded-2xl border px-4 py-3 ${paymentFailed ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
+                <p className={`text-sm font-semibold ${paymentFailed ? 'text-amber-900' : 'text-green-800'}`}>
+                  {paymentFailed ? 'Payment failed — update your card' : 'Your membership is active'}
+                </p>
+                <p className={`text-xs mt-0.5 leading-relaxed ${paymentFailed ? 'text-amber-800' : 'text-green-700'}`}>
+                  {paymentFailed ? MEMBERSHIP_PAYMENT_FAILED_NOTICE : 'Update your payment method, cancel, or view invoices via Stripe.'}
+                </p>
+              </div>
+              <button
+                onClick={handleManage}
+                disabled={loading}
+                className="w-full py-4 bg-primary-500 hover:bg-primary-600 text-white font-bold text-sm rounded-2xl transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-60"
+              >
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
+                {loading ? 'Opening…' : paymentFailed ? 'Update payment' : 'Manage membership'}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleCheckout}
+              disabled={loading}
+              className="w-full py-4 bg-primary-500 hover:bg-primary-600 text-white font-bold text-sm rounded-2xl transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-60"
+            >
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
+              {loading ? 'Redirecting to checkout…' : 'Start membership →'}
+            </button>
+          )}
 
           {/* Fine print */}
           <p className="text-xs text-slate-400 text-center mt-4 leading-relaxed">

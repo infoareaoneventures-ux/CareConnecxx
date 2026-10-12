@@ -3,7 +3,7 @@ import { CheckCircle2, AlertCircle, ShieldCheck, XCircle, RefreshCw, ExternalLin
 import { BackgroundCheckModal } from '../BackgroundCheckModal';
 import { getSubscriptionStatus, getCaregiverBillingPortalUrl } from '../../services/stripeService';
 import { hasValidTransportDocs } from '../../utils/transportDocs';
-import { caregiverMembershipActive, ADD_TRANSPORTATION_PATH } from '../../hooks/useCaregiverGate';
+import { caregiverMembershipActive, caregiverMembershipPaymentFailed, MEMBERSHIP_PAYMENT_FAILED_NOTICE, ADD_TRANSPORTATION_PATH } from '../../hooks/useCaregiverGate';
 import { useNavigate } from 'react-router-dom';
 import type { Caregiver } from '../../types';
 
@@ -149,7 +149,11 @@ export const AccountStandingSection: React.FC<{
   };
 
   const status = p?.membershipStatus as string | undefined;
-  const isActive = status === 'active' || status === 'trialing';
+  // ONE membership rule (founder, 2026-10-11): the gate hook's. A failed renewal charge
+  // (past_due / payment_failed) is still ACTIVE — this card shows the active plan with an
+  // update-your-card notice + the billing portal, never "No active membership" + a new checkout.
+  const isActive = caregiverMembershipActive(p);
+  const paymentFailed = caregiverMembershipPaymentFailed(p);
   const badge = status ? STATUS_BADGE[status] : null;
   const renewalDate = subscription?.currentPeriodEnd ? longDate(subscription.currentPeriodEnd) : null;
   const bg = backgroundCheckState(p, caregiverMembershipActive(p));
@@ -212,6 +216,20 @@ export const AccountStandingSection: React.FC<{
                 <p className="text-white/70 text-sm mb-0.5">Evia Membership</p>
                 {/* No hardcoded amount — legacy $66.49 members and current $69.99 members both land here; exact billing lives in the Stripe portal via Manage. */}
                 <p className="text-2xl font-bold">Annual plan</p>
+                {paymentFailed && (
+                  <div className="mt-3 rounded-xl bg-white/15 border border-amber-200/60 px-3 py-2.5" data-testid="membership-payment-failed-notice">
+                    <p className="text-sm font-semibold text-amber-100">Payment failed — update your card</p>
+                    <p className="text-xs text-white/80 mt-0.5 leading-relaxed">{MEMBERSHIP_PAYMENT_FAILED_NOTICE}</p>
+                    <button
+                      onClick={handleManage}
+                      disabled={managing}
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-amber-800 text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
+                    >
+                      {managing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                      {managing ? 'Opening…' : 'Update payment'}
+                    </button>
+                  </div>
+                )}
                 {subscription?.cancelAtPeriodEnd ? (
                   <p className="text-sm text-amber-200 mt-2">⚠ Cancels on {renewalDate ?? '—'}</p>
                 ) : renewalDate ? (

@@ -9,20 +9,37 @@
 // payout setup. Without this a caregiver who finished a step on the site was
 // walked through its link again by text.
 //
+// The rules are the SITE's (sweep C1/C2/C5, 2026-10-11): membership = the one
+// caregiverAccessGate rule (active / trialing / past_due / payment_failed, or
+// the legacy paid flag with no status — never membershipPaid:true on a
+// canceled status); payouts live = payouts AND charges enabled on the private
+// payout subdoc (the Payouts page); and a membership the site's webhook already
+// parked on "authorize your background check" lands the cursor on the
+// AWAITING-consent step (the caregiver was already told and linked by the
+// membership_paid notice), so her next text is answered — not met with a
+// second consent link.
+//
 // The Evia → site half needs no code here: every field Evia collects is
-// mirrored to the same record as it is saved (mergeOnboardingData), the
+// mirrored to the same record as it is saved (caregiverProfileMirror.ts), the
 // profile-complete/wizardStep stamps land at complete_collection, and the
 // membership / Checkr / Stripe webhooks write the same fields for both
 // channels — the dashboard's progress card is field-driven.
 import * as admin from "firebase-admin";
 import type { AgentSession } from "../linq/client";
 import { collectionStepsForRole } from "./onboardingContract";
+import { isCaregiverMembershipActive, caregiverPayoutsLive } from "./caregiverAccessGate";
 
 const db = admin.firestore();
 
 const MEMBERSHIP_STEPS = new Set(["caregiver_send_membership", "caregiver_awaiting_membership"]);
 const BGCHECK_STEPS    = new Set(["caregiver_send_bgcheck", "caregiver_awaiting_bgcheck_consent", "caregiver_awaiting_bgcheck"]);
 const STRIPE_STEPS     = new Set(["caregiver_send_stripe_connect", "caregiver_awaiting_stripe"]);
+
+/** The site's payment webhook (bgcheckConsentRequest.ts) parked the record on "authorize your background check" — the caregiver has the consent link already. */
+export function consentAlreadyRequested(cg: Record<string, any> | undefined): boolean {
+  const bg = (cg?.backgroundCheckData ?? {}) as Record<string, any>;
+  return bg.consentRequired === true || bg.invitationStatus === "awaiting_consent";
+}
 
 /** Pure decision: given the session cursor and the caregiver record, where should the cursor be? */
 export function reconciledCaregiverStep(
@@ -32,17 +49,25 @@ export function reconciledCaregiverStep(
 ): string {
   if (!cg) return step;
   let cur = step;
-  const membershipPaid = cg.membershipPaid === true || cg.membershipStatus === "active" || cg.membershipStatus === "trialing";
+  const membershipPaid = isCaregiverMembershipActive(cg);
   const bg = (cg.backgroundCheckData ?? {}) as Record<string, any>;
-  const invitationLive = !!bg.checkrCandidateId && bg.invitationStatus !== "awaiting_consent" && bg.consentRequired !== true;
+  const invitationLive = !!bg.checkrCandidateId && bg.invitationStatus !== "awaiting_consent" && bg.consentRequired !== true
+    && bg.invitationStatus !== "expired" && bg.invitationStatus !== "canceled";
   const bgClear = cg.backgroundCheckStatus === "clear" || bg.status === "clear";
-  const payoutsLive = !!(payout?.payoutsEnabled && payout?.chargesEnabled) || cg.payoutsEnabled === true || cg.stripeOnboardingComplete === true;
+  const payoutsLive = caregiverPayoutsLive(payout);
 
   if (collectionStepsForRole("caregiver").includes(cur) && cg.onboardingStatus === "profile_complete") cur = "caregiver_send_membership";
-  if (MEMBERSHIP_STEPS.has(cur) && membershipPaid) cur = "caregiver_send_bgcheck";
+  if (MEMBERSHIP_STEPS.has(cur) && membershipPaid) {
+    // Paid on the site: the membership_paid notice already carried the consent
+    // link, so the cursor lands on the awaiting step (the next text is read,
+    // not answered with a second link). With no consent request on the record
+    // yet, Evia still owes the link (caregiver_send_bgcheck).
+    cur = consentAlreadyRequested(cg) ? "caregiver_awaiting_bgcheck_consent" : "caregiver_send_bgcheck";
+  }
   if (BGCHECK_STEPS.has(cur)) {
     if (bgClear) cur = "caregiver_send_stripe_connect";
     else if (invitationLive && cur !== "caregiver_awaiting_bgcheck") cur = "caregiver_awaiting_bgcheck";
+    else if (cur === "caregiver_send_bgcheck" && consentAlreadyRequested(cg)) cur = "caregiver_awaiting_bgcheck_consent";
   }
   if (STRIPE_STEPS.has(cur) && payoutsLive) cur = "complete";
   return cur;
@@ -63,7 +88,10 @@ export async function reconcileCaregiverOnboardingWithSite(phone: string, sessio
     const cg = cgSnap.data() as Record<string, any>;
     let payout: Record<string, any> | undefined;
     if (STRIPE_STEPS.has(step)) {
-      payout = (await db.collection("caregivers").doc(uid).collection("private").doc("payout").get().catch(() => null))?.data() as Record<string, any> | undefined;
+      // The same read the Payouts page / get_payout_status make: the private
+      // payout subdoc, falling back to the parent record's fields.
+      const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
+      payout = await getCaregiverPayoutFields(uid, cg).catch(() => undefined) as Record<string, any> | undefined;
     }
     const next = reconciledCaregiverStep(step, cg, payout);
     if (next === step) return session;

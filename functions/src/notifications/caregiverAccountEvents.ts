@@ -154,7 +154,7 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
           : `Thanks for authorizing! Here's your background check link — it usually takes about 5 minutes, and your SSN and date of birth go directly to Checkr, never to Evia: ${ctx.url ?? dash}`,
       };
     case "bgcheck_clear":
-      return { title: "Background check approved", body: "Great news — your background check came back clear." };
+      return { title: "Background check complete", body: "Great news — your background check came back clear." };
     case "bgcheck_review":
       return { title: "Background check needs review", body: "Your background check is under review. This is normal — our team will follow up if anything is needed." };
     case "bgcheck_on_hold":
@@ -263,7 +263,7 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       };
 
     case "now_bookable":
-      return { title: "You're approved", body: "You're approved — families can now find and book you." };
+      return { title: "You're all set", body: "You're all set — families can now find and book you." };
   }
 }
 
@@ -336,11 +336,9 @@ export async function notifyCaregiverAccountEvent(
   const { title, body, text } = caregiverAccountEventCopy(kind, ctx);
   const smsBody = text ?? body;
   const textWanted = smsBody.trim().length > 0; // "" = bell only
+  const bellKey = { sourcePath: opts.sourcePath ?? `caregivers/${uid}`, eventId: opts.eventId, recipientId: uid, transitionType: kind };
   const created = await writeUserNotification({
-    sourcePath: opts.sourcePath ?? `caregivers/${uid}`,
-    eventId: opts.eventId,
-    recipientId: uid,
-    transitionType: kind,
+    ...bellKey,
     type: `caregiver_${kind}`,
     title,
     body,
@@ -349,8 +347,22 @@ export async function notifyCaregiverAccountEvent(
   if (!created) return { bell: false, text: false };
   if (kind === "mvr_review") await alertTeamDrivingRecordReview(uid, opts.eventId);
   if (!textWanted) return { bell: true, text: false };
+
+  // Bell ⇄ text in lockstep (C11, 2026-10-11): the bell above is the idempotency
+  // claim; when the text does not actually go, the claim is taken back so the
+  // site never shows an event the caregiver was never told. Kept as bell-only:
+  // a text the gate step is about to send itself (it DOES go, through the step),
+  // and a caregiver who texted STOP (the site is then her only channel).
+  const takeBellBack = async (why: string) => {
+    try {
+      const m = await import("./userNotification");
+      await m.deleteUserNotification(bellKey.sourcePath, bellKey.eventId, bellKey.recipientId, bellKey.transitionType);
+    } catch (err) { console.error(`[caregiverAccountEvents] bell rollback failed (${kind}, ${why}) for ${uid}:`, err); }
+    return { bell: false, text: false };
+  };
+
   const phone = phoneForLink ?? await resolveCaregiverPhone(uid).catch(() => undefined);
-  if (!phone) return { bell: true, text: false };
+  if (!phone) return takeBellBack("no_phone");
   try {
     const sessSnap = await db.collection("agent_sessions").doc(phone).get();
     if (sessSnap.exists && lifecycleTextOwnedByGate(kind, sessSnap.data() as { onboardingStep?: unknown; membershipRecordedAt?: unknown })) {
@@ -358,21 +370,24 @@ export async function notifyCaregiverAccountEvent(
     }
     if (sessSnap.exists && sessSnap.data()?.optedOut !== true) {
       const { sendViaInteractionAgent } = await import("../agents/caraAgent");
-      await sendViaInteractionAgent(phone, {
+      const sent = await sendViaInteractionAgent(phone, {
         content: smsBody,
         urgency: "immediate",
         sourceAgent: "caregiver_account_event",
         canDrop: false,
+        fixedString: true, // the founder's words: reviewed for a block, never rephrased (C12)
         ...(BILLING_KINDS.has(kind) ? { preferredService: "SMS" as const } : {}),
       });
+      if (sent === false) return takeBellBack("send_suppressed");
       return { bell: true, text: true };
     }
-    if (sessSnap.exists) return { bell: true, text: false }; // opted out: bell only
+    if (sessSnap.exists) return { bell: true, text: false }; // opted out (STOP): bell only, the site is her channel
     const { sendToPhone } = await import("../linq/client");
-    await sendToPhone(phone, smsBody);
+    const outcome = await sendToPhone(phone, smsBody);
+    if (outcome === "dropped" || outcome === "skipped_opt_out") return takeBellBack(String(outcome));
     return { bell: true, text: true };
   } catch (err) {
     console.error(`[caregiverAccountEvents] text failed (${kind}) for ${uid}:`, err);
-    return { bell: true, text: false };
+    return takeBellBack("send_failed");
   }
 }

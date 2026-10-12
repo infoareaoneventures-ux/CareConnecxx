@@ -44,7 +44,7 @@ const stepMocks = vi.hoisted(() => ({
 }));
 vi.mock("../stepHandler", () => ({ isQuestionOrOther: (...a: any[]) => (stepMocks.isQuestion as any)(...a), answerMidFlow: (...a: any[]) => (stepMocks.answer as any)(...a) }));
 
-import { handleLateKeyword, relayLateSentence, relayCaregiverMessageToFamily } from "../familyRelay";
+import { handleLateKeyword, relayLateSentence, relayCaregiverMessageToFamily, caregiverHasVisitSoon } from "../familyRelay";
 import { businessTodayStr } from "../../utils/scheduledTime";
 
 beforeEach(() => {
@@ -119,6 +119,21 @@ describe("LATE — the caregiver's words, posted as their Inbox message", () => 
     const r = await relayCaregiverMessageToFamily("cg1", "hi", { clientId: "fam1", clientName: "Basra Yousuf" });
     expect(r).toMatchObject({ ok: false, reason: "membership" });
     expect(await handleLateKeyword("+1", "chat", "cg1", "what's my schedule?", {})).toBe("passthrough");
+  });
+  it("membership = the ONE rule (sweep C1): Stripe's retry state still sends; canceled + a stale paid flag does not", async () => {
+    hoisted.docs.set("caregivers/cg1", { name: "Maria Garcia", membershipStatus: "past_due" });
+    expect((await relayCaregiverMessageToFamily("cg1", "hi", { clientId: "fam1", clientName: "Basra Yousuf" })).ok).toBe(true);
+    hoisted.docs.set("caregivers/cg1", { name: "Maria Garcia", membershipStatus: "canceled", membershipPaid: true });
+    expect((await relayCaregiverMessageToFamily("cg1", "hi", { clientId: "fam1", clientName: "Basra Yousuf" })).ok).toBe(false);
+  });
+  it("caregiverHasVisitSoon (C21): a visit today counts, a completed one or none does not", async () => {
+    expect(await caregiverHasVisitSoon("cg1")).toBe(true);
+    hoisted.docs.set("shifts/s1", { ...hoisted.docs.get("shifts/s1"), status: "completed" });
+    expect(await caregiverHasVisitSoon("cg1")).toBe(false);
+    hoisted.docs.delete("shifts/s1");
+    expect(await caregiverHasVisitSoon("cg1")).toBe(false);
+    hoisted.docs.set("shifts/s2", { caregiverId: "cg1", clientId: "fam1", status: "scheduled", date: "2099-01-01", startTime: "09:00" });
+    expect(await caregiverHasVisitSoon("cg1")).toBe(false); // far future never counts
   });
   // Founder 2026-10-11: before this, a question at "What should I tell X?" was texted to the family verbatim.
   it("a question at 'What should I tell X?' is answered (who the family is, where the words go) and re-asked — never relayed; only a non-question reply relays", async () => {

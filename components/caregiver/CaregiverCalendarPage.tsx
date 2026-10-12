@@ -17,6 +17,9 @@ import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilit
 import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../../utils/shiftUtils';
 import { useInProgressVisits } from '../../hooks/useInProgressVisits';
 import { otherVisitInProgress, finishFirstText, FINISH_FIRST_LABEL } from '../../utils/shiftStart';
+// Start / End / Cancel are server writes (2026-10-11) through the visit_action_requests queue —
+// functions/src/shifts/visitActions.ts, the same functions the Bookings page and Evia use.
+import { submitVisitAction } from '../../services/visitActionQueue';
 
 const TIME_BLOCKS = [
   { id: 'morning',   label: 'Morning',   hours: '6am – 12pm' },
@@ -226,46 +229,49 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   };
 
   const handleStartShift = async (shiftId: string) => {
-    if (!db) return;
-    // Same write as the Bookings page's Start Shift (CaregiverBookingsPage.tsx handleStart).
-    await db.collection('shifts').doc(shiftId).update({
-      status: 'in-progress',
-      startedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
+    if (!user) return;
+    // Same server write as the Bookings page's Start Shift (startVisit: the gate, the
+    // 15-minute window and one visit at a time are checked there, then
+    // {status:'in-progress', startedAt, updatedAt}).
+    try {
+      const r = await submitVisitAction('start_visit', { caregiverId: user.uid, shiftId });
+      if (!r.ok) { pageToast(r.message, 'error'); return; }
+    } catch {
+      pageToast('Could not start this shift. Please try again.', 'error');
+      return;
+    }
     setSelectedShift(prev => prev ? { ...prev, status: 'in-progress' } : prev);
     fetchShifts();
   };
 
   const handleEndShift = async (shiftId: string, notes?: string) => {
-    if (!db) return;
-    // Same write as the Bookings page's End Shift (handleEnd).
-    const update: Record<string, any> = {
-      status: 'completed',
-      completedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    };
-    if (notes?.trim()) update.completionNotes = notes.trim();
-    await db.collection('shifts').doc(shiftId).update(update);
+    if (!user) return;
+    // Same server write as the Bookings page's End Shift (endVisit: {status:'completed', completedAt, updatedAt, completionNotes?}).
+    try {
+      const r = await submitVisitAction('end_visit', { caregiverId: user.uid, shiftId, closingNote: notes?.trim() || undefined });
+      if (!r.ok) { pageToast(r.message, 'error'); return; }
+    } catch {
+      pageToast('Could not end this shift. Please try again.', 'error');
+      return;
+    }
     setSelectedShift(null);
     fetchShifts();
   };
 
   const handleCancelShift = async (shiftId: string) => {
-    // Same dialog and write as the Bookings page's per-visit ✕ (handleCancelShift):
+    // Same dialog and server write as the Bookings page's per-visit ✕ (cancelVisit):
     // within 24h of the start the family gets the fast replacement picker
     // (needs_replacement); further out it is a plain cancellation.
-    if (!db || !user || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
+    if (!user || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
     const shift = shifts.find(s => s.id === shiftId);
     if (!shift) return;
-    const startsAt = new Date(`${shift.date}T${shift.startTime}`);
-    const hoursUntilStart = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
-    const isUrgent = hoursUntilStart <= 24;
-    await db.collection('shifts').doc(shiftId).update({
-      status: isUrgent ? 'needs_replacement' : 'cancelled',
-      cancelledBy: 'caregiver',
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
+    try {
+      const r = await submitVisitAction('cancel_visit', { caregiverId: user.uid, shiftId });
+      if (!r.ok) { pageToast(r.message, 'error'); return; }
+    } catch {
+      pageToast('Failed to cancel shift', 'error');
+      return;
+    }
     // Notification handled by onShiftStatusChanged Cloud Function
     setSelectedShift(null);
     fetchShifts();

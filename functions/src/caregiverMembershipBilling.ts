@@ -15,6 +15,7 @@
 // Evia-paid caregiver was missing from the admin verification queue and saw a
 // different background-check card until she consented.
 import * as admin from "firebase-admin";
+import { LIVE_SUBSCRIPTION_STATUSES, pickLiveSubscription } from "./utils/liveSubscription";
 
 const db = () => admin.firestore();
 
@@ -193,11 +194,12 @@ export async function createCaregiverBillingPortalUrl(
   return session.url;
 }
 
-/** The tab's subscription record: the live (active/trialing) one first, else whatever exists. */
+/** The section's subscription record: the live one first (utils/liveSubscription.ts — active / trialing / Stripe's retry states, most recent wins; the site's getSubscriptionStatus rule), else whatever exists. */
 export async function readCaregiverSubscriptionRecord(uid: string): Promise<Record<string, unknown> | null> {
   const coll = db().collection("customers").doc(uid).collection("subscriptions");
-  const live = await coll.where("status", "in", ["active", "trialing"]).limit(1).get();
-  if (!live.empty) return live.docs[0].data() as Record<string, unknown>;
+  const liveSnap = await coll.where("status", "in", [...LIVE_SUBSCRIPTION_STATUSES]).get();
+  const live = pickLiveSubscription(liveSnap.docs.map((d) => d.data() as Record<string, unknown>));
+  if (live) return live;
   const any = await coll.limit(1).get();
   return any.empty ? null : (any.docs[0].data() as Record<string, unknown>);
 }

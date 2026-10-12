@@ -13,15 +13,16 @@ const hoisted = vi.hoisted(() => {
       docs.set(path, { ...(opts?.merge ? docs.get(path) ?? {} : {}), ...data });
     }),
     collection: (sub: string) => {
-      const q = (live: boolean): any => ({
-        where: () => q(true), limit: () => q(live),
+      // `where('status','in', [...])` filters by the statuses the code passes — the live rule lives in the code, not here.
+      const q = (statuses: string[] | null): any => ({
+        where: (_f: string, _op: string, v: string[]) => q(v), limit: () => q(statuses),
         get: vi.fn(async () => {
-          const rows = live ? subs.filter((s) => s.status === "active" || s.status === "trialing") : subs;
+          const rows = statuses ? subs.filter((s) => statuses.includes(String(s.status))) : subs;
           return { empty: rows.length === 0, docs: rows.map((d) => ({ data: () => d })) };
         }),
       });
       if (sub !== "subscriptions") throw new Error("unexpected subcollection " + sub);
-      return q(false);
+      return q(null);
     },
   });
   const firestore = Object.assign(() => ({ collection: (name: string) => ({ doc: (id: string) => makeDoc(`${name}/${id}`) }) }), {
@@ -143,12 +144,27 @@ describe("createCaregiverBillingPortalUrl — the Manage button", () => {
   });
 });
 
-describe("readCaregiverSubscriptionRecord — the tab's record", () => {
+describe("readCaregiverSubscriptionRecord — the section's record", () => {
   it("live (active/trialing) first, else whatever exists, else null", async () => {
     expect(await readCaregiverSubscriptionRecord("cg1")).toBeNull();
     hoisted.subs.push({ status: "canceled", id: "old" });
     expect((await readCaregiverSubscriptionRecord("cg1"))?.id).toBe("old");
     hoisted.subs.push({ status: "active", id: "new" });
     expect((await readCaregiverSubscriptionRecord("cg1"))?.id).toBe("new");
+  });
+
+  it("a record Stripe is retrying (past_due / payment_failed) IS live — its date is the one the Renews-on line reads (founder, 2026-10-11)", async () => {
+    hoisted.subs.push({ status: "canceled", id: "old", created: new Date("2025-01-01") });
+    hoisted.subs.push({ status: "past_due", id: "retrying", created: new Date("2026-01-01") });
+    expect((await readCaregiverSubscriptionRecord("cg1"))?.id).toBe("retrying");
+    hoisted.subs.length = 0;
+    hoisted.subs.push({ status: "payment_failed", id: "failed", created: new Date("2026-01-01") });
+    expect((await readCaregiverSubscriptionRecord("cg1"))?.id).toBe("failed");
+  });
+
+  it("several live records → the most recently created one (a re-subscribe beside an old past_due)", async () => {
+    hoisted.subs.push({ status: "past_due", id: "older", created: new Date("2026-01-01") });
+    hoisted.subs.push({ status: "active", id: "newer", created: new Date("2026-06-01") });
+    expect((await readCaregiverSubscriptionRecord("cg1"))?.id).toBe("newer");
   });
 });

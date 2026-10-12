@@ -5,7 +5,7 @@ import { submitAccountAction } from '../../services/accountActionQueue';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver, CaregiverDocument } from '../../types';
-import { geocodeToLatLng } from '../../utils/geocode';
+import { geocodeAddress } from '../../utils/geocode';
 import { usePhoneReauth } from '../../hooks/usePhoneReauth';
 import { AccountStandingSection } from './AccountStandingSection';
 
@@ -214,13 +214,15 @@ export const CaregiverAccountSettings: React.FC = () => {
     if (!currentUser?.uid) return;
     setSavingAddress(true);
     try {
-      // Geocode so job-board distance filtering works instantly
-      const coords = await geocodeToLatLng(street, city, state, zip);
+      // Geocode so job-board distance filtering works instantly (street first — one geocoder,
+      // utils/geocode.ts). The server trigger (functions/src/triggers/caregiverGeocode.ts) owns the
+      // record's coords and re-derives the same point from these address fields on this write.
+      const point = await geocodeAddress({ street, city, state, zipCode: zip });
       await dbService.updateUser('caregivers', currentUser.uid, {
         street, zipCode: zip, city, state,
         location: city && state ? `${city}, ${state}` : city || '',
         // Only overwrite coords if geocoding succeeded — server-side trigger handles it otherwise
-        ...(coords ? { lat: coords.lat, lng: coords.lng, latitude: coords.lat, longitude: coords.lng } : {}),
+        ...(point ? { lat: point.lat, lng: point.lng, latitude: point.lat, longitude: point.lng, geoPrecision: point.geoPrecision } : {}),
       } as any);
       setEditingAddress(false);
       addToast('Address saved', 'success');

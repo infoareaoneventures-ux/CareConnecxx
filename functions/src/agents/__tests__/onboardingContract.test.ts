@@ -159,6 +159,20 @@ describe("onboardingContract", () => {
       expect(resolveOnboardingFieldName("client", "Smoking Household")).toBe("smokingHousehold");
       expect(resolveOnboardingFieldName("caregiver", "hourly_rate")).toBe("hourlyRate");
     });
+    it("jobTypes (the record's name) resolves onto the session's jobType; the optional rates-step boxes resolve onto the canonical names (C7, 2026-10-11)", () => {
+      expect(resolveOnboardingFieldName("caregiver", "jobTypes")).toBe("jobType");
+      expect(resolveOnboardingFieldName("caregiver", "looking for")).toBe("jobType");
+      expect(resolveOnboardingFieldName("caregiver", "rateForTwo")).toBe("rateFor2Seniors");
+      expect(resolveOnboardingFieldName("caregiver", "rateForThree")).toBe("rateFor3PlusSeniors");
+      expect(resolveOnboardingFieldName("caregiver", "maxClients")).toBe("maxClients");
+    });
+    it("normalizes one or many job types (the wizard's multi-select)", () => {
+      expect(normalizeOnboardingFieldValue("jobType", ["Part time", "full-time"])).toEqual(["part_time", "full_time"]);
+      expect(normalizeOnboardingFieldValue("jobType", ["Part time"])).toBe("part_time");
+      expect(normalizeOnboardingFieldValue("jobType", "part-time and full-time")).toEqual(["part_time", "full_time"]);
+      expect(normalizeOnboardingFieldValue("jobType", "occasional, part time")).toEqual(["occasional", "part_time"]);
+      expect(caregiverJobTypesToWebIds(["full_time", "occasional"], undefined)).toEqual(["occasional", "full-time"]);
+    });
     it("maps the live near-misses", () => {
       expect(resolveOnboardingFieldName("client", "smoking")).toBe("smokingHousehold");
       expect(resolveOnboardingFieldName("client", "pets")).toBe("petsInHome");

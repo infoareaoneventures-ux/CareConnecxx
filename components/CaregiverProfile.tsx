@@ -6,7 +6,7 @@ import {
 import { AvatarUpload } from './ui/AvatarUpload';
 import { Badge } from './ui/Badge';
 import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
-import { dbService, authService } from '../services/api';
+import { dbService, authService, uploadCaregiverProfilePhoto, CAREGIVER_PHOTO_FIELDS } from '../services/api';
 import { useCareConnex } from '../context/CareConnexContext';
 import { useSearchParams } from 'react-router-dom';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilityService';
@@ -19,6 +19,8 @@ import {
   DAYS,
   JOB_TYPES,
   MAX_CLIENTS_OPTIONS,
+  BIO_MIN_CHARS,
+  BIO_MAX_CHARS,
 } from './caregiver/signup/constants';
 
 interface CaregiverProfileProps {
@@ -111,10 +113,11 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   }, [currentUser, onShowToast]);
 
   const handleImageUpdate = useCallback(async (url: string) => {
-    setProfile(prev => ({ ...prev, photo: url, imageUrl: url }));
+    setProfile(prev => ({ ...prev, ...CAREGIVER_PHOTO_FIELDS(url), imageUrl: url }));
     if (currentUser) {
       try {
-        await dbService.updateUser('caregivers', currentUser.uid, { photo: url });
+        // photo + its mirrors photoURL / profilePhoto — the same three Evia writes (sweep C7, 2026-10-11).
+        await dbService.updateUser('caregivers', currentUser.uid, CAREGIVER_PHOTO_FIELDS(url) as any);
       } catch {
         onShowToast('Photo saved locally but failed to sync', 'error');
       }
@@ -193,16 +196,19 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           <div className="bg-gradient-to-r from-primary-500 to-primary-600 h-24" />
           <div className="px-6 pb-5">
             <div className="flex items-end justify-between -mt-10 mb-4">
+              {/* ONE photo path on the site + Evia (sweep C7, 2026-10-11): profile-photos/caregivers/{uid}
+                  (services/api.ts uploadCaregiverProfilePhoto — the wizard and Evia's /upload/photo
+                  write the same object) and ONE field set: photo + photoURL / profilePhoto mirrors. */}
               <AvatarUpload
                 currentUrl={profile.photo || profile.imageUrl || (profile as any).profilePhoto || (profile as any).photoURL}
                 onImageSelected={handleImageUpdate}
-                userId={currentUser?.uid}
-                storageFolder="caregivers"
+                upload={currentUser ? (file) => uploadCaregiverProfilePhoto(currentUser.uid, file) : undefined}
+                onUploadError={msg => onShowToast(msg, 'error')}
               />
               <div className="mb-1">
                 {profile.verified
-                  ? <Badge variant="success">Verified</Badge>
-                  : <Badge variant="neutral">Pending</Badge>
+                  ? <Badge variant="success">Background check complete</Badge>
+                  : <Badge variant="neutral">Background check pending</Badge>
                 }
               </div>
             </div>
@@ -244,17 +250,31 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <SectionActions
                   section="about"
                   onEdit={() => { setEditBio(profile.bio || ''); setEditLanguages(displayLanguages); setEditingSection('about'); }}
-                  onSave={() => saveSection({ bio: editBio, languages: editLanguages })}
+                  onSave={() => {
+                    // ONE bio rule (sweep C7, 2026-10-11): the wizard's — at least 150 characters, same words.
+                    if (editBio.trim().length < BIO_MIN_CHARS) {
+                      onShowToast(`Please write at least ${BIO_MIN_CHARS} characters (${BIO_MIN_CHARS - editBio.trim().length} more needed)`, 'error');
+                      return;
+                    }
+                    saveSection({ bio: editBio.trim(), languages: editLanguages });
+                  }}
                 />
               </div>
               {editingSection === 'about' ? (
                 <div className="space-y-4">
+                  <p className="text-xs text-slate-500">
+                    Highlight your experience, personality, and what makes you a great caregiver. Min {BIO_MIN_CHARS} characters.
+                  </p>
                   <textarea
                     className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-400 min-h-[110px] resize-none"
                     value={editBio}
-                    onChange={e => setEditBio(e.target.value)}
-                    placeholder="Tell families about your experience and approach to care..."
+                    onChange={e => { if (e.target.value.length <= BIO_MAX_CHARS) setEditBio(e.target.value); }}
+                    placeholder={`Describe your caregiving background... at least ${BIO_MIN_CHARS} characters required.`}
                   />
+                  <div className="flex justify-between -mt-3">
+                    <span className={`text-xs ${editBio.length < BIO_MIN_CHARS ? 'text-indigo-500' : 'text-slate-400'}`}>{BIO_MAX_CHARS - editBio.length} left</span>
+                    <span className={`text-xs font-medium ${editBio.length < BIO_MIN_CHARS ? 'text-indigo-500' : 'text-teal-600'}`}>{editBio.length}/{BIO_MIN_CHARS} min</span>
+                  </div>
                   <div>
                     <p className="text-xs font-medium text-slate-600 mb-2">Languages spoken</p>
                     <div className="flex flex-wrap gap-2">

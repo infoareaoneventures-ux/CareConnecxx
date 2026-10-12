@@ -13,7 +13,7 @@ import { CaregiverBookingsCard } from './CaregiverBookingsCard';
 import { jobApplicationService } from '../../hooks/useJobApplications';
 import { hasValidTransportDocs } from '../../utils/transportDocs';
 import { openCaregiverBillingPortal } from '../../services/stripeService';
-import { useCaregiverGate } from '../../hooks/useCaregiverGate';
+import { useCaregiverGate, caregiverMembershipActive, caregiverMembershipPaymentFailed, MEMBERSHIP_PAYMENT_FAILED_NOTICE } from '../../hooks/useCaregiverGate';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -46,7 +46,11 @@ export const CaregiverProgressCard: React.FC<{
 }> = ({ profile, onNavigate, onShowToast, compactMode = false }) => {
   const [showBgModal, setShowBgModal] = useState(false);
   const p = profile as any;
-  const membershipActive = p.membershipStatus === 'active' || p.membershipStatus === 'trialing' || (!p.membershipStatus && p.membershipPaid === true);
+  // ONE membership rule (founder, 2026-10-11): the gate hook's — Stripe's retry state
+  // (past_due / payment_failed) is still active, so it is never a "Payment failed" step
+  // here; the card carries an update-your-card notice instead (below).
+  const membershipActive = caregiverMembershipActive(p);
+  const paymentFailed = caregiverMembershipPaymentFailed(p);
   const bgApprovedFull = profile.verified === true || p.backgroundCheckStatus === 'clear' || p.backgroundCheckComplete === true;
   const services: string[] = (p.services || p.skills || []) as string[];
   const needsTransportDocs = services.includes('Transportation');
@@ -146,21 +150,9 @@ export const CaregiverProgressCard: React.FC<{
       : 'Add your photo, availability, services, and bio.';
     cardCta = { label: 'Complete profile', onClick: () => onNavigate('caregiver-profile') };
   } else if (activeStep === 2) {
-    if (p.membershipStatus === 'payment_failed') {
-      cardTitle = 'Payment failed';
-      cardDesc = 'We couldn\'t process your last payment. Update your payment method to continue.';
-      cardVariant = 'warning';
-      cardCta = {
-        label: 'Update payment',
-        onClick: async () => {
-          try {
-            await openCaregiverBillingPortal(`${window.location.origin}/caregiver/dashboard`);
-          } catch {
-            onShowToast?.('Unable to open billing portal. Please try again.', 'error');
-          }
-        },
-      };
-    } else if (p.membershipStatus === 'canceled') {
+    // Reached only when the membership is NOT active by the one rule (canceled / unpaid /
+    // never paid) — a failed renewal charge keeps it active and never lands here (2026-10-11).
+    if (p.membershipStatus === 'canceled') {
       cardTitle = 'Membership canceled';
       cardDesc = 'Your membership has been canceled. Reactivate to regain access to jobs and messaging.';
       cardCta = { label: 'Reactivate membership', onClick: () => onNavigate('caregiver-membership') };
@@ -271,6 +263,27 @@ export const CaregiverProgressCard: React.FC<{
           </div>
         );
       })()}
+
+      {/* Stripe retrying a failed renewal: membership stays active (one rule) — notice + the
+          billing portal (v1-createCaregiverBillingPortalSession), never a second checkout. */}
+      {paymentFailed && (
+        <div className="rounded-2xl p-4 mb-3 bg-amber-50 border border-amber-200" data-testid="membership-payment-failed-notice">
+          <p className="text-sm font-semibold text-amber-900 mb-1">Payment failed — update your card</p>
+          <p className="text-xs text-amber-800 leading-relaxed mb-3">{MEMBERSHIP_PAYMENT_FAILED_NOTICE}</p>
+          <button
+            onClick={async () => {
+              try {
+                await openCaregiverBillingPortal(`${window.location.origin}/caregiver/dashboard`);
+              } catch {
+                onShowToast?.('Unable to open billing portal. Please try again.', 'error');
+              }
+            }}
+            className="flex items-center gap-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 px-4 py-2 rounded-full transition-colors"
+          >
+            Update payment <ArrowRight className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       {/* Active step CTA card */}
       <div className={`rounded-2xl p-4 ${

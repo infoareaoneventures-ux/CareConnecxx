@@ -1,8 +1,29 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import { applyMembershipLapse } from '../billing/membershipLapse';
+import { canWork } from '../utils/caregiverCanWork';
+import { businessTodayStr, DEFAULT_TZ } from '../utils/scheduledTime';
 
 const db = admin.firestore();
+
+// A LOCKED caregiver gets no new visits (caregiver sweep C17, 2026-10-11): the one
+// gate rule — membership active per caregiverAccessGate (active / trialing / the
+// Stripe retry states / legacy membershipPaid) AND the background check cleared —
+// is the same canWork() the lock release reads. Visits already on the calendar
+// were released by releaseUpcomingVisitsOnLock; this keeps the daily roll from
+// quietly adding new ones for someone families can no longer be served by.
+export async function caregiverEligibleForNewVisits(
+  caregiverId: string,
+  cache: Map<string, boolean> = new Map(),
+): Promise<boolean> {
+  if (!caregiverId) return false;
+  const cached = cache.get(caregiverId);
+  if (cached !== undefined) return cached;
+  const snap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
+  const ok = !!snap?.exists && canWork(snap.data() as Record<string, any>);
+  cache.set(caregiverId, ok);
+  return ok;
+}
 
 const ALL_DAYS_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -27,36 +48,59 @@ export function addDays(dateStr: string, days: number): string {
   return d.toISOString().split('T')[0];
 }
 
+type ShiftBlock = { start: string; end: string };
+type DayShiftTimes = Record<string, ShiftBlock[]>;
+
+// An accepted schedule change (booking_amendments) generates with the SAME
+// generator — only these inputs differ from a fresh booking: the days are the
+// amendment's newDays (not the booking's whole schedule), the visit carries the
+// merged schedule, the amendment's own end rule and note, and the page's cap.
+export interface GenerateOverrides {
+  dayShiftTimes?: DayShiftTimes;
+  schedule?: Record<string, unknown> | null;
+  /** `null` = ongoing (no end). `undefined` = the booking's own end rule. */
+  endDate?: string | null;
+  notes?: string;
+  caregiverId?: string;
+  caregiverName?: string;
+  clientId?: string;
+  clientName?: string;
+  maxShifts?: number;
+}
+
 // Shared: generate shifts for one booking starting from a given date up to generateTo.
+// ONE generator for a fresh booking (onBookingAccepted, generateRollingShifts) AND an
+// accepted schedule change (onBookingAmendmentAccepted) — never a second shift shape.
 async function generateShiftsForBooking(
   bookingId: string,
   booking: FirebaseFirestore.DocumentData,
   generateFrom: string,
   generateTo: string,
+  over: GenerateOverrides = {},
 ): Promise<number> {
-  const dayShiftTimes: Record<string, Array<{ start: string; end: string }>> =
-    booking.schedule?.dayShiftTimes || {};
+  const dayShiftTimes: DayShiftTimes = over.dayShiftTimes ?? (booking.schedule?.dayShiftTimes || {});
   if (Object.keys(dayShiftTimes).length === 0) return 0;
 
-  const endDate: string | null =
-    booking.schedule?.ongoing ? null : (booking.schedule?.endDate || null);
+  const endDate: string | null = over.endDate !== undefined
+    ? over.endDate
+    : (booking.schedule?.ongoing ? null : (booking.schedule?.endDate || null));
 
   if (endDate && generateFrom > endDate) return 0;
 
-  const caregiverId: string = booking.caregiverId || '';
+  const caregiverId: string = over.caregiverId || booking.caregiverId || '';
   let caregiverPhotoURL: string | null = null;
   if (caregiverId) {
     const cgSnap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
     const cgData = cgSnap?.data();
-    caregiverPhotoURL = cgData?.profilePhoto || cgData?.photoURL || cgData?.photo || null;
+    caregiverPhotoURL = cgData?.profilePhoto || cgData?.photoURL || cgData?.photo || cgData?.imageUrl || null;
   }
 
   const shiftBase = {
-    clientId:             booking.clientId || '',
-    clientName:           booking.clientName || '',
+    clientId:             booking.clientId || over.clientId || '',
+    clientName:           booking.clientName || over.clientName || '',
     clientPhotoURL:       booking.clientPhotoURL || null,
     caregiverId,
-    caregiverName:        booking.caregiverName || '',
+    caregiverName:        booking.caregiverName || over.caregiverName || '',
     caregiverPhotoURL,
     status:               'scheduled',
     address:              booking.address || '',
@@ -64,10 +108,10 @@ async function generateShiftsForBooking(
     lifestylePreferences: booking.lifestylePreferences || [],
     rate:                 booking.rate ?? null,
     paymentMethod:        booking.paymentMethod || null,
-    notes:                booking.notes || '',
+    notes:                over.notes ?? (booking.notes || ''),
     careRecipients:       booking.careRecipients || [],
     emergencyContact:     booking.emergencyContact || null,
-    schedule:             booking.schedule || null,
+    schedule:             over.schedule !== undefined ? over.schedule : (booking.schedule || null),
     bookingRequestId:     bookingId,
     jobId:                booking.jobId || null,
     recurringWeekly:      true,
@@ -76,13 +120,14 @@ async function generateShiftsForBooking(
   };
 
   const newShifts: Array<{ date: string; start: string; end: string }> = [];
+  const maxShifts = over.maxShifts ?? Number.POSITIVE_INFINITY;
 
   Object.entries(dayShiftTimes).forEach(([day, blocks]) => {
-    (blocks as Array<{ start: string; end: string }>)
+    (blocks as ShiftBlock[])
       .filter(b => b.start && b.end)
       .forEach(b => {
         let dateStr = nextOccurrenceOnOrAfter(generateFrom, day);
-        while (dateStr <= generateTo) {
+        while (dateStr <= generateTo && newShifts.length < maxShifts) {
           if (endDate && dateStr > endDate) break;
           newShifts.push({ date: dateStr, start: b.start, end: b.end });
           dateStr = addDays(dateStr, 7);
@@ -223,6 +268,105 @@ export const onBookingAccepted = functions.firestore
     }
   });
 
+// ── Accepted schedule change → the visits, server-side ───────────────────────
+// Until 2026-10-11 the caregiver's Accept on a schedule change
+// (CaregiverBookingsPage.handleAcceptAmendment) and Evia's twin
+// (caregiverBookingRequests.acceptAmendment) each built the visit documents
+// themselves — a browser batch, which is why firestore.rules had to let a
+// caregiver create shifts with any status. Now BOTH doors write only the
+// acceptance ({status:'accepted', respondedAt}) and this trigger does what the
+// page did, with the page's rules: generate from max(startDate, today) for 28
+// days (the family's business day, Pacific — live 2026-10-07 a 6 PM accept
+// landed "tomorrow" in UTC and every visit slid a week), an ongoing change is
+// merged into booking_requests.schedule.dayShiftTimes (a dated one is NOT — the
+// daily generator would recreate it forever), a dated change ends on its own
+// end date (else the booking's), the request's note travels onto the visits
+// (falling back to the booking's), cap 490 — through the ONE generator above,
+// behind the C17 gate (a locked caregiver gets no new visits).
+export const AMENDMENT_WINDOW_DAYS = 27;   // generateFrom + 27 = 28 days inclusive (the page's window)
+export const AMENDMENT_MAX_SHIFTS  = 490;  // the page's batch cap
+
+export async function applyAcceptedAmendment(
+  amendmentId: string,
+  amendment: FirebaseFirestore.DocumentData,
+  now: Date = new Date(),
+): Promise<{ created: number; skipped?: 'no_booking' | 'caregiver_not_eligible' }> {
+  const bookingRequestId: string = amendment.bookingRequestId || '';
+  if (!bookingRequestId) return { created: 0, skipped: 'no_booking' };
+  const bookingRef = db.collection('booking_requests').doc(bookingRequestId);
+  const bookingSnap = await bookingRef.get();
+  if (!bookingSnap.exists) return { created: 0, skipped: 'no_booking' };
+  const booking = bookingSnap.data() || {};
+
+  const newDays: DayShiftTimes = amendment.newDays || {};
+  const currentDST: DayShiftTimes = booking.schedule?.dayShiftTimes || {};
+  const mergedDST: DayShiftTimes = amendment.ongoing
+    ? Object.entries(newDays).reduce<DayShiftTimes>((dst, [day, blocks]) => {
+        dst[day] = [...(dst[day] ?? []), ...(blocks as ShiftBlock[])];
+        return dst;
+      }, { ...currentDST })
+    : currentDST;
+  if (amendment.ongoing) {
+    await bookingRef.update({
+      'schedule.dayShiftTimes': mergedDST,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+
+  const caregiverId: string = amendment.caregiverId || booking.caregiverId || '';
+  if (!(await caregiverEligibleForNewVisits(caregiverId))) {
+    console.info(`onBookingAmendmentAccepted: caregiver ${caregiverId || '?'} is not eligible (membership/background) — no new visits for amendment ${amendmentId}`);
+    return { created: 0, skipped: 'caregiver_not_eligible' };
+  }
+
+  const today = businessTodayStr(DEFAULT_TZ, now);
+  const generateFrom: string = amendment.startDate && amendment.startDate >= today ? amendment.startDate : today;
+  const generateTo = addDays(generateFrom, AMENDMENT_WINDOW_DAYS);
+  const endDate: string | null = amendment.ongoing
+    ? null
+    : (amendment.endDate || (booking.schedule?.ongoing ? null : booking.schedule?.endDate || null));
+
+  const created = await generateShiftsForBooking(bookingRequestId, booking, generateFrom, generateTo, {
+    dayShiftTimes: newDays,
+    schedule: { ...(booking.schedule || {}), dayShiftTimes: mergedDST },
+    endDate,
+    notes: amendment.notes || booking.notes || '',
+    caregiverId,
+    caregiverName: amendment.caregiverName,
+    clientId: amendment.clientId,
+    clientName: amendment.clientName,
+    maxShifts: AMENDMENT_MAX_SHIFTS,
+  });
+  return { created };
+}
+
+/**
+ * Firestore trigger: booking_amendments status → 'accepted' (from either door)
+ * generates the visits. Runs once per acceptance: the stamp it leaves
+ * (shiftsGeneratedAt) makes a redelivered event a no-op, and the rules keep a
+ * caregiver's own write to {status, respondedAt} so the stamp can't be forged.
+ */
+export const onBookingAmendmentAccepted = functions.firestore
+  .document('booking_amendments/{amendmentId}')
+  .onUpdate(async (change, context) => {
+    const before = change.before.data() || {};
+    const after  = change.after.data()  || {};
+    if (after.status !== 'accepted' || before.status === 'accepted') return;
+    if (after.shiftsGeneratedAt) return; // already generated (event redelivery)
+    const amendmentId = context.params.amendmentId;
+    try {
+      const result = await applyAcceptedAmendment(amendmentId, after);
+      await change.after.ref.update({
+        shiftsGeneratedAt: admin.firestore.FieldValue.serverTimestamp(),
+        shiftsCreated: result.created,
+        ...(result.skipped ? { shiftsSkippedReason: result.skipped } : {}),
+      });
+      console.log(`onBookingAmendmentAccepted: created ${result.created} shifts for amendment ${amendmentId}${result.skipped ? ` (${result.skipped})` : ''}`);
+    } catch (err) {
+      console.error(`onBookingAmendmentAccepted: error for amendment ${amendmentId}`, err);
+    }
+  });
+
 const SHIFT_REPLACEMENT_RESPONSE_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
@@ -312,6 +456,8 @@ export const generateRollingShifts = functions.pubsub
     let totalCreated = 0;
     // One users read per family per run, shared across their bookings (membership lapse check).
     const membershipCache = new Map<string, Record<string, unknown> | null>();
+    // One caregivers read per caregiver per run (eligibility gate, C17).
+    const eligibilityCache = new Map<string, boolean>();
 
     for (const bookingDoc of bookingsSnap.docs) {
       try {
@@ -326,6 +472,11 @@ export const generateRollingShifts = functions.pubsub
         // no new visits are added until they reactivate (billing/membershipLapse.ts).
         const lapse = await applyMembershipLapse(bookingDoc.ref, booking, today, membershipCache);
         if (lapse === 'frozen') continue;
+        // Locked caregiver (renewal lock / membership canceled / check not clear): skip + log, never generate.
+        if (!(await caregiverEligibleForNewVisits(String(booking.caregiverId || ''), eligibilityCache))) {
+          console.info(`generateRollingShifts: caregiver ${booking.caregiverId || '?'} is not eligible (membership/background) — no new visits for booking ${bookingId}`);
+          continue;
+        }
 
         const latestShiftSnap = await db.collection('shifts')
           .where('bookingRequestId', '==', bookingId)

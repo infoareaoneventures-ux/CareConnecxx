@@ -20,16 +20,17 @@ vi.mock("firebase-admin", () => {
       doc: (id: string) => ({
         get: vi.fn(async () => ({ exists: hoisted.docs.has(`${name}/${id}`), id, data: () => hoisted.docs.get(`${name}/${id}`) })),
         collection: (sub: string) => {
-          const q = (live: boolean): any => ({
-            where: () => q(true),
-            limit: () => q(live),
+          // `where('status','in', [...])` filters by the statuses the code passes — the live rule lives in the code, not here.
+          const q = (statuses: string[] | null): any => ({
+            where: (_f: string, _op: string, v: string[]) => q(v),
+            limit: () => q(statuses),
             get: vi.fn(async () => {
-              const rows = live ? hoisted.subs.filter((s) => s.status === "active" || s.status === "trialing") : hoisted.subs;
+              const rows = statuses ? hoisted.subs.filter((s) => statuses.includes(s.status)) : hoisted.subs;
               expect(sub).toBe("subscriptions");
               return { empty: rows.length === 0, docs: rows.map((d) => ({ data: () => d })) };
             }),
           });
-          return q(false);
+          return q(null);
         },
       }),
     }),

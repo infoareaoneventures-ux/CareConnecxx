@@ -60,6 +60,14 @@ vi.mock("../../utils/caraMessage", () => ({
 const sendSpy = vi.fn(async (..._a: unknown[]) => true);
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unknown[]) => sendSpy(...a) }));
 
+// Bell ⇄ text in lockstep (C11, 2026-10-11): the website bell is written only
+// after the text went. `order` records which happened first.
+const bells: any[] = [];
+const order: string[] = [];
+vi.mock("../../notifications/userNotification", () => ({
+  writeUserNotification: vi.fn(async (n: any) => { bells.push(n); order.push("bell"); return true; }),
+}));
+
 import {
   sendInterviewCompletionNudges,
   shouldNudgeInterviewCompletion,
@@ -189,7 +197,10 @@ describe("sendInterviewCompletionNudges — only counts a nudge when it actually
     store.sessions.clear();
     store.updates.length = 0;
     store.sessionUpdates.length = 0;
+    bells.length = 0;
+    order.length = 0;
     sendSpy.mockReset();
+    sendSpy.mockImplementation(async () => { order.push("text"); return true; });
   });
 
   it("does not touch the interview doc when the send is suppressed (cap/opt-out/wait-tool)", async () => {
@@ -201,6 +212,34 @@ describe("sendInterviewCompletionNudges — only counts a nudge when it actually
 
     expect(sendSpy).toHaveBeenCalledTimes(1);
     expect(store.updates).toHaveLength(0);
+  });
+
+  // Bell ⇄ text in lockstep (C11, 2026-10-11).
+  it("text dropped → no bell", async () => {
+    sendSpy.mockResolvedValueOnce(false);
+    seedInterview("iv-no-bell");
+    seedSession("+15550000007");
+
+    await (sendInterviewCompletionNudges as any)();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(bells).toHaveLength(0);
+  });
+
+  it("text sent → the bell follows it, in the Interviews tab's words, keyed per nudge number", async () => {
+    seedInterview("iv-bell", { completionNudgeCount: 2 });
+    seedSession("+15550000008");
+
+    await (sendInterviewCompletionNudges as any)();
+
+    expect(order).toEqual(["text", "bell"]);
+    expect(bells).toEqual([expect.objectContaining({
+      sourcePath: "video_interviews/iv-bell", eventId: "completion-nudge-3", recipientId: "client-1",
+      transitionType: "interview_completion_nudge", type: "interview_completion_reminder",
+      title: "Did your interview happen?", data: { interviewId: "iv-bell" },
+    })]);
+    expect(bells[0].body).toMatch(/^Your interview with Basra was scheduled for .+\. Mark it completed — or reschedule it — from your Interviews tab\.$/);
+    expect(bells[0].body).not.toMatch(/reply/i);
   });
 
   it("increments the nudge counter only when the send actually succeeds", async () => {

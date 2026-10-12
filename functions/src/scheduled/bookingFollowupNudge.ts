@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { writeUserNotification } from "../notifications/userNotification";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { formatInterviewTime, parseScheduledTimeMs } from "../utils/scheduledTime";
 
@@ -130,6 +131,16 @@ export const sendBookingFollowupNudges = functions.pubsub
           bookingNudgeCount: nudgeCount + 1,
           bookingNudgedAt:   new Date(nowMs).toISOString(),
         }).catch(() => {});
+
+        // Bell ⇄ text in lockstep (C11, 2026-10-11): the site's copy, in the
+        // Interviews tab's words (its Send Booking button, no text keywords),
+        // written only because the text went. Idempotent per nudge number.
+        await writeUserNotification({
+          sourcePath: `video_interviews/${doc.id}`, eventId: `booking-followup-nudge-${nudgeCount + 1}`, recipientId: clientId,
+          transitionType: "booking_followup_nudge", type: "interview_booking_followup", title: "Finish setting up your booking",
+          body: `You marked ${caregiverName} a strong fit${whenClause}, but the booking was never sent. Send Booking from your Interviews tab to lock in the schedule and rate.`,
+          data: { interviewId: doc.id },
+        }).catch((err) => console.error("[sendBookingFollowupNudges] bell failed:", doc.id, err));
 
         // Same anchor pattern as interviewCompletionNudge.ts's
         // pendingCompletionNudge* / interviewFeedbackNudge.ts's

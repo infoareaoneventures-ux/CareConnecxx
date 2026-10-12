@@ -1,8 +1,9 @@
 import { stripeService as externalStripeService } from './stripeService';
 import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 
-import firebase, { auth, db, functions, isConfigured } from '../lib/firebase';
+import firebase, { auth, db, functions, storage, isConfigured } from '../lib/firebase';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
+import { geocodeAddress, GeoPrecision } from '../utils/geocode';
 import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
 
 // A family-facing "Evia Activity" entry (projection of an allow-listed audit
@@ -405,12 +406,14 @@ export const dbService = {
         return { caregivers: [], lastDoc: null };
     },
 
-    createJobPost: async (post: Partial<JobPost>, clientId: string) => {
+    createJobPost: async (post: Partial<JobPost> & { streetAddress?: string; lat?: number; lng?: number; geoPrecision?: GeoPrecision }, clientId: string) => {
+        // streetAddress is NEVER stored on the public post (it is used for the
+        // geocode only — see below); the caregiver sees city/state/zip + distance.
         const allowedFields = [
             'title', 'description', 'rate', 'date', 'startTime', 'endTime',
             'location', 'requirements', 'seniorNeeds',
             'startDate', 'endDate', 'daysOfWeek', 'timeOfDay', 'minHoursPerWeek', 'jobFrequency',
-            'recipientsCount', 'streetAddress', 'city', 'state', 'zipCode', 'neighborhood',
+            'recipientsCount', 'city', 'state', 'zipCode', 'neighborhood',
             'careTypes', 'careLevel', 'petsInHome', 'smokingHousehold',
             'paymentMethod', 'rateFlexible',
         ];
@@ -445,22 +448,34 @@ export const dbService = {
             sanitizedPost.location = parts.join(', ');
         }
 
-        // Geocode the job address once at creation — stored as lat/lng so caregivers
-        // can do instant distance math without API calls at browse time.
-        const addrQuery = [sanitizedPost.streetAddress, sanitizedPost.city, sanitizedPost.state, sanitizedPost.zipCode]
-            .filter(Boolean).join(', ') || sanitizedPost.location || '';
-        if (addrQuery) {
+        // The post's point, resolved once at creation (ONE rule, 2026-10-11 — Evia's
+        // functions/src/agents/jobPostCoords.ts is the server twin):
+        //   1. the Care Plan location's saved STREET-level point when the caller
+        //      passes it (PostJobFlow.tsx hands over the selected location's);
+        //   2. else the street geocoded now (utils/geocode.ts geocodeAddress,
+        //      Nominatim on the full address) — the street is consumed here and
+        //      never written to the post;
+        //   3. last resort the ZIP centroid, then the city.
+        // Stored as lat/lng (+ geoPrecision: how it was derived) so caregivers do
+        // instant distance math at browse time and a backfill can find the coarse ones.
+        if (typeof post.lat === 'number' && typeof post.lng === 'number' && Number.isFinite(post.lat) && Number.isFinite(post.lng)) {
+            sanitizedPost.lat = post.lat;
+            sanitizedPost.lng = post.lng;
+            if (post.geoPrecision) sanitizedPost.geoPrecision = post.geoPrecision;
+        } else {
             try {
-                const geoRes = await fetch(
-                    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addrQuery)}&format=json&limit=1&countrycodes=us`,
-                    { headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' } }
-                );
-                const geoData = await geoRes.json();
-                if (geoData?.length) {
-                    sanitizedPost.lat = parseFloat(geoData[0].lat);
-                    sanitizedPost.lng = parseFloat(geoData[0].lon);
+                const point = await geocodeAddress({
+                    street: post.streetAddress,
+                    city: sanitizedPost.city || sanitizedPost.location,
+                    state: sanitizedPost.state,
+                    zipCode: sanitizedPost.zipCode,
+                });
+                if (point) {
+                    sanitizedPost.lat = point.lat;
+                    sanitizedPost.lng = point.lng;
+                    sanitizedPost.geoPrecision = point.geoPrecision;
                 }
-            } catch { /* best effort — job saves without coords if geocoding fails */ }
+            } catch { /* best effort — job saves without coords if geocoding fails; the server trigger fills the ZIP centroid */ }
         }
 
         if (isConfigured && db) {
@@ -1534,12 +1549,15 @@ export const dbService = {
             );
     },
 
-    joinWaitlist: async (lead: { uid: string; phone: string; name?: string; city?: string; zipCode?: string }): Promise<void> => {
+    // The out-of-area waitlist lead — the family wizard's and (since 2026-10-11, sweep C6) the
+    // caregiver wizard's "Notify me when you reach my area" button; same record shape as Evia's
+    // functions/src/agents/serviceAreaGate.ts (source 'text'), role per door.
+    joinWaitlist: async (lead: { uid: string; phone: string; name?: string; city?: string; zipCode?: string; role?: 'client' | 'caregiver' }): Promise<void> => {
         if (!isConfigured || !db) throw new Error("Database not connected");
         await db.collection('waitlist').doc(lead.uid).set({
             uid:           lead.uid,
             phone:         lead.phone,
-            role:          'client',
+            role:          lead.role ?? 'client',
             attemptedCity: lead.city || null,
             attemptedZip:  lead.zipCode || null,
             name:          lead.name || null,
@@ -2349,6 +2367,35 @@ export const dbService = {
 export const stripeService = externalStripeService;
 // Export storageService for convenience
 export { storageService };
+
+/**
+ * ONE caregiver profile-photo path on the site and Evia (sweep C7, 2026-10-11):
+ * Storage object `profile-photos/caregivers/{uid}` (one object, overwritten on a
+ * new upload — the profile page's AvatarUpload path, and Evia's /upload/photo
+ * writes the same object: functions/src/agents/onboardingAgent.ts
+ * CAREGIVER_PROFILE_PHOTO_PATH). The wizard and the profile page both call this;
+ * the record fields are `photo` + its mirrors `photoURL` / `profilePhoto`
+ * (CAREGIVER_PHOTO_FIELDS). The old caregivers/{uid}/documents/profilePhoto_* file
+ * and the `documents.profilePhoto` map are no longer written anywhere.
+ */
+export const CAREGIVER_PROFILE_PHOTO_PATH = (uid: string) => `profile-photos/caregivers/${uid}`;
+export const CAREGIVER_PHOTO_FIELDS = (url: string) => ({ photo: url, photoURL: url, profilePhoto: url });
+export async function uploadCaregiverProfilePhoto(uid: string, file: File): Promise<string> {
+    if (!file.type.startsWith('image/')) throw new Error('Please select an image file');
+    if (file.size > 5 * 1024 * 1024) throw new Error('Photo must be under 5MB');
+    if (!storage) throw new Error('Storage not initialized. Please refresh and try again.');
+    try {
+        const ref = storage.ref().child(CAREGIVER_PROFILE_PHOTO_PATH(uid));
+        const snap = await ref.put(file, { contentType: file.type, customMetadata: { uploadedBy: uid, uploadTime: new Date().toISOString(), originalName: file.name } });
+        return await snap.ref.getDownloadURL();
+    } catch (error: any) {
+        const code = error?.code || '';
+        if (code === 'storage/unauthorized') throw new Error('Upload permission denied. Please make sure you are logged in.');
+        if (code === 'storage/quota-exceeded') throw new Error('Storage quota exceeded. Please contact support.');
+        if (code === 'storage/invalid-checksum' || code === 'storage/canceled') throw new Error('Upload interrupted. Please try again.');
+        throw new Error(error?.message || 'Failed to upload photo. Please try again.');
+    }
+}
 
 // authService is an alias for dbService
 export { dbService as authService };

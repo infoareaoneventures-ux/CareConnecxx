@@ -77,7 +77,11 @@ vi.mock("../../agents/caregiverSearch", () => ({
 }));
 
 const lookupZipPlace = vi.fn();
-vi.mock("../../utils/geocode", () => ({ lookupZipPlace: (...a: unknown[]) => lookupZipPlace(...a) }));
+const geocodeAddress = vi.fn(async (..._a: unknown[]): Promise<any> => null);
+vi.mock("../../utils/geocode", () => ({
+  lookupZipPlace: (...a: unknown[]) => lookupZipPlace(...a),
+  geocodeAddress: (...a: unknown[]) => geocodeAddress(...a),
+}));
 
 import { handleToolCall } from "../server";
 
@@ -286,5 +290,40 @@ describe("create_job_post", () => {
       expect(cp.recipientPlans.rosie_doe.notes).toBe(NOTES);
       expect(cp.recipientPlans.rosie_doe.careNeeds).toEqual(["companionship"]);
     });
+  });
+});
+
+// 2026-10-11 ("Distance is ZIP-level"): the tool's post follows the same
+// point rule as buildAndSaveJobPost (jobPostCoords.ts) — street-level when a
+// street is known (Care Plan location or geocoded now), the ZIP only as a
+// fallback, geoPrecision marked, the street never on the post.
+describe("create_job_post — street-level point", () => {
+  beforeEach(() => {
+    hoisted.reset(); lookupZipPlace.mockReset();
+    geocodeAddress.mockReset(); geocodeAddress.mockResolvedValue(null);
+    hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", membershipStatus: "active" });
+  });
+
+  it("geocodes the full street through the one server geocoder and marks the post 'street' (streetAddress still never stored)", async () => {
+    lookupZipPlace.mockResolvedValue({ city: "Austin", state: "TX", lat: 30.27, lng: -97.74 });
+    geocodeAddress.mockResolvedValue({ lat: 30.2711, lng: -97.7437, geoPrecision: "street" });
+    const r = await handleToolCall("create_job_post", {
+      clientId: CLIENT, title: TITLE, notes: NOTES, careTypes: ["companionship"], hourlyRate: 25, zipCode: "78701",
+      streetAddress: "123 Main St",
+    }) as any;
+    expect(r.success).toBe(true);
+    expect(geocodeAddress).toHaveBeenCalledWith({ street: "123 Main St", city: "Austin", state: "TX", zipCode: "78701" });
+    const doc = hoisted.sets.find(s => s.path === `job_posts/${r.jobId}`)?.data;
+    expect(doc).toMatchObject({ lat: 30.2711, lng: -97.7437, geoPrecision: "street" });
+    expect(doc.streetAddress).toBeUndefined();
+  });
+
+  it("falls back to the ZIP centroid marked 'zip' when nothing better resolves", async () => {
+    lookupZipPlace.mockResolvedValue({ city: "Austin", state: "TX", lat: 30.27, lng: -97.74 });
+    const r = await handleToolCall("create_job_post", {
+      clientId: CLIENT, title: TITLE, notes: NOTES, careTypes: ["companionship"], zipCode: "78701",
+    }) as any;
+    const doc = hoisted.sets.find(s => s.path === `job_posts/${r.jobId}`)?.data;
+    expect(doc).toMatchObject({ lat: 30.27, lng: -97.74, geoPrecision: "zip" });
   });
 });

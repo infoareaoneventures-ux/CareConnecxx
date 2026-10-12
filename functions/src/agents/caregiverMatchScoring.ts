@@ -85,9 +85,25 @@ export function hasValidTransportDocs(profile: Record<string, unknown> | null | 
 export interface ScoredCaregiver {
   id: string;
   data: Record<string, unknown>;
-  distance: number;
+  /** Miles to the nearest client location; null = unknown (no coords on one side) — never 0 (2026-10-11). */
+  distance: number | null;
   skillsScore: number;
   availScore: number;
+}
+
+/**
+ * Distance tiebreak with unknown LAST — the site's rule
+ * (hooks/useNearbyCaregiversWithScores.ts compareDistanceUnknownLast): a
+ * caregiver with no coordinates used to score as 0 miles and float to the top
+ * of every list.
+ */
+export function compareDistanceUnknownLast(a: number | null | undefined, b: number | null | undefined): number {
+  const aKnown = typeof a === "number" && Number.isFinite(a);
+  const bKnown = typeof b === "number" && Number.isFinite(b);
+  if (aKnown && bKnown) return (a as number) - (b as number);
+  if (aKnown) return -1;
+  if (bKnown) return 1;
+  return 0;
 }
 
 export interface ScoreCaregiversOptions {
@@ -122,7 +138,9 @@ export function scoreAndRankCaregivers(
     .map(({ id, data }) => {
       const cgLat = (data.lat ?? data.latitude ?? (data as any).location?.lat) as number | undefined;
       const cgLng = (data.lng ?? data.longitude ?? (data as any).location?.lng) as number | undefined;
-      let dist = 0;
+      // Unknown (no coords on either side) stays null — never a fake 0 that
+      // would read as "closest" (the ZIP-level distance fix, 2026-10-11).
+      let dist: number | null = null;
       if (cgLat != null && cgLng != null && clientLocations.length > 0) {
         dist = Math.min(...clientLocations.map((loc) => haversineDistanceMiles(loc.lat, loc.lng, Number(cgLat), Number(cgLng))));
         dist = Math.round(dist * 10) / 10;
@@ -141,8 +159,7 @@ export function scoreAndRankCaregivers(
   let filtered = scored;
   if (applyHardFilters) {
     filtered = filtered.filter((c) => {
-      const cgLat = c.data.lat ?? c.data.latitude ?? (c.data as any).location?.lat;
-      if (cgLat == null || clientLocations.length === 0) return true;
+      if (c.distance == null) return true;
       if (maxDistance != null && c.distance > maxDistance) return false;
       const sr = (c.data.serviceRadius ?? c.data.travelRadius) as number | undefined;
       if (sr != null && sr > 0 && c.distance > sr) return false;
@@ -164,7 +181,7 @@ export function scoreAndRankCaregivers(
       if (Math.abs(availDiff) > 0.01) return availDiff;
       const ratingDiff = (Number(b.data.rating) || 0) - (Number(a.data.rating) || 0);
       if (ratingDiff !== 0) return ratingDiff;
-      return a.distance - b.distance;
+      return compareDistanceUnknownLast(a.distance, b.distance);
     })
     .slice(0, limit);
 }

@@ -76,7 +76,8 @@ export async function authorizeBackgroundCheck(args: {
     if (!isCaregiverMembershipActive(cg)) {
       const userSnap = await db.collection("users").doc(uid).get().catch(() => null);
       const u = (userSnap?.data() ?? {}) as Record<string, any>;
-      const userActive = u.subscriptionActive === true || u.membershipStatus === "active" || u.membershipStatus === "trialing";
+      // The same one rule on the users mirror (sweep C1, 2026-10-11); subscriptionActive is what markCaregiverMembershipPaid also writes there.
+      const userActive = isCaregiverMembershipActive(u) || u.subscriptionActive === true;
       if (!userActive) throw new MembershipRequiredError();
     }
   }

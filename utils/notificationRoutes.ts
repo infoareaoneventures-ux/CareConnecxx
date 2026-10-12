@@ -1,9 +1,16 @@
 // Where a bell notification takes you when clicked — ONE map for the whole
 // site (components/ui/NotificationDropdown.tsx) and mirrored, path for path,
-// in functions/src/agents/notificationsPage.ts so Evia names the same page.
-// Audited 2026-09-19 against every type the server writes to families
-// (functions/src/triggers/notificationTriggers.ts, appointmentUpdated.ts,
+// in functions/src/agents/notificationsPage.ts so Evia names the same page
+// (its test compiles this file and asserts parity — change both together).
+// Family side audited 2026-09-19 against every type the server writes to
+// families (functions/src/triggers/notificationTriggers.ts, appointmentUpdated.ts,
 // notifications.ts, stripe.ts, agents/reviewPrompt.ts).
+// Caregiver side re-routed 2026-10-11 (sweep C10) to the page each bell body
+// names: Jobs (new_job / My Applications / Interviews), Bookings by tab
+// (Requests for booking + amendment requests, Active for live visits, Past for
+// finished ones), Payments by tab (Timesheets / Payouts), Settings ›
+// Membership & verification for membership / background check / driving
+// record / renewal, My Profile › Reviews for a review.
 export type NotificationRole = 'client' | 'caregiver';
 
 export interface RoutableNotification {
@@ -38,12 +45,41 @@ export function routeForNotification(n: RoutableNotification, role: Notification
     if (t.includes('payment')) return '/client/payments';
     return '/client/dashboard';
   }
-  if (t.startsWith('account')) return '/caregiver/settings';
+  return caregiverRoute(t, tt, data);
+}
+
+// ── Caregiver ──────────────────────────────────────────────────────────────────
+// Lifecycle bells (functions/src/notifications/caregiverAccountEvents.ts) are typed
+// `caregiver_<kind>`: membership_*, bgcheck_*, mvr_*, transport_badge_*,
+// renewal_refresh_*, membership_renewal_upcoming, payouts_*, now_bookable.
+function caregiverRoute(t: string, tt: string, data: Record<string, any>): string {
+  const shiftId = typeof data.shiftId === 'string' && data.shiftId ? data.shiftId : '';
+  const active = shiftId ? `/caregiver/bookings?tab=active&visit=${shiftId}` : '/caregiver/bookings?tab=active';
+
+  // Jobs page — the job card itself, My Applications, Interviews.
+  if (t === 'new_job') return typeof data.jobId === 'string' && data.jobId ? `/caregiver/jobs?job=${data.jobId}` : '/caregiver/jobs';
+  if (t.startsWith('job_application')) return '/caregiver/jobs?tab=applications';
   if (t.startsWith('interview') || t === 'hire_decision') return '/caregiver/jobs?tab=interviews';
-  if (t.startsWith('shift_hours')) return '/caregiver/payments?tab=timesheets'; // Timesheets events (approved / correction / paid) live on Payments
-  if (t.startsWith('booking') || t.startsWith('amendment') || t.startsWith('shift')) return '/caregiver/bookings';
-  if (t.includes('payment') || t.includes('payout') || t.includes('membership')) return '/caregiver/payments';
+
+  // Payments — Timesheets events (submitted / approved / correction / paid / reminders) and payouts.
+  if (t.startsWith('shift_hours')) return '/caregiver/payments?tab=timesheets';
+  if (t.includes('payout')) return '/caregiver/payments?tab=payouts';
+
+  // Bookings — a request waiting on the caregiver (or withdrawn) → Requests; a finished or
+  // unfinished-past visit → Past (Log Hours lives there); every live-visit event → Active.
+  if (t.startsWith('booking') || t.startsWith('amendment')) return '/caregiver/bookings?tab=requests';
+  if (t === 'shift_completed' || t === 'shift_missed') return '/caregiver/bookings?tab=past';
+  if (t.startsWith('shift')) return active;
+  if (t === 'alert' && (tt.startsWith('shift') || data.appointmentId || data.recurringGroupId)) return active;
+
+  // Settings › Membership & verification — membership, background check, driving record,
+  // renewal refresh, Transportation live/removed, account standing (the cards moved there 2026-10-04).
+  if (t.includes('membership') || t.includes('bgcheck') || t.includes('mvr') || t.includes('renewal') || t.includes('transport_badge') || t.startsWith('account')) return '/caregiver/settings';
+  // "You're approved — families can now find and book you" → the Jobs page.
+  if (t === 'caregiver_now_bookable') return '/caregiver/jobs';
+
   // A new review lives on the caregiver's own profile page (Reviews card) — it used to fall through to the dashboard (2026-10-07).
   if (t === 'review_received') return '/caregiver/profile?section=reviews';
+  // onboarding_reminder ("pick up on your dashboard") and anything unknown → the dashboard.
   return '/caregiver/dashboard';
 }

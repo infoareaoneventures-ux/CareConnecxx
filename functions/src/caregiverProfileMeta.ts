@@ -104,7 +104,7 @@ export function buildProfileMeta(
   const parts: string[] = [];
   const bg = (cg.backgroundCheckStatus ?? "") as string;
   // Requirement-framed, never a quality claim (marketplace wording rule): what happened, not what we concluded.
-  const titleCase = (v: string) => v.replace(/w/g, (ch) => ch.toUpperCase());
+  const titleCase = (v: string) => v.toLowerCase().replace(/(^|[\s-])([a-z])/g, (_m, pre: string, ch: string) => pre + ch.toUpperCase());
   const cityRaw = typeof cg.city === "string" && cg.city.trim() ? titleCase(cg.city.trim()) : "";
   const state = typeof cg.state === "string" && cg.state.trim() ? cg.state.trim().toUpperCase() : "";
   const city = [cityRaw, state].filter(Boolean).join(", ");

@@ -40,6 +40,8 @@ describe("buildProfileMeta", () => {
     });
     expect(meta.title).toBe("Maria Gonzalez — Care Provider on Evia");
     expect(meta.description).toContain("Care provider in San Jose, CA who has completed a background check");
+    // A city stored lowercase ("san jose", as Evia-onboarded records carry it) renders title-cased (2026-10-12).
+    expect(buildProfileMeta("cg1", { name: "Mahad", city: "san jose", state: "ca", backgroundCheckStatus: "clear" }).description).toContain("Care provider in San Jose, CA who has completed a background check");
     expect(meta.description).toContain("$28/hr");
     expect(meta.description).toContain("5 years experience");
     expect(meta.description).toContain("Dementia care, Mobility support, Meal prep");

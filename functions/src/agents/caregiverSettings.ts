@@ -140,10 +140,14 @@ export async function sendResendEmailLink(chatId: string, caregiverId: string): 
   }
 }
 
-/** The page's Reactivate button — the same shared write its queue action calls, the page's toast. (Pause parks the confirm flow — see handleSettingsKeyword.) */
-export async function reactivateFromSettings(chatId: string, caregiverId: string): Promise<boolean> {
+/**
+ * The page's Reactivate button — the same shared write its queue action calls, the page's toast.
+ * (Pause parks the confirm flow — see handleSettingsKeyword.) The line below is this door's own
+ * confirmation, so the write stamps the session (phone) and the lifecycle notice keeps the bell only (B7).
+ */
+export async function reactivateFromSettings(chatId: string, caregiverId: string, phone?: string): Promise<boolean> {
   const { reactivateCaregiver } = await import("./pauseAccount");
-  await reactivateCaregiver(caregiverId);
+  await reactivateCaregiver(caregiverId, { phone });
   await sendMessage(chatId, "You're active again — you'll start showing up for new matches.");
   return true;
 }
@@ -172,6 +176,6 @@ export async function handleSettingsKeyword(phone: string, chatId: string, careg
     await sendMessage(chatId, `Pause your account until ${until}? You won't receive job matches during this time. Reply YES to pause, or NO to cancel.`);
     return "handled";
   }
-  if (upper === "REACTIVATE" || upper === "REACTIVATE ACCOUNT" || upper === "UNPAUSE") { await reactivateFromSettings(chatId, caregiverId); return "handled"; }
+  if (upper === "REACTIVATE" || upper === "REACTIVATE ACCOUNT" || upper === "UNPAUSE") { await reactivateFromSettings(chatId, caregiverId, phone); return "handled"; }
   return "passthrough";
 }

@@ -12,7 +12,7 @@ vi.mock("../userNotification", () => ({ writeUserNotification: vi.fn(async () =>
 vi.mock("../../config/appUrl", () => ({ appLink: (p: string) => `https://eviacares.com${p}` }));
 vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(async () => undefined) }));
 
-import { caregiverAccountEventCopy , lifecycleTextOwnedByGate } from "../caregiverAccountEvents";
+import { caregiverAccountEventCopy, caregiverAccountEventBellType, lifecycleTextOwnedByGate } from "../caregiverAccountEvents";
 
 const TAB = "https://eviacares.com/caregiver/settings";
 
@@ -50,6 +50,16 @@ describe("caregiverAccountEventCopy — membership notices", () => {
     }
   });
 
+  it("renewed without this year's refresh (B8, 2026-10-11): the charge alone, the invoice amount, the next billing date — legacy monthly plans get the same text as annual", () => {
+    const monthly = caregiverAccountEventCopy("membership_renewed", { amount: "24.95", date: "Wednesday, November 11", checkRefresh: false });
+    expect(monthly.title).toBe("Membership renewed");
+    expect(monthly.text).toBe("Your Evia membership renewed — $24.95 was charged to your card on file. Next billing date: Wednesday, November 11.");
+    expect(monthly.body).toBe(`Your Evia membership renewed — $24.95 was charged to your card on file. Next billing date: Wednesday, November 11. ${TAB}`);
+    expect(monthly.text).not.toMatch(/annual|background check|bgcheck/i);
+    // No amount on the invoice → still a sentence, never "$undefined".
+    expect(caregiverAccountEventCopy("membership_renewed", { checkRefresh: false }).text).toBe("Your Evia membership renewed.");
+  });
+
   it("reactivated has one wording for bell and text", () => {
     const r = caregiverAccountEventCopy("membership_reactivated", { date: "Monday, March 3" });
     expect(r.body).toBe("Your Evia membership is active again. Next billing date: Monday, March 3.");
@@ -85,6 +95,33 @@ describe("caregiverAccountEventCopy — membership notices", () => {
   });
 });
 
+describe("caregiverAccountEventCopy — account paused / reactivated (B7, 2026-10-11)", () => {
+  it("paused until a date: the page's sentence; bell → Settings (the Reactivate button), text → the REACTIVATE keyword; nothing existing is touched", () => {
+    const c = caregiverAccountEventCopy("account_paused", { date: "2026-11-01" });
+    expect(c.title).toBe("Your account is paused");
+    expect(c.text).toBe("Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime — reply REACTIVATE.");
+    expect(c.body).toBe(`Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime: ${TAB}`);
+    expect(c.text).not.toMatch(/SETTINGS/);
+  });
+  it("paused with no end date: until you reactivate", () => {
+    const c = caregiverAccountEventCopy("account_paused", { indefinite: true });
+    expect(c.text).toBe("Your account is paused until you reactivate. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate anytime — reply REACTIVATE.");
+    expect(c.body).toContain(TAB);
+  });
+  it("reactivated: one wording for bell and text", () => {
+    const c = caregiverAccountEventCopy("account_reactivated");
+    expect(c.title).toBe("You're active again");
+    expect(c.body).toBe("You're active again — you'll show up for new matches.");
+    expect(c.text).toBeUndefined();
+  });
+  it("the bell type is account_<…> (both bell maps route startsWith('account') to /caregiver/settings); every other kind keeps caregiver_<kind>", () => {
+    expect(caregiverAccountEventBellType("account_paused")).toBe("account_paused");
+    expect(caregiverAccountEventBellType("account_reactivated")).toBe("account_reactivated");
+    expect(caregiverAccountEventBellType("membership_renewed")).toBe("caregiver_membership_renewed");
+    expect(caregiverAccountEventBellType("now_bookable")).toBe("caregiver_now_bookable");
+  });
+});
+
 describe("lifecycleTextOwnedByGate — one text per gate (2026-10-04)", () => {
   const now = Date.parse("2026-10-04T12:00:00Z");
   it("membership_paid stands down only after an Evia-checkout payment (fresh membershipRecordedAt)", () => {
@@ -98,6 +135,15 @@ describe("lifecycleTextOwnedByGate — one text per gate (2026-10-04)", () => {
       expect(lifecycleTextOwnedByGate("bgcheck_clear", { onboardingStep: step }, now)).toBe(true);
     }
     expect(lifecycleTextOwnedByGate("bgcheck_clear", { onboardingStep: "complete" }, now)).toBe(false);
+  });
+  it("account_paused / account_reactivated stand down only for the door that texted its own line within the window (B7)", () => {
+    const stamp = (kind: string, at: string) => ({ accountNoticeTexted: { kind, at } });
+    expect(lifecycleTextOwnedByGate("account_paused", stamp("account_paused", "2026-10-04T11:59:00Z"), now)).toBe(true);
+    expect(lifecycleTextOwnedByGate("account_reactivated", stamp("account_reactivated", "2026-10-04T11:58:30Z"), now)).toBe(true);
+    expect(lifecycleTextOwnedByGate("account_paused", stamp("account_paused", "2026-10-04T11:50:00Z"), now)).toBe(false); // old stamp = a later site pause
+    expect(lifecycleTextOwnedByGate("account_reactivated", stamp("account_paused", "2026-10-04T11:59:30Z"), now)).toBe(false); // other kind's stamp
+    expect(lifecycleTextOwnedByGate("account_paused", { onboardingStep: "complete" }, now)).toBe(false); // the site's queue never stamps
+    expect(lifecycleTextOwnedByGate("account_paused", undefined, now)).toBe(false);
   });
   it("every other kind still texts", () => {
     expect(lifecycleTextOwnedByGate("membership_renewed", { membershipRecordedAt: "2026-10-04T11:59:00Z", onboardingStep: "caregiver_awaiting_bgcheck" }, now)).toBe(false);

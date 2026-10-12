@@ -367,20 +367,32 @@ export const onBookingAmendmentAccepted = functions.firestore
     }
   });
 
-const SHIFT_REPLACEMENT_RESPONSE_MS = 30 * 60 * 1000; // 30 minutes
-
 /**
  * A single-shift replacement request is urgent by construction (it only ever
  * gets created for a shift within 24h of starting — see ClientVisitsPage.tsx's
  * handleConfirmReplacement). If the picked caregiver hasn't responded within
- * 30 minutes, expire the request so the client can pick someone else instead
- * of being stuck waiting — onBookingAccepted's reopen branch above handles the
- * 'expired' status the same way it handles a decline.
+ * 30 minutes (REPLACEMENT_EXPIRY_MS, pendingDecisionNudge.ts), expire the
+ * request so the client can pick someone else instead of being stuck waiting —
+ * onBookingAccepted's reopen branch above handles the 'expired' status the
+ * same way it handles a decline, and onBookingRequestWrite
+ * (notificationTriggers.ts) tells both sides and takes down the caregiver's
+ * parked ACCEPT (sweep B6, 2026-10-11).
+ *
+ * The same 10-minute sweep runs the caregiver's ONE replacement nudge first
+ * (10 minutes before expiry — the hourly nudge job cannot land inside a
+ * 30-minute window), so a request is never nudged after it has expired.
  */
 export const expireStaleShiftReplacements = functions.pubsub
   .schedule('every 10 minutes')
   .onRun(async () => {
-    const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - SHIFT_REPLACEMENT_RESPONSE_MS);
+    const { REPLACEMENT_EXPIRY_MS, runPendingDecisionNudges } = await import('./pendingDecisionNudge');
+    try {
+      const r = await runPendingDecisionNudges(Date.now(), { only: 'replacement' });
+      if (r.nudged || r.dropped) console.log('[expireStaleShiftReplacements] replacement nudges', r);
+    } catch (err) {
+      console.error('expireStaleShiftReplacements: replacement nudge failed', err);
+    }
+    const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - REPLACEMENT_EXPIRY_MS);
     const staleSnap = await db.collection('booking_requests')
       .where('isShiftReplacement', '==', true)
       .where('status', '==', 'pending')

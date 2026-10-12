@@ -65,7 +65,7 @@ export function joinVideoCallUrl(iv: Doc, status: InterviewTabStatus): string | 
 
 export type InterviewAction =
   | "Details" | "Accept" | "Decline" | "Cancel" | "Propose new time" | "Reschedule"
-  | "Propose different time" | "Accept new time" | "Join video call"
+  | "Propose different time" | "Keep current time" | "Accept new time" | "Join video call"
   | "Activate Membership" | "Complete Verification";
 
 /**
@@ -82,13 +82,15 @@ export function interviewActions(
   const actions: InterviewAction[] = ["Details"];
   if (join) actions.push("Join video call");
   if (status === "pending" && gate) {
+    // Keep current time stays under the gate like Decline (B5, 2026-10-11) — it is a decline.
+    if (proposal?.by === "client") actions.push("Keep current time");
     actions.push("Decline", gate === "membership" ? "Activate Membership" : "Complete Verification");
     return actions;
   }
   if (status === "pending" || status === "accepted" || status === "confirmed") {
     const endAction: InterviewAction = status === "pending" ? "Decline" : "Cancel";
     if (proposal?.by === "caregiver") { actions.push(endAction); return actions; }          // own proposal out: only end it
-    if (proposal?.by === "client") { actions.push("Propose different time", endAction, "Accept new time"); return actions; }
+    if (proposal?.by === "client") { actions.push("Propose different time", "Keep current time", endAction, "Accept new time"); return actions; }
     if (status === "pending") { actions.push("Propose new time", "Decline", "Accept"); return actions; }
     actions.push("Reschedule", "Cancel");
     return actions;

@@ -272,7 +272,8 @@ export function interviewDetailText(row: CaregiverInterviewRow, job: Doc | null)
     if (a === "Accept") acts.push("Reply ACCEPT to accept");
     else if (a === "Decline") acts.push("DECLINE to decline");
     else if (a === "Propose different time") acts.push("or tell me a different time to propose");
-    else if (a === "Accept new time") acts.push("Reply ACCEPT to take the new time, or DECLINE");
+    else if (a === "Accept new time") acts.push("Reply CONFIRM to take the new time");
+    else if (a === "Keep current time") acts.push("KEEP to keep the current time");
     else if (a === "Join video call" && row.joinVideoCall) acts.push(`Join: ${row.joinVideoCall}`);
     else if (a === "Cancel") acts.push("Tell me if you need to cancel this interview");
     else if (a === "Activate Membership" || a === "Complete Verification") acts.push(caregiverGateText(a === "Activate Membership" ? "membership" : "background"));

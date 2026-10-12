@@ -92,6 +92,8 @@ export type AuditEventType =
   | "interview_cancelled"
   | "interview_rescheduled"
   | "interview_reschedule_accepted"
+  // Keep current time on the other side's proposal (caregiver sweep B5, 2026-10-11)
+  | "interview_time_kept"
   | "memory_file_deleted"
   | "cash_payment_confirmed"
   // Memory-grounding U4b: durable completion records for cross-store fact

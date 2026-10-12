@@ -22,6 +22,7 @@ const CLIENT_CASES: Array<[Record<string, unknown>, string]> = [
   [{ type: "alert", transitionType: "shift_cancelled_by_caregiver", data: { appointmentId: "a1" } }, "/client/bookings?tab=active"],
   [{ type: "booking", transitionType: "booking_confirmed" }, "/client/bookings?tab=active"],
   [{ type: "booking_accepted" }, "/client/bookings?tab=active"],
+  [{ type: "booking_request_expired", data: { bookingId: "rep1", shiftId: "s9" } }, "/client/bookings?tab=active"], // B6: the visit's Find replacement button is back
   [{ type: "shift_hours_payment_failed" }, "/client/payments"],
   [{ type: "shift_hours_approved" }, "/client/payments"],
   [{ type: "shift_hours_counter_proposed" }, "/client/payments"],
@@ -65,6 +66,7 @@ const CAREGIVER_CASES: Array<[Record<string, unknown>, string]> = [
   [{ type: "caregiver_payouts_enabled" }, "/caregiver/payments?tab=payouts"],
   [{ type: "booking_request" }, "/caregiver/bookings?tab=requests"],
   [{ type: "booking_cancelled" }, "/caregiver/bookings?tab=requests"],
+  [{ type: "booking_request_expired" }, "/caregiver/bookings?tab=requests"], // B6: an expired replacement request (the Requests tab is where it sat)
   [{ type: "amendment_request" }, "/caregiver/bookings?tab=requests"],
   [{ type: "amendment_cancelled" }, "/caregiver/bookings?tab=requests"],
   [{ type: "shift_cancelled", data: { shiftId: "s1" } }, "/caregiver/bookings?tab=active&visit=s1"],

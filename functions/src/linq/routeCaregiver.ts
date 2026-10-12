@@ -59,6 +59,7 @@ const PAGE_KEYWORDS: ReadonlySet<string> = new Set([
   "PAYOUTS", "PAYOUT", "SETUP", "MORE",
   "TIMESHEETS", "PENDING", "HISTORY", "REPORT",
   "LATE",
+  "JOBS",
 ]);
 
 /** The agent's last outbound, when it ended with a question inside the window; else null. */
@@ -225,7 +226,9 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // A notice that ended in "Reply ACCEPT or DECLINE" parked the expected
     // decision; a plain reply runs the page's own write here — no tool choice,
     // no id, no guessing. Anything else falls through with the decision parked.
-    if ((session as any).pendingDecision) {
+    // A notice whose record EXPIRED (a 30-minute replacement request, B6) leaves
+    // an expired marker instead: a late ACCEPT gets "it expired", never a write.
+    if ((session as any).pendingDecision || (session as any).expiredDecision) {
       const { handlePendingDecisionReply } = await import("../agents/decisionNotices");
       if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
       try {
@@ -244,6 +247,16 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (inShift === "handled") return "handled";
     }
 
+    // ── WITHDRAW — the Active Bookings strip's Withdraw on a proposal you sent (agents/caregiverShiftProposal.ts, B4) ──
+    // One proposal out → withdrawn; several → "Which visit?" (a number or the
+    // family's name picks; CANCEL / NO backs out), parked on the session and
+    // answered here before any page keyword.
+    if (session.caregiverId) {
+      const { handleWithdrawKeyword } = await import("../agents/caregiverShiftProposal");
+      const wd = await handleWithdrawKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>, { say: (m) => sendMessage(chatId, m) });
+      if (wd === "handled") return "handled";
+    }
+
     // ── Visit mode — free text while a visit is IN PROGRESS (agents/visitMode.ts, 2026-10-07) ──
     // Read against the open visit before any other page's keywords, flow or the
     // intent classifier can claim it ("I'm done with the visit" used to become
@@ -260,6 +273,17 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     if (session.caregiverId && PAGE_KEYWORDS.has(norm)) {
       const parked = await lastParkedAgentQuestion(phone).catch(() => null);
       if (parked && await keywordAnswersParkedQuestion(parked, text)) return "fallthrough";
+    }
+
+    // ── JOBS · JOBS <words> · MORE · JOB n · HIDE n · APPLY TO n — the Jobs page's Available Jobs tab (agents/jobBoardText.ts, B3) ──
+    // JOBS alone = the page as it opens; the words after JOBS set the sidebar
+    // (values from the quick model, validated against the page's options);
+    // MORE / the numbered picks index the list that was texted while it is the
+    // newest list.
+    if (session.caregiverId) {
+      const { handleJobsKeyword } = await import("../agents/jobBoardText");
+      const jb = await handleJobsKeyword(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (jb === "handled") return "handled";
     }
 
     // ── FAMILIES · PAST FAMILIES · FAMILY n — the My Families page (agents/caregiverFamilies.ts) ──
@@ -406,6 +430,16 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // (The Cancel-shift, profile-editor and Cash Out confirm resumes that used to
     // sit here — AFTER the page keywords — moved to the parked-page-flows block
     // at the top of this router on 2026-10-11; see PARKED_FLOW_ORDER.)
+
+    // ── "only weekends" / "over $25" right after the job list — the sidebar narrowed (agents/jobBoardText.ts, B3) ──
+    // Only while the job list is the newest list texted (2h window), and only
+    // when the quick model reads the text as a filter change; a bare number
+    // never is. After every page keyword so a page word still opens its page.
+    if (session.caregiverId) {
+      const { handleJobsFilterFollowUp } = await import("../agents/jobBoardText");
+      const fu = await handleJobsFilterFollowUp(phone, chatId, session.caregiverId, text, session as unknown as Record<string, unknown>);
+      if (fu === "handled") return "handled";
+    }
 
     // ── "running about 10 minutes late" in plain words → relayed verbatim ──
     // Only LATE is inferred here (2026-09-28): arriving / finishing a visit is

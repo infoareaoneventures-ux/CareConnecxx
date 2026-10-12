@@ -18,6 +18,13 @@ const hoisted = vi.hoisted(() => {
     id: path.split("/").pop(),
     path,
     get: async () => ({ exists: docState.has(path), data: () => docState.get(path) }),
+    // The session stamp (a parked decision) and the expiry clear write here.
+    set: async (data: any, opts?: any) => { docState.set(path, opts?.merge ? { ...(docState.get(path) ?? {}), ...data } : data); },
+    update: async (data: any) => {
+      const next = { ...(docState.get(path) ?? {}) };
+      for (const [k, v] of Object.entries(data)) { if ((v as any)?.__delete) delete next[k]; else next[k] = v; }
+      docState.set(path, next);
+    },
     collection: (sub: string) => makeCollRef(`${path}/${sub}`),
   });
   const makeCollRef = (path: string): any => ({
@@ -34,7 +41,7 @@ vi.mock("firebase-admin", () => ({
   __esModule: true,
   default: { firestore: () => hoisted.dbMock },
   firestore: Object.assign(() => hoisted.dbMock, {
-    FieldValue: { serverTimestamp: () => ({ __serverTimestamp: true }) },
+    FieldValue: { serverTimestamp: () => ({ __serverTimestamp: true }), delete: () => ({ __delete: true }) },
   }),
 }));
 
@@ -54,6 +61,16 @@ vi.mock("../../linq/client", () => ({ sendToPhone: (...a: unknown[]) => sendToPh
 
 const writeUserNotification = vi.fn().mockResolvedValue(true);
 vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: (...a: unknown[]) => writeUserNotification(...a) }));
+
+// The caregiver's phone for the expiry clear (B6) — users/{uid}.phone, as resolveCaregiverPhone reads it.
+vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(async (id: string) => (id === "cg1" ? "+15550001111" : undefined)) }));
+// Decision notices: the real park shape (asserted below), the expiry take-down spied.
+const expireParkedDecision = vi.fn(async (..._a: any[]) => ({ wasParked: true }));
+vi.mock("../../agents/decisionNotices", () => ({
+  parkDecision: (pd: any) => ({ pendingDecision: pd }),
+  parkedDecision: (kind: string, recordId: string, label: string, role: string, _now?: number, party?: string) => ({ kind, recordId, label, role, ...(party ? { party } : {}), options: kind === "shift_proposal" ? ["ACCEPT", "DECLINE", "PROPOSE"] : ["ACCEPT", "DECLINE"] }),
+  expireParkedDecision: (...a: any[]) => expireParkedDecision(...a),
+}));
 
 import {
   onBookingRequestWrite,
@@ -79,6 +96,7 @@ beforeEach(() => {
   sendViaInteractionAgent.mockClear();
   sendToPhone.mockClear();
   writeUserNotification.mockClear();
+  expireParkedDecision.mockClear();
   hoisted.docState.set(`caregivers/${CAREGIVER}`, { phone: "+15550001111" });
   hoisted.docState.set(`users/${CLIENT}`, { phone: "+15550002222" });
   // sendTransactionalText (2026-09-06 fix, second pass) only calls
@@ -420,6 +438,48 @@ describe("onVideoInterviewWrite — SMS parity", () => {
       expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550001111", expect.anything());
     });
 
+    // Keep current time (caregiver sweep B5, 2026-10-11): the proposal cleared,
+    // status and scheduledTime untouched — the write both Interviews tabs, Evia's
+    // KEEP reply and the tool's action:"keep" produce (agents/interviewProposal.ts).
+    // The proposer gets ONE bell + ONE text here; nothing else texts for it.
+    describe("Keep current time — the proposal cleared, same status, same time → the proposer is told once", () => {
+      const keep = (doc: any) => { const { reschedulePendingTime: _p, rescheduledBy: _b, rescheduledViaAgent: _v, ...rest } = doc; return rest; };
+
+      it("the family keeps the time against the caregiver's proposal → the caregiver's bell + text, nothing to the family", async () => {
+        const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z", rescheduledViaAgent: true };
+        await (onVideoInterviewWrite as any)(change(before, "iv1", keep(before)), { params: { interviewId: "iv1" } });
+        const line = "A Family isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM.";
+        expect(sendViaInteractionAgent).toHaveBeenCalledTimes(1);
+        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: line }));
+        expect(writeUserNotification).toHaveBeenCalledTimes(1);
+        expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "interview_rescheduled", title: "Time Change Declined", body: line }));
+        expect(sendToPhone).not.toHaveBeenCalled();
+      });
+
+      it("the caregiver keeps the time against the family's proposal → the family's bell + text, nothing to the caregiver", async () => {
+        const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
+        await (onVideoInterviewWrite as any)(change(before, "iv1", keep(before)), { params: { interviewId: "iv1" } });
+        const line = "Alice isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM.";
+        expect(sendViaInteractionAgent).toHaveBeenCalledTimes(1);
+        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: line }));
+        expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CLIENT, type: "interview_rescheduled", title: "Time Change Declined", body: line }));
+        // Not the accept branch, not the proposal branch.
+        expect(sendViaInteractionAgent).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ content: expect.stringContaining("confirmed the new interview time") }));
+        expect(sendViaInteractionAgent).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ content: expect.stringContaining("proposed a new interview time") }));
+      });
+
+      it("the proposal notices name KEEP and park CONFIRM / KEEP / PROPOSE with the other side's name", async () => {
+        const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z" };
+        await (onVideoInterviewWrite as any)(change(before, "iv1", { ...before, rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" }), { params: { interviewId: "iv1" } });
+        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("Reply CONFIRM, KEEP to keep the current time, or PROPOSE another time.") }));
+        expect(hoisted.docState.get("agent_sessions/+15550001111").pendingDecision).toMatchObject({ kind: "interview_proposal", recordId: "iv1", role: "caregiver", party: "A Family" });
+        sendViaInteractionAgent.mockClear();
+        await (onVideoInterviewWrite as any)(change(before, "iv1", { ...before, rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" }), { params: { interviewId: "iv1" } });
+        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Reply CONFIRM, KEEP to keep the current time, or suggest another time.") }));
+        expect(hoisted.docState.get("agent_sessions/+15550002222").pendingDecision).toMatchObject({ kind: "interview_proposal", recordId: "iv1", role: "client", party: "Alice" });
+      });
+    });
+
     it("does NOT fire when declining clears the proposal instead of accepting it (scheduledTime never changed)", async () => {
       const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
       const after  = { status: "declined", caregiverId: CAREGIVER, clientId: CLIENT, scheduledTime: "2026-09-10T17:00:00.000Z" };
@@ -459,5 +519,81 @@ describe("sendTransactionalText — reliability fix (2026-09-06, second pass)", 
     await (onJobApplicationCreate as any)({ data: () => data }, { params: { applicationId: "app1" } });
     expect(sendViaInteractionAgent).not.toHaveBeenCalled();
     expect(sendToPhone).toHaveBeenCalledWith("+15550002222", expect.stringContaining("applied"));
+  });
+});
+
+// ── Caregiver sweep B1 / B5 / B6 (2026-10-11) ────────────────────────────────
+describe("B1 — the family's proposed visit time parks the strip's reply words on the caregiver", () => {
+  it("names the visit and the proposed time, offers ACCEPT / DECLINE / PROPOSE, parks shift_proposal + lastNoticedShiftId; the bell follows the text", async () => {
+    const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER, clientName: "The Nguyen Family", date: "2099-10-05", startTime: "11:00", endTime: "14:00" };
+    const after  = { ...before, reschedulePendingDate: "2099-10-06", reschedulePendingStartTime: "12:00", reschedulePendingEndTime: "15:00", rescheduledBy: "client" };
+    await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
+    const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111");
+    expect(call?.[1].content).toBe("The Nguyen Family proposed moving your visit on Mon, Oct 5, 11:00 AM–2:00 PM to Tue, Oct 6, 12:00 PM–3:00 PM. Reply ACCEPT or DECLINE, or PROPOSE a different time.");
+    const sess = hoisted.docState.get("agent_sessions/+15550001111");
+    expect(sess.lastNoticedShiftId).toBe("s1");
+    expect(sess.pendingDecision).toMatchObject({ kind: "shift_proposal", recordId: "s1", role: "caregiver", party: "The Nguyen Family", options: ["ACCEPT", "DECLINE", "PROPOSE"] });
+    expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "shift_rescheduled", title: "New Time Proposed", data: { shiftId: "s1" } }));
+    expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
+  });
+});
+
+describe("B5 — an interview proposal declined/withdrawn outright (same status, same scheduledTime) tells whoever proposed it", () => {
+  const kept = "2099-09-10T17:00:00.000Z";
+  it("the family clears the caregiver's proposal → the caregiver is told the time stands (bell + text, Jobs › Interviews)", async () => {
+    const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "The Nguyen Family", scheduledTime: kept, rescheduledBy: "caregiver", reschedulePendingTime: "2099-09-14T18:00:00.000Z" };
+    const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "The Nguyen Family", scheduledTime: kept };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" }, eventId: "e1" });
+    const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111");
+    expect(call?.[1].content).toMatch(/^The Nguyen Family isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM\.$/);
+    expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "interview_rescheduled", title: "Time Change Declined", body: call?.[1].content, transitionType: "interview_time_declined:2099-09-14T18:00:00.000Z" }));
+    expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
+  });
+  it("the mirror: the caregiver clears the family's proposal → the family is told", async () => {
+    const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: kept, rescheduledBy: "client", reschedulePendingTime: "2099-09-14T18:00:00.000Z" };
+    const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: kept };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" }, eventId: "e1" });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringMatching(/^Alice isn't able to move the interview — it's staying at /) }));
+    expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CLIENT, type: "interview_rescheduled", title: "Time Change Declined" }));
+    expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550001111", expect.anything());
+  });
+  it("does NOT fire when the proposal clears as part of a decline / cancel / complete of the whole interview (those branches own that)", async () => {
+    const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: kept, rescheduledBy: "caregiver", reschedulePendingTime: "2099-09-14T18:00:00.000Z" };
+    const after  = { status: "cancelled", cancelledBy: "client", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: kept };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" }, eventId: "e1" });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ content: expect.stringContaining("move the interview") }));
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("cancelled") }));
+  });
+});
+
+describe("B6 — a replacement request that expired (30 minutes, nobody answered)", () => {
+  const rep = { isShiftReplacement: true, replacementForShiftId: "shift-9", caregiverId: CAREGIVER, caregiverName: "Alice", clientId: CLIENT, clientName: "The Nguyen Family", schedule: { startDate: "2099-10-06", dayShiftTimes: { Tue: [{ start: "12:00", end: "15:00" }] } } };
+  it("the caregiver gets ONE factual sentence (text, then the bell) and her parked ACCEPT is taken down with the expired line", async () => {
+    await (onBookingRequestWrite as any)(change({ ...rep, status: "pending" }, "rep1", { ...rep, status: "expired" }), { params: { bookingId: "rep1" }, eventId: "e1" });
+    const line = "The Nguyen Family's replacement request for the visit on October 6, 2099 at 12:00 PM has expired — no reply came in time, so nothing was sent.";
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: line, urgency: "immediate", canDrop: false }));
+    expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "booking_request_expired", title: "Replacement Request Expired", body: line, data: { bookingId: "rep1" }, transitionType: "booking_request_expired" }));
+    expect(expireParkedDecision).toHaveBeenCalledWith("+15550001111", "rep1", { kind: "booking_request", line: "The Nguyen Family's replacement request has expired — nothing was sent." });
+    // The park comes down before the text (the record IS expired, whatever the send does).
+    expect(expireParkedDecision.mock.invocationCallOrder[0]).toBeLessThan(sendViaInteractionAgent.mock.invocationCallOrder[0]);
+  });
+  it("the family hears it as it happens — find another replacement or skip — routed to the visit", async () => {
+    await (onBookingRequestWrite as any)(change({ ...rep, status: "pending" }, "rep1", { ...rep, status: "expired" }), { params: { bookingId: "rep1" }, eventId: "e1" });
+    const line = "Alice didn't respond to the replacement request on October 6, 2099 at 12:00 PM in time — find another replacement or skip that visit.";
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: line }));
+    expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CLIENT, type: "booking_request_expired", body: line, data: { bookingId: "rep1", shiftId: "shift-9" } }));
+  });
+  it("a plain (non-replacement) request never expires through this branch, and a dropped text writes no bell", async () => {
+    await (onBookingRequestWrite as any)(change({ caregiverId: CAREGIVER, clientId: CLIENT, status: "pending" }, "br1", { caregiverId: CAREGIVER, clientId: CLIENT, status: "expired" }), { params: { bookingId: "br1" }, eventId: "e1" });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+    expect(expireParkedDecision).not.toHaveBeenCalled();
+    sendViaInteractionAgent.mockResolvedValueOnce(false);
+    await (onBookingRequestWrite as any)(change({ ...rep, clientId: undefined, status: "pending" }, "rep2", { ...rep, clientId: undefined, status: "expired" }), { params: { bookingId: "rep2" }, eventId: "e2" });
+    expect(writeUserNotification).not.toHaveBeenCalled();
+  });
+  it("the replacement notice itself tells the caregiver the 30-minute clock", async () => {
+    await (onBookingRequestWrite as any)(change(null, "rep1", { ...rep, status: "pending" }), { params: { bookingId: "rep1" }, eventId: "e1" });
+    const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111");
+    expect(call?.[1].content.endsWith("Reply ACCEPT or DECLINE. This request expires in 30 minutes.")).toBe(true);
   });
 });

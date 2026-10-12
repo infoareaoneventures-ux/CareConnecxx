@@ -40,7 +40,6 @@ const ALLOWED_PRICE_IDS = [
   // Older prices ($66.49 → $54.99) are archived in Stripe; existing
   // subscriptions keep billing on them, but new checkouts must not use them.
   CAREGIVER_ANNUAL_PRICE_ID,
-  process.env.STRIPE_CAREGIVER_MONTHLY    || '',
   MEMBERSHIP_PRICE_ID,
 ].filter(Boolean);
 
@@ -610,11 +609,18 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     return;
   }
 
-  // …and only for an ANNUAL plan. `subscription_cycle` fires on EVERY renewal
-  // regardless of interval, so a monthly caregiver plan (legacy $24.95 /
-  // STRIPE_CAREGIVER_MONTHLY, still allowed) would buy a Checkr check every
-  // month AND strip `verified` 12x/yr. The background check is annual; gate on
-  // the price interval, not the price ID (robust to price-ID drift).
+  // …and only for an ANNUAL plan. Caregiver membership is yearly only (founder,
+  // 2026-09-25; the monthly caregiver plan was removed from the code
+  // 2026-10-11 — no caregiver ever billed on it). `subscription_cycle` fires on
+  // every renewal regardless of interval, so the interval is still the gate for
+  // the yearly Checkr refresh (a safety check, robust to price-ID drift).
+  //
+  // The renewal CHARGE is told on every caregiver renewal (caregiver sweep B8,
+  // 2026-10-11): keyed on the subscription being a caregiver membership (the
+  // record, or the plan family on the subscription), the amount from the
+  // invoice — never a hard-coded price. A family's renewal was already told
+  // above and is untouched here.
+  const caregiverPlan = isCaregiverMember || isCaregiverMembershipSubscription(subscription);
   const renewalInterval = subscription.items?.data?.[0]?.price?.recurring?.interval;
   if (renewalInterval !== 'year') {
     console.log(`Renewal for ${userId} is interval='${renewalInterval}', not annual — skipping Checkr re-initiation`);
@@ -630,12 +636,40 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
   const { requestBackgroundCheckConsent } = await import('./bgcheckConsentRequest');
   const asked = await requestBackgroundCheckConsent(userId, 'renewal')
     .catch((err) => { console.error(`requestBackgroundCheckConsent(renewal) failed for ${userId}:`, err); return false; });
-  if (asked) {
-    const { notifyCaregiverAccountEvent } = await import('./notifications/caregiverAccountEvents');
-    await notifyCaregiverAccountEvent(userId, 'membership_renewed', { eventId: `invoice:${invoice.id}`, ctx: { amount: amountPaid } })
-      .catch((err) => console.error(`membership_renewed notice failed for ${userId}:`, err));
+  // Asked → the renewed text carries this year's consent ask; not asked but a caregiver
+  // plan (a refresh already waiting, a clear younger than ~10 months) → the charge alone (B8).
+  if (caregiverPlan) await notifyCaregiverRenewalCharge(userId, invoice, amountPaid, asked);
+  console.log(`Annual renewal for caregiver ${userId} — ${asked ? 'consent requested for the yearly background check' : (caregiverPlan ? 'refresh not due, charge told' : 'no caregiver record, nothing to refresh')}`);
+}
+
+/**
+ * Pure (B8): is this subscription a caregiver membership by its plan family —
+ * the metadata both checkout origins write (`kind: caregiver_membership`,
+ * caregiverMembershipBilling.ts) or the flat annual caregiver price id (the
+ * only caregiver plan — yearly, founder 2026-09-25). The caregiver record is
+ * the first signal; this is the belt for a record that is missing or not yet
+ * mirrored.
+ */
+export function isCaregiverMembershipSubscription(subscription: Pick<Stripe.Subscription, 'metadata' | 'items'>): boolean {
+  const meta = (subscription.metadata ?? {}) as Record<string, string | undefined>;
+  if (meta.kind === 'caregiver_membership' || meta.task === 'caregiver_membership') return true;
+  const caregiverPriceIds = new Set([CAREGIVER_ANNUAL_PRICE_ID].filter(Boolean));
+  for (const item of subscription.items?.data ?? []) {
+    const price = item.price as Stripe.Price | undefined;
+    if (price?.id && caregiverPriceIds.has(price.id)) return true;
+    const pm = (price?.metadata ?? {}) as Record<string, string | undefined>;
+    if (pm.plan === 'caregiver_membership' || pm.role === 'caregiver' || pm.audience === 'caregiver') return true;
   }
-  console.log(`Annual renewal for caregiver ${userId} — ${asked ? 'consent requested for the yearly background check' : 'no caregiver record, nothing to refresh'}`);
+  return false;
+}
+
+/** One bell + one text for a caregiver renewal charge (notifications/caregiverAccountEvents.ts, keyed on the invoice). */
+async function notifyCaregiverRenewalCharge(userId: string, invoice: Stripe.Invoice, amountPaid: string, checkRefresh: boolean): Promise<void> {
+  const { notifyCaregiverAccountEvent } = await import('./notifications/caregiverAccountEvents');
+  await notifyCaregiverAccountEvent(userId, 'membership_renewed', {
+    eventId: `invoice:${invoice.id}`,
+    ctx: { amount: amountPaid, ...(checkRefresh ? {} : { checkRefresh: false, date: membershipDay(invoice.period_end) }) },
+  }).catch((err) => console.error(`membership_renewed notice failed for ${userId}:`, err));
 }
 
 /**

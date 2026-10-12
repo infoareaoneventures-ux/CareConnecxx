@@ -74,6 +74,7 @@ vi.mock("firebase-admin", () => {
 import {
   normalizeJobPost, rateLabel, frequencyLabel, dateLabel, hoursLabel, passesJobBoardFilters,
   withinCaregiverRadius, loadAvailableJobs, loadJobDetails, setJobHidden, loadHiddenJobs, jobCardLine, buildJobCard,
+  normalizeJobBoardFilters, hasJobBoardFilters, jobBoardFiltersLabel, applyJobBoardFilters,
 } from "../jobBoardPage";
 
 // San Jose (0.2 mi), Santa Clara (~3.9 mi), Sacramento (~90 mi) from the caregiver.
@@ -274,5 +275,83 @@ describe("hide / unhide — shared with the website via caregivers/{uid}.hiddenJ
     expect(await loadHiddenJobs("cg1")).toEqual([{ jobId: "j1", title: "Senior care", location: "San Jose, CA", rate: "$25/hr" }]);
     await setJobHidden("cg1", "j1", false);
     expect(hoisted.docState.get("caregivers/cg1").hiddenJobIds).toEqual(["j2"]);
+  });
+});
+
+// ── B3 (2026-10-11): the sidebar over text — values validated against the page's option sets ──
+describe("normalizeJobBoardFilters — only the sidebar's own values survive", () => {
+  it("keeps the page's option sets, normalizes day / care-type spellings, drops the rest", () => {
+    expect(normalizeJobBoardFilters({
+      search: "  san jose  ", payMin: "25", payMax: 40,
+      timeOfDay: ["Morning", "night", "overnight"],
+      days: ["Saturday", "sun", "Funday", "Mon"],
+      seniors: ["2", "3", "9"],
+      careTypes: ["companionship", "Medication Reminders Only", "Hair Styling"],
+    })).toEqual({
+      search: "san jose", payMin: 25, payMax: 40,
+      timeOfDay: ["morning", "overnight"],
+      days: ["Sat", "Sun", "Mon"],
+      seniors: ["2", "3+"],
+      careTypes: ["Companionship", "Medication Reminders"],
+    });
+  });
+  it("empty / junk / negative / unknown keys → the default view ({}); a distance key is ignored (the page has no distance control)", () => {
+    expect(normalizeJobBoardFilters(undefined)).toEqual({});
+    expect(normalizeJobBoardFilters("morning")).toEqual({});
+    expect(normalizeJobBoardFilters({ radiusMiles: 5, within: "5 miles", payMin: -3, payMax: "lots", timeOfDay: "dawn", days: [], search: "   " })).toEqual({});
+    expect(hasJobBoardFilters({})).toBe(false);
+    expect(hasJobBoardFilters({ payMax: 0 })).toBe(true);
+    expect(hasJobBoardFilters(normalizeJobBoardFilters({ days: ["weekend"] }))).toBe(false); // not a chip — the model sends Sat/Sun
+  });
+  it("a long search string is capped; a single string value is accepted as a one-item list", () => {
+    expect(normalizeJobBoardFilters({ search: "x".repeat(200) }).search).toHaveLength(80);
+    expect(normalizeJobBoardFilters({ timeOfDay: "evening", days: "Fri" })).toEqual({ timeOfDay: ["evening"], days: ["Fri"] });
+  });
+});
+
+describe("jobBoardFiltersLabel — the header names the sidebar set in its own words", () => {
+  it("joins every set control", () => {
+    expect(jobBoardFiltersLabel({ search: "san jose", payMin: 25, timeOfDay: ["morning", "evening"], days: ["Sat", "Sun"], seniors: ["1", "3+"], careTypes: ["Medication Reminders", "Companionship"] }))
+      .toBe('"san jose", $25+/hr, Morning, Evening, Sat, Sun, 1 senior, 3+ seniors, Medication Reminders Only, Companionship');
+    expect(jobBoardFiltersLabel({ payMax: 30 })).toBe("up to $30/hr");
+    expect(jobBoardFiltersLabel({ payMin: 20, payMax: 30 })).toBe("$20–$30/hr");
+    expect(jobBoardFiltersLabel({})).toBe("");
+    expect(jobBoardFiltersLabel(undefined)).toBe("");
+  });
+});
+
+describe("applyJobBoardFilters — JobBoard.tsx filteredJobs (:510-550) as one pure step", () => {
+  const cg = { latitude: 37.3382, longitude: -121.8863, serviceRadius: 10 };
+  const near = { id: "near", title: "Morning help in San Jose", location: "San Jose, CA", rate: 28, timeOfDay: ["morning"], daysOfWeek: ["Saturday", "Sunday"], recipientsCount: 1, careTypes: ["Companionship"], lat: 37.3382, lng: -121.8863 };
+  const santaClara = { id: "sc", title: "Evening care", location: "Santa Clara, CA", rate: 22, timeOfDay: ["evening"], daysOfWeek: ["Monday"], recipientsCount: 2, careTypes: ["Meal Preparation"], lat: 37.3541, lng: -121.9552 };
+  const far = { id: "far", title: "Weekend mornings", location: "Sacramento, CA", rate: 30, timeOfDay: ["morning"], daysOfWeek: ["Saturday"], careTypes: ["Companionship"], lat: 38.5816, lng: -121.4944 };
+  const noCoords = { id: "nocoords", title: "Overnight sitter", location: "Fremont, CA", rate: 0, rateFlexible: true, timeOfDay: ["overnight"], daysOfWeek: ["Friday", "Saturday"], careTypes: ["Personal Care"] };
+  const jobs = [near, santaClara, far, noCoords];
+  const ids = (list: Array<Record<string, unknown>>) => list.map((j) => j.id);
+
+  it("no filters = the travel-distance rule alone: a far job drops, a job with no coordinates stays (unknown, not excluded)", () => {
+    expect(ids(applyJobBoardFilters(jobs, undefined, cg))).toEqual(["near", "sc", "nocoords"]);
+    expect(ids(applyJobBoardFilters(jobs, {}, cg))).toEqual(["near", "sc", "nocoords"]);
+  });
+  it("no caregiver coords, or no travel distance set → distance never excludes (the page's cgLat && cgLng && cgRadius > 0 guard)", () => {
+    expect(ids(applyJobBoardFilters(jobs, {}, { serviceRadius: 10 }))).toEqual(["near", "sc", "far", "nocoords"]);
+    expect(ids(applyJobBoardFilters(jobs, {}, { ...cg, serviceRadius: 0 }))).toEqual(["near", "sc", "far", "nocoords"]);
+    expect(ids(applyJobBoardFilters(jobs, {}, { lat: cg.latitude, lng: cg.longitude, travelRadius: 10 }))).toEqual(["near", "sc", "nocoords"]); // legacy lat/lng + travelRadius fallbacks
+    expect(ids(applyJobBoardFilters(jobs, {}, { ...cg, serviceRadius: 2 }))).toEqual(["near", "nocoords"]); // Santa Clara is ~3.9 mi out
+  });
+  it("each sidebar control, with the page's comparisons", () => {
+    expect(ids(applyJobBoardFilters(jobs, { search: "SAN JOSE" }, cg))).toEqual(["near"]);          // title/location substring, case-insensitive
+    expect(ids(applyJobBoardFilters(jobs, { payMin: 25 }, cg))).toEqual(["near"]);                  // Flexible (rate 0) is below any minimum
+    expect(ids(applyJobBoardFilters(jobs, { payMax: 22 }, cg))).toEqual(["sc", "nocoords"]);
+    expect(ids(applyJobBoardFilters(jobs, { timeOfDay: ["evening", "overnight"] }, cg))).toEqual(["sc", "nocoords"]); // any overlap
+    expect(ids(applyJobBoardFilters(jobs, { days: ["Sat"] }, cg))).toEqual(["near", "nocoords"]);   // job day startsWith the chip
+    expect(ids(applyJobBoardFilters(jobs, { seniors: ["1"] }, cg))).toEqual(["near", "nocoords"]);  // missing recipientsCount counts as 1
+    expect(ids(applyJobBoardFilters(jobs, { seniors: ["2"] }, cg))).toEqual(["sc"]);
+    expect(ids(applyJobBoardFilters(jobs, { careTypes: ["Personal Care", "Meal Preparation"] }, cg))).toEqual(["sc", "nocoords"]);
+  });
+  it("controls combine with AND, and the distance rule still applies on top", () => {
+    expect(ids(applyJobBoardFilters(jobs, { timeOfDay: ["morning"], days: ["Sat", "Sun"], payMin: 25 }, cg))).toEqual(["near"]);  // far matches every control but is out of range
+    expect(ids(applyJobBoardFilters(jobs, { timeOfDay: ["morning"], days: ["Sat", "Sun"], payMin: 25 }, { serviceRadius: 10 }))).toEqual(["near", "far"]);
+    expect(ids(applyJobBoardFilters(jobs, { timeOfDay: ["morning"], careTypes: ["Meal Preparation"] }, cg))).toEqual([]);
   });
 });

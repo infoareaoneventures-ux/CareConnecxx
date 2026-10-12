@@ -11,13 +11,20 @@
 //   • schedule change  (booking_amendments pending)
 // 24h after the request, then every 48h while it's pending, AT MOST THREE
 // TIMES (day 1, 3, 5 — founder 2026-09-29: a caregiver who ignored three is not
-// accepting on the fourth; replacements: 2h, then every 12h with no cap — they
-// stop when the visit date passes); stops the moment it's answered or withdrawn
-// (the record is no longer pending). Each nudge is the same words
-// as the original notice, texted AND THEN mirrored to the bell (idempotent per
-// window; bell ⇄ text in lockstep — see runPendingDecisionNudges), and re-parks
-// the decision so a plain ACCEPT / DECLINE reply runs the page's button
+// accepting on the fourth); stops the moment it's answered or withdrawn (the
+// record is no longer pending). Each nudge is the same words as the original
+// notice, texted AND THEN mirrored to the bell (idempotent per window; bell ⇄
+// text in lockstep — see runPendingDecisionNudges), and re-parks the decision
+// so a plain ACCEPT / DECLINE reply runs the page's button
 // (agents/decisionNotices.ts).
+//
+// Replacement requests (sweep B6, 2026-10-11): the family's Needs Replacement
+// wait is 30 minutes — the request expires then (shiftGenerator.ts
+// expireStaleShiftReplacements) and the family is free to pick someone else.
+// The old "2h, then every 12h" cycle could never fire inside that window. Now:
+// ONE nudge 10 minutes before expiry (at 20 minutes), never at or after it,
+// run from the same 10-minute sweep that expires them (the hourly job also
+// honours the window but rarely lands in it).
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
@@ -30,8 +37,11 @@ const db = admin.firestore();
 
 export const NUDGE_DELAY_MS       = 24 * 60 * 60 * 1000;
 export const RENUDGE_COOLDOWN_MS  = 48 * 60 * 60 * 1000;
-export const REPLACEMENT_DELAY_MS    = 2 * 60 * 60 * 1000;
-export const REPLACEMENT_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+/** A replacement request expires this long after it is sent (the family's Needs Replacement wait — shiftGenerator.ts reads it from here). */
+export const REPLACEMENT_EXPIRY_MS = 30 * 60 * 1000;
+/** The one replacement nudge lands this long before expiry. */
+export const REPLACEMENT_NUDGE_BEFORE_EXPIRY_MS = 10 * 60 * 1000;
+export const REPLACEMENT_DELAY_MS = REPLACEMENT_EXPIRY_MS - REPLACEMENT_NUDGE_BEFORE_EXPIRY_MS;
 /** Non-replacement requests are nudged at most this many times (founder, 2026-09-29). */
 export const MAX_NUDGES = 3;
 
@@ -40,12 +50,17 @@ export function shouldNudgePendingDecision(p: {
   createdMs: number | null; lastNudgedMs: number | null; nowMs: number; replacement?: boolean; visitDate?: string | null; today?: string; nudgeCount?: number;
 }): boolean {
   if (p.createdMs === null) return false;
-  if (!p.replacement && (p.nudgeCount ?? 0) >= MAX_NUDGES) return false; // three and done
-  const delay = p.replacement ? REPLACEMENT_DELAY_MS : NUDGE_DELAY_MS;
-  const cooldown = p.replacement ? REPLACEMENT_COOLDOWN_MS : RENUDGE_COOLDOWN_MS;
-  if (p.nowMs - p.createdMs < delay) return false;
-  if (p.lastNudgedMs !== null && p.nowMs - p.lastNudgedMs < cooldown) return false;
-  if (p.replacement && p.visitDate && p.today && p.visitDate < p.today) return false; // the visit is gone
+  if (p.replacement) {
+    // One nudge, inside [20 min, 30 min) after the request — never at or after expiry.
+    if ((p.nudgeCount ?? 0) >= 1 || p.lastNudgedMs !== null) return false;
+    const elapsed = p.nowMs - p.createdMs;
+    if (elapsed < REPLACEMENT_DELAY_MS || elapsed >= REPLACEMENT_EXPIRY_MS) return false;
+    if (p.visitDate && p.today && p.visitDate < p.today) return false; // the visit is gone
+    return true;
+  }
+  if ((p.nudgeCount ?? 0) >= MAX_NUDGES) return false; // three and done
+  if (p.nowMs - p.createdMs < NUDGE_DELAY_MS) return false;
+  if (p.lastNudgedMs !== null && p.nowMs - p.lastNudgedMs < RENUDGE_COOLDOWN_MS) return false;
   return true;
 }
 
@@ -86,11 +101,13 @@ const REPLY: Record<string, string> = {
   amendment:         "Reply ACCEPT or DECLINE.",
 };
 
+export interface NudgeLoadOptions { /** Only the replacement requests (the 10-minute expiry sweep's call). */ only?: "replacement" }
+
 /** The three queries, each the tab's own filter, mapped to one shape. */
-export async function loadPendingItems(): Promise<PendingItem[]> {
+export async function loadPendingItems(opts: NudgeLoadOptions = {}): Promise<PendingItem[]> {
   const out: PendingItem[] = [];
   // Interview requests awaiting the caregiver (the Interviews tab's Pending chip).
-  for (const status of ["requested", "scheduled", "pending"]) {
+  for (const status of opts.only === "replacement" ? [] : ["requested", "scheduled", "pending"]) {
     const snap = await db.collection("video_interviews").where("status", "==", status).limit(300).get();
     for (const d of snap.docs) {
       const iv = d.data();
@@ -116,6 +133,7 @@ export async function loadPendingItems(): Promise<PendingItem[]> {
       const b = d.data();
       if (!b.caregiverId) continue;
       const replacement = b.isShiftReplacement === true;
+      if (opts.only === "replacement" && !replacement) continue;
       const client = (b.clientName as string) || "A family";
       const startDate = ((b.schedule as Record<string, unknown> | undefined)?.startDate as string | undefined) ?? null;
       out.push({
@@ -123,14 +141,14 @@ export async function loadPendingItems(): Promise<PendingItem[]> {
         createdMs: toMs(b.updatedAt && b.isResend ? b.updatedAt : b.createdAt), lastNudgedMs: toMs(b.decisionNudgedAt), nudgeCount: Number(b.decisionNudgeCount ?? 0),
         replacement, visitDate: startDate,
         body: replacement
-          ? `${client} needs a replacement caregiver${startDate ? ` on ${formatDateForDisplay(startDate)}` : ""} — the request is still waiting on you.`
+          ? `${client} needs a replacement caregiver${startDate ? ` on ${formatDateForDisplay(startDate)}` : ""} — the request is still waiting on you and expires in ${Math.round(REPLACEMENT_NUDGE_BEFORE_EXPIRY_MS / 60000)} minutes.`
           : `${client}'s booking request is still waiting on you.`,
-        replyLine: REPLY.booking_request, label: `a booking request from ${client}`,
+        replyLine: REPLY.booking_request, label: replacement ? `a replacement request from ${client}` : `a booking request from ${client}`,
       });
     }
   }
   // Schedule changes — the Requests tab's second card.
-  {
+  if (opts.only !== "replacement") {
     const snap = await db.collection("booking_amendments").where("status", "==", "pending").limit(300).get();
     for (const d of snap.docs) {
       const a = d.data();
@@ -165,10 +183,10 @@ export interface PendingDecisionNudgeResult {
 // nudges do (the send layer's dedup and daily cap keep that from becoming spam).
 // ONE exception: a caregiver who texted STOP keeps the bell (the site is then her
 // only channel) and her window is stamped like a sent nudge.
-export async function runPendingDecisionNudges(nowMs = Date.now()): Promise<PendingDecisionNudgeResult> {
+export async function runPendingDecisionNudges(nowMs = Date.now(), opts: NudgeLoadOptions = {}): Promise<PendingDecisionNudgeResult> {
   const result: PendingDecisionNudgeResult = { nudged: 0, bellKeptOptedOut: 0, dropped: 0, skipped: 0 };
   const today = new Date(nowMs).toISOString().slice(0, 10);
-  const items = await loadPendingItems();
+  const items = await loadPendingItems(opts);
   for (const it of items) {
     try {
       if (!shouldNudgePendingDecision({ createdMs: it.createdMs, lastNudgedMs: it.lastNudgedMs, nowMs, replacement: it.replacement, visitDate: it.visitDate, today, nudgeCount: it.nudgeCount })) { result.skipped++; continue; }

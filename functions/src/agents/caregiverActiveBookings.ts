@@ -168,11 +168,15 @@ export function activeCardLines(g: ActiveGroup, opts: { schedulePaused?: boolean
     // The visit's own note (the note on the schedule-change request that
     // created it) — only when it differs from the booking's note above.
     if (s.notes && s.notes !== headerNote) out.push(`  ${String(s.notes)}`);
+    // The strip's buttons as reply words (B1 + B4, 2026-10-11): ACCEPT /
+    // DECLINE / PROPOSE answer a family's proposal (sendCaregiverActiveBookings
+    // parks the decision when exactly one is on screen; otherwise the agent
+    // asks which and runs manage_shift_reschedule), WITHDRAW takes yours back.
     if (s.status === "scheduled" && s.reschedulePendingDate) {
       const when = `${fmtDate(String(s.reschedulePendingDate))}, ${fmtTime(s.reschedulePendingStartTime as string | undefined)}${s.reschedulePendingEndTime ? ` – ${fmtTime(s.reschedulePendingEndTime as string)}` : ""}`;
       out.push(s.rescheduledBy === "client"
-        ? `  ${base.clientName || "The family"} proposed moving this visit to ${when} — reply to accept or decline.`
-        : `  You proposed moving this visit to ${when} — waiting on the family to confirm.`);
+        ? `  ${base.clientName || "The family"} proposed moving this visit to ${when} — reply ACCEPT or DECLINE, or PROPOSE a different time.`
+        : `  You proposed moving this visit to ${when} — waiting on the family to confirm. Reply WITHDRAW to take it back.`);
     }
     // The page's "Show reschedule history (N)" — one line per past change.
     const history = Array.isArray(s.rescheduleHistory) ? (s.rescheduleHistory as Array<Record<string, any>>) : [];
@@ -237,8 +241,18 @@ export async function sendCaregiverActiveBookings(phone: string, chatId: string,
     .sort((a, b) => a.date.localeCompare(b.date) || String(a.startTime ?? "").localeCompare(String(b.startTime ?? "")))
     .map((s) => ({ shiftId: s.id, bookingRequestId: g.key, clientName: String(g.base.clientName ?? ""), date: s.date, startTime: s.startTime ?? null, endTime: s.endTime ?? null, status: shiftDisplayStatus(s) })));
   const items = from > 0 && prev ? [...prev.items.filter((it) => it.number <= from), ...newItems] : newItems;
+  // Exactly one family proposal on screen → park it, so the card's "reply
+  // ACCEPT or DECLINE, or PROPOSE" runs the strip's button (decisionNotices.ts).
+  const proposals = shown.flatMap((g) => g.shifts.filter((s) => s.status === "scheduled" && s.reschedulePendingDate && s.rescheduledBy === "client").map((s) => ({ s, clientName: String(g.base.clientName ?? "") })));
+  let park: Record<string, unknown> = {};
+  if (proposals.length === 1) {
+    const { parkDecision, parkedDecision } = await import("./decisionNotices");
+    const { s, clientName } = proposals[0];
+    const when = `${fmtDate(String(s.reschedulePendingDate))}, ${fmtTime(s.reschedulePendingStartTime as string | undefined)}${s.reschedulePendingEndTime ? ` – ${fmtTime(s.reschedulePendingEndTime as string)}` : ""}`;
+    park = { lastNoticedShiftId: s.id, ...parkDecision(parkedDecision("shift_proposal", s.id, `a new visit time ${clientName || "the family"} proposed (${when})`, "caregiver", Date.now(), clientName || undefined)) };
+  }
   await db.collection("agent_sessions").doc(phone).set(
-    { lastActiveBookingList: { at: new Date().toISOString(), items, offset: from + shown.length, total: groups.length } satisfies LastActiveBookingList },
+    { lastActiveBookingList: { at: new Date().toISOString(), items, offset: from + shown.length, total: groups.length } satisfies LastActiveBookingList, ...park },
     { merge: true },
   ).catch(() => {});
   return { sent: true, count: shown.length, total: groups.length, remaining, items: newItems, visits };

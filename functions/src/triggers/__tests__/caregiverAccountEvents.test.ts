@@ -104,6 +104,34 @@ describe("caregiverAccountTransitions — one event per progress-bar change", ()
     expect(kinds({ ...TRANSPORT, isApprovedDriver: true, documents: { insurance: { status: "pending" } } }, { ...TRANSPORT, isApprovedDriver: true, documents: { insurance: { status: "approved" } } })).toEqual([]);
   });
 
+  it("account paused / reactivated (B7, 2026-10-11): the pausedUntil transition, as every reader compares it", () => {
+    const now = "2026-10-11T12:00:00.000Z";
+    const at = (b: any, a: any) => caregiverAccountTransitions(b, a, now);
+    // unset → a future date = paused until that date; → the sentinel = paused until she reactivates
+    expect(at({}, { pausedUntil: "2026-11-01", pausedAt: now })).toEqual([{ kind: "account_paused", ctx: { date: "2026-11-01" } }]);
+    expect(at({}, { pausedUntil: "2099-12-31", pausedAt: now })).toEqual([{ kind: "account_paused", ctx: { indefinite: true } }]);
+    // a new end date while paused → told again with the new date
+    expect(at({ pausedUntil: "2026-11-01" }, { pausedUntil: "2026-12-01" })).toEqual([{ kind: "account_paused", ctx: { date: "2026-12-01" } }]);
+    // set → unset (reactivateCaregiver deletes the field) = reactivated
+    expect(at({ pausedUntil: "2026-11-01", pausedAt: now }, { reactivatedAt: now })).toEqual([{ kind: "account_reactivated" }]);
+    expect(at({ pausedUntil: "2099-12-31" }, {})).toEqual([{ kind: "account_reactivated" }]);
+    // unrelated writes while paused: nothing
+    expect(at({ pausedUntil: "2026-11-01", bio: "a" }, { pausedUntil: "2026-11-01", bio: "b" })).toEqual([]);
+    // a dated pause expires by comparison — nothing clears pausedUntil on the date, so an unrelated
+    // write with the past date still on the record is not a transition (she was already active)
+    expect(at({ pausedUntil: "2026-09-01", bio: "a" }, { pausedUntil: "2026-09-01", bio: "b" })).toEqual([]);
+    // reactivating an already-expired pause: she was active; nothing to announce
+    expect(at({ pausedUntil: "2026-09-01" }, { reactivatedAt: now })).toEqual([]);
+    // pausing again after an expired dated pause = paused (not "told again")
+    expect(at({ pausedUntil: "2026-09-01" }, { pausedUntil: "2026-11-15" })).toEqual([{ kind: "account_paused", ctx: { date: "2026-11-15" } }]);
+  });
+
+  it("lifting a pause says 'active again', not a second 'you're all set' (bookable is suppressed on reactivation)", () => {
+    const bookable = { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", backgroundCheckStatus: "clear", verified: true };
+    expect(kinds({ ...bookable, pausedUntil: "2099-12-31" }, { ...bookable })).toEqual(["account_reactivated"]);
+    expect(kinds({ ...bookable }, { ...bookable, pausedUntil: "2099-12-31" })).toEqual(["account_paused"]);
+  });
+
   it("payouts enabled / disabled", () => {
     expect(kinds({}, { payoutsEnabled: true, stripeOnboardingComplete: true })).toEqual(["payouts_enabled"]);
     expect(kinds({ payoutsEnabled: true, stripeOnboardingComplete: true }, { payoutsEnabled: false, stripeOnboardingComplete: false })).toEqual(["payouts_disabled"]);
@@ -132,6 +160,31 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
     hoisted.docState.set("users/cg3", { phone: "+15555556666" });
     hoisted.docState.set("agent_sessions/+15555556666", { userId: "cg3", optedOut: true });
     expect(await notifyCaregiverAccountEvent("cg3", "bgcheck_clear", { eventId: "e" })).toEqual({ bell: true, text: false });
+  });
+
+  it("pause from the SITE (queue action, no session stamp): bell typed account_paused + the text; from an Evia door (stamped within the window): bell only — it texted its own line", async () => {
+    hoisted.docState.set("users/cg1", { phone: "+15551112222" });
+    hoisted.docState.set("agent_sessions/+15551112222", { userId: "cg1" });
+    const pauseChange = { before: { data: () => ({ name: "A" }) }, after: { data: () => ({ name: "A", pausedUntil: "2026-11-01", pausedAt: "x" }) } };
+    await (onCaregiverAccountChange as any)(pauseChange, { params: { uid: "cg1" }, eventId: "fs-pause-1" });
+    expect(hoisted.bells.map((b) => [b.type, b.transitionType])).toEqual([["account_paused", "account_paused"]]);
+    expect(hoisted.bells[0].body).toContain("https://eviacares.com/caregiver/settings");
+    expect(hoisted.sent.map((s) => s.content)).toEqual(["Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime — reply REACTIVATE."]);
+    // A retried invocation of the same event sends nothing more.
+    await (onCaregiverAccountChange as any)(pauseChange, { params: { uid: "cg1" }, eventId: "fs-pause-1" });
+    expect(hoisted.sent).toHaveLength(1);
+
+    // Evia's REACTIVATE keyword: pauseAccount.ts stamped the session just before the write.
+    hoisted.docState.set("agent_sessions/+15551112222", { userId: "cg1", accountNoticeTexted: { kind: "account_reactivated", at: new Date().toISOString() } });
+    const reactivateChange = { before: { data: () => ({ name: "A", pausedUntil: "2026-11-01" }) }, after: { data: () => ({ name: "A", reactivatedAt: "y" }) } };
+    await (onCaregiverAccountChange as any)(reactivateChange, { params: { uid: "cg1" }, eventId: "fs-react-1" });
+    expect(hoisted.bells.map((b) => b.type)).toEqual(["account_paused", "account_reactivated"]);
+    expect(hoisted.sent).toHaveLength(1); // no second text: the door's "You're active again…" line already went
+
+    // The same reactivation from the site (no stamp) → text too.
+    hoisted.docState.set("agent_sessions/+15551112222", { userId: "cg1" });
+    await (onCaregiverAccountChange as any)(reactivateChange, { params: { uid: "cg1" }, eventId: "fs-react-2" });
+    expect(hoisted.sent.at(-1)?.content).toBe("You're active again — you'll show up for new matches.");
   });
 
   it("the trigger tells the caregiver each event of a change, keyed on the Firestore event id", async () => {

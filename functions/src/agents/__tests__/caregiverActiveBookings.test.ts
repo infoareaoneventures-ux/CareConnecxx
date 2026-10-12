@@ -38,6 +38,10 @@ vi.mock("firebase-admin", () => {
   return { __esModule: true, default: { firestore }, firestore };
 });
 vi.mock("../../linq/client", () => ({ sendMessage: vi.fn(async (_c: string, m: string) => { hoisted.sent.push(m); return { message_id: "m" }; }) }));
+vi.mock("../decisionNotices", () => ({
+  parkDecision: (pd: any) => ({ pendingDecision: pd }),
+  parkedDecision: (kind: string, recordId: string, label: string, role: string, _now?: number, party?: string) => ({ kind, recordId, label, role, party }),
+}));
 
 import { activeCardLines, groupActiveShifts, baseShift, totalTasksFor, shiftStatusLabel, activeBookingsText, sendCaregiverActiveBookings, EMPTY_TEXT } from "../caregiverActiveBookings";
 
@@ -144,7 +148,10 @@ describe("the card — header, schedule, note, care plan, upcoming visits with t
     const [g] = groupActiveShifts([s]);
     const lines = activeCardLines(g, { schedulePaused: true });
     expect(lines[0]).toBe("Basra Yousuf · Ongoing · Schedule paused — family's membership inactive");
-    expect(lines).toContain("  Basra Yousuf proposed moving this visit to Tue, Oct 6, 2099, 12:00 PM – 3:00 PM — reply to accept or decline.");
+    // B1 / B4 (2026-10-11): the strip's buttons as reply words — a parked decision (family's proposal) / the WITHDRAW keyword (yours).
+    expect(lines).toContain("  Basra Yousuf proposed moving this visit to Tue, Oct 6, 2099, 12:00 PM – 3:00 PM — reply ACCEPT or DECLINE, or PROPOSE a different time.");
+    const mine = shift("r2", { date: "2099-10-05", startTime: "11:00", endTime: "14:00", reschedulePendingDate: "2099-10-07", reschedulePendingStartTime: "09:00", reschedulePendingEndTime: "11:00", rescheduledBy: "caregiver" }) as any;
+    expect(activeCardLines(groupActiveShifts([mine])[0])).toContain("  You proposed moving this visit to Wed, Oct 7, 2099, 9:00 AM – 11:00 AM — waiting on the family to confirm. Reply WITHDRAW to take it back.");
   });
 });
 
@@ -171,6 +178,18 @@ describe("sendCaregiverActiveBookings — 2 cards per text, MORE continues, numb
     expect(r2).toMatchObject({ count: 1, remaining: 0 });
     expect(hoisted.sent[1]).toMatch(/^More bookings:\n\n3\. Fam C · Ongoing\n/);
     expect(hoisted.sent[1]).not.toContain("Reply MORE");
+  });
+  // B1 (2026-10-11): the card's "reply ACCEPT or DECLINE, or PROPOSE" is true — the one proposal on screen is parked.
+  it("parks the family's proposal when exactly ONE is on screen (lastNoticedShiftId + shift_proposal); none when there are several", async () => {
+    hoisted.docs.set("shifts/p1", shift("p1", { date: "2099-10-05", startTime: "11:00", endTime: "14:00", bookingRequestId: "br1", clientName: "Fam A", reschedulePendingDate: "2099-10-06", reschedulePendingStartTime: "12:00", reschedulePendingEndTime: "15:00", rescheduledBy: "client", schedule: { startDate: "2099-10-01", ongoing: true, dayShiftTimes: { Mon: [{ start: "11:00", end: "14:00" }] } } }));
+    hoisted.docs.set("shifts/p2", shift("p2", { date: "2099-10-12", startTime: "11:00", endTime: "14:00", bookingRequestId: "br1", clientName: "Fam A", reschedulePendingDate: "2099-10-13", reschedulePendingStartTime: "09:00", reschedulePendingEndTime: "11:00", rescheduledBy: "caregiver" }));
+    await sendCaregiverActiveBookings("+1", "chat", "cg1");
+    expect(hoisted.sessionWrites[0].data).toMatchObject({ lastNoticedShiftId: "p1", pendingDecision: { kind: "shift_proposal", recordId: "p1", role: "caregiver", party: "Fam A", label: "a new visit time Fam A proposed (Tue, Oct 6, 2099, 12:00 PM – 3:00 PM)" } });
+    hoisted.sessionWrites.length = 0;
+    hoisted.docs.set("shifts/p2", shift("p2", { date: "2099-10-12", startTime: "11:00", endTime: "14:00", bookingRequestId: "br1", clientName: "Fam A", reschedulePendingDate: "2099-10-13", reschedulePendingStartTime: "09:00", reschedulePendingEndTime: "11:00", rescheduledBy: "client" }));
+    await sendCaregiverActiveBookings("+1", "chat", "cg1");
+    expect(hoisted.sessionWrites[0].data.pendingDecision).toBeUndefined();
+    expect(hoisted.sessionWrites[0].data.lastNoticedShiftId).toBeUndefined();
   });
   it("no active shifts → the page's empty state", async () => {
     const r = await sendCaregiverActiveBookings("+1", "chat", "cg1");

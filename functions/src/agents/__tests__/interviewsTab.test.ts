@@ -97,7 +97,7 @@ describe("listClientInterviews", () => {
     iv("theirs", { status: "accepted", scheduledTime: "2026-09-20T21:00:00.000Z", reschedulePendingTime: "2026-09-21T21:00:00.000Z", rescheduledBy: "caregiver" });
     iv("mine",   { status: "accepted", scheduledTime: "2026-09-22T21:00:00.000Z", reschedulePendingTime: "2026-09-23T21:00:00.000Z", rescheduledBy: "client" });
     const byId = Object.fromEntries((await listClientInterviews(C, undefined, NOW)).map((r) => [r.interviewId, r]));
-    expect(byId.theirs.actions).toEqual(["message", "accept_new_time", "propose_time", "cancel"]);
+    expect(byId.theirs.actions).toEqual(["message", "accept_new_time", "keep_current_time", "propose_time", "cancel"]); // Keep current time beside Accept new time (B5, 2026-10-11)
     expect(byId.theirs.rescheduleWaitingOn).toBe("you");
     expect(byId.theirs.reschedulePendingTimeLocal).toBe("Monday, September 21 at 2:00 PM");
     expect(byId.mine.actions).toEqual(["message", "cancel"]);

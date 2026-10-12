@@ -814,7 +814,7 @@ export async function handleTimesheetsKeyword(phone: string, chatId: string, car
 export function listIsLatest(session: Record<string, unknown>): boolean {
   const mine = tsMs((session.lastTimesheetList as LastTimesheetList | undefined)?.at) ?? 0;
   if (!mine) return false;
-  for (const k of ["lastPastBookingList", "lastCalendarList", "lastFamilyList", "lastActiveBookingList", "lastBookingRequestList"]) {
+  for (const k of ["lastPastBookingList", "lastCalendarList", "lastFamilyList", "lastActiveBookingList", "lastBookingRequestList", "lastJobList"]) {
     const other = tsMs((session[k] as { at?: string } | undefined)?.at) ?? 0;
     if (other > mine) return false;
   }

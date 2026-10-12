@@ -62,10 +62,12 @@ describe("pure rules", () => {
     expect(interviewActions("pending", null, "membership", null)).toEqual(["Details", "Decline", "Activate Membership"]);
     expect(interviewActions("pending", null, "background", null)).toEqual(["Details", "Decline", "Complete Verification"]);
     expect(interviewActions("pending", { by: "caregiver" }, null, null)).toEqual(["Details", "Decline"]);
-    expect(interviewActions("pending", { by: "client" }, null, null)).toEqual(["Details", "Propose different time", "Decline", "Accept new time"]);
+    expect(interviewActions("pending", { by: "client" }, null, null)).toEqual(["Details", "Propose different time", "Keep current time", "Decline", "Accept new time"]);
+    // Keep current time stays under the gate like Decline (B5, 2026-10-11) — it is a decline.
+    expect(interviewActions("pending", { by: "client" }, "membership", null)).toEqual(["Details", "Keep current time", "Decline", "Activate Membership"]);
     expect(interviewActions("accepted", null, null, "https://meet.google.com/x")).toEqual(["Details", "Join video call", "Reschedule", "Cancel"]);
     expect(interviewActions("accepted", { by: "caregiver" }, null, null)).toEqual(["Details", "Cancel"]);
-    expect(interviewActions("accepted", { by: "client" }, "membership", null)).toEqual(["Details", "Propose different time", "Cancel", "Accept new time"]); // accepted rows aren't gated
+    expect(interviewActions("accepted", { by: "client" }, "membership", null)).toEqual(["Details", "Propose different time", "Keep current time", "Cancel", "Accept new time"]); // accepted rows aren't gated
     expect(interviewActions("completed", null, null, null)).toEqual(["Details"]);
     expect(interviewActions("declined", null, null, null)).toEqual(["Details"]);
   });
@@ -129,7 +131,7 @@ describe("listCaregiverInterviews — the tab", () => {
     const row = (await listCaregiverInterviews(CG)).interviews[0];
     expect(row.proposal?.by).toBe("client");
     expect(row.proposal?.banner).toContain("A Family proposed a new time: Saturday, October 3 at 10:00 AM");
-    expect(row.actions).toEqual(["Details", "Propose different time", "Cancel", "Accept new time"]);
+    expect(row.actions).toEqual(["Details", "Propose different time", "Keep current time", "Cancel", "Accept new time"]);
   });
 
   it("empty state is the tab's own words", async () => {

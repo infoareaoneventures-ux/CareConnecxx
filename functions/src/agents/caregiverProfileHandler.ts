@@ -666,7 +666,9 @@ async function handlePauseAccount(
   if (decision !== "YES" && decision !== "NO") { await sendMessage(chatId, reAskConfirm); return; }
   await clearProfileFlow(phone);
   if (decision === "YES") {
-    await pauseCaregiver(caregiverId, until);
+    // This door texts its own "Done" line below, so the shared write stamps the session
+    // and the lifecycle notice (B7) keeps the bell only — one text per event.
+    await pauseCaregiver(caregiverId, until, { phone });
     const backWhen = until === "indefinite" ? "Text REACTIVATE whenever you're ready to come back." : `You'll be reactivated on ${until}. Text REACTIVATE sooner if your plans change.`;
     await sendMessage(chatId, `Done — your account is paused. ${backWhen}`);
   } else {
@@ -680,7 +682,7 @@ async function handleReactivate(
   caregiverId: string, phone: string,
   _session: Record<string, unknown>, chatId: string,
 ): Promise<void> {
-  await reactivateCaregiver(caregiverId);
+  await reactivateCaregiver(caregiverId, { phone }); // texts its own welcome below → lifecycle bell only (B7)
   await clearProfileFlow(phone);
   const msg = await generateCaraMessage({
     audience: "caregiver",

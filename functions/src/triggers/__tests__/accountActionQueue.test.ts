@@ -119,10 +119,12 @@ describe("processAccountActionQueue", () => {
     }));
   });
 
-  it("dispatches set_caregiver_pause_status (pause) with uid + until", async () => {
+  // door: "site" (B7, 2026-10-11): the page only toasts, so the shared write must NOT stamp the
+  // session — the lifecycle text ("Your account is paused…") goes in full for a site pause.
+  it("dispatches set_caregiver_pause_status (pause) with uid + until, as the site door", async () => {
     const snap = makeSnap({ type: "set_caregiver_pause_status", uid: "cg1", action: "pause", until: "2026-10-01" });
     await processAccountActionQueue(snap as any);
-    expect(pauseCaregiver).toHaveBeenCalledWith("cg1", "2026-10-01");
+    expect(pauseCaregiver).toHaveBeenCalledWith("cg1", "2026-10-01", { door: "site" });
     expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
       status: "done", result: { status: "paused", until: "2026-10-01" },
     }));
@@ -131,13 +133,13 @@ describe("processAccountActionQueue", () => {
   it("dispatches set_caregiver_pause_status (pause) defaulting to indefinite when no until is given", async () => {
     const snap = makeSnap({ type: "set_caregiver_pause_status", uid: "cg1", action: "pause" });
     await processAccountActionQueue(snap as any);
-    expect(pauseCaregiver).toHaveBeenCalledWith("cg1", "indefinite");
+    expect(pauseCaregiver).toHaveBeenCalledWith("cg1", "indefinite", { door: "site" });
   });
 
-  it("dispatches set_caregiver_pause_status (reactivate) with uid", async () => {
+  it("dispatches set_caregiver_pause_status (reactivate) with uid, as the site door", async () => {
     const snap = makeSnap({ type: "set_caregiver_pause_status", uid: "cg1", action: "reactivate" });
     await processAccountActionQueue(snap as any);
-    expect(reactivateCaregiver).toHaveBeenCalledWith("cg1");
+    expect(reactivateCaregiver).toHaveBeenCalledWith("cg1", { door: "site" });
     expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
       status: "done", result: { status: "active" },
     }));

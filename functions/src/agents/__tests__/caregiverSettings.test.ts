@@ -133,7 +133,7 @@ describe("keywords — the page's buttons through the same server paths", () => 
     expect(hoisted.sent.at(-1)).toContain("That date has already passed");
     expect(hoisted.pause).not.toHaveBeenCalled();
     expect(await handleSettingsKeyword("+1", "chat", "cg1", "REACTIVATE")).toBe("handled");
-    expect(hoisted.reactivate).toHaveBeenCalledWith("cg1");
+    expect(hoisted.reactivate).toHaveBeenCalledWith("cg1", { phone: "+1" }); // this door texts its own line → the write stamps the session (B7)
     expect(hoisted.sent.at(-1)).toBe("You're active again — you'll start showing up for new matches.");
     expect(await handleSettingsKeyword("+1", "chat", "cg1", "what's my rate")).toBe("passthrough");
   });

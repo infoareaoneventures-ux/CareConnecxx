@@ -20,7 +20,7 @@ export type InterviewDisplayStatus = "pending" | "accepted" | "completed" | "dec
 
 export type InterviewAction =
   | "join_video_call" | "message"
-  | "accept_new_time" | "propose_time" | "cancel" | "mark_completed"
+  | "accept_new_time" | "keep_current_time" | "propose_time" | "cancel" | "mark_completed"
   | "cancel_pending_booking" | "rebook" | "resend" | "not_selected" | "send_booking"
   | "view_other_applicants" | "accept_proposed_time" | "propose_another_time";
 
@@ -127,7 +127,8 @@ export async function listClientInterviews(clientId: string, filter?: string, no
       const actions: InterviewAction[] = [];
       if (meetUrl && isActive) actions.push("join_video_call");
       if (isActive) actions.push("message");
-      if (iv.reschedulePendingTime && iv.rescheduledBy === "caregiver") actions.push("accept_new_time");
+      // The caregiver's proposal: Accept new time + Keep current time (B5, 2026-10-11) sit together on the row.
+      if (iv.reschedulePendingTime && iv.rescheduledBy === "caregiver") actions.push("accept_new_time", "keep_current_time");
       // Propose/Reschedule only on the family's TURN — never on their own outgoing proposal.
       if (isActive && iv.rescheduledBy !== "client") actions.push("propose_time");
       if (isActive) actions.push("cancel");

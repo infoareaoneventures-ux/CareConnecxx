@@ -181,10 +181,95 @@ export interface JobBoardFilters {
   careTypes?: string[];            // exact overlap with job.careTypes
 }
 
+// The sidebar's option sets, verbatim (JobBoard.tsx FilterPanel): Time of Day
+// checkboxes (:602-607), Days chips (:626), Seniors in Home (:639), Care Type
+// (:657). There is NO distance input on the page — the radius is the travel
+// distance on her profile and applies to every view (:542-548), so "within 5
+// miles" is not a filter here (B3, 2026-10-11).
+export const JOB_BOARD_TIME_OF_DAY = ["morning", "afternoon", "evening", "overnight"] as const;
+export const JOB_BOARD_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+export const JOB_BOARD_SENIORS = ["1", "2", "3+"] as const;
 export const JOB_BOARD_CARE_TYPES = [
   "Mobility Assistance", "Dementia / Memory Care", "Medication Reminders", "Personal Care",
   "Companionship", "Transportation", "Meal Preparation", "Light Housekeeping",
 ];
+// components/caregiver/signup/constants.ts serviceLabel: the one care type whose
+// checkbox reads differently from its stored value.
+const CARE_TYPE_DISPLAY: Record<string, string> = { "Medication Reminders": "Medication Reminders Only" };
+const TIME_OF_DAY_LABEL: Record<string, string> = { morning: "Morning", afternoon: "Afternoon", evening: "Evening", overnight: "Overnight" };
+const SEARCH_MAX_CHARS = 80;
+
+function pickFromSet<T extends string>(raw: unknown, options: readonly T[], match: (v: string, opt: T) => boolean): T[] {
+  const list = Array.isArray(raw) ? raw : (typeof raw === "string" && raw ? [raw] : []);
+  const out: T[] = [];
+  for (const v of list) {
+    if (typeof v !== "string" && typeof v !== "number") continue;
+    const s = String(v).trim();
+    if (!s) continue;
+    const hit = options.find((opt) => match(s, opt));
+    if (hit && !out.includes(hit)) out.push(hit);
+  }
+  return out;
+}
+
+function nonNegativeNumber(raw: unknown): number | undefined {
+  const n = typeof raw === "number" ? raw : (typeof raw === "string" && raw.trim() ? Number(raw.replace(/[$,\s]/g, "")) : NaN);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * Whatever the model (tool input or the JOBS extractor) handed over → only the
+ * page's own filter values. Unknown keys and values are dropped, never guessed;
+ * an empty result means "the default view" (sidebar untouched).
+ */
+export function normalizeJobBoardFilters(raw: unknown): JobBoardFilters {
+  if (!raw || typeof raw !== "object") return {};
+  const r = raw as Record<string, unknown>;
+  const out: JobBoardFilters = {};
+  const search = typeof r.search === "string" ? r.search.trim().slice(0, SEARCH_MAX_CHARS) : "";
+  if (search) out.search = search;
+  const payMin = nonNegativeNumber(r.payMin);
+  const payMax = nonNegativeNumber(r.payMax);
+  if (payMin !== undefined) out.payMin = payMin;
+  if (payMax !== undefined) out.payMax = payMax;
+  const timeOfDay = pickFromSet(r.timeOfDay, JOB_BOARD_TIME_OF_DAY, (v, opt) => v.toLowerCase() === opt);
+  if (timeOfDay.length) out.timeOfDay = timeOfDay;
+  // "Saturday" / "sat" / "Sat" all mean the Sat chip (the page itself matches job days by prefix).
+  const days = pickFromSet(r.days, JOB_BOARD_DAYS, (v, opt) => v.toLowerCase().startsWith(opt.toLowerCase()));
+  if (days.length) out.days = days;
+  const seniors = pickFromSet(r.seniors, JOB_BOARD_SENIORS, (v, opt) => v === opt || (opt === "3+" && /^3\+?$/.test(v)));
+  if (seniors.length) out.seniors = seniors;
+  const careTypes = pickFromSet(r.careTypes, JOB_BOARD_CARE_TYPES, (v, opt) => {
+    const low = v.toLowerCase();
+    return low === opt.toLowerCase() || low === (CARE_TYPE_DISPLAY[opt] ?? "").toLowerCase();
+  });
+  if (careTypes.length) out.careTypes = careTypes;
+  return out;
+}
+
+/** True when at least one sidebar control is set (the page's activeFilterCount > 0). */
+export function hasJobBoardFilters(f: JobBoardFilters | undefined): boolean {
+  if (!f) return false;
+  return !!(f.search || typeof f.payMin === "number" || typeof f.payMax === "number"
+    || f.timeOfDay?.length || f.days?.length || f.seniors?.length || f.careTypes?.length);
+}
+
+/** The filters in the sidebar's own words, for the list header: `"san jose", $25+/hr, Morning, Sat, Sun, 2 seniors, Companionship`. */
+export function jobBoardFiltersLabel(f: JobBoardFilters | undefined): string {
+  if (!f) return "";
+  const parts: string[] = [];
+  if (f.search) parts.push(`"${f.search}"`);
+  const hasMin = typeof f.payMin === "number";
+  const hasMax = typeof f.payMax === "number";
+  if (hasMin && hasMax) parts.push(`$${f.payMin}–$${f.payMax}/hr`);
+  else if (hasMin) parts.push(`$${f.payMin}+/hr`);
+  else if (hasMax) parts.push(`up to $${f.payMax}/hr`);
+  if (f.timeOfDay?.length) parts.push(f.timeOfDay.map((t) => TIME_OF_DAY_LABEL[t] ?? t).join(", "));
+  if (f.days?.length) parts.push(f.days.join(", "));
+  if (f.seniors?.length) parts.push(f.seniors.map((s) => `${s} ${s === "1" ? "senior" : "seniors"}`).join(", "));
+  if (f.careTypes?.length) parts.push(f.careTypes.map((ct) => CARE_TYPE_DISPLAY[ct] ?? ct).join(", "));
+  return parts.join(", ");
+}
 
 export function passesJobBoardFilters(job: Doc, f: JobBoardFilters | undefined): boolean {
   if (!f) return true;
@@ -226,6 +311,19 @@ export function withinCaregiverRadius(job: Doc, coords: { lat: number; lng: numb
   if (!coords || !jLat || !jLng || radius <= 0) return true;
   const d = haversineMiles(coords.lat, coords.lng, jLat, jLng);
   return d === undefined ? true : d <= radius;
+}
+
+/**
+ * JobBoard.tsx `filteredJobs` (:510-550) as one pure step over an already
+ * loaded list: the sidebar filters (:512-541) then the travel-distance rule
+ * (:542-548) — caregiver coords (latitude/lat, longitude/lng, :225-226),
+ * `serviceRadius || travelRadius` (:545), haversine in miles (:18-24), and a
+ * job with no coordinates is never excluded by distance (:546).
+ */
+export function applyJobBoardFilters(jobs: Doc[], filters: JobBoardFilters | undefined, caregiver: Doc): Doc[] {
+  const coords = caregiverCoords(caregiver);
+  const radius = caregiverRadiusMiles(caregiver);
+  return jobs.filter((j) => passesJobBoardFilters(j, filters) && withinCaregiverRadius(j, coords, radius));
 }
 
 async function caregiverBlockedIds(caregiverId: string): Promise<Set<string>> {
@@ -270,13 +368,12 @@ export async function loadAvailableJobs(
     caregiverBlockedIds(caregiverId),
     db.collection("job_posts").where("status", "==", "open").orderBy("createdAt", "desc").get(),
   ]);
-  let jobs = snap.docs
+  const listed = snap.docs
     .map((d) => normalizeJobPost({ id: d.id, ...(d.data() as Doc) }))
     .filter((j) => !applied.has(j.id as string) && !hidden.has(j.id as string) && j.clientActive !== false)
     .filter((j) => !blocked.has(j.clientId as string))
-    .filter((j) => !(drivingJobsHiddenFor(cg) && jobRequiresTransport(j)))
-    .filter((j) => passesJobBoardFilters(j, opts.filters))
-    .filter((j) => withinCaregiverRadius(j, coords, radius));
+    .filter((j) => !(drivingJobsHiddenFor(cg) && jobRequiresTransport(j)));
+  let jobs = applyJobBoardFilters(listed, opts.filters, cg);
   if (opts.sort === "nearest" && coords) {
     jobs = jobs
       .map((j) => ({ j, d: jobDistanceMiles(j, coords) ?? Infinity }))

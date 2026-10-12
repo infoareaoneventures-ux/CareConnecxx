@@ -21,13 +21,14 @@ const db = admin.firestore();
 
 export type DecisionKind =
   | "interview_request"          // caregiver: ACCEPT / DECLINE / PROPOSE
-  | "interview_proposal"         // either side: CONFIRM / PROPOSE
+  | "interview_proposal"         // either side: CONFIRM / KEEP / PROPOSE (KEEP = Keep current time, B5 2026-10-11)
   | "booking_request"            // caregiver: ACCEPT / DECLINE / DETAILS
   | "booking_request_decline"    // caregiver: the page's confirm — YES / NO
   | "amendment"                  // caregiver: ACCEPT / DECLINE
   | "new_job"                    // caregiver: APPLY / DETAILS
   | "job_application"            // client: VIEW / INTERVIEW / DECLINE — the post's applicant row (2026-10-07)
-  | "job_application_decline";   // client: YES / NO — the decline confirm (no card in view)
+  | "job_application_decline"    // client: YES / NO — the decline confirm (no card in view)
+  | "shift_proposal";            // caregiver: ACCEPT / DECLINE / PROPOSE — the family's proposed visit time (B1, 2026-10-11)
 
 export interface PendingDecision {
   kind: DecisionKind;
@@ -45,13 +46,14 @@ export interface PendingDecision {
 export const DECISION_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 export const OPTIONS: Record<DecisionKind, string[]> = {
   interview_request:       ["ACCEPT", "DECLINE", "PROPOSE"],
-  interview_proposal:      ["CONFIRM", "PROPOSE"],
+  interview_proposal:      ["CONFIRM", "KEEP", "PROPOSE"],
   booking_request:         ["ACCEPT", "DECLINE", "DETAILS"],
   booking_request_decline: ["YES", "NO"],
   amendment:               ["ACCEPT", "DECLINE"],
   new_job:                 ["APPLY", "DETAILS"],
   job_application:         ["VIEW", "INTERVIEW", "DECLINE"],
   job_application_decline: ["YES", "NO"],
+  shift_proposal:          ["ACCEPT", "DECLINE", "PROPOSE"],
 };
 
 export function parkedDecision(kind: DecisionKind, recordId: string, label: string, role: "caregiver" | "client", now = Date.now(), party?: string): PendingDecision {
@@ -97,7 +99,7 @@ export async function classifyDecision(text: string, pd: PendingDecision): Promi
     `Evia texted a person about ${pd.label} and asked them to reply with one of: ${pd.options.join(", ")}. ` +
     `Classify their reply as exactly one of those words when it clearly means that choice — including when the word sits inside a sentence about this same item ` +
     `(e.g. "please decline the booking request" → DECLINE, "yes confirm" → CONFIRM, "I can't make it" / "I can't accept this" → DECLINE, ` +
-    `"sounds good" → the positive option, "tell me more" → DETAILS when offered). ` +
+    `"sounds good" → the positive option, "tell me more" → DETAILS when offered, "the original time is fine" / "leave it as it is" → KEEP when offered). ` +
     `A question ABOUT this same item (its time, place, pay, who it is with, what happens next) or about what those replies do → QUESTION. ` +
     `Only a request about something else, or an unclear reply, is OTHER. Reply with ONE word only.`,
     text,
@@ -111,13 +113,14 @@ export async function classifyDecision(text: string, pd: PendingDecision): Promi
 // ── A question while a notice is parked: answered from the notice, then the expected reply re-stated ──
 const OPTION_MEANING: Record<DecisionKind, string> = {
   interview_request:       "ACCEPT accepts the interview (the Jobs page's Accept — the Google Meet link is then texted to both sides); DECLINE declines it; PROPOSE proposes a different time to the family.",
-  interview_proposal:      "CONFIRM confirms the proposed time (the interview moves to it); PROPOSE proposes another time instead.",
+  interview_proposal:      "CONFIRM confirms the proposed time (the interview moves to it); KEEP is the page's Keep current time (the proposal is dropped, the interview stays at its confirmed time and the other side is told); PROPOSE proposes another time instead.",
   booking_request:         "ACCEPT accepts the booking (its visits go on the caregiver's schedule and the family is told); DECLINE declines it (a YES/NO confirm follows first); DETAILS shows the whole request.",
   booking_request_decline: "YES declines the booking request; NO leaves it pending on the Requests tab.",
   amendment:               "ACCEPT accepts the family's schedule change (the booking's visits follow the new schedule); DECLINE declines it and the schedule stays as it was.",
   new_job:                 "APPLY starts the application (a cover letter is asked, then SUBMIT sends it); DETAILS shows the whole job post.",
   job_application:         "VIEW shows the caregiver's profile link; INTERVIEW requests an interview with them; DECLINE declines the application (a YES/NO confirm follows first).",
   job_application_decline: "YES declines the application (the caregiver is not told); NO leaves it pending on the post.",
+  shift_proposal:          "ACCEPT is the page's Accept new time (the visit moves to the proposed time, after a check against your other visits that day); DECLINE keeps the visit at its current time; PROPOSE suggests a different day and time to the family instead.",
 };
 const listWords = (ws: string[]) => (ws.length > 1 ? `${ws.slice(0, -1).join(", ")} or ${ws[ws.length - 1]}` : ws[0] ?? "");
 /** The expected reply, re-stated after the answer. */
@@ -177,6 +180,22 @@ export async function noticeScreenText(pd: PendingDecision, session: AgentSessio
           `Status: ${String(app.status ?? "pending")}`,
         ].join("\n");
       }
+      case "shift_proposal": {
+        // The Active Bookings visit row with its proposal strip.
+        const snap = await db.collection("shifts").doc(pd.recordId).get();
+        const s = snap.exists ? (snap.data() ?? {}) : null;
+        if (!s) break;
+        const { visitWhen, proposalWhen } = await import("./caregiverShiftProposal");
+        return [
+          `Visit with ${String(s.clientName || pd.party || "the family")}${s.address ? ` at ${String(s.address)}` : ""}`,
+          `Current (confirmed) time: ${visitWhen(s)}`,
+          s.reschedulePendingDate
+            ? `Proposed new time: ${proposalWhen(s)} (proposed by the ${s.rescheduledBy === "client" ? "family" : "caregiver"})`
+            : "No proposal is pending on this visit any more.",
+          s.notes ? `Notes: ${String(s.notes)}` : "",
+          `Status: ${String(s.status ?? "scheduled")}`,
+        ].filter(Boolean).join("\n");
+      }
     }
   } catch { /* fail soft — the label below still grounds the answer */ }
   return `Evia's notice was about ${pd.label}${pd.party ? ` (${pd.party})` : ""}.`;
@@ -198,6 +217,57 @@ async function clearDecision(phone: string): Promise<void> {
   await db.collection("agent_sessions").doc(phone).update({ pendingDecision: admin.firestore.FieldValue.delete() }).catch(() => {});
 }
 
+// ── A notice whose record EXPIRED before the reply (B6, 2026-10-11) ─────────
+// A replacement request dies 30 minutes after it is sent (shiftGenerator.ts
+// expireStaleShiftReplacements). The parked decision is taken down the moment
+// the record expires — so the stale notice no longer owns every inbound — and
+// a short "it expired" marker is left in its place: a late ACCEPT / DECLINE /
+// DETAILS in the next while gets one factual line and never reaches a write
+// (nor the agent, which would otherwise guess). Any other text routes normally.
+export const EXPIRED_DECISION_TTL_MS = 24 * 60 * 60 * 1000;
+export interface ExpiredDecision {
+  kind: DecisionKind;
+  recordId: string;
+  options: string[];
+  /** The one line a late reply gets. */
+  line: string;
+  expiredAt: string;
+  until: string;
+}
+
+/** Take down the parked decision for this record (if it is the one parked) and leave the expired marker. */
+export async function expireParkedDecision(
+  phone: string, recordId: string, fallback: { kind: DecisionKind; line: string }, now = Date.now(),
+): Promise<{ wasParked: boolean }> {
+  const ref = db.collection("agent_sessions").doc(phone);
+  const snap = await ref.get().catch(() => null);
+  if (!snap?.exists) return { wasParked: false };
+  const pd = snap.data()?.pendingDecision as PendingDecision | undefined;
+  const wasParked = !!pd && pd.recordId === recordId;
+  const marker: ExpiredDecision = {
+    kind: wasParked && pd ? pd.kind : fallback.kind, recordId, options: OPTIONS[wasParked && pd ? pd.kind : fallback.kind],
+    line: fallback.line, expiredAt: new Date(now).toISOString(), until: new Date(now + EXPIRED_DECISION_TTL_MS).toISOString(),
+  };
+  await ref.update({
+    ...(wasParked ? { pendingDecision: admin.firestore.FieldValue.delete() } : {}),
+    expiredDecision: marker,
+  }).catch(() => {});
+  return { wasParked };
+}
+
+/** A late reply word to an expired notice → the one line; anything else → passthrough (the marker is dropped once stale). */
+async function handleExpiredDecisionReply(phone: string, chatId: string, text: string, session: AgentSession & Record<string, unknown>): Promise<"handled" | "passthrough"> {
+  const ed = session.expiredDecision as ExpiredDecision | undefined;
+  if (!ed || !ed.recordId) return "passthrough";
+  const clear = () => db.collection("agent_sessions").doc(phone).update({ expiredDecision: admin.firestore.FieldValue.delete() }).catch(() => {});
+  const until = Date.parse(ed.until);
+  if (!Number.isFinite(until) || until < Date.now()) { await clear(); return "passthrough"; }
+  if (!matchDecisionWord(text, ed.options ?? [])) return "passthrough";
+  await clear();
+  await sendMessage(chatId, ed.line);
+  return "handled";
+}
+
 /**
  * Route entry: "handled" when the reply answered the parked decision (the
  * page's write ran and the toast was texted), "passthrough" otherwise.
@@ -206,7 +276,7 @@ export async function handlePendingDecisionReply(
   phone: string, chatId: string, text: string, session: AgentSession & Record<string, unknown>,
 ): Promise<"handled" | "passthrough"> {
   const pd = session.pendingDecision as PendingDecision | undefined;
-  if (!pd || !pd.kind || !pd.recordId) return "passthrough";
+  if (!pd || !pd.kind || !pd.recordId) return handleExpiredDecisionReply(phone, chatId, text, session);
   if (isExpired(pd)) { await clearDecision(phone); return "passthrough"; }
   const choice = await classifyDecision(text, pd);
   if (!choice) return "passthrough";
@@ -252,6 +322,17 @@ export async function runDecision(
       break;
     }
     case "interview_proposal": {
+      if (choice === "KEEP") {
+        // The page's Keep current time (B5, 2026-10-11) — agents/interviewProposal.ts,
+        // the same write as the button on either Interviews tab; never gated
+        // (keeping the current time is a decline, like Decline / Cancel). The
+        // proposer's bell + text ("isn't able to move the interview — it's
+        // staying at …") come from onVideoInterviewWrite, exactly as after a click.
+        const { keepInterviewTime, keptInterviewLine } = await import("./interviewProposal");
+        const r = await keepInterviewTime({ by: pd.role, userId: pd.role === "caregiver" ? caregiverId : clientId, interviewId: pd.recordId, source: "decision_notice" });
+        await say(r.ok ? keptInterviewLine(r) : `That proposal isn't pending any more — your interview with ${pd.party ?? (pd.role === "caregiver" ? "the family" : "your caregiver")} stays as it is.`);
+        break;
+      }
       if (choice === "PROPOSE") {
         if (pd.role === "caregiver") {
           const { startInterviewRescheduleFlow } = await import("./caregiverJobFlows");
@@ -291,7 +372,34 @@ export async function runDecision(
       }
       if (!(await caregiverGate(phone, chatId, caregiverId))) break;
       const r = await br.respondToBookingRequest(caregiverId, pd.recordId, "accept");
-      await say(r.ok ? r.toast : r.reason === "not_pending" ? `That request is already ${r.status}.` : "That request isn't on your Requests tab anymore.");
+      // A replacement request that already expired (30 minutes, B6): no write — the one factual line.
+      await say(r.ok ? r.toast : r.reason === "not_pending" ? (r.status === "expired" ? `${pd.party ? `${pd.party}'s` : "That"} replacement request has expired — nothing was sent.` : `That request is already ${r.status}.`) : "That request isn't on your Requests tab anymore.");
+      break;
+    }
+    case "shift_proposal": {
+      // The Active Bookings visit's proposal strip — Accept new time / Decline
+      // (agents/caregiverShiftProposal.ts: the page's own writes). PROPOSE is the
+      // page's Reschedule button: the agent takes the new day/time with
+      // manage_shift_reschedule action:"propose" (the visit is stamped on the session).
+      const sp = await import("./caregiverShiftProposal");
+      if (choice === "PROPOSE") {
+        keepParked = true;
+        await db.collection("agent_sessions").doc(phone).set({ lastNoticedShiftId: pd.recordId }, { merge: true }).catch(() => {});
+        await say(`Sure — what day and time would you like for your visit with ${pd.party ?? "the family"} instead?`);
+        break;
+      }
+      const r = choice === "ACCEPT"
+        ? await sp.acceptFamilyShiftProposal(caregiverId, pd.recordId, new Date().toISOString(), "decision_notice")
+        : await sp.declineFamilyShiftProposal(caregiverId, pd.recordId, "decision_notice");
+      if (!r.ok) {
+        // CONFLICT is the page's own alert, verbatim; the proposal stays pending (the page leaves it too).
+        if (r.code === "CONFLICT") { keepParked = true; await say(`${r.message} Reply DECLINE to keep the current time, or PROPOSE a different one.`); break; }
+        await say(`That proposal isn't pending any more — your visit with ${pd.party ?? "the family"} stays as it is.`);
+        break;
+      }
+      await say(choice === "ACCEPT"
+        ? `New time confirmed — your visit with ${r.clientName} is now ${sp.visitWhen(r.to!)}.`
+        : `Declined — your visit with ${r.clientName} stays at ${sp.visitWhen(r.from)}.`);
       break;
     }
     case "booking_request_decline": {

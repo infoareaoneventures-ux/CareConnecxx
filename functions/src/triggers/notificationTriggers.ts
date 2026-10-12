@@ -103,7 +103,11 @@ import { normalizeBookingRequest, requestCardLines, requestDetailsLines, amendme
 function bookingRequestText(id: string, doc: Record<string, unknown>, lead: string): string {
   const req = normalizeBookingRequest(id, doc);
   const lines = [...requestCardLines(req), ...(() => { const d = requestDetailsLines(req); return d.length ? ["", ...d] : []; })()];
-  return `${lead}\n\n${lines.join("\n").replace(/\n{3,}/g, "\n\n")}\n\nReply ACCEPT or DECLINE.`;
+  // A replacement request dies after 30 minutes (shiftGenerator.ts
+  // expireStaleShiftReplacements) — the family is then free to ask someone
+  // else, so the caregiver is told the clock up front (B6, 2026-10-11).
+  const clock = doc.isShiftReplacement === true ? " This request expires in 30 minutes." : "";
+  return `${lead}\n\n${lines.join("\n").replace(/\n{3,}/g, "\n\n")}\n\nReply ACCEPT or DECLINE.${clock}`;
 }
 
 // Resolves true only when the text actually went (handed to the transport or to
@@ -231,20 +235,20 @@ export const onVideoInterviewWrite = functions.firestore
             title: 'New Time Proposed',
             body: `${after.caregiverName || 'Your caregiver'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
-          }, `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply CONFIRM, or suggest another time.`,
+          }, `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply CONFIRM, KEEP to keep the current time, or suggest another time.`,
           { ...iv, transitionType: `interview_proposed:${after.reschedulePendingTime}` },
           { textOwnedElsewhere: !!after.rescheduledViaAgent, stamp: { ...noticedInterview(context.params.interviewId),
-            ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.caregiverName || 'your caregiver'} proposed (${displayTime})`, "client")) } });
+            ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.caregiverName || 'your caregiver'} proposed (${displayTime})`, "client", Date.now(), after.caregiverName || undefined)) } });
         } else if (after.caregiverId) {
           await tell('caregiver', after.caregiverId, {
             type: 'interview_rescheduled',
             title: 'New Time Proposed',
             body: `${after.clientName || 'The family'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
-          }, `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply CONFIRM, or PROPOSE another time.`,
+          }, `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply CONFIRM, KEEP to keep the current time, or PROPOSE another time.`,
           { ...iv, transitionType: `interview_proposed:${after.reschedulePendingTime}` },
           { textOwnedElsewhere: !!after.rescheduledViaAgent, stamp: { ...noticedInterview(context.params.interviewId),
-            ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.clientName || 'the family'} proposed (${displayTime})`, "caregiver")) } });
+            ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.clientName || 'the family'} proposed (${displayTime})`, "caregiver", Date.now(), after.clientName || undefined)) } });
         }
         return;
       }
@@ -285,6 +289,51 @@ export const onVideoInterviewWrite = functions.firestore
             data: { interviewId: context.params.interviewId },
           }, `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`,
           { ...iv, transitionType: `interview_time_confirmed:${after.scheduledTime}` }, { textOwnedElsewhere: !!after.acceptedRescheduleViaAgent });
+        }
+        return;
+      }
+
+      // Proposal DECLINED (or withdrawn) — the pending time is gone but the
+      // interview itself is unchanged (same status, same scheduledTime). That
+      // is what separates it from an accept (above) and from a decline / cancel
+      // / complete of the whole interview (the status branches below, which
+      // clear the proposal as part of the terminal write). Tell whoever
+      // proposed it that the original time stands — the shifts trigger has had
+      // this branch since 2026-09; interviews had none (sweep B5, 2026-10-11).
+      // The write that lands here is "Keep current time" — both Interviews
+      // tabs (PostsPage.tsx / JobBoard.tsx handleKeepCurrentTime), Evia's KEEP
+      // reply and the accept_interview_reschedule tool's action:"keep" all
+      // write the same field set (agents/interviewProposal.ts): the proposal
+      // cleared, status and scheduledTime untouched. None of them texts the
+      // proposer itself — this is the one notice, bell + text, either direction.
+      if (
+        before?.reschedulePendingTime &&
+        !after.reschedulePendingTime &&
+        statusBefore === statusAfter &&
+        before.scheduledTime === after.scheduledTime
+      ) {
+        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
+        const keptMs = parseScheduledTimeMs(String(after.scheduledTime ?? ''));
+        const kept = Number.isFinite(keptMs) && keptMs > 0
+          ? new Date(keptMs).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : '';
+        const declinedKey = { ...iv, transitionType: `interview_time_declined:${before.reschedulePendingTime}` };
+        if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
+          const line = `${after.clientName || 'The family'} isn't able to move the interview${kept ? ` — it's staying at ${kept}` : ''}.`;
+          await tell('caregiver', after.caregiverId, {
+            type: 'interview_rescheduled',
+            title: 'Time Change Declined',
+            body: line,
+            data: { interviewId: context.params.interviewId },
+          }, line, declinedKey);
+        } else if (before.rescheduledBy === 'client' && after.clientId) {
+          const line = `${after.caregiverName || 'Your caregiver'} isn't able to move the interview${kept ? ` — it's staying at ${kept}` : ''}.`;
+          await tell('client', after.clientId, {
+            type: 'interview_rescheduled',
+            title: 'Time Change Declined',
+            body: line,
+            data: { interviewId: context.params.interviewId },
+          }, line, declinedKey);
         }
         return;
       }
@@ -505,6 +554,48 @@ export const onBookingRequestWrite = functions.firestore
           data: { bookingId: context.params.bookingId },
         }, `${after.clientName || 'A client'} cancelled their ${noun}. Sorry for the inconvenience.`, { ...br, transitionType: 'booking_cancelled' });
       }
+
+      // Expired — a replacement request nobody answered in 30 minutes
+      // (shiftGenerator.ts expireStaleShiftReplacements; B6, 2026-10-11). Until
+      // now nothing told the caregiver, her parked ACCEPT stayed live for three
+      // days, and the family only saw the Find replacement button come back.
+      // Both sides get ONE factual sentence (bell ⇄ text), and the caregiver's
+      // parked decision is taken down so a late ACCEPT gets "it expired", not a
+      // write (agents/decisionNotices.ts expireParkedDecision).
+      if (statusAfter === 'expired' && after.isShiftReplacement === true) {
+        const sch = (after.schedule ?? {}) as { startDate?: string; dayShiftTimes?: Record<string, Array<{ start?: string; end?: string }>> };
+        const block = Object.values(sch.dayShiftTimes ?? {}).flat()[0];
+        const whenText = sch.startDate
+          ? ` on ${formatDateForDisplay(sch.startDate)}${block?.start ? ` at ${formatHHMMForDisplay(block.start)}` : ''}`
+          : '';
+        const family = after.clientName || 'The family';
+        if (after.caregiverId) {
+          const line = `${family}'s replacement request for the visit${whenText} has expired — no reply came in time, so nothing was sent.`;
+          // The park comes down whether or not the text goes — the record IS expired.
+          try {
+            const { resolveCaregiverPhone } = await import('../utils/caregiverPhone');
+            const { expireParkedDecision } = await import('../agents/decisionNotices');
+            const cgPhone = await resolveCaregiverPhone(after.caregiverId);
+            if (cgPhone) await expireParkedDecision(cgPhone, context.params.bookingId, { kind: 'booking_request', line: `${family}'s replacement request has expired — nothing was sent.` });
+          } catch (err) { console.error('[onBookingRequestWrite] expire park failed:', err); }
+          await tell('caregiver', after.caregiverId, {
+            type: 'booking_request_expired',
+            title: 'Replacement Request Expired',
+            body: line,
+            data: { bookingId: context.params.bookingId },
+          }, line, { ...br, transitionType: 'booking_request_expired' });
+        }
+        if (after.clientId) {
+          const cg = after.caregiverName || 'The caregiver';
+          const line = `${cg} didn't respond to the replacement request${whenText} in time — find another replacement or skip that visit.`;
+          await tell('client', after.clientId, {
+            type: 'booking_request_expired',
+            title: 'Replacement Request Expired',
+            body: line,
+            data: { bookingId: context.params.bookingId, shiftId: after.replacementForShiftId ?? null },
+          }, line, { ...br, transitionType: 'booking_request_expired' });
+        }
+      }
     } catch (err) {
       console.error('[onBookingRequestWrite] error:', err);
     }
@@ -646,12 +737,22 @@ export const onShiftStatusChanged = functions.firestore
           data: { shiftId },
         }, `${after.caregiverName || 'Your caregiver'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`, proposedKey);
       } else if (after.rescheduledBy === 'client' && after.caregiverId) {
+        // The Active Bookings strip's three buttons as the reply words (B1,
+        // 2026-10-11): the decision is parked so ACCEPT / DECLINE run the page's
+        // Accept new time / Decline (agents/caregiverShiftProposal.ts) and
+        // PROPOSE opens a counter-proposal — no tool choice, no id guessing.
+        // "this visit" is named over text, where no card is in view.
+        const currentTime = new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', {
+          weekday: 'short', month: 'short', day: 'numeric',
+        }) + `, ${formatHHMMForDisplay(after.startTime)}${after.endTime ? `–${formatHHMMForDisplay(after.endTime)}` : ''}`;
+        const family = after.clientName || 'The family';
         await tell('caregiver', after.caregiverId, {
           type: 'shift_rescheduled',
           title: 'New Time Proposed',
-          body: `${after.clientName || 'The family'} proposed moving this visit to ${displayTime}. Please confirm.`,
+          body: `${family} proposed moving this visit to ${displayTime}. Please confirm.`,
           data: { shiftId },
-        }, `${after.clientName || 'The family'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`, proposedKey);
+        }, `${family} proposed moving your visit on ${currentTime} to ${displayTime}. Reply ACCEPT or DECLINE, or PROPOSE a different time.`, proposedKey,
+        { stamp: { lastNoticedShiftId: shiftId, ...parkDecision(parkedDecision("shift_proposal", shiftId, `a new visit time ${family} proposed (${displayTime})`, "caregiver", Date.now(), after.clientName || undefined)) } });
       }
       return;
     }

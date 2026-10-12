@@ -70,7 +70,7 @@ export async function respondToInterviewRequest(
     throw new InterviewResponseError(
       "invalid-argument",
       iv.rescheduledBy === "client"
-        ? "The family proposed a new time for this interview — accept that time (accept_interview_reschedule) or propose a different one (reschedule_interview)"
+        ? "The family proposed a new time for this interview — accept that time (accept_interview_reschedule), keep the current time (accept_interview_reschedule action:\"keep\") or propose a different one (reschedule_interview)"
         : "You already proposed a new time for this interview — it's waiting on the family to confirm; decline it if it no longer works",
     );
   }

@@ -608,6 +608,36 @@ export const PostsPage: React.FC = () => {
     }
   };
 
+  // Keep current time (caregiver sweep B5, founder 2026-10-11): the caregiver's
+  // proposed time doesn't work but the confirmed one still does — drop the
+  // proposal, nothing else. Before this the only ways out were Cancel (the
+  // whole interview) or re-proposing the original time. The field set is
+  // pinned equal to Evia's shared write (functions/src/agents/
+  // interviewProposal.ts KEEP_INTERVIEW_TIME_FIELDS) by a static test — the
+  // proposal + its Evia marker cleared, updatedAt stamped, status and
+  // scheduledTime untouched, so onVideoInterviewWrite tells the caregiver
+  // "isn't able to move the interview — it's staying at …".
+  const handleKeepCurrentTime = async (interview: Interview) => {
+    if (!db || !interview.reschedulePendingTime || interview.rescheduledBy !== 'caregiver') return;
+    setReschedulingId(interview.id);
+    try {
+      await db.collection('video_interviews').doc(interview.id).update({
+        reschedulePendingTime: firebase.firestore.FieldValue.delete(),
+        rescheduledBy: firebase.firestore.FieldValue.delete(),
+        rescheduledViaAgent: firebase.firestore.FieldValue.delete(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      setInterviews(prev => prev.map(i => i.id === interview.id
+        ? { ...i, reschedulePendingTime: undefined, rescheduledBy: undefined }
+        : i));
+      addToast(`Kept the current time — ${interview.caregiverName} will be told.`, 'success');
+    } catch {
+      addToast('Failed to keep the current time', 'error');
+    } finally {
+      setReschedulingId(null);
+    }
+  };
+
   // Real-time booking request statuses for this client
   useEffect(() => {
     if (!currentUser?.uid || !db) return;
@@ -1538,6 +1568,18 @@ export const PostsPage: React.FC = () => {
                                   className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50"
                                 >
                                   {reschedulingId === interview.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />} Accept new time
+                                </button>
+                              )}
+                              {/* Keep current time (B5): the caregiver's proposal dropped, the
+                                  confirmed time stands, the caregiver is told — no Cancel, no
+                                  re-proposing the original time. */}
+                              {!!interview.reschedulePendingTime && interview.rescheduledBy === 'caregiver' && (
+                                <button
+                                  onClick={() => handleKeepCurrentTime(interview)}
+                                  disabled={reschedulingId === interview.id}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                >
+                                  {reschedulingId === interview.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clock className="w-3.5 h-3.5" />} Keep current time
                                 </button>
                               )}
                               {/* Propose/Reschedule only comes available on your TURN — either

@@ -145,6 +145,7 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   interview_cancelled:                { included: false },
   interview_rescheduled:              { included: false },
   interview_reschedule_accepted:      { included: false },
+  interview_time_kept:                { included: false },
   memory_file_deleted:                { included: false },
   cash_payment_confirmed:             { included: false },
   memory_fact_corrected:              { included: false },

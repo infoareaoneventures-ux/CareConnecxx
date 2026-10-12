@@ -99,6 +99,18 @@ export const renewalRefreshSweep = functions.pubsub
       }
     }
 
+    // The amount/period the reminder names come from the subscription record
+    // itself (a legacy monthly caregiver plan is not "$69.99/year", B8
+    // 2026-10-11); the flat annual display is only the fallback.
+    const subscriptionAmountDisplay = (s: Record<string, unknown>): string => {
+      const item = (Array.isArray(s.items) ? s.items[0] : undefined) as Record<string, unknown> | undefined;
+      const price = (item?.price ?? item?.plan) as Record<string, unknown> | undefined;
+      const cents = Number(price?.unit_amount ?? price?.amount);
+      const interval = String((price?.recurring as Record<string, unknown> | undefined)?.interval ?? price?.interval ?? "");
+      if (!Number.isFinite(cents) || cents <= 0 || !interval) return caregiverAnnualDisplay();
+      return `$${(cents / 100).toFixed(2)}/${interval}`;
+    };
+
     // (b) card reminder 7 days before the anniversary — caregivers only
     const members = await db.collection("caregivers").where("membershipStatus", "in", ["active", "trialing"]).get();
     const { readCaregiverSubscriptionRecord } = await import("../caregiverMembershipBilling");
@@ -112,7 +124,7 @@ export const renewalRefreshSweep = functions.pubsub
       if (d.renewalReminders?.cardAskedFor === key) continue;
       await doc.ref.set({ renewalReminders: { cardAskedFor: key, cardAskedAt: new Date(now).toISOString() } }, { merge: true });
       const date = new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/Los_Angeles" }).format(new Date(endMs as number));
-      await notifyCaregiverAccountEvent(doc.id, "membership_renewal_upcoming", { eventId: `renewal-card:${doc.id}:${key}`, ctx: { date, amount: caregiverAnnualDisplay() } })
+      await notifyCaregiverAccountEvent(doc.id, "membership_renewal_upcoming", { eventId: `renewal-card:${doc.id}:${key}`, ctx: { date, amount: subscriptionAmountDisplay(sub) } })
         .catch((err) => console.error("renewal card reminder failed", doc.id, err));
     }
   });

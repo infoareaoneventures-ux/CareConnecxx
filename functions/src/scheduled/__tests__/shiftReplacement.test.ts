@@ -73,6 +73,11 @@ vi.mock("firebase-functions/v1", () => {
   return { __esModule: true, ...builder, default: builder };
 });
 
+// B6 (2026-10-11): the 10-minute sweep runs the caregiver's ONE replacement nudge
+// (10 minutes before expiry) before expiring anything — spied here.
+const runPendingDecisionNudges = vi.fn(async (..._a: any[]) => ({ nudged: 0, bellKeptOptedOut: 0, dropped: 0, skipped: 0 }));
+vi.mock("../pendingDecisionNudge", () => ({ REPLACEMENT_EXPIRY_MS: 30 * 60 * 1000, runPendingDecisionNudges: (...a: any[]) => runPendingDecisionNudges(...a) }));
+
 import { onBookingAccepted, expireStaleShiftReplacements } from "../shiftGenerator";
 
 function change(before: any, after: any) {
@@ -84,6 +89,7 @@ function change(before: any, after: any) {
 
 beforeEach(() => {
   hoisted.reset();
+  runPendingDecisionNudges.mockClear();
 });
 
 describe("onBookingAccepted — single-shift replacement resolution", () => {
@@ -186,6 +192,19 @@ describe("onBookingAccepted — single-shift replacement resolution", () => {
 });
 
 describe("expireStaleShiftReplacements", () => {
+  it("runs the replacement-only nudge pass BEFORE expiring (so a nudge never lands after expiry), and keeps expiring if the nudge pass throws", async () => {
+    hoisted.docState.set("booking_requests/br1", { isShiftReplacement: true, status: "pending", createdAt: { seconds: Math.floor((Date.now() - 40 * 60 * 1000) / 1000) } });
+    await expireStaleShiftReplacements(undefined as any);
+    expect(runPendingDecisionNudges).toHaveBeenCalledTimes(1);
+    expect(runPendingDecisionNudges.mock.calls[0][1]).toEqual({ only: "replacement" });
+    expect(runPendingDecisionNudges.mock.invocationCallOrder[0]).toBeLessThan(hoisted.updateMock.mock.invocationCallOrder[0]);
+    hoisted.reset();
+    runPendingDecisionNudges.mockRejectedValueOnce(new Error("boom"));
+    hoisted.docState.set("booking_requests/br2", { isShiftReplacement: true, status: "pending", createdAt: { seconds: Math.floor((Date.now() - 40 * 60 * 1000) / 1000) } });
+    await expireStaleShiftReplacements(undefined as any);
+    expect(hoisted.docState.get("booking_requests/br2").status).toBe("expired");
+  });
+
   it("expires a pending replacement request older than 30 minutes", async () => {
     hoisted.docState.set("booking_requests/br1", {
       isShiftReplacement: true,

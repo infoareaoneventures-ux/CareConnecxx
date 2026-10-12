@@ -1,8 +1,9 @@
 // Caregiver account events — ONE notification path (founder, 2026-09-27):
 // for every change the dashboard's "Your progress" bar would show (membership,
 // background check, transport documents / driving record / badge, payouts,
-// admin approvals and revokes, lapses), the caregiver gets exactly one website
-// bell entry and one text with the same words, never twice.
+// admin approvals and revokes, lapses) and for the Settings page's Pause card
+// (account paused / reactivated, B7 2026-10-11), the caregiver gets exactly one
+// website bell entry and one text with the same words, never twice.
 //
 // Idempotency: the bell is written through writeUserNotification, keyed on
 // (sourcePath, eventId, recipient, event kind); the text goes out ONLY when
@@ -28,13 +29,22 @@ export type CaregiverAccountEventKind =
   | "mvr_clear" | "mvr_review" | "mvr_not_approved" | "mvr_consent_requested" | "mvr_check_started" | "transport_badge_earned" | "transport_badge_lost"
   | "membership_renewal_upcoming" | "renewal_refresh_reminder" | "renewal_refresh_locked"
   | "payouts_enabled" | "payouts_disabled"
-  | "now_bookable";
+  | "now_bookable"
+  | "account_paused" | "account_reactivated";
 
 export interface CaregiverAccountEventContext {
   /** bgcheck_revoked: no consent link — the membership is not active, and the check is part of it (2026-10-04). */
   membershipInactive?: boolean;
   amount?: string;          // "69.99"
-  date?: string;            // a formatted day ("Monday, October 5")
+  date?: string;            // a formatted day ("Monday, October 5"); account_paused: the pause end date as the page shows it ("2026-11-01")
+  /** account_paused: an open-ended pause (until she reactivates). */
+  indefinite?: boolean;
+  /**
+   * membership_renewed: false when this year's background check refresh is NOT part of the
+   * renewal (a legacy monthly plan, or an annual renewal whose refresh was already asked) —
+   * the text is then the renewal charge alone (B8, 2026-10-11). Default (annual) = the refresh ask.
+   */
+  checkRefresh?: boolean;
   attempt?: number;         // payment-failed attempt number
   finalAttempt?: boolean;
   nextRetry?: string;       // "Oct 5"
@@ -94,6 +104,14 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       };
     case "membership_renewed": {
       const charged = ctx.amount ? ` — $${ctx.amount} was charged` : "";
+      if (ctx.checkRefresh === false) {
+        // The renewal charge alone — the family's own renewal sentence (stripe.ts), the
+        // amount from the invoice, never a hard-coded price. Caregivers are annual-only
+        // since 2026-09-25; legacy monthly subscriptions still bill, and were told nothing (B8).
+        const next = ctx.date ? ` Next billing date: ${ctx.date}.` : "";
+        const line = `Your Evia membership renewed${ctx.amount ? ` — $${ctx.amount} was charged to your card on file` : ""}.${next}`;
+        return { title: "Membership renewed", body: `${line} ${membership}`, text: line };
+      }
       return {
         title: "Membership renewed",
         // Founder, 2026-10-06: paid first, still cleared, 7 days to authorize (the daily sweep reminds on day 5, locks on day 7).
@@ -264,7 +282,28 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
 
     case "now_bookable":
       return { title: "You're all set", body: "You're all set — families can now find and book you." };
+
+    case "account_paused": {
+      // The Settings page's Pause card, as the record of the event (B7, 2026-10-11): until the
+      // date it shows (or until she reactivates); nothing that exists is touched (PAUSE_FACTS).
+      // Bell → the page (Reactivate button); text → the keyword that IS that button.
+      const until = ctx.indefinite || !ctx.date ? "until you reactivate" : `until ${ctx.date}`;
+      const back = ctx.indefinite || !ctx.date ? "Reactivate anytime" : "Reactivate sooner anytime";
+      const line = `Your account is paused ${until}. You won't show up for new matches; existing visits, bookings and interviews are unchanged.`;
+      return { title: "Your account is paused", body: `${line} ${back}: ${membership}`, text: `${line} ${back} — reply REACTIVATE.` };
+    }
+    case "account_reactivated":
+      return { title: "You're active again", body: "You're active again — you'll show up for new matches." };
   }
+}
+
+/**
+ * The bell's `type`: `caregiver_<kind>` — except the account-standing kinds, typed
+ * `account_<…>` so both bell maps (utils/notificationRoutes.ts, agents/notificationsPage.ts:
+ * `startsWith("account")`) land them on Settings, where the Pause card lives (B7).
+ */
+export function caregiverAccountEventBellType(kind: CaregiverAccountEventKind): string {
+  return kind.startsWith("account_") ? kind : `caregiver_${kind}`;
 }
 
 export interface NotifyOptions {
@@ -288,16 +327,29 @@ export interface NotifyOptions {
  *  - bgcheck_clear while the session waits at a background-check or payout step
  *    (advanceOnboardingStep moves it to payouts and sends that link with
  *    "your check cleared").
+ *  - account_paused / account_reactivated when an Evia door (the confirm flow,
+ *    the REACTIVATE keyword, the MCP tools) just wrote the pause and texts its
+ *    own confirmation line: pauseAccount.ts stamps `accountNoticeTexted`
+ *    {kind, at} on the session right before the record flips (B7, 2026-10-11).
+ *    The site's queue action never stamps it, so that caregiver gets this text.
  */
+export const ACCOUNT_NOTICE_OWNED_WINDOW_MS = 2 * 60 * 1000;
+
 export function lifecycleTextOwnedByGate(
   kind: CaregiverAccountEventKind,
-  session: { onboardingStep?: unknown; membershipRecordedAt?: unknown } | undefined,
+  session: { onboardingStep?: unknown; membershipRecordedAt?: unknown; accountNoticeTexted?: unknown } | undefined,
   now: number = Date.now(),
 ): boolean {
   if (!session) return false;
   if (kind === "membership_paid") {
     const at = Date.parse(String(session.membershipRecordedAt ?? ""));
     return Number.isFinite(at) && now - at < 10 * 60 * 1000;
+  }
+  if (kind === "account_paused" || kind === "account_reactivated") {
+    const stamp = (session.accountNoticeTexted ?? {}) as { kind?: unknown; at?: unknown };
+    if (stamp.kind !== kind) return false;
+    const at = Date.parse(String(stamp.at ?? ""));
+    return Number.isFinite(at) && now - at < ACCOUNT_NOTICE_OWNED_WINDOW_MS;
   }
   if (kind === "bgcheck_clear") {
     return ["caregiver_awaiting_bgcheck", "caregiver_send_bgcheck", "caregiver_awaiting_bgcheck_consent", "caregiver_send_stripe_connect", "caregiver_awaiting_stripe"]
@@ -315,7 +367,8 @@ export async function notifyCaregiverAccountEvent(
   // button, by text). Token TTL 14 days — the caregiver may act on it days later.
   const ctx: CaregiverAccountEventContext = { ...(opts.ctx ?? {}) };
   let phoneForLink: string | undefined;
-  if ((kind === "membership_paid" || kind === "membership_renewed" || kind === "bgcheck_link_expired" || kind === "bgcheck_revoked" || kind === "mvr_consent_requested" || kind === "renewal_refresh_reminder" || kind === "renewal_refresh_locked") && !ctx.consentUrl) {
+  const renewalWithoutRefresh = kind === "membership_renewed" && ctx.checkRefresh === false; // the charge alone carries no consent link (B8)
+  if ((kind === "membership_paid" || kind === "membership_renewed" || kind === "bgcheck_link_expired" || kind === "bgcheck_revoked" || kind === "mvr_consent_requested" || kind === "renewal_refresh_reminder" || kind === "renewal_refresh_locked") && !ctx.consentUrl && !renewalWithoutRefresh) {
     // The check is part of the membership: no consent link while it is inactive
     // (the consent function refuses it anyway — backgroundCheckConsent.ts, 2026-10-04).
     let membershipActive = true;
@@ -339,7 +392,7 @@ export async function notifyCaregiverAccountEvent(
   const bellKey = { sourcePath: opts.sourcePath ?? `caregivers/${uid}`, eventId: opts.eventId, recipientId: uid, transitionType: kind };
   const created = await writeUserNotification({
     ...bellKey,
-    type: `caregiver_${kind}`,
+    type: caregiverAccountEventBellType(kind),
     title,
     body,
     data: { kind },
@@ -365,7 +418,7 @@ export async function notifyCaregiverAccountEvent(
   if (!phone) return takeBellBack("no_phone");
   try {
     const sessSnap = await db.collection("agent_sessions").doc(phone).get();
-    if (sessSnap.exists && lifecycleTextOwnedByGate(kind, sessSnap.data() as { onboardingStep?: unknown; membershipRecordedAt?: unknown })) {
+    if (sessSnap.exists && lifecycleTextOwnedByGate(kind, sessSnap.data() as { onboardingStep?: unknown; membershipRecordedAt?: unknown; accountNoticeTexted?: unknown })) {
       return { bell: true, text: false }; // the gate step is about to say it, with its link
     }
     if (sessSnap.exists && sessSnap.data()?.optedOut !== true) {

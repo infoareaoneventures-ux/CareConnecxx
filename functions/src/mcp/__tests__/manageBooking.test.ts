@@ -378,6 +378,64 @@ describe("manage_shift_reschedule (caregiver side)", () => {
     expect(update.reschedulePendingDate).toEqual({ __delete: true });
     expect(update.date).toBeUndefined();
   });
+
+  // Caregiver sweep B1 + B4 (2026-10-11): the strip's three buttons, the page's own writes and alert text.
+  it("accept's conflict refusal is the page's alert, verbatim; accept writes the page's full accept (history incl.)", async () => {
+    hoisted.docState.set("shifts/s1", {
+      caregiverId: CAREGIVER, clientName: "Fam", status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00",
+      reschedulePendingDate: "2099-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00", reschedulePendingAt: "2099-08-30T00:00:00.000Z",
+      rescheduledBy: "client",
+    });
+    hoisted.collState.set("shifts", [{ id: "s2", caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-08", startTime: "12:30", endTime: "14:00" }]);
+    let r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "accept" }) as any;
+    expect(r.message).toBe("You already have another shift at 12:30 PM–2:00 PM that day — choose a different time.");
+    hoisted.collState.set("shifts", []);
+    r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "accept" }) as any;
+    expect(r).toMatchObject({ success: true, clientName: "Fam", date: "2099-09-08", startTime: "10:00", endTime: "13:00" });
+    const update = hoisted.updates.find(u => u.path === "shifts/s1")?.data;
+    expect(update).toMatchObject({
+      date: "2099-09-08", startTime: "10:00", endTime: "13:00",
+      reschedulePendingDate: { __delete: true }, reschedulePendingStartTime: { __delete: true }, reschedulePendingEndTime: { __delete: true }, reschedulePendingAt: { __delete: true }, rescheduledBy: { __delete: true },
+      updatedAt: { __serverTimestamp: true },
+    });
+    expect(update.rescheduleHistory.__arrayUnion[0]).toMatchObject({ from: { date: "2099-09-01", startTime: "09:00", endTime: "12:00" }, to: { date: "2099-09-08", startTime: "10:00", endTime: "13:00" }, proposedBy: "client", proposedAt: "2099-08-30T00:00:00.000Z", acceptedBy: "caregiver" });
+  });
+
+  it("withdraw clears YOUR proposal (the page's Withdraw); decline refuses your own, withdraw refuses the family's", async () => {
+    const mine = { caregiverId: CAREGIVER, clientName: "Fam", status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00", reschedulePendingDate: "2099-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00", rescheduledBy: "caregiver" };
+    hoisted.docState.set("shifts/s1", mine);
+    let r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "decline" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.message).toMatch(/your own — withdraw it/);
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")).toBeUndefined();
+    r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "withdraw" }) as any;
+    expect(r).toMatchObject({ success: true, action: "withdraw", clientName: "Fam", date: "2099-09-01", startTime: "09:00" });
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toEqual({
+      reschedulePendingDate: { __delete: true }, reschedulePendingStartTime: { __delete: true }, reschedulePendingEndTime: { __delete: true }, reschedulePendingAt: { __delete: true }, rescheduledBy: { __delete: true },
+      updatedAt: { __serverTimestamp: true },
+    });
+    hoisted.reset();
+    hoisted.docState.set("shifts/s1", { ...mine, rescheduledBy: "client" });
+    r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "withdraw" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.message).toMatch(/family's proposal/);
+  });
+
+  it("no shiftId right after the proposal notice → the visit the notice was about (lastNoticedShiftId on the session)", async () => {
+    hoisted.docState.set("agent_sessions/+1555", { lastNoticedShiftId: "s1" });
+    hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER, clientName: "Fam", status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00", reschedulePendingDate: "2099-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00", rescheduledBy: "client" });
+    const r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, action: "decline", phone: "+1555" }) as any;
+    expect(r).toMatchObject({ success: true, shiftId: "s1" });
+    const none = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, action: "decline" }) as any;
+    expect(none._toolError).toBe(true);
+  });
+
+  it("is on the caregiver tool list (it was caregiver-only but never caregiver-visible)", async () => {
+    const { CAREGIVER_TOOLS, CLIENT_TOOLS } = await import("../server");
+    expect(CAREGIVER_TOOLS.some(t => t.name === "manage_shift_reschedule")).toBe(true);
+    expect(CLIENT_TOOLS.some(t => t.name === "manage_shift_reschedule")).toBe(false);
+    expect((CAREGIVER_TOOLS.find(t => t.name === "manage_shift_reschedule")!.input_schema as any).properties.action.enum).toEqual(["propose", "accept", "decline", "withdraw"]);
+  });
 });
 
 describe("request_schedule_amendment", () => {

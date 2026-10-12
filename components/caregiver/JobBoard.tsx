@@ -483,6 +483,34 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
         }
     };
 
+    // Keep current time (caregiver sweep B5, founder 2026-10-11): the family's
+    // proposed time doesn't work but the confirmed one still does — drop the
+    // proposal, nothing else. Before this the only ways out were Cancel (the
+    // whole interview) or re-proposing the original time. NOT gated by
+    // membership / background: keeping the current time is a decline, like
+    // Decline / Cancel. The field set is pinned equal to Evia's shared write
+    // (functions/src/agents/interviewProposal.ts KEEP_INTERVIEW_TIME_FIELDS) by
+    // a static test — the proposal + its Evia marker cleared, updatedAt stamped,
+    // status and scheduledTime untouched, so onVideoInterviewWrite tells the
+    // family "isn't able to move the interview — it's staying at …".
+    const handleKeepCurrentTime = async (iv: InterviewItem) => {
+        if (!db || !profile || !iv.reschedulePendingTime || iv.rescheduledBy !== 'client') return;
+        setSubmittingInterview(iv.id);
+        try {
+            await db.collection('video_interviews').doc(iv.id).update({
+                reschedulePendingTime: firebase.firestore.FieldValue.delete(),
+                rescheduledBy: firebase.firestore.FieldValue.delete(),
+                rescheduledViaAgent: firebase.firestore.FieldValue.delete(),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
+            onShowToast(`Kept the current time — ${iv.clientName} will be told.`, 'success');
+        } catch {
+            onShowToast('Failed to keep the current time', 'error');
+        } finally {
+            setSubmittingInterview(null);
+        }
+    };
+
     const toggleChip = (list: string[], setList: React.Dispatch<React.SetStateAction<string[]>>, value: string) => {
         setList(prev => prev.includes(value) ? prev.filter(x => x !== value) : [...prev, value]);
     };
@@ -1185,7 +1213,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                     {/* Gated (membership / background check): Accept, Accept new time,
                                                         Propose and Reschedule all go behind the gate CTA — the reschedule
                                                         form below is hidden under the same gate, so a visible Propose/
-                                                        Reschedule button would open nothing. Decline/Cancel stays. */}
+                                                        Reschedule button would open nothing. Decline/Cancel stays — and
+                                                        so does Keep current time on the family's proposal (a decline). */}
                                                     {blockReason && (iv.status === 'pending' || iv.status === 'accepted') ? (
                                                         <div className="flex items-center justify-between">
                                                             {iv.jobId ? (
@@ -1194,6 +1223,15 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                                 </button>
                                                             ) : <span />}
                                                             <div className="flex gap-2">
+                                                                {iv.reschedulePendingTime && iv.rescheduledBy === 'client' && (
+                                                                    <button
+                                                                        onClick={() => handleKeepCurrentTime(iv)}
+                                                                        disabled={submittingInterview === iv.id}
+                                                                        className="px-4 py-1.5 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+                                                                    >
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Keep current time'}
+                                                                    </button>
+                                                                )}
                                                                 <button
                                                                     onClick={() => (iv.status === 'accepted' ? handleCancelInterview(iv) : handleDeclineInterview(iv))}
                                                                     disabled={submittingInterview === iv.id}
@@ -1243,7 +1281,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                                 </div>
                                                             ) : iv.reschedulePendingTime && iv.rescheduledBy === 'client' ? (
                                                                 // The family proposed a new time — this caregiver reviews it,
-                                                                // same shape as a fresh request (Accept/Decline/Counter).
+                                                                // same shape as a fresh request (Accept/Decline/Counter), plus
+                                                                // Keep current time (B5): the proposal dropped, the interview stays.
                                                                 <div className="flex gap-2">
                                                                     {rescheduleOpenId !== iv.id && (
                                                                         <button
@@ -1254,6 +1293,13 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                                             Propose different time
                                                                         </button>
                                                                     )}
+                                                                    <button
+                                                                        onClick={() => handleKeepCurrentTime(iv)}
+                                                                        disabled={submittingInterview === iv.id}
+                                                                        className="px-4 py-1.5 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+                                                                    >
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Keep current time'}
+                                                                    </button>
                                                                     <button
                                                                         onClick={() => (iv.status === 'accepted' ? handleCancelInterview(iv) : handleDeclineInterview(iv))}
                                                                         disabled={submittingInterview === iv.id}

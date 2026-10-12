@@ -38,7 +38,7 @@ vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async 
 vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (n: any) => { hoisted.bells.push(n); hoisted.order.push("bell"); return true; }) }));
 vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(async (id: string) => (id === "cg1" ? "+1408" : undefined)) }));
 
-import { shouldNudgePendingDecision, runPendingDecisionNudges, toMs, NUDGE_DELAY_MS, RENUDGE_COOLDOWN_MS, REPLACEMENT_DELAY_MS, REPLACEMENT_COOLDOWN_MS, MAX_NUDGES } from "../pendingDecisionNudge";
+import { shouldNudgePendingDecision, runPendingDecisionNudges, toMs, NUDGE_DELAY_MS, RENUDGE_COOLDOWN_MS, REPLACEMENT_DELAY_MS, REPLACEMENT_EXPIRY_MS, REPLACEMENT_NUDGE_BEFORE_EXPIRY_MS, MAX_NUDGES } from "../pendingDecisionNudge";
 
 const NOW = Date.parse("2099-03-10T18:00:00.000Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -46,20 +46,25 @@ const ago = (ms: number) => new Date(NOW - ms).toISOString();
 beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sessionSets.length = 0; hoisted.bells.length = 0; hoisted.sends.length = 0; hoisted.order.length = 0; hoisted.sendResult = true; hoisted.docs.set("agent_sessions/+1408", { caregiverId: "cg1" }); });
 
 describe("shouldNudgePendingDecision", () => {
-  it("24h after the request, then every 48h; replacements 2h then every 12h and never after the visit date", () => {
+  it("24h after the request, then every 48h; a replacement ONCE, 10 minutes before its 30-minute expiry, never at or after it (B6)", () => {
     expect(shouldNudgePendingDecision({ createdMs: NOW - NUDGE_DELAY_MS + 1000, lastNudgedMs: null, nowMs: NOW })).toBe(false);
     expect(shouldNudgePendingDecision({ createdMs: NOW - NUDGE_DELAY_MS - 1000, lastNudgedMs: null, nowMs: NOW })).toBe(true);
     expect(shouldNudgePendingDecision({ createdMs: NOW - 5 * NUDGE_DELAY_MS, lastNudgedMs: NOW - RENUDGE_COOLDOWN_MS + 1000, nowMs: NOW })).toBe(false);
     expect(shouldNudgePendingDecision({ createdMs: NOW - 5 * NUDGE_DELAY_MS, lastNudgedMs: NOW - RENUDGE_COOLDOWN_MS - 1000, nowMs: NOW })).toBe(true);
+    // Replacement: the family's Needs Replacement wait is 30 minutes (shiftGenerator.ts expireStaleShiftReplacements reads REPLACEMENT_EXPIRY_MS).
+    expect(REPLACEMENT_EXPIRY_MS).toBe(30 * 60 * 1000);
+    expect(REPLACEMENT_DELAY_MS).toBe(REPLACEMENT_EXPIRY_MS - REPLACEMENT_NUDGE_BEFORE_EXPIRY_MS);
     expect(shouldNudgePendingDecision({ createdMs: NOW - REPLACEMENT_DELAY_MS - 1000, lastNudgedMs: null, nowMs: NOW, replacement: true, visitDate: "2099-03-11", today: "2099-03-10" })).toBe(true);
-    expect(shouldNudgePendingDecision({ createdMs: NOW - REPLACEMENT_DELAY_MS + 1000, lastNudgedMs: null, nowMs: NOW, replacement: true })).toBe(false);
-    expect(shouldNudgePendingDecision({ createdMs: NOW - 3 * REPLACEMENT_DELAY_MS, lastNudgedMs: NOW - REPLACEMENT_COOLDOWN_MS + 1000, nowMs: NOW, replacement: true })).toBe(false);
-    expect(shouldNudgePendingDecision({ createdMs: NOW - 3 * REPLACEMENT_DELAY_MS, lastNudgedMs: null, nowMs: NOW, replacement: true, visitDate: "2099-03-09", today: "2099-03-10" })).toBe(false);
+    expect(shouldNudgePendingDecision({ createdMs: NOW - REPLACEMENT_DELAY_MS + 1000, lastNudgedMs: null, nowMs: NOW, replacement: true })).toBe(false);          // too early
+    expect(shouldNudgePendingDecision({ createdMs: NOW - REPLACEMENT_EXPIRY_MS, lastNudgedMs: null, nowMs: NOW, replacement: true })).toBe(false);               // at expiry — never
+    expect(shouldNudgePendingDecision({ createdMs: NOW - REPLACEMENT_EXPIRY_MS - 60_000, lastNudgedMs: null, nowMs: NOW, replacement: true })).toBe(false);      // after expiry — never
+    expect(shouldNudgePendingDecision({ createdMs: NOW - REPLACEMENT_DELAY_MS - 1000, lastNudgedMs: NOW - 1000, nowMs: NOW, replacement: true })).toBe(false);   // already nudged once
+    expect(shouldNudgePendingDecision({ createdMs: NOW - REPLACEMENT_DELAY_MS - 1000, lastNudgedMs: null, nowMs: NOW, replacement: true, nudgeCount: 1 })).toBe(false);
+    expect(shouldNudgePendingDecision({ createdMs: NOW - REPLACEMENT_DELAY_MS - 1000, lastNudgedMs: null, nowMs: NOW, replacement: true, visitDate: "2099-03-09", today: "2099-03-10" })).toBe(false); // the visit is gone
     expect(shouldNudgePendingDecision({ createdMs: null, lastNudgedMs: null, nowMs: NOW })).toBe(false);
-    // Cap (founder 2026-09-29): three nudges for a booking request / schedule change / interview, then silence; replacements have no cap (they stop at the visit date).
+    // Cap (founder 2026-09-29): three nudges for a booking request / schedule change / interview, then silence.
     expect(shouldNudgePendingDecision({ createdMs: NOW - 9 * NUDGE_DELAY_MS, lastNudgedMs: NOW - RENUDGE_COOLDOWN_MS - 1000, nowMs: NOW, nudgeCount: 2 })).toBe(true);
     expect(shouldNudgePendingDecision({ createdMs: NOW - 9 * NUDGE_DELAY_MS, lastNudgedMs: NOW - RENUDGE_COOLDOWN_MS - 1000, nowMs: NOW, nudgeCount: MAX_NUDGES })).toBe(false);
-    expect(shouldNudgePendingDecision({ createdMs: NOW - 9 * REPLACEMENT_DELAY_MS, lastNudgedMs: NOW - REPLACEMENT_COOLDOWN_MS - 1000, nowMs: NOW, replacement: true, visitDate: "2099-03-11", today: "2099-03-10", nudgeCount: 7 })).toBe(true);
   });
   it("reads either side's timestamp shape", () => {
     expect(toMs("2099-03-10T00:00:00.000Z")).toBe(Date.parse("2099-03-10T00:00:00.000Z"));
@@ -101,9 +106,26 @@ describe("runPendingDecisionNudges", () => {
     expect(r).toEqual({ nudged: 3, bellKeptOptedOut: 0, dropped: 0, skipped: 1 });
     const texts = hoisted.sends.map((s) => s.out.content);
     expect(texts).toContain("Fam A's booking request is still waiting on you. Reply ACCEPT or DECLINE, or DETAILS to see the full request.");
-    expect(texts.some((t) => t.startsWith("Fam B needs a replacement caregiver on ") && t.endsWith("— the request is still waiting on you. Reply ACCEPT or DECLINE, or DETAILS to see the full request."))).toBe(true);
+    expect(texts.some((t) => t.startsWith("Fam B needs a replacement caregiver on ") && t.endsWith("— the request is still waiting on you and expires in 10 minutes. Reply ACCEPT or DECLINE, or DETAILS to see the full request."))).toBe(true);
     expect(texts).toContain("Fam D's schedule change request is still waiting on you. Reply ACCEPT or DECLINE.");
     expect(hoisted.sessionSets.map((s) => s.data.pendingDecision.kind).sort()).toEqual(["amendment", "booking_request", "booking_request"]);
+  });
+
+  // B6: the 10-minute expiry sweep (shiftGenerator.ts) runs only the replacement items — the other kinds stay on the hourly job.
+  it("only:'replacement' loads replacement requests alone, nudges inside the window, and skips one at/after expiry", async () => {
+    hoisted.docs.set("video_interviews/iv1", { status: "requested", caregiverId: "cg1", clientName: "Fam", scheduledTime: "2099-03-28T16:00:00.000Z", createdAt: ago(NUDGE_DELAY_MS + 60_000) });
+    hoisted.docs.set("booking_requests/br1", { status: "pending", caregiverId: "cg1", clientName: "Fam A", createdAt: ago(NUDGE_DELAY_MS + 1) });
+    hoisted.docs.set("booking_requests/rep", { status: "pending", caregiverId: "cg1", clientName: "Fam B", isShiftReplacement: true, schedule: { startDate: "2099-03-11" }, createdAt: ago(REPLACEMENT_DELAY_MS + 1) });
+    hoisted.docs.set("booking_requests/stale", { status: "pending", caregiverId: "cg1", clientName: "Fam C", isShiftReplacement: true, schedule: { startDate: "2099-03-11" }, createdAt: ago(REPLACEMENT_EXPIRY_MS + 1) });
+    hoisted.docs.set("booking_amendments/am1", { status: "pending", caregiverId: "cg1", clientName: "Fam D", createdAt: ago(NUDGE_DELAY_MS + 1) });
+    const r = await runPendingDecisionNudges(NOW, { only: "replacement" });
+    expect(r).toEqual({ nudged: 1, bellKeptOptedOut: 0, dropped: 0, skipped: 1 });
+    expect(hoisted.sends).toHaveLength(1);
+    expect(hoisted.sends[0].out.content).toMatch(/^Fam B needs a replacement caregiver on /);
+    expect(hoisted.sessionSets[0].data.pendingDecision).toMatchObject({ kind: "booking_request", recordId: "rep", label: "a replacement request from Fam B" });
+    // A second sweep inside the window does not nudge again.
+    const r2 = await runPendingDecisionNudges(NOW + 5 * 60_000, { only: "replacement" });
+    expect(r2.nudged).toBe(0);
   });
 
   // Bell ⇄ text in lockstep (caregiver sweep C11, 2026-10-11): the bell is written

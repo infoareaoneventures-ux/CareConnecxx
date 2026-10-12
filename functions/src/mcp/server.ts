@@ -656,29 +656,31 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "manage_shift_reschedule",
     description:
-      "Caregiver-side counterpart to the family's own reschedule tool — proposes moving ONE existing scheduled visit " +
-      "to a new day/time in place (matches CaregiverBookingsPage.tsx's own Reschedule button exactly), or responds to a " +
-      "day/time the FAMILY already proposed for one of your visits. This is for changing an already-scheduled visit — " +
-      "not for cancelling a shift (use your normal cancel-a-shift flow) or adding a brand-new recurring day.",
+      "The reschedule strip on an Active Bookings visit (CaregiverBookingsPage.tsx) — proposes moving ONE existing scheduled " +
+      "visit to a new day/time in place (the page's Reschedule button), or answers a day/time the FAMILY proposed for one of " +
+      "your visits (Accept new time / Decline), or withdraws a proposal you sent (Withdraw). Same writes as the page, same " +
+      "checks, same refusal text; the family is told by the site's own notification — send nothing yourself. Not for " +
+      "cancelling a shift (the cancel-a-shift flow) or adding a brand-new recurring day.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        shiftId:     { type: "string", description: "The shifts document ID" },
+        shiftId:     { type: "string", description: "The shifts document ID. For accept / decline right after the proposal notice it may be omitted — the visit that notice was about is used." },
         action: {
           type: "string",
-          enum: ["propose", "accept", "decline"],
+          enum: ["propose", "accept", "decline", "withdraw"],
           description:
             "propose — suggest a new day/time for this visit (needs date, startTime, endTime); the family gets a text " +
             "to confirm or counter, the visit's real time doesn't change until they accept. " +
-            "accept — confirm a new day/time the FAMILY proposed (only valid when they proposed it, not you). " +
-            "decline — reject the family's proposed time (original stands), or withdraw your own proposal before they respond.",
+            "accept — the Accept new time button: confirm a day/time the FAMILY proposed (never your own). " +
+            "decline — the Decline button: reject the family's proposed time (the original time stands). " +
+            "withdraw — the Withdraw button: take back a proposal YOU sent before the family answers.",
         },
         date:      { type: "string", description: "YYYY-MM-DD — required for action:'propose'" },
         startTime: { type: "string", description: "HH:MM 24-hour — required for action:'propose'" },
         endTime:   { type: "string", description: "HH:MM 24-hour — required for action:'propose'" },
       },
-      required: ["caregiverId", "shiftId", "action"],
+      required: ["caregiverId", "action"],
     },
   },
   {
@@ -1634,7 +1636,9 @@ export const MCP_TOOLS: McpTool[] = [
       "The caregiver's Jobs page (Available Jobs tab), exactly as the website lists it — this tool TEXTS THE NUMBERED LIST ITSELF, say nothing else this turn. Every open job, newest first, minus the ones they already " +
       "applied to or hid, within their travel distance when set. No fit or skills ranking — the site has none. Each entry is one card (title, location, " +
       "distance, rate or Flexible, frequency, Day/Night, date, hours) plus the button the site would show (Apply Now, or the gate that replaces it). " +
-      "Pass sort 'nearest' with limit 4 for the dashboard's Nearby Jobs; pass filters to mirror the sidebar (search, pay range, time of day, days, seniors, care type). " +
+      "Pass sort 'nearest' with limit 4 for the dashboard's Nearby Jobs. Pass filters = the page's sidebar, set from what they said ('morning shifts over $25 on weekends' → timeOfDay ['morning'], payMin 25, days ['Sat','Sun']); " +
+      "the list header then names the filters. refine:true narrows the list they were just shown (merges with its filters); more:true keeps that list's filters. " +
+      "There is NO distance filter — the page has none; the list is already within the travel distance on their profile (update_caregiver_profile changes it). " +
       "total = the page's 'N jobs found'.",
     input_schema: {
       type: "object",
@@ -1642,18 +1646,19 @@ export const MCP_TOOLS: McpTool[] = [
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
         sort:        { type: "string", enum: ["newest", "nearest"], description: "newest = the Jobs page order (default); nearest = the dashboard's Nearby Jobs order" },
         limit:       { type: "number", description: "Optional cap (the dashboard shows 4); omit for the Jobs page, which is texted 2 at a time" },
-        more:        { type: "boolean", description: "true when they ask for more / the next ones — continues the last list where it left off (numbers keep counting)" },
+        more:        { type: "boolean", description: "true when they ask for more / the next ones — continues the last list where it left off (numbers keep counting, same filters)" },
+        refine:      { type: "boolean", description: "true when they are narrowing the list just shown ('only weekends') — the filters you pass are merged over that list's filters" },
         filters: {
           type: "object",
-          description: "The page's sidebar filters — only when the caregiver asked for them",
+          description: "The page's sidebar filters — only the controls the caregiver asked for; unknown values are dropped (never guessed)",
           properties: {
             search:    { type: "string", description: "Area or skill text (matches title, location, requirements)" },
-            payMin:    { type: "number" },
-            payMax:    { type: "number" },
-            timeOfDay: { type: "array", items: { type: "string", enum: ["morning", "afternoon", "evening", "overnight"] } },
-            days:      { type: "array", items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] } },
-            seniors:   { type: "array", items: { type: "string", enum: ["1", "2", "3+"] } },
-            careTypes: { type: "array", items: { type: "string" }, description: "Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping" },
+            payMin:    { type: "number", description: "Pay Rate ($/hr) minimum — a Flexible-rate job counts as $0" },
+            payMax:    { type: "number", description: "Pay Rate ($/hr) maximum" },
+            timeOfDay: { type: "array", items: { type: "string", enum: ["morning", "afternoon", "evening", "overnight"] }, description: "Morning 6am–12pm, Afternoon 12pm–6pm, Evening 6pm–12am, Overnight 12am–6am" },
+            days:      { type: "array", items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }, description: "weekends = Sat, Sun; weekdays = Mon–Fri" },
+            seniors:   { type: "array", items: { type: "string", enum: ["1", "2", "3+"] }, description: "Seniors in Home" },
+            careTypes: { type: "array", items: { type: "string", enum: ["Mobility Assistance", "Dementia / Memory Care", "Medication Reminders", "Personal Care", "Companionship", "Transportation", "Meal Preparation", "Light Housekeeping"] }, description: "Care Type (exact names)" },
           },
         },
       },
@@ -2327,16 +2332,20 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "accept_interview_reschedule",
     description:
-      "Confirm the OTHER party's pending proposed interview time (sent via reschedule_interview) — this is the " +
-      "moment the interview's real scheduled time actually changes. Use list_interviews first if it's unclear " +
-      "whether a proposal is pending or who proposed it — you cannot accept your own proposal, only the other " +
-      "party's.",
+      "Answer the OTHER party's pending proposed interview time (sent via reschedule_interview). action \"accept\" " +
+      "(default) is the Interviews tab's Accept new time — the moment the interview's real scheduled time actually " +
+      "changes. action \"keep\" is the tab's Keep current time — the proposal is dropped, the interview stays at its " +
+      "confirmed time, and the other side is told it isn't moving (use it when they say the new time doesn't work " +
+      "but the original one still does; never cancel the interview or re-propose the original time for that). " +
+      "Use list_interviews first if it's unclear whether a proposal is pending or who proposed it — you cannot " +
+      "accept or keep against your own proposal, only the other party's.",
     input_schema: {
       type: "object",
       properties: {
-        interviewId: { type: "string", description: "The video_interviews document ID — omit for a bare \"yes confirm\" / \"accept\" right after the proposal notice (it uses that interview). Never guess an id." },
-        clientId:    { type: "string", description: "The client's user ID (when the family accepts)" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver accepts)" },
+        interviewId: { type: "string", description: "The video_interviews document ID — omit for a bare \"yes confirm\" / \"accept\" / \"keep it\" right after the proposal notice (it uses that interview). Never guess an id." },
+        clientId:    { type: "string", description: "The client's user ID (when the family answers)" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver answers)" },
+        action:      { type: "string", enum: ["accept", "keep"], description: "accept = Accept new time (default); keep = Keep current time (decline the proposed time, the confirmed time stands)" },
       },
       required: [],
     },
@@ -2446,6 +2455,11 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "react_to_message",
   // Booking-pipeline parity (2026-08-30) — the caregiver's own accept/decline
   // of a family's schedule-change request.
+  // The Active Bookings visit's reschedule strip (caregiver sweep B1 + B4,
+  // 2026-10-11): propose a new time, Accept new time / Decline a family's
+  // proposal, Withdraw your own. It sat only on CAREGIVER_ONLY_TOOL_NAMES
+  // before, so the model could never call it.
+  "manage_shift_reschedule",
   // Account Settings phone-recovery audit (2026-09-02) — delete_account looks
   // the account up in whichever collection has it, so it works for either
   // role. The phone-change entry point didn't need a new tool slot — it's
@@ -4127,9 +4141,35 @@ async function executeToolCall(
       // (notificationTriggers.ts) already watches this field combination
       // and texts the family automatically — no manual send needed here.
       case "manage_shift_reschedule": {
-        const { caregiverId, shiftId, action, date, startTime, endTime } = input;
-        if (!caregiverId || !shiftId || !action) return toolError("INVALID_INPUT", "caregiverId, shiftId, and action are required");
-        const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
+        const { caregiverId, action, date, startTime, endTime } = input;
+        if (!caregiverId || !action) return toolError("INVALID_INPUT", "caregiverId and action are required");
+        // A bare "accept" / "decline" after the proposal notice: no id → the visit
+        // the notice was about (notificationTriggers stamps lastNoticedShiftId).
+        let shiftId = typeof input.shiftId === "string" && input.shiftId.trim() ? input.shiftId.trim() : "";
+        if (!shiftId && typeof (input as Record<string, unknown>).phone === "string") {
+          const sess = await db.collection("agent_sessions").doc(String((input as Record<string, unknown>).phone)).get().catch(() => null);
+          const noticed = sess?.data()?.lastNoticedShiftId;
+          if (typeof noticed === "string" && noticed) shiftId = noticed;
+        }
+        if (!shiftId) return toolError("INVALID_INPUT", "shiftId is required (which visit?)");
+
+        // Accept new time / Decline / Withdraw — the strip's buttons, ONE
+        // implementation shared with the texted ACCEPT / DECLINE / WITHDRAW
+        // replies (agents/caregiverShiftProposal.ts).
+        if (action === "accept" || action === "decline" || action === "withdraw") {
+          const { acceptFamilyShiftProposal, declineFamilyShiftProposal, withdrawOwnShiftProposal } = await import("../agents/caregiverShiftProposal");
+          const r = action === "accept"
+            ? await acceptFamilyShiftProposal(caregiverId as string, shiftId, nowIso, "mcp:manage_shift_reschedule")
+            : action === "decline"
+              ? await declineFamilyShiftProposal(caregiverId as string, shiftId, "mcp:manage_shift_reschedule")
+              : await withdrawOwnShiftProposal(caregiverId as string, shiftId, "mcp:manage_shift_reschedule");
+          if (!r.ok) return toolError(r.code === "CONFLICT" ? "INVALID_INPUT" : r.code, r.message);
+          return action === "accept"
+            ? { success: true, action, shiftId, clientName: r.clientName, date: r.to?.date, startTime: r.to?.startTime, endTime: r.to?.endTime }
+            : { success: true, action, shiftId, clientName: r.clientName, date: r.from.date, startTime: r.from.startTime, endTime: r.from.endTime };
+        }
+
+        const shiftSnap = await db.collection("shifts").doc(shiftId).get();
         if (!shiftSnap.exists) return toolError("NOT_FOUND", "Visit not found");
         const shift = shiftSnap.data()!;
         if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Visit does not belong to this caregiver");
@@ -4146,7 +4186,7 @@ async function executeToolCall(
           // once the visit is overdue, and inside 24h of the start (Cancel is the
           // only option that close); it also refuses a time that overlaps another
           // visit of theirs that day (2026-09-28 parity).
-          if (shift.reschedulePendingDate && shift.rescheduledBy === "caregiver") return toolError("INVALID_INPUT", "Your proposal for this visit is already out — withdraw it (action:'decline') before proposing another time.");
+          if (shift.reschedulePendingDate && shift.rescheduledBy === "caregiver") return toolError("INVALID_INPUT", "Your proposal for this visit is already out — withdraw it (action:'withdraw') before proposing another time.");
           if (isShiftOverdue(shift)) return toolError("INVALID_INPUT", "This visit's time has already passed — it can't be moved.");
           {
             const startsMs = parseScheduledTimeMs(`${String(shift.date ?? "")}T${String(shift.startTime ?? "00:00").slice(0, 5)}:00`);
@@ -4155,8 +4195,8 @@ async function executeToolCall(
             }
           }
           {
-            const conflict = await findCaregiverOwnShiftConflict({ caregiverId: caregiverId as string, date: date as string, startTime: startTime as string, endTime: endTime as string, excludeShiftId: shiftId as string });
-            if (conflict) return toolError("INVALID_INPUT", `That overlaps another shift you have at ${formatHHMMForDisplay(conflict.startTime)}${conflict.endTime ? `–${formatHHMMForDisplay(conflict.endTime)}` : ""} that day.`);
+            const conflict = await findCaregiverOwnShiftConflict({ caregiverId: caregiverId as string, date: date as string, startTime: startTime as string, endTime: endTime as string, excludeShiftId: shiftId });
+            if (conflict) return toolError("INVALID_INPUT", `That overlaps another shift you have at ${formatHHMMForDisplay(conflict.startTime)}${conflict.endTime ? `–${formatHHMMForDisplay(conflict.endTime)}` : ""} that day — choose a different time.`);
           }
           await shiftSnap.ref.update({
             reschedulePendingDate: date,
@@ -4168,51 +4208,6 @@ async function executeToolCall(
           });
           logAudit({ eventType: "shift_reschedule_proposed", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
           return { success: true, action, shiftId, date, startTime, endTime };
-        }
-
-        if (action === "accept") {
-          if (!shift.reschedulePendingDate) return toolError("INVALID_INPUT", "There's no pending reschedule proposal on this visit");
-          if (shift.rescheduledBy !== "client") return toolError("INVALID_INPUT", "This proposal is your own — nothing to accept (use action:'decline' to withdraw it)");
-          {
-            // The page's Accept new time checks the caregiver's other visits on the new day first.
-            const conflict = await findCaregiverOwnShiftConflict({ caregiverId: caregiverId as string, date: String(shift.reschedulePendingDate), startTime: String(shift.reschedulePendingStartTime ?? ""), endTime: String(shift.reschedulePendingEndTime ?? shift.reschedulePendingStartTime ?? ""), excludeShiftId: shiftId as string });
-            if (conflict) return toolError("INVALID_INPUT", `You already have another shift at ${formatHHMMForDisplay(conflict.startTime)}${conflict.endTime ? `–${formatHHMMForDisplay(conflict.endTime)}` : ""} that day — decline this proposal or move that visit first.`);
-          }
-          await shiftSnap.ref.update({
-            date: shift.reschedulePendingDate,
-            startTime: shift.reschedulePendingStartTime,
-            endTime: shift.reschedulePendingEndTime,
-            reschedulePendingDate: admin.firestore.FieldValue.delete(),
-            reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
-            reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
-            reschedulePendingAt: admin.firestore.FieldValue.delete(),
-            rescheduledBy: admin.firestore.FieldValue.delete(),
-            rescheduleHistory: admin.firestore.FieldValue.arrayUnion({
-              from: { date: shift.date, startTime: shift.startTime, endTime: shift.endTime ?? null },
-              to:   { date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime ?? null },
-              proposedBy: shift.rescheduledBy,
-              proposedAt: shift.reschedulePendingAt ?? null,
-              acceptedBy: "caregiver",
-              acceptedAt: nowIso,
-            }),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          logAudit({ eventType: "shift_reschedule_accepted", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
-          return { success: true, action, shiftId, date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime };
-        }
-
-        if (action === "decline") {
-          if (!shift.reschedulePendingDate) return toolError("INVALID_INPUT", "There's no pending reschedule proposal on this visit");
-          await shiftSnap.ref.update({
-            reschedulePendingDate: admin.firestore.FieldValue.delete(),
-            reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
-            reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
-            reschedulePendingAt: admin.firestore.FieldValue.delete(),
-            rescheduledBy: admin.firestore.FieldValue.delete(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          logAudit({ eventType: "shift_reschedule_cleared", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
-          return { success: true, action, shiftId };
         }
 
         return toolError("INVALID_INPUT", `Unknown action: ${action}`);
@@ -6318,7 +6313,7 @@ async function executeToolCall(
 
     // The Jobs page, as data (agents/jobBoardPage.ts mirrors JobBoard.tsx).
     if (name === "browse_job_board") {
-      const { caregiverId, sort, limit, filters, more, phone: bPhone } = input as Record<string, unknown>;
+      const { caregiverId, sort, limit, filters, more, refine, phone: bPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       // Self-sending (2026-09-27): the list goes out verbatim from the tool —
       // the reply post-processor used to rewrite the model's list into "I
@@ -6327,13 +6322,20 @@ async function executeToolCall(
       const sess = await findCaregiverSession(caregiverId as string, bPhone);
       if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
       const { sendJobList } = await import("../agents/jobBoardText");
+      const { normalizeJobBoardFilters } = await import("../agents/jobBoardPage");
+      // The sidebar's own option sets only (B3): unknown values are dropped, never guessed.
       const r = await sendJobList(sess.phone, sess.chatId, caregiverId as string, {
         sort:    sort === "nearest" ? "nearest" : "newest",
         limit:   typeof limit === "number" && limit > 0 ? Math.floor(limit) : undefined,
-        filters: (filters && typeof filters === "object") ? (filters as Record<string, unknown>) : undefined,
+        filters: normalizeJobBoardFilters(filters),
         more:    more === true,
+        refine:  refine === true,
       });
-      return { success: r.sent, sent: r.sent, count: r.count, total: r.total, remaining: r.remaining, jobs: r.items, note: "The numbered list was texted to the caregiver — send nothing else this turn. They answer with a number, or MORE for the next page." };
+      return {
+        success: r.sent, sent: r.sent, count: r.count, total: r.total, remaining: r.remaining, jobs: r.items,
+        filters: r.filters, filtersLabel: r.filtersLabel || null,
+        note: "The numbered list was texted to the caregiver — send nothing else this turn. They answer with a number, or MORE for the next page.",
+      };
     }
 
     if (name === "get_job_details") {
@@ -7852,7 +7854,7 @@ async function executeToolCall(
         if (cgPhone) {
           const { trySend } = await import("../utils/toolNotify");
           const clName = (iv.clientName as string | undefined) ?? "The family";
-          notification = await trySend(cgPhone, `${clName} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`, "mcp:reschedule_interview");
+          notification = await trySend(cgPhone, `${clName} proposed a new interview time: ${displayTime}. Reply here to confirm, keep the current time, or suggest another time.`, "mcp:reschedule_interview");
         }
       } else {
         // Caregiver proposal: the family's bell + text come from onVideoInterviewWrite.
@@ -7905,6 +7907,26 @@ async function executeToolCall(
       }
       if (iv.rescheduledBy === acceptedBy) {
         return toolError("INVALID_INPUT", "You proposed this time yourself — waiting on the other party to accept it, not you");
+      }
+      // action:"keep" — the tab's Keep current time (B5, 2026-10-11): ONE shared
+      // write (agents/interviewProposal.ts) with the site's handleKeepCurrentTime
+      // and Evia's parked KEEP reply. Never gated (it is a decline, like Decline /
+      // Cancel). The proposer's bell + text come from onVideoInterviewWrite — send
+      // nothing here.
+      if (input.action === "keep") {
+        const { keepInterviewTime } = await import("../agents/interviewProposal");
+        const kept = await keepInterviewTime({ by: acceptedBy, userId: (acceptedBy === "caregiver" ? arCaregiverId : arClientId) as string, interviewId: arInterviewId, source: "mcp:accept_interview_reschedule" });
+        if (!kept.ok) return toolError(kept.code, kept.message);
+        return {
+          success: true,
+          kept: true,
+          interviewId: arInterviewId,
+          keptBy: acceptedBy,
+          scheduledTime: kept.scheduledTime,
+          scheduledTimeLocal: kept.scheduledTimeLocal,
+          notification: { sent: true, reason: "notification_trigger" },
+          note: `The proposal is dropped and the interview stays at ${kept.scheduledTimeLocal ?? "its confirmed time"}; ${acceptedBy === "caregiver" ? kept.clientName : kept.caregiverName} is being told by the site's own notification — send nothing yourself.`,
+        };
       }
       // Caregiver (JobBoard.tsx): a PENDING row is gated (Decline + the gate
       // button only); an accepted interview's Accept new time is not.

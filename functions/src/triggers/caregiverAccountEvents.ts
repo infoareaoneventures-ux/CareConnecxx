@@ -4,13 +4,17 @@
 // (Stripe / Checkr webhooks, the admin panel's overrides and document reviews,
 // Evia's own steps, the daily badge job) the change lands here ONCE, and the
 // caregiver hears about it once — bell + text with the same words
-// (notifications/caregiverAccountEvents.ts). Events with no record transition
+// (notifications/caregiverAccountEvents.ts). The same for the Settings page's
+// Pause card: pausedUntil set / cleared by the ONE shared write
+// (agents/pauseAccount.ts) from any door — site queue action, Evia's confirm
+// flow, REACTIVATE keyword, MCP tools. Events with no record transition
 // (a payment-failed attempt, a renewal invoice, a scheduled cancel) are sent
 // by their Stripe handlers through the same module.
 import * as functions from "firebase-functions/v1";
 import { notifyCaregiverAccountEvent, CaregiverAccountEventKind, CaregiverAccountEventContext } from "../notifications/caregiverAccountEvents";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { canWork, lockedNow } from "../utils/caregiverCanWork";
+import { INDEFINITE_PAUSE_UNTIL } from "../agents/pauseAccount";
 import * as admin from "firebase-admin";
 export { canWork, lockedNow };
 
@@ -24,12 +28,32 @@ function offersTransportation(d: Doc | undefined): boolean {
   return services.includes("Transportation");
 }
 
+// Pause (caregiver sweep B7, 2026-10-11): the same rule every reader uses —
+// isCaregiverBookable, the Settings page, Evia's settings text, the admin panel:
+// paused = `pausedUntil` is a string later than now (ISO string compare). Nothing
+// clears a dated pause on its date; it expires by comparison, with no write, so
+// there is no record transition (and no notice) for that — only for the writes
+// pauseCaregiver / reactivateCaregiver make.
+function activePause(d: Doc | undefined, nowIso: string): boolean {
+  return typeof d?.pausedUntil === "string" && d.pausedUntil > nowIso;
+}
+
 /** Pure: which events this before→after change represents, in the order they should be told. */
-export function caregiverAccountTransitions(before: Doc | undefined, after: Doc | undefined): Array<{ kind: CaregiverAccountEventKind; ctx?: CaregiverAccountEventContext }> {
+export function caregiverAccountTransitions(before: Doc | undefined, after: Doc | undefined, nowIso: string = new Date().toISOString()): Array<{ kind: CaregiverAccountEventKind; ctx?: CaregiverAccountEventContext }> {
   const out: Array<{ kind: CaregiverAccountEventKind; ctx?: CaregiverAccountEventContext }> = [];
   if (!after) return out;
   const b = before ?? {};
   const a = after;
+
+  // ── Account paused / reactivated (B7) ─────────────────────────────────────
+  const pausedB = activePause(b, nowIso); const pausedA = activePause(a, nowIso);
+  if (pausedA && (!pausedB || b.pausedUntil !== a.pausedUntil)) {
+    // unset/expired → set = paused; a new end date while paused = told again with the new date.
+    const indefinite = a.pausedUntil === INDEFINITE_PAUSE_UNTIL;
+    out.push({ kind: "account_paused", ctx: indefinite ? { indefinite: true } : { date: String(a.pausedUntil).slice(0, 10) } });
+  }
+  const reactivatedNow = pausedB && !pausedA; // set → unset (or an explicit past date)
+  if (reactivatedNow) out.push({ kind: "account_reactivated" });
 
   // ── Membership ────────────────────────────────────────────────────────────
   const paidBefore = b.membershipPaid === true;
@@ -86,7 +110,9 @@ export function caregiverAccountTransitions(before: Doc | undefined, after: Doc 
   if (payB && !payA && (a.payoutsEnabled === false || a.stripeOnboardingComplete === false)) out.push({ kind: "payouts_disabled" });
 
   // ── Bookable (the one true "you're approved") ──────────────────────────────
-  if (!isCaregiverBookable(b) && isCaregiverBookable(a)) out.push({ kind: "now_bookable" });
+  // A pause makes her not bookable; lifting it is announced by account_reactivated
+  // ("you'll show up for new matches"), not by a second "you're all set".
+  if (!reactivatedNow && !isCaregiverBookable(b) && isCaregiverBookable(a)) out.push({ kind: "now_bookable" });
 
   return out;
 }

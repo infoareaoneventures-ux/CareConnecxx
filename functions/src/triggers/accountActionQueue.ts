@@ -109,14 +109,16 @@ async function dispatch(type: ActionType, data: Record<string, unknown>): Promis
     // Website entry point for the same pause/reactivate a caregiver could
     // already do over SMS (pause_account/reactivate_account MCP tools) —
     // calls the exact same shared write logic so all callers stay in sync.
+    // door: "site" — the page only toasts, so the record of the event
+    // (account_paused / account_reactivated bell + text, B7) goes in full.
     case "set_caregiver_pause_status": {
       const uid = String(data.uid ?? "");
       if (data.action === "reactivate") {
-        await reactivateCaregiver(uid);
+        await reactivateCaregiver(uid, { door: "site" });
         return { status: "active" };
       }
       const until = typeof data.until === "string" && data.until.trim() ? data.until.trim() : "indefinite";
-      await pauseCaregiver(uid, until);
+      await pauseCaregiver(uid, until, { door: "site" });
       return { status: "paused", until };
     }
 

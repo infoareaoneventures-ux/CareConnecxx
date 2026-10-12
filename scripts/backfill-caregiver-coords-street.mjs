@@ -23,7 +23,7 @@
  *   node scripts/backfill-caregiver-coords-street.mjs --limit 20     # first N candidates only
  *   node scripts/backfill-caregiver-coords-street.mjs --uid <uid>    # one record
  */
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -32,8 +32,19 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const admin = require(join(root, 'functions/node_modules/firebase-admin'));
 const axios = require(join(root, 'functions/node_modules/axios'));
-const sa = JSON.parse(readFileSync(join(root, 'functions/serviceAccountKey.json'), 'utf8'));
-admin.initializeApp({ credential: admin.credential.cert(sa) });
+// Credentials: functions/serviceAccountKey.json (git-ignored) when present, else
+// application-default credentials (`gcloud auth application-default login`).
+const keyPath = join(root, 'functions/serviceAccountKey.json');
+if (existsSync(keyPath)) {
+  const sa = JSON.parse(readFileSync(keyPath, 'utf8'));
+  admin.initializeApp({ credential: admin.credential.cert(sa) });
+} else if (process.env.GOOGLE_OAUTH_ACCESS_TOKEN) {
+  // A short-lived user token (`$env:GOOGLE_OAUTH_ACCESS_TOKEN = (gcloud auth print-access-token)`) — never printed, never stored.
+  const access_token = process.env.GOOGLE_OAUTH_ACCESS_TOKEN;
+  admin.initializeApp({ credential: { getAccessToken: async () => ({ access_token, expires_in: 3300 }) }, projectId: process.env.GCLOUD_PROJECT || 'careconnex-d4c8b' });
+} else {
+  admin.initializeApp({ credential: admin.credential.applicationDefault(), projectId: process.env.GCLOUD_PROJECT || 'careconnex-d4c8b' });
+}
 const db = admin.firestore();
 
 const args = process.argv.slice(2);

@@ -42,17 +42,6 @@ test.describe('Evia Smoke Tests', () => {
     console.log('✅ Client signup page accessible');
   });
 
-  test('How It Works page exists', async ({ page }) => {
-    const response = await page.goto(`${BASE_URL}/how-it-works`);
-    
-    expect(response?.status()).toBeLessThan(400);
-    
-    const body = page.locator('body');
-    await expect(body).toBeVisible();
-    
-    console.log('✅ How It Works page accessible');
-  });
-
   test('Login page exists', async ({ page }) => {
     const response = await page.goto(`${BASE_URL}/login`);
     

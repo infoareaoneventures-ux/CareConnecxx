@@ -1,8 +1,6 @@
 User-agent: *
 Allow: /
 Allow: /assets/
-Allow: /how-it-works
-Allow: /pricing
 
 # Allow CSS and JS for proper rendering
 Allow: /*.css$

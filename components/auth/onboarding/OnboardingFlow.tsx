@@ -9,8 +9,8 @@ import { useOnboardingSession } from '../../../hooks/useOnboardingSession';
 import { QRHandoff } from './QRHandoff';
 import { MobileHandoff } from './MobileHandoff';
 import { sanitizeName } from '../../../utils/sanitize';
-import { supportPhone } from '../../../utils/launchConfig';
 import { TaskPageBar } from '../TaskPageBar';
+import { Footer } from '../../landing/Footer';
 
 export type OnboardingRole = 'client' | 'caregiver';
 type Step = 'role' | 'consent' | 'name' | 'phone' | 'verify' | 'handoff' | 'connected';
@@ -267,7 +267,7 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
 // SHELL COMPONENTS — provide the visual frame for each mode
 // ============================================================================
 
-// Same top bar as the family shell (logo → home, help line) so the caregiver
+// Same site header + footer as the family shell so the caregiver
 // door matches the client door (founder, 2026-09-25).
 const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col">
@@ -283,6 +283,7 @@ const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) =
         {children}
       </div>
     </div>
+    <Footer />
   </div>
 );
 
@@ -304,13 +305,7 @@ const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children:
         {children}
       </div>
     </main>
-    {supportPhone && (
-      <footer className="text-center px-6 pb-6 text-xs text-ink-400">
-        <a href={supportPhone.telHref} className="underline-offset-2 hover:underline">
-          Prefer to talk to a person? Call us at {supportPhone.display}.
-        </a>
-      </footer>
-    )}
+    <Footer />
   </div>
 );
 

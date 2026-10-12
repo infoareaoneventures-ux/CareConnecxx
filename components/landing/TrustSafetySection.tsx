@@ -1,19 +1,24 @@
 import React from 'react';
-import { ShieldCheck, UserCheck, Lock, Search } from 'lucide-react';
+import { ShieldCheck, Video, Lock, MessageSquare } from 'lucide-react';
 import { ViewType } from '../../types';
 
 interface TrustSafetySectionProps {
     onNavigate: (view: ViewType) => void;
 }
 
+// Only what the product does (founder, 2026-10-12): the annual background
+// check every caregiver completes before a family can book, the optional
+// interview (a Google Meet link texted to both parties), Stripe payments, and
+// text coordination. No "profile review" (there is no such step) and no
+// Trust & Safety page behind it (removed). The provider is not named here.
 const trustPoints = [
-    { icon: <ShieldCheck className="w-6 h-6" strokeWidth={1.5} />, title: 'Annual background checks' },
-    { icon: <UserCheck className="w-6 h-6" strokeWidth={1.5} />, title: 'Profile review before booking' },
-    { icon: <Lock className="w-6 h-6" strokeWidth={1.5} />, title: 'Secure payments through Stripe' },
-    { icon: <Search className="w-6 h-6" strokeWidth={1.5} />, title: 'Interview before you book' },
+    { icon: <ShieldCheck className="w-6 h-6" strokeWidth={1.5} />, title: 'Annual background check by Checkr' },
+    { icon: <Video className="w-6 h-6" strokeWidth={1.5} />, title: 'Interview before you book' },
+    { icon: <Lock className="w-6 h-6" strokeWidth={1.5} />, title: 'Payments through Stripe' },
+    { icon: <MessageSquare className="w-6 h-6" strokeWidth={1.5} />, title: 'Everything coordinated by text' },
 ];
 
-export const TrustSafetySection: React.FC<TrustSafetySectionProps> = ({ onNavigate }) => {
+export const TrustSafetySection: React.FC<TrustSafetySectionProps> = () => {
     return (
         <section className="bg-[#fafaf9] relative overflow-hidden pt-20 pb-32">
             <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
@@ -26,25 +31,19 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = ({ onNaviga
                             Care you can look into before you book
                         </h2>
                         <p className="text-slate-600 text-[17px] mb-10 leading-relaxed max-w-md">
-                            Every caregiver completes a background check and a profile review before families can book them. For more information,{' '}
-                            <button
-                                onClick={() => onNavigate('trust')}
-                                className="underline font-medium hover:text-primary-600 text-slate-800 transition-colors"
-                            >
-                                visit our Trust and Safety Center.
-                            </button>
+                            Every caregiver completes a background check before families can book them.
                         </p>
 
-                        <div className="space-y-6">
+                        <ul className="space-y-6">
                             {trustPoints.map((point, i) => (
-                                <div key={i} className="flex items-center gap-5 group">
+                                <li key={i} className="flex items-center gap-5 group">
                                     <div className="text-slate-800 flex-shrink-0 group-hover:scale-110 transition-transform">
                                         {point.icon}
                                     </div>
                                     <h3 className="text-[17px] text-slate-700">{point.title}</h3>
-                                </div>
+                                </li>
                             ))}
-                        </div>
+                        </ul>
                     </div>
 
                     {/* Middle Column: Image */}

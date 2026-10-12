@@ -19,6 +19,16 @@ export const INSTANT_PAYOUT_FEE_RATE = 0.01;
 export const INSTANT_PAYOUT_FEE_MIN_CENTS = 50;
 export const INSTANT_PAYOUT_FEE_LABEL = "Stripe's 1% instant fee (min $0.50)";
 
+// Membership prices as SHOWN on the site (landing page, membership pages). The
+// charge itself is resolved server-side from Stripe price ids
+// (functions/src/config/pricing.ts owns the canonical display amounts there);
+// change these when a Stripe price changes — never hand-type a dollar amount
+// in copy. Families: one monthly plan, cancel anytime. Caregivers: ONE flat
+// annual membership (founder 2026-09-25) covering the background check (+ MVR
+// when Transportation is offered).
+export const CLIENT_MONTHLY_PRICE = 29.95;
+export const CAREGIVER_ANNUAL_PRICE = 69.99;
+
 /** Fee in cents for a visit whose caregiver total is `grossCents` (0 → 0). Same arithmetic as the backend. */
 export function serviceFeeCents(grossCents: number): number {
   const g = Math.max(0, Math.round(Number(grossCents) || 0));

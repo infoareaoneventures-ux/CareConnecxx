@@ -83,41 +83,14 @@ test.describe('1. Public Pages', () => {
     console.log('✅ Landing page loads');
   });
 
-  test('1.2 How It Works page loads', async ({ page }) => {
-    await page.goto(`${BASE}/how-it-works`);
-    const body = page.locator('body');
-    await expect(body).toBeVisible();
-    console.log('✅ How It Works loads');
-  });
-
-  test('1.3 Pricing page loads', async ({ page }) => {
-    await page.goto(`${BASE}/pricing`);
-    await expect(page.locator('body')).toBeVisible();
-    console.log('✅ Pricing page loads');
-  });
-
-  test('1.4 Blog page loads', async ({ page }) => {
-    await page.goto(`${BASE}/blog`);
-    await expect(page.locator('body')).toBeVisible();
-    console.log('✅ Blog page loads');
-  });
-
-  test('1.5 Trust & Safety page loads', async ({ page }) => {
-    await page.goto(`${BASE}/trust`);
-    await expect(page.locator('body')).toBeVisible();
-    console.log('✅ Trust & Safety loads');
-  });
-
-  test('1.6 City landing page loads (Atlanta)', async ({ page }) => {
-    await page.goto(`${BASE}/care/atlanta`);
-    await expect(page.locator('body')).toBeVisible();
-    console.log('✅ City page loads');
-  });
-
-  test('1.7 Help Center loads', async ({ page }) => {
-    await page.goto(`${BASE}/help`);
-    await expect(page.locator('body')).toBeVisible();
-    console.log('✅ Help Center loads');
+  test('1.2 removed marketing paths fall through to the 404 page', async ({ page }) => {
+    // 2026-10-12: /how-it-works, /pricing, /blog, /trust, /care/*, /help were removed —
+    // the landing page is the one public page; unknown paths render NotFound.
+    for (const path of ['/how-it-works', '/pricing', '/blog', '/trust', '/care/san-jose', '/help']) {
+      await page.goto(`${BASE}${path}`);
+      await expect(page.locator('text=Page Not Found')).toBeVisible({ timeout: 15000 });
+    }
+    console.log('✅ Removed marketing paths 404');
   });
 
   test('1.8 Login page loads', async ({ page }) => {

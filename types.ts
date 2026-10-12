@@ -2,9 +2,6 @@
 export type ViewType =
   | 'landing'
   | 'login'
-  | 'how-it-works'
-  | 'trust'
-  | 'subscription'
   | 'client-signup'
   | 'client-apply'
   | 'caregiver-signup'
@@ -34,12 +31,7 @@ export type ViewType =
   | 'stripe-callback'
   | 'payment-success'
   | 'payment-cancel'
-  | 'express-booking'
-  | 'family-faq'
-  | 'help-center'
-  | 'help-families'
-  | 'help-caregivers'
-  | 'help-general';
+  | 'express-booking';
 
 export interface Senior {
   id: number;

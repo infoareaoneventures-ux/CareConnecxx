@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { submitAccountAction } from '../../services/accountActionQueue';
 import { TaskPageBar } from '../auth/TaskPageBar';
+import { Footer } from '../landing/Footer';
 
 // "Trouble signing in?" destination — mounted at both /client/forgot-password
 // and /caregiver/forgot-password (login here is phone-OTP only for both
@@ -33,7 +34,7 @@ export default function RequestAccountRecoveryPage() {
 
   return (
     <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col">
-      {/* Shared task-page bar: logo → home + help line (2026-09-25). */}
+      {/* The site header (logo → home, Log in, Get started); help phone in the footer (2026-10-12). */}
       <TaskPageBar />
       <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
       <div className="w-full max-w-sm space-y-8">
@@ -88,6 +89,7 @@ export default function RequestAccountRecoveryPage() {
         )}
       </div>
       </div>
+      <Footer />
     </div>
   );
 }

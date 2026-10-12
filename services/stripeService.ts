@@ -21,9 +21,10 @@ export const getStripe = () => {
 // Client monthly membership — $29.95/mo (live price ID)
 export const MEMBERSHIP_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
 
-// Caregiver annual membership — ONE flat $69.99/yr (background check + MVR when transportation is offered)
+// Caregiver annual membership — ONE flat annual fee (background check + MVR when transportation is offered)
 // Display-only — the charge itself is resolved server-side (createCheckoutSession, plan 'caregiver_annual').
-export const CAREGIVER_ANNUAL_PRICE = 69.99;
+// The amount lives with the other site-side price constants in utils/pricing.ts.
+export { CAREGIVER_ANNUAL_PRICE } from '../utils/pricing';
 
 export interface SubscriptionStatus {
   status: 'active' | 'canceled' | 'incomplete' | 'past_due' | 'unpaid' | 'trialing' | null;

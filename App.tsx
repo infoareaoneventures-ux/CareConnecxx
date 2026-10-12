@@ -27,8 +27,6 @@ const StripeCallback = lazy(() => import('./components/StripeCallback').then(mod
 const PaymentSuccess = lazy(() => import('./components/PaymentSuccess').then(module => ({ default: module.PaymentSuccess })));
 const PaymentCancel = lazy(() => import('./components/PaymentCancel').then(module => ({ default: module.PaymentCancel })));
 const CarePlan = lazy(() => import('./components/CarePlan').then(module => ({ default: module.CarePlan })));
-const HowItWorks = lazy(() => import('./components/HowItWorks').then(module => ({ default: module.HowItWorks })));
-const Subscription = lazy(() => import('./components/Subscription').then(module => ({ default: module.Subscription })));
 const NotFound = lazy(() => import('./components/NotFound').then(module => ({ default: module.NotFound })));
 const CaregiverCalendarPage = lazy(() => import('./components/caregiver/CaregiverCalendarPage').then(module => ({ default: module.CaregiverCalendarPage })));
 const CaregiverMembership = lazy(() => import('./components/caregiver/CaregiverMembership').then(module => ({ default: module.CaregiverMembership })));
@@ -42,13 +40,6 @@ const PostJobFlow = lazy(() => import('./components/client/postJob/PostJobFlow')
 const CaregiverOnboardingWizard = lazy(() => import('./components/caregiver/CaregiverOnboardingWizard').then(m => ({ default: m.CaregiverOnboardingWizard })));
 const ClientJobPostingWizard = lazy(() => import('./components/client/ClientJobPostingWizard').then(m => ({ default: m.ClientJobPostingWizard })));
 const PostsPage = lazy(() => import('./components/client/PostsPage').then(module => ({ default: module.PostsPage })));
-const TrustAndSafetyPage = lazy(() => import('./components/TrustAndSafetyPage').then(module => ({ default: module.TrustAndSafetyPage })));
-const FamilyFAQ = lazy(() => import('./components/FamilyFAQ').then(module => ({ default: module.FamilyFAQ })));
-const HelpCenter = lazy(() => import('./components/HelpCenter').then(module => ({ default: module.HelpCenter })));
-const HelpPage = lazy(() => import('./components/HelpPage').then(module => ({ default: module.HelpPage })));
-const BlogPage        = lazy(() => import('./components/pages/BlogPage').then(module => ({ default: module.BlogPage })));
-const CityPage        = lazy(() => import('./components/pages/CityPage').then(module => ({ default: module.CityPage })));
-const IMessageSignupPage  = lazy(() => import('./components/landing/IMessageSignupPage'));
 const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage'));
 const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
 const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
@@ -222,14 +213,6 @@ const AppContent: React.FC = () => {
 
     switch (view) {
       case 'landing': navigate('/'); break;
-      case 'how-it-works': navigate('/how-it-works'); break;
-      case 'trust': navigate('/trust'); break;
-      case 'family-faq': navigate('/family-faq'); break;
-      case 'help-center': navigate('/help'); break;
-      case 'help-families': navigate('/help/families'); break;
-      case 'help-caregivers': navigate('/help/caregivers'); break;
-      case 'help-general': navigate('/help/general'); break;
-      case 'subscription': navigate('/pricing'); break;
       case 'client-signup': navigate('/client/signup'); break;
       // Phone-OTP is the only login; legacy view names are aliases to /login.
       case 'login':
@@ -324,11 +307,6 @@ const AppContent: React.FC = () => {
           <Route path="/" element={<PublicOnlyRoute element={<LandingView onNavigate={handleNavigation} />} />} />
           <Route path="/login" element={<PublicOnlyRoute element={<AuthLoginPage />} />} />
           <Route path="/auth/login" element={<Navigate to="/login" replace />} />
-          <Route path="/how-it-works" element={<HowItWorks onNavigate={handleNavigation} />} />
-          <Route path="/trust" element={<TrustAndSafetyPage onNavigate={handleNavigation} />} />
-          <Route path="/blog" element={<BlogPage onNavigate={handleNavigation} />} />
-          <Route path="/blog/:slug" element={<BlogPage onNavigate={handleNavigation} />} />
-          <Route path="/care/:city" element={<CityPage onNavigate={handleNavigation} />} />
           <Route path="/start"              element={<PhoneSignupPage />} />
           <Route path="/upload/:type"        element={<UploadPage />} />
           {/* SPA-served aliases: v1-uploadPageMeta redirects here if it can't
@@ -337,12 +315,6 @@ const AppContent: React.FC = () => {
           <Route path="/bgcheck"            element={<BgcheckConsentPage />} />
           <Route path="/bgcheck-direct"     element={<BgcheckConsentPage />} />
           <Route path="/done"               element={<GenericSuccessPage />} />
-          <Route path="/family-faq" element={<FamilyFAQ onNavigate={handleNavigation} />} />
-          <Route path="/help" element={<HelpCenter onNavigate={handleNavigation} />} />
-          <Route path="/help/families" element={<HelpPage section="families" onNavigate={handleNavigation} />} />
-          <Route path="/help/caregivers" element={<HelpPage section="caregivers" onNavigate={handleNavigation} />} />
-          <Route path="/help/general" element={<HelpPage section="general" onNavigate={handleNavigation} />} />
-          <Route path="/pricing" element={<Subscription onNavigate={handleNavigation} />} />
           {/* Signup routes redirect into the unified phone-first onboarding at /start.
               The role= query param selects between the senior-friendly family mode and
               the leaner caregiver mode. See components/auth/onboarding/OnboardingFlow.tsx. */}

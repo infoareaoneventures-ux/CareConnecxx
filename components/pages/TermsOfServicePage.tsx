@@ -1,18 +1,10 @@
 import React from 'react';
-import { BloomMark } from '../ui/BloomMark';
+import { SiteHeader } from '../landing/SiteHeader';
+import { Footer } from '../landing/Footer';
 
 export const TermsOfServicePage: React.FC = () => (
   <div className="min-h-screen bg-paper-50">
-    <header className="bg-white border-b hairline sticky top-0 z-10">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
-        <a href="/" className="flex items-center gap-2">
-          <div className="bg-primary-600 p-2 rounded-xl">
-            <BloomMark className="text-white w-5 h-5" />
-          </div>
-          <span className="text-xl font-bold text-ink-900">Evia</span>
-        </a>
-      </div>
-    </header>
+    <SiteHeader />
     <main className="max-w-3xl mx-auto px-4 sm:px-6 py-10">
       <h1 className="font-display text-3xl font-semibold tracking-[-0.02em] text-ink-900 mb-2">Terms of Service</h1>
       <p className="text-sm text-ink-600 mb-8">Effective Date: February 7, 2026 &nbsp;·&nbsp; Version 1.0</p>
@@ -73,7 +65,7 @@ export const TermsOfServicePage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">10. Governing Law &amp; Dispute Resolution</h2>
-          <p>These Terms are governed by the laws of the State of Illinois. Before filing a claim, contact us at support@eviacares.com. Any unresolved dispute will be resolved through binding arbitration administered by the AAA in Chicago, Illinois. <strong>YOU AGREE TO BRING CLAIMS ONLY IN YOUR INDIVIDUAL CAPACITY</strong> and not as a plaintiff or class member in any class proceeding.</p>
+          <p>These Terms are governed by the laws of the State of Illinois. Before filing a claim, message our team from your account (Message our team). Any unresolved dispute will be resolved through binding arbitration administered by the AAA in Chicago, Illinois. <strong>YOU AGREE TO BRING CLAIMS ONLY IN YOUR INDIVIDUAL CAPACITY</strong> and not as a plaintiff or class member in any class proceeding.</p>
         </section>
 
         <section>
@@ -83,12 +75,13 @@ export const TermsOfServicePage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">12. Contact</h2>
-          <p>Evia &nbsp;·&nbsp; <a href="mailto:support@eviacares.com" className="text-primary-600 underline">support@eviacares.com</a></p>
+          <p>Evia &nbsp;·&nbsp; message our team from your account (Message our team in the menu).</p>
         </section>
 
         <p className="text-xs text-ink-400 pt-4 border-t hairline">BY USING EVIA SERVICES, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO BE BOUND BY THESE TERMS OF SERVICE.</p>
       </div>
     </main>
+    <Footer />
   </div>
 );
 

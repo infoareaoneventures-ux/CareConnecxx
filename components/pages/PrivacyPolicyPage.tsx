@@ -1,18 +1,10 @@
 import React from 'react';
-import { BloomMark } from '../ui/BloomMark';
+import { SiteHeader } from '../landing/SiteHeader';
+import { Footer } from '../landing/Footer';
 
 export const PrivacyPolicyPage: React.FC = () => (
   <div className="min-h-screen bg-paper-50">
-    <header className="bg-white border-b hairline sticky top-0 z-10">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
-        <a href="/" className="flex items-center gap-2">
-          <div className="bg-primary-600 p-2 rounded-xl">
-            <BloomMark className="text-white w-5 h-5" />
-          </div>
-          <span className="text-xl font-bold text-ink-900">Evia</span>
-        </a>
-      </div>
-    </header>
+    <SiteHeader />
     <main className="max-w-3xl mx-auto px-4 sm:px-6 py-10">
       <h1 className="font-display text-3xl font-semibold tracking-[-0.02em] text-ink-900 mb-2">Privacy Policy</h1>
       <p className="text-sm text-ink-600 mb-8">Effective Date: February 7, 2026 &nbsp;·&nbsp; Last Updated: February 7, 2026</p>
@@ -77,12 +69,12 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">8. Data Retention</h2>
-          <p>We retain personal information for as long as your account is active or as needed to provide services. SMS consent records are retained for a minimum of 5 years, and access-audit records for 6 years. You may request deletion of your account data by contacting us at support@eviacares.com.</p>
+          <p>We retain personal information for as long as your account is active or as needed to provide services. SMS consent records are retained for a minimum of 5 years, and access-audit records for 6 years. You may request deletion of your account data by messaging our team from your account (Message our team).</p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">9. Your Rights (CCPA / CPRA)</h2>
-          <p>California residents have the right to know what personal information we collect, request deletion of personal information, opt out of the sale of personal information (we do not sell personal information), and non-discrimination for exercising these rights. To exercise your rights, contact us at support@eviacares.com.</p>
+          <p>California residents have the right to know what personal information we collect, request deletion of personal information, opt out of the sale of personal information (we do not sell personal information), and non-discrimination for exercising these rights. To exercise your rights, message our team from your account (Message our team).</p>
         </section>
 
         <section>
@@ -92,13 +84,14 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">11. Contact Us</h2>
-          <p>General Support: <a href="mailto:support@eviacares.com" className="text-primary-600 underline">support@eviacares.com</a></p>
+          <p>General Support: message our team from your account (Message our team in the menu).</p>
           <p>Evia Inc. &nbsp;·&nbsp; www.eviacares.com</p>
         </section>
 
         <p className="text-xs text-ink-400 pt-4 border-t hairline">This Privacy Policy was last updated February 7, 2026. We will notify you of material changes by posting the updated Policy on our platform and updating the effective date.</p>
       </div>
     </main>
+    <Footer />
   </div>
 );
 

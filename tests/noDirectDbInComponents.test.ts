@@ -22,6 +22,8 @@ const DIRECT_DB = /\bdb\.(collection|doc)\(/;
 // dead/orphaned top-level components, not migrated. Baseline now 40.
 // 2026-06-24 (migration pass): -2 (AdminReports, CaregiverBookingsCard) migrated
 // off direct db. Baseline now 38.
+// 2026-10-12 (public-side rebuild): -1 (landing/FeaturedCaregiversSection) —
+// deleted with the rest of the placeholder marketing sections, not migrated.
 const KNOWN_OFFENDERS = new Set<string>([
   "components/CarePlan.tsx",
   "components/CaregiverDashboard.tsx",
@@ -48,7 +50,6 @@ const KNOWN_OFFENDERS = new Set<string>([
   "components/client/postJob/PostJobFlow.tsx",
   "components/client/postJob/Step2WhoWhere.tsx",
   "components/client/postJob/Step3CareNeeds.tsx",
-  "components/landing/FeaturedCaregiversSection.tsx",
 ]);
 
 function componentFiles(): string[] {

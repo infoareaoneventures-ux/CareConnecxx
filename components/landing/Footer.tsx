@@ -1,75 +1,47 @@
-import React, { useState } from 'react';
-import { Twitter, Facebook, Instagram } from 'lucide-react';
+import React from 'react';
+import { Link } from 'react-router-dom';
 import { BloomMark } from '../ui/BloomMark';
-import { ViewType } from '../../types';
-import { LegalDocs } from '../LegalDocs';
+import { supportPhone } from '../../utils/launchConfig';
 
-interface FooterProps {
-    onNavigate: (view: ViewType) => void;
-}
-
-export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
-    const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
-
+// Minimal footer (founder, 2026-10-12): the mark, one line, the help phone,
+// five links. Router links only, so every pre-login page (landing, login,
+// /start, recovery, Privacy, Terms, not-found) mounts the same footer. The
+// social icons and the For Families / For Caregivers columns are gone with the
+// pages they pointed at; Privacy and Terms open the real /privacy and /terms
+// pages (the old LegalDocs modal duplicated them and named the provider).
+// The help phone moved here from the task pages' top bar (founder, 2026-10-12).
+export const Footer: React.FC = () => {
+    const linkClass = 'cursor-pointer hover:text-ink-900 transition-colors';
     return (
-        <>
-            <footer className="bg-paper-50 border-t hairline py-14">
-                <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-                        <div className="col-span-2 md:col-span-2">
-                            <div className="flex items-center space-x-2 mb-4">
-                                <BloomMark className="text-ink-900 w-5 h-5" />
-                                <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
-                            </div>
-                            <p className="text-ink-600 max-w-xs text-sm leading-relaxed">
-                                Care for your loved one, coordinated entirely over text.
-                            </p>
-                            <div className="flex gap-4 mt-6">
-                                <button aria-label="Twitter" className="w-8 h-8 bg-paper-100 rounded-full hover:bg-paper-200 text-ink-400 hover:text-ink-900 transition-colors cursor-pointer flex items-center justify-center">
-                                    <Twitter className="w-4 h-4" />
-                                </button>
-                                <button aria-label="Facebook" className="w-8 h-8 bg-paper-100 rounded-full hover:bg-paper-200 text-ink-400 hover:text-ink-900 transition-colors cursor-pointer flex items-center justify-center">
-                                    <Facebook className="w-4 h-4" />
-                                </button>
-                                <button aria-label="Instagram" className="w-8 h-8 bg-paper-100 rounded-full hover:bg-paper-200 text-ink-400 hover:text-ink-900 transition-colors cursor-pointer flex items-center justify-center">
-                                    <Instagram className="w-4 h-4" />
-                                </button>
-                            </div>
-                        </div>
-
-                        <div>
-                            <h4 className="font-semibold text-ink-900 mb-4 text-sm">For Families</h4>
-                            <ul className="space-y-2.5 text-ink-600 text-sm">
-                                <li><button onClick={() => onNavigate('client-signup')} className="hover:text-ink-900 transition-colors">Find Care</button></li>
-                                <li><button onClick={() => onNavigate('login')} className="hover:text-ink-900 transition-colors">Log In</button></li>
-                                <li><button onClick={() => onNavigate('family-faq')} className="hover:text-ink-900 transition-colors">Family FAQ</button></li>
-                                <li><button onClick={() => onNavigate('client-apply')} className="hover:text-ink-900 transition-colors">Create Account</button></li>
-                            </ul>
-                        </div>
-
-                        <div>
-                            <h4 className="font-semibold text-ink-900 mb-4 text-sm">For Caregivers</h4>
-                            <ul className="space-y-2.5 text-ink-600 text-sm">
-                                <li><button onClick={() => onNavigate('caregiver-signup')} className="hover:text-ink-900 transition-colors">Find Jobs</button></li>
-                                <li><button onClick={() => onNavigate('trust')} className="hover:text-ink-900 transition-colors">Trust & Safety</button></li>
-                                <li><button onClick={() => onNavigate('caregiver-apply')} className="hover:text-ink-900 transition-colors">Apply Online</button></li>
-                                <li><button onClick={() => onNavigate('help-center')} className="hover:text-ink-900 transition-colors">Help Center</button></li>
-                            </ul>
-                        </div>
-                    </div>
-                    <div className="border-t hairline mt-12 pt-8 text-ink-400 text-sm flex flex-col md:flex-row justify-between items-center gap-4">
-                        <span>&copy; 2026 · Designed in San Jose, California</span>
-                        <div className="flex gap-6">
-                            <button onClick={() => setLegalModal('privacy')} className="cursor-pointer hover:text-ink-900 transition-colors">Privacy</button>
-                            <button onClick={() => setLegalModal('terms')} className="cursor-pointer hover:text-ink-900 transition-colors">Terms</button>
-                            <button onClick={() => onNavigate('how-it-works')} className="cursor-pointer hover:text-ink-900 transition-colors">How It Works</button>
-                            <button onClick={() => onNavigate('admin')} className="cursor-pointer hover:text-ink-900 transition-colors">Admin</button>
-                        </div>
-                    </div>
+        <footer className="bg-paper-50 border-t hairline py-14">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex items-center space-x-2 mb-4">
+                    <BloomMark className="text-ink-900 w-5 h-5" />
+                    <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
                 </div>
-            </footer>
+                <p className="text-ink-600 max-w-xs text-sm leading-relaxed">
+                    Care for your loved one, coordinated entirely over text.
+                </p>
+                {supportPhone && (
+                    <p className="text-ink-600 text-sm leading-relaxed mt-3">
+                        Need help?{' '}
+                        <a href={supportPhone.telHref} className="font-medium text-ink-900 hover:underline">
+                            Call {supportPhone.display}
+                        </a>
+                    </p>
+                )}
 
-            {legalModal && <LegalDocs type={legalModal} onClose={() => setLegalModal(null)} />}
-        </>
+                <div className="border-t hairline mt-12 pt-8 text-ink-400 text-sm flex flex-col md:flex-row justify-between items-center gap-4">
+                    <span>&copy; 2026 Evia · San Jose, California</span>
+                    <nav aria-label="Footer" className="flex flex-wrap justify-center gap-6">
+                        <Link to="/privacy" className={linkClass}>Privacy</Link>
+                        <Link to="/terms" className={linkClass}>Terms</Link>
+                        <Link to="/login" className={linkClass}>Log in</Link>
+                        <Link to="/start?role=client" className={linkClass}>Get started</Link>
+                        <Link to="/admin" className={linkClass}>Admin</Link>
+                    </nav>
+                </div>
+            </div>
+        </footer>
     );
 };

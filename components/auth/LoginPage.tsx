@@ -4,6 +4,7 @@ import { auth, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../.
 import { dbService } from '../../services/api';
 import type firebase from 'firebase/compat/app';
 import { TaskPageBar } from './TaskPageBar';
+import { Footer } from '../landing/Footer';
 import { isPhoneAllowed } from '../../utils/phoneAllowlist';
 
 type Step = 'phone' | 'otp';
@@ -127,7 +128,7 @@ export const AuthLoginPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col">
-      {/* Shared task-page bar: logo → home + help line (2026-09-25). */}
+      {/* The site header (logo → home, Log in, Get started); help phone in the footer (2026-10-12). */}
       <TaskPageBar />
       {/* RecaptchaVerifier needs a stable DOM target; created per send. */}
       <div id={RECAPTCHA_CONTAINER} />
@@ -228,6 +229,7 @@ export const AuthLoginPage: React.FC = () => {
         )}
       </div>
       </div>
+      <Footer />
     </div>
   );
 };

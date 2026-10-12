@@ -17,7 +17,7 @@ const SITE_URL = 'https://www.eviacares.com';
 export const SEO: React.FC<SEOProps> = ({
   title,
   description,
-  keywords = "senior care, caregiver, elderly care, home health aide, finding care, caregiving jobs",
+  keywords = "senior care, caregiver, elderly care, in-home care, finding care, caregiving jobs",
   image = DEFAULT_IMAGE,
   canonicalUrl,
   noindex = false,
@@ -119,7 +119,7 @@ export const generateLocalBusinessSchema = () => ({
   image: `${SITE_URL}/icon-512.png`,
   url: SITE_URL,
   telephone: '',
-  description: 'Senior care marketplace connecting families with verified local caregivers',
+  description: 'Senior care marketplace connecting families with local caregivers who have completed a background check',
   priceRange: '$$',
   areaServed: 'US'
 });

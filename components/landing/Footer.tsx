@@ -20,7 +20,7 @@ export const Footer: React.FC = () => {
                     <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
                 </div>
                 <p className="text-ink-600 max-w-xs text-sm leading-relaxed">
-                    Care for your loved one, coordinated entirely over text.
+                    Care for your loved one, coordinated over text or on the site.
                 </p>
                 {supportPhone && (
                     <p className="text-ink-600 text-sm leading-relaxed mt-3">

@@ -35,8 +35,8 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
 
                 {/* Subline */}
                 <p className="text-lg text-ink-600 mb-9 leading-relaxed max-w-md">
-                    Local care providers, coordinated entirely over text.
-                    No app. No login. Just a conversation.
+                    Local care providers, coordinated over text — or on the site, your choice.
+                    No app to install.
                 </p>
 
                 {/* One CTA + one quiet link — the family door and the caregiver door */}

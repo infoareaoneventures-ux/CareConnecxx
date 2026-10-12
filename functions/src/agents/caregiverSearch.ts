@@ -328,16 +328,16 @@ export async function presentCaregiverSearch(args: PresentCaregiverSearchArgs): 
   if (result.total === 0) {
     // FindCaregivers.tsx EmptyState — same two messages.
     await sendMessage(args.chatId, active.length > 0
-      ? `No caregivers match your filters (${active.join(", ")}). Try widening your distance, raising your rate, or removing some specialties — just tell me what to change.`
-      : "No caregivers available yet — we're growing our caregiver network in your area. Want me to post a care request so matching caregivers can apply directly?");
+      ? `No care providers match your filters (${active.join(", ")}). Try widening your distance, raising your rate, or removing some specialties — just tell me what to change.`
+      : "No care providers available yet — we're growing our care provider network in your area. Want me to post a care request so matching care providers can apply directly?");
     return { status: "empty", total: 0, hasFilters: active.length > 0 };
   }
   if (shown.length === 0) {
-    await sendMessage(args.chatId, `That's everyone — ${result.total} caregiver${result.total === 1 ? "" : "s"} match${result.total === 1 ? "es" : ""}${active.length ? ` (${active.join(", ")})` : ""}. Want me to widen the search?`);
+    await sendMessage(args.chatId, `That's everyone — ${result.total} care provider${result.total === 1 ? "" : "s"} match${result.total === 1 ? "es" : ""}${active.length ? ` (${active.join(", ")})` : ""}. Want me to widen the search?`);
     return { status: "shown", total: result.total, shown: [], offset, hasMore: false };
   }
 
-  const header = `${result.total} caregiver${result.total === 1 ? "" : "s"} found${active.length ? ` (${active.join(", ")})` : ""}` +
+  const header = `${result.total} care provider${result.total === 1 ? "" : "s"} found${active.length ? ` (${active.join(", ")})` : ""}` +
     (result.total > shown.length ? ` — here ${offset > 0 ? "are the next" : "are the first"} ${shown.length}:` : ":");
   // (The page's "rates are the caregiver's; a 9% service fee is added" footnote was removed 2026-09-30 — founder — so it is gone here too.)
   await sendMessage(args.chatId, header);

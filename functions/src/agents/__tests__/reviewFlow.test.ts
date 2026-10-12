@@ -51,7 +51,7 @@ describe("recap + document", () => {
 });
 
 describe("first-visit prompt", () => {
-  it("recap line and bell copy name the caregiver by first name", () => {
+  it("recap line and bell copy name the care provider by first name", () => {
     expect(firstVisitReviewPromptLine("Basra Ali")).toContain("This was your first visit with Basra — want to leave a review? Reply with 1 to 5 stars");
     expect(firstVisitReviewNotification("Basra Ali", "cg1", "s1")).toEqual({ type: "review_prompt", title: "How was your first visit?", body: "Leave a review for Basra — it helps other families choose.", data: { caregiverId: "cg1", shiftId: "s1" } });
   });

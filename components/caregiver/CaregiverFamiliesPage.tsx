@@ -168,15 +168,15 @@ export const CaregiverFamiliesPage: React.FC = () => {
       const currentUid = uid;
       const currentName = authService.getCurrentUser()?.displayName
         || authService.getCurrentUser()?.email?.split('@')[0]
-        || 'Caregiver';
+        || 'Care Provider';
       if (currentUid) {
         const roomId = await chatService.getOrCreateChatRoom(currentUid, currentName, clientId, clientName);
-        navigate(`/caregiver/inbox?room=${roomId}`);
+        navigate(`/care-provider/inbox?room=${roomId}`);
       } else {
-        navigate('/caregiver/inbox');
+        navigate('/care-provider/inbox');
       }
     } catch {
-      navigate('/caregiver/inbox');
+      navigate('/care-provider/inbox');
     }
   };
 

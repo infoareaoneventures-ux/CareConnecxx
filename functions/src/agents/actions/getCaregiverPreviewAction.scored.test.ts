@@ -31,7 +31,7 @@ const SAN_JOSE = { lat: 37.3382, lng: -121.8863 };
 const NEW_YORK = { lat: 40.7128, lng: -74.0060 };
 
 describe("get_caregiver_preview — scored path (lat/lng present)", () => {
-  it("ranks a nearby bookable caregiver as a local (non-widened) match", async () => {
+  it("ranks a nearby bookable care provider as a local (non-widened) match", async () => {
     caregiverDocs = [toDoc("cg-near", { ...BOOKABLE, name: "Maria Santos", lat: 37.34, lng: -121.89 })];
 
     const result = await getCaregiverPreviewCaraAction.run(
@@ -57,7 +57,7 @@ describe("get_caregiver_preview — scored path (lat/lng present)", () => {
     expect(result.items.map(i => i.name)).toEqual(["Distant Dan"]);
   });
 
-  it("holds to the no-caregivers contract when no bookable caregiver exists at all", async () => {
+  it("holds to the no-caregivers contract when no bookable care provider exists at all", async () => {
     caregiverDocs = [toDoc("cg-pending", { onboardingStatus: "profile_complete", verificationStatus: "pending", name: "Not Approved", ...SAN_JOSE })];
 
     const result = await getCaregiverPreviewCaraAction.run(
@@ -71,7 +71,7 @@ describe("get_caregiver_preview — scored path (lat/lng present)", () => {
 
   it("excludes a seeded doc from the scored pool the same as the legacy path", async () => {
     caregiverDocs = [
-      toDoc("cg-seed", { ...BOOKABLE, __seedTag: "cara-test", name: "Fake Test Caregiver", ...SAN_JOSE }),
+      toDoc("cg-seed", { ...BOOKABLE, __seedTag: "cara-test", name: "Fake Test Care Provider", ...SAN_JOSE }),
       toDoc("cg-real", { ...BOOKABLE, name: "Maria Santos", lat: 37.34, lng: -121.89 }),
     ];
 
@@ -81,7 +81,7 @@ describe("get_caregiver_preview — scored path (lat/lng present)", () => {
     );
 
     expect(result.items.map(i => i.name)).toEqual(["Maria Santos"]);
-    expect(result.message).not.toContain("Fake Test Caregiver");
+    expect(result.message).not.toContain("Fake Test Care Provider");
   });
 
   it("requires valid transport docs when needsTransportation is true, even in the backup pass", async () => {

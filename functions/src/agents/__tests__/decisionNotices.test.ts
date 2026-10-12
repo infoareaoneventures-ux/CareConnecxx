@@ -152,7 +152,7 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
       expect(matchDecisionWord("Keep.", OPTIONS.interview_proposal)).toBe("KEEP");
     });
 
-    it("caregiver KEEP runs keepInterviewTime as the caregiver and texts the kept line; the decision is cleared; no gate, no tool", async () => {
+    it("care provider KEEP runs keepInterviewTime as the care provider and texts the kept line; the decision is cleared; no gate, no tool", async () => {
       hoisted.access = { ok: false, block: "membership", caregiver: {} }; // would block an accept — never a keep
       const pd = parkedDecision("interview_proposal", "iv1", "a new interview time The Nguyen Family proposed", "caregiver", Date.now(), "The Nguyen Family");
       expect(await handlePendingDecisionReply("+1", "chat", "KEEP", session(pd))).toBe("handled");
@@ -163,7 +163,7 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
       expect(hoisted.sessionUpdates.at(-1)?.d).toEqual({ pendingDecision: "__delete__" });
     });
 
-    it("family KEEP runs keepInterviewTime as the client (users/{uid}) and names the caregiver", async () => {
+    it("family KEEP runs keepInterviewTime as the client (users/{uid}) and names the care provider", async () => {
       hoisted.keepInterviewTime.mockResolvedValueOnce({ ok: true, interviewId: "iv1", keptBy: "client", clientName: "The Nguyen Family", caregiverName: "Alice Mahad", scheduledTime: "2099-10-05T18:00:00.000Z", scheduledTimeLocal: "Monday, October 5 at 11:00 AM" });
       const pd = parkedDecision("interview_proposal", "iv1", "a new interview time Alice Mahad proposed", "client", Date.now(), "Alice Mahad");
       expect(await handlePendingDecisionReply("+1", "chat", "keep", session(pd))).toBe("handled");
@@ -238,7 +238,7 @@ describe("a question while a notice is parked", () => {
     const classifier = hoisted.quick.mock.calls.at(-2)![0] as string;
     expect(classifier).toContain("A question ABOUT this same item");
     const briefing = hoisted.quick.mock.calls.at(-1)![0] as string;
-    expect(briefing).toContain("Audience: caregiver");
+    expect(briefing).toContain("Audience: care provider");
     expect(briefing).toContain("Reply ACCEPT, DECLINE or PROPOSE for an interview request from The Nguyen Family.");
     expect(briefing).toContain("Evia's notice was about an interview request from The Nguyen Family (The Nguyen Family)."); // no record in this fixture → the label grounds it
     expect(briefing).toContain("ACCEPT accepts the interview (the Jobs page's Accept");

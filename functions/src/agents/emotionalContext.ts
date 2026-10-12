@@ -87,13 +87,13 @@ export async function classifyEmotionalContext(text: string): Promise<EmotionalC
   const timer = setTimeout(() => controller.abort(), 4_000);
   try {
     const raw = await quickComplete(
-      "You read a single inbound message from a family member or caregiver to Evia, a care coordinator. " +
+      "You read a single inbound message from a family member or care provider to Evia, a care coordinator. " +
       "Classify the EMOTIONAL POSTURE of the sender, not the topic. " +
       "Reply with exactly one word: calm, anxious, grieving, frustrated, rushed, or celebratory.\n" +
       "calm = neutral, ordinary check-in or question, no strong feeling.\n" +
       "anxious = worried, scared, overwhelmed (\"I don't know what to do\", \"is mom going to be okay\", \"I'm so worried\").\n" +
       "grieving = bereavement, recent loss, anticipatory grief, mentions of dying or end-of-life.\n" +
-      "frustrated = angry, fed up, complaints about the caregiver/system/bill (\"this is ridiculous\", \"again??\", \"useless\").\n" +
+      "frustrated = angry, fed up, complaints about the care provider/system/bill (\"this is ridiculous\", \"again??\", \"useless\").\n" +
       "rushed = terse, mid-something, just wants the answer (\"quick — what time\", \"can't talk now just confirm\").\n" +
       "celebratory = good news, gratitude, milestone (\"she's home!\", \"thank you so much\", \"best day in months\").\n" +
       "When uncertain, choose calm.",
@@ -194,7 +194,7 @@ export function buildEmotionalContextDirective(
         topic === "health"
           ? "Topic is health/care: acknowledge the specific care concern by name and pull recent journal notes (get_care_journal_client) before responding so your acknowledgment is grounded."
           : topic === "logistics"
-            ? "Topic is logistics: fix the logistics directly in this turn — cancel, reschedule, refund, message the caregiver. Don't ask permission for the obvious next step."
+            ? "Topic is logistics: fix the logistics directly in this turn — cancel, reschedule, refund, message the care provider. Don't ask permission for the obvious next step."
             : "";
       return [
         "<emotional_context>",

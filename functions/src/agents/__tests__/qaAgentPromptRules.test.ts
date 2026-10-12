@@ -32,7 +32,7 @@ it("builder slices resolve (guards against renames silently emptying the asserti
   expect(caregiverEnd).toBeGreaterThan(caregiverStart);
 });
 
-describe("shared rules — present in BOTH client and caregiver prompts", () => {
+describe("shared rules — present in BOTH client and care provider prompts", () => {
   const both: Array<[string, string]> = [
     ["never-invent-people", "Never invent a person's name"],
     ["never-deny-unseen-message", "Never assert you did or did not send a message you have no record of — offer to (re)send instead."],
@@ -49,14 +49,14 @@ describe("shared rules — present in BOTH client and caregiver prompts", () => 
     expect(clientPrompt).toContain(text);
   });
 
-  it.each(both)("caregiver prompt contains the %s rule (parity)", (_label, text) => {
+  it.each(both)("care provider prompt contains the %s rule (parity)", (_label, text) => {
     expect(caregiverPrompt).toContain(text);
   });
 });
 
 describe("client KNOWLEDGE BOUNDARY — people extension (R5)", () => {
-  it("forbids inventing names, caregivers, and relationships, not just locations", () => {
-    expect(clientPrompt).toContain("Never invent a person's name, a caregiver, or a relationship.");
+  it("forbids inventing names, care providers, and relationships, not just locations", () => {
+    expect(clientPrompt).toContain("Never invent a person's name, a care provider, or a relationship.");
   });
 });
 
@@ -81,14 +81,14 @@ describe("reschedule instruction uses the in-place reschedule tools, not cancel+
 // counter-proposed time (decline + proposedDate/proposedTime) has no dedicated
 // instruction at all before this fix, so it was exposed to the same
 // guessed/placeholder caregiverId risk as the reschedule case above.
-describe("accepting a caregiver's counter-proposed time also requires a real caregiverId lookup (2026-09-09)", () => {
+describe("accepting a care provider's counter-proposed time also requires a real caregiverId lookup (2026-09-09)", () => {
   it("tells the model to look up the real caregiverId and not to cancel the already-declined original interview", () => {
     expect(clientPrompt).toContain("counter-proposed time");
     expect(clientPrompt).toContain("do NOT call cancel_interview on it");
   });
 });
 
-describe("caregiver prompt parity details (R16)", () => {
+describe("care provider prompt parity details (R16)", () => {
   it("scopes stateable facts to the grounded sources", () => {
     expect(caregiverPrompt).toContain("tool results from this conversation");
   });

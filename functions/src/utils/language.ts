@@ -15,7 +15,7 @@ function spanishHeuristicHit(text: string): boolean {
 }
 
 function englishHeuristicHit(text: string): boolean {
-  return /\b(the|and|need|hi|hello|yes|no|please|thanks|help|caregiver|mom|dad)\b/i.test(text);
+  return /\b(the|and|need|hi|hello|yes|no|please|thanks|help|caregiver|care provider|mom|dad)\b/i.test(text);
 }
 
 // Detect the language of the user's first message. Returns null if unsure —
@@ -75,7 +75,7 @@ export const t = {
   otp_verified_role_question: (lang: Language): string =>
     lang === "es"
       ? `Verificado — gracias.\n\n¿Estás buscando cuidado para alguien, o eres cuidador/a?`
-      : `Verified — thanks.\n\nAre you looking for care for someone, or are you a caregiver yourself?`,
+      : `Verified — thanks.\n\nAre you looking for care for someone, or are you a care provider yourself?`,
 
   otp_resend_too_soon: (lang: Language): string =>
     lang === "es"
@@ -155,8 +155,8 @@ export const flowLabel = (key: string, lang: Language): string => {
     modify_schedule:       { en: "changing your recurring schedule", es: "cambiar tu horario recurrente" },
     healthcare:            { en: "a healthcare action",             es: "una acción médica" },
     credential:            { en: "saving a portal login",           es: "guardar un acceso de portal" },
-    hire:                  { en: "hiring a caregiver",              es: "contratar un/a cuidador/a" },
-    matches:               { en: "reviewing caregiver matches",     es: "revisar opciones de cuidadores" },
+    hire:                  { en: "hiring a care provider",              es: "contratar un/a cuidador/a" },
+    matches:               { en: "reviewing care provider matches",     es: "revisar opciones de cuidadores" },
     booking_confirm:       { en: "confirming a booking",            es: "confirmar una reserva" },
   };
   const entry = labels[key];

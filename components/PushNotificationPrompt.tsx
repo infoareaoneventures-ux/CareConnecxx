@@ -130,7 +130,7 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
           <ul className="mt-3 space-y-2">
             <li className="flex items-center text-sm text-slate-600">
               <Check className="w-4 h-4 text-primary-500 mr-2 flex-shrink-0" />
-              Caregivers send you messages
+              Care providers send you messages
             </li>
             <li className="flex items-center text-sm text-slate-600">
               <Check className="w-4 h-4 text-primary-500 mr-2 flex-shrink-0" />
@@ -138,7 +138,7 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
             </li>
             <li className="flex items-center text-sm text-slate-600">
               <Check className="w-4 h-4 text-primary-500 mr-2 flex-shrink-0" />
-              Caregivers check in/out
+              Care providers check in/out
             </li>
           </ul>
         </div>

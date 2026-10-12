@@ -57,12 +57,12 @@ export const SUB_AGENT_REGISTRY: Record<string, SubAgentDefinition> = {
   caregiver_compare: {
     name:        "caregiver_compare",
     description:
-      "Compare two or more caregivers and recommend one for a specific shift. " +
-      "Pass each caregiver's name, rate, specialties, rating, and any context in `description`.",
+      "Compare two or more care providers and recommend one for a specific shift. " +
+      "Pass each care provider's name, rate, specialties, rating, and any context in `description`.",
     needsSonnet: true, // tradeoffs need real reasoning
-    inputs: "description should contain shift requirements + a list of caregivers (name, rate, specialties, rating).",
+    inputs: "description should contain shift requirements + a list of care providers (name, rate, specialties, rating).",
     systemPrompt:
-      "You compare caregivers for a specific shift and pick one. " +
+      "You compare care providers for a specific shift and pick one. " +
       "Output exactly two sentences: " +
       "Sentence 1 names your recommendation and the single biggest reason. " +
       "Sentence 2 names the runner-up and the one trade-off that decided it. " +
@@ -209,7 +209,7 @@ export function buildTaskToolDescription(): string {
     .map(d => `  • ${d.name}: ${d.description}`);
   return [
     "Delegate a focused analytical chunk to an ephemeral sub-agent. The sub-agent has its own focused system prompt and returns a single text result.",
-    "Use this when a turn needs a distinct piece of analysis that would otherwise pollute your main reasoning (e.g. summarizing many journal entries, comparing caregivers, computing budget impact).",
+    "Use this when a turn needs a distinct piece of analysis that would otherwise pollute your main reasoning (e.g. summarizing many journal entries, comparing care providers, computing budget impact).",
     "You can call `task` multiple times in one turn — independent calls run in parallel.",
     "Available sub-agents:",
     ...lines,

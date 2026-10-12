@@ -11,6 +11,7 @@
 // intent classification, back-out check first, isQuestionOrOther guard,
 // deterministic bare number / yes / no before any model call, nothing
 // written before YES, fresh re-check at commit.
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -70,7 +71,7 @@ async function answerQuestionMidFlow(text: string): Promise<string> {
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a family cancel a care visit, booking, or request. You see ONLY this one " +
+      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family cancel a care visit, booking, or request. You see ONLY this one " +
       "message. NEVER claim something was or wasn't mentioned before, and NEVER state whether anything has been cancelled — " +
       "you cannot see the schedule. If the message is about something else, say plainly it'll have to wait until this is " +
       "finished. Otherwise answer briefly (1–2 sentences). Be warm. NEVER write out a URL. " + ANTI_INVENTION_CLAUSE,

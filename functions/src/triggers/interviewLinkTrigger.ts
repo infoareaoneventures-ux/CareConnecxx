@@ -153,7 +153,7 @@ async function processInterview(
     console.error(`Interview ${interviewId} has unparseable scheduledTime; skipping`);
     return;
   }
-  const caregiverName = (doc.caregiverName as string) || "the caregiver";
+  const caregiverName = (doc.caregiverName as string) || "the care provider";
   const clientName    = (doc.clientName as string) || "the family";
   const formatted     = formatInterviewTime(startMs);
 

@@ -107,7 +107,7 @@ describe("resolveInterviewLinkage", () => {
     expect(await resolveInterviewLinkage("client1", "cg1", undefined)).toEqual({});
   });
 
-  it("returns nothing when the interview doesn't match the client/caregiver", async () => {
+  it("returns nothing when the interview doesn't match the client/care provider", async () => {
     hoisted.docState.set("video_interviews/iv1", { clientId: "other", caregiverId: "cg1" });
     expect(await resolveInterviewLinkage("client1", "cg1", "iv1")).toEqual({});
   });

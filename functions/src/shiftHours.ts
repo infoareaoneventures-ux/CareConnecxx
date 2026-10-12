@@ -299,7 +299,7 @@ export async function respondToCorrectionAs(uid: string, data: Partial<RespondTo
     await pushNotification(
       shift.clientId,
       'shift_hours_approved',
-      'Caregiver accepted correction',
+      'Care Provider accepted correction',
       `${shift.caregiverName} accepted your proposed ${fmtHours(finalAmount.totalHours)}.`,
       { appointmentId }
     );
@@ -307,7 +307,7 @@ export async function respondToCorrectionAs(uid: string, data: Partial<RespondTo
     // and the 24h auto-accept already text them; an accept only left an in-app
     // notification (live-caught 2026-09-18). Same information as the card.
     await textClient(shift.clientId,
-      `${shift.caregiverName ?? 'Your caregiver'} accepted your correction: ${formatClockTime(Date.parse(shift.proposedStartTime))}–${formatClockTime(Date.parse(shift.proposedEndTime))} (${fmtHours(finalAmount.totalHours)}). $${finalAmount.grossPay.toFixed(2)} to ${shift.caregiverName ?? 'your caregiver'}; $${(finalAmount.totalChargeCents / 100).toFixed(2)} goes on your card on file (incl. the $${(finalAmount.serviceFeeCents / 100).toFixed(2)} service fee).`);
+      `${shift.caregiverName ?? 'Your care provider'} accepted your correction: ${formatClockTime(Date.parse(shift.proposedStartTime))}–${formatClockTime(Date.parse(shift.proposedEndTime))} (${fmtHours(finalAmount.totalHours)}). $${finalAmount.grossPay.toFixed(2)} to ${shift.caregiverName ?? 'your care provider'}; $${(finalAmount.totalChargeCents / 100).toFixed(2)} goes on your card on file (incl. the $${(finalAmount.serviceFeeCents / 100).toFixed(2)} service fee).`);
     return { success: true };
   }
 
@@ -353,7 +353,7 @@ export async function respondToCorrectionAs(uid: string, data: Partial<RespondTo
   await pushNotification(
     shift.clientId,
     'shift_hours_counter_proposed',
-    'Caregiver sent a counter-proposal',
+    'Care Provider sent a counter-proposal',
     `${shift.caregiverName} sent a counter-proposal of ${fmtHours(counter.totalHours)}${counter.lineItemsTotal !== (Number(shift.proposedLineItemsTotal ?? shift.lineItemsTotal) || 0) ? ` with additional charges of $${counter.lineItemsTotal.toFixed(2)}` : ''}. Review and accept or escalate.`,
     { appointmentId, counterTotalHours: counter.totalHours }
   );
@@ -438,7 +438,7 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
     { appointmentId }
   );
   await textClient(shift.clientId,
-    `our team resolved the dispute over ${shift.caregiverName || 'your caregiver'}'s hours. Final: ${fmtHours(finalAmount.totalHours)}. The charge is on your Timesheets page.`);
+    `our team resolved the dispute over ${shift.caregiverName || 'your care provider'}'s hours. Final: ${fmtHours(finalAmount.totalHours)}. The charge is on your Timesheets page.`);
 
   return { success: true };
 });
@@ -539,7 +539,7 @@ export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').
       `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so your ${fmtHours(shift.submittedTotalHours)} for ${shift.clientName ?? 'the family'} were auto-approved — $${Number(autoGrossPay).toFixed(2)}. Payment is being processed.`,
       { appointmentId: doc.id });
     await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The ${TIMESHEET_AUTO_APPROVE_HOURS}h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
-    await textClient(shift.clientId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so ${shift.caregiverName ?? 'your caregiver'}'s ${fmtHours(shift.submittedTotalHours)} were auto-approved ($${Number(autoGrossPay).toFixed(2)} to them) and your card is being charged $${((Math.round(Number(autoGrossPay) * 100) + serviceFeeCentsFor(Math.round(Number(autoGrossPay) * 100))) / 100).toFixed(2)} (incl. the 9% service fee).`);
+    await textClient(shift.clientId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so ${shift.caregiverName ?? 'your care provider'}'s ${fmtHours(shift.submittedTotalHours)} were auto-approved ($${Number(autoGrossPay).toFixed(2)} to them) and your card is being charged $${((Math.round(Number(autoGrossPay) * 100) + serviceFeeCentsFor(Math.round(Number(autoGrossPay) * 100))) / 100).toFixed(2)} (incl. the 9% service fee).`);
   }
 
   return null;
@@ -643,8 +643,8 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
         await tellCaregiver(shift.caregiverId, 'shift_hours_admin_review', "Correction needs our team's review", `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`,
           `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. Nothing is paid until they decide; we'll text you the outcome.`,
           { appointmentId: doc.id });
-        await pushNotification(shift.clientId, 'shift_hours_admin_review', "Correction needs our team's review", `Your correction on ${shift.caregiverName ?? 'your caregiver'}'s hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`, { appointmentId: doc.id });
-        await textClient(shift.clientId, `your correction on ${shift.caregiverName ?? 'your caregiver'}'s hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. We'll text you the outcome.`);
+        await pushNotification(shift.clientId, 'shift_hours_admin_review', "Correction needs our team's review", `Your correction on ${shift.caregiverName ?? 'your care provider'}'s hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`, { appointmentId: doc.id });
+        await textClient(shift.clientId, `your correction on ${shift.caregiverName ?? 'your care provider'}'s hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. We'll text you the outcome.`);
       }
       continue;
     }
@@ -652,8 +652,8 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
     await tellCaregiver(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${fmtHours(autoFinal.totalHours)} proposal was accepted.`,
       `You didn't respond to ${shift.clientName ?? 'the family'}'s correction in 24 hours, so their ${fmtHours(autoFinal.totalHours)} proposal is final — $${autoFinal.grossPay.toFixed(2)}.`,
       { appointmentId: doc.id });
-    await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Caregiver did not respond; your proposed ${fmtHours(autoFinal.totalHours)} is final.`, { appointmentId: doc.id });
-    await textClient(shift.clientId, `${shift.caregiverName ?? 'Your caregiver'} didn't respond to your correction in 24 hours, so your proposed ${fmtHours(autoFinal.totalHours)} ($${autoFinal.grossPay.toFixed(2)} to them) is final and your card is being charged $${(autoFinal.totalChargeCents / 100).toFixed(2)} (incl. the $${(autoFinal.serviceFeeCents / 100).toFixed(2)} service fee).`);
+    await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Care Provider did not respond; your proposed ${fmtHours(autoFinal.totalHours)} is final.`, { appointmentId: doc.id });
+    await textClient(shift.clientId, `${shift.caregiverName ?? 'Your care provider'} didn't respond to your correction in 24 hours, so your proposed ${fmtHours(autoFinal.totalHours)} ($${autoFinal.grossPay.toFixed(2)} to them) is final and your card is being charged $${(autoFinal.totalChargeCents / 100).toFixed(2)} (incl. the $${(autoFinal.serviceFeeCents / 100).toFixed(2)} service fee).`);
   }
 
   return null;
@@ -887,7 +887,7 @@ export async function settleShiftTransfer(
   // the card was actually charged (stored at approval), not the caregiver gross.
   const chargedCents = Number(shift.totalChargeCents ?? (grossCents + serviceFeeCentsFor(grossCents)));
   await textClient(shift.clientId,
-    `your card was charged ${(chargedCents / 100).toFixed(2)} for ${shift.caregiverName ?? 'your caregiver'}'s visit — ${(grossCents / 100).toFixed(2)} to them plus the service fee. It's marked Paid on your Timesheets page.`);
+    `your card was charged ${(chargedCents / 100).toFixed(2)} for ${shift.caregiverName ?? 'your care provider'}'s visit — ${(grossCents / 100).toFixed(2)} to them plus the service fee. It's marked Paid on your Timesheets page.`);
 }
 
 /**
@@ -966,7 +966,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
     const payoutFields = await getCaregiverPayoutFields(shift.caregiverId, caregiverSnap.data() ?? null);
     const caregiverStripeAccountId = payoutFields.stripeAccountId as string | undefined;
     if (!caregiverStripeAccountId) {
-      throw new Error('Caregiver has no Stripe Connect account');
+      throw new Error('Care Provider has no Stripe Connect account');
     }
 
     // ONE source of truth for the family's Stripe customer: customers/{clientId} —
@@ -1124,7 +1124,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
     if (attempt === 1 && !terminal && shift.clientId) {
       const failedGross = computeGrossCents(shift);
       const failedTotal = failedGross + serviceFeeCentsFor(failedGross);
-      const cgFirst = String(shift.caregiverName ?? 'your caregiver').split(' ')[0];
+      const cgFirst = String(shift.caregiverName ?? 'your care provider').split(' ')[0];
       const amount = `$${(failedTotal / 100).toFixed(2)}`;
       const lower = errorMessage.toLowerCase();
       const why = lower.includes('no payment method') || lower.includes('payment method') || lower.includes('no card') || lower.includes('customer') ? "there's no card on file" : 'the card was declined';
@@ -1143,7 +1143,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
       );
       await Promise.all([
         pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment needs review', 'We could not complete this visit payment. Evia support is reviewing it.', { appointmentId }),
-        textClient(shift.clientId, `We couldn't complete the payment for ${shift.caregiverName ?? 'your caregiver'}'s visit. Please check the card on file (say "update my card" and I'll send the link), then tell me to retry the payment.`),
+        textClient(shift.clientId, `We couldn't complete the payment for ${shift.caregiverName ?? 'your care provider'}'s visit. Please check the card on file (say "update my card" and I'll send the link), then tell me to retry the payment.`),
         tellCaregiver(shift.caregiverId, 'shift_hours_payment_failed', 'Payment needs review', 'This visit payment could not be completed automatically. Evia support is reviewing it.',
           `The payment for your visit${fmtDay(shift.finalStartTime ?? shift.submittedStartTime) ? ` on ${fmtDay(shift.finalStartTime ?? shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'} couldn't be completed automatically. Our team is reviewing it; we'll text you when it's resolved.`,
           { appointmentId }),

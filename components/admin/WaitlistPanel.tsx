@@ -52,7 +52,7 @@ export const WaitlistPanel: React.FC = () => {
                 ? 'text-primary-600 border-b-2 border-primary-600'
                 : 'text-slate-500 hover:text-slate-700'}`}
             >
-              {f === 'all' ? 'All' : f === 'client' ? 'Families' : 'Caregivers'}
+              {f === 'all' ? 'All' : f === 'client' ? 'Families' : 'Care Providers'}
               <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-slate-100">
                 {leads.filter((l) => f === 'all' || (l.role ?? 'client') === f).length}
               </span>
@@ -85,7 +85,7 @@ export const WaitlistPanel: React.FC = () => {
                 <tr key={l.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{l.name || <span className="text-slate-400">—</span>}</td>
                   <td className="px-4 py-3 text-slate-700 whitespace-nowrap"><span className="inline-flex items-center gap-1.5"><Phone className="w-3.5 h-3.5 text-slate-400" />{l.phone || l.id}</span></td>
-                  <td className="px-4 py-3 capitalize text-slate-700">{(l.role ?? 'client') === 'client' ? 'Family' : 'Caregiver'}</td>
+                  <td className="px-4 py-3 capitalize text-slate-700">{(l.role ?? 'client') === 'client' ? 'Family' : 'Care Provider'}</td>
                   <td className="px-4 py-3 text-slate-700">{[l.attemptedCity, l.attemptedZip].filter(Boolean).join(' · ') || <span className="text-slate-400">—</span>}</td>
                   <td className="px-4 py-3 text-slate-700">
                     <span className="inline-flex items-center gap-1.5">

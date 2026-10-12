@@ -92,8 +92,8 @@ export const renewalRefreshSweep = functions.pubsub
         await notifyCaregiverAccountEvent(doc.id, "renewal_refresh_locked", { eventId: `renewal-lock:${doc.id}:${today}` }).catch((err) => console.error("renewal lock notice failed", doc.id, err));
         await db.collection("admin_alerts").add({
           type: "renewal_refresh_locked", severity: "high", resolved: false, caregiverId: doc.id,
-          caregiverName: String(d.name ?? "A caregiver"),
-          message: `${String(d.name ?? "A caregiver")} did not authorize this year's background check within 7 days of the renewal — paused until they do.`,
+          caregiverName: String(d.name ?? "A care provider"),
+          message: `${String(d.name ?? "A care provider")} did not authorize this year's background check within 7 days of the renewal — paused until they do.`,
           createdAt: new Date(now).toISOString(),
         }).catch(() => {});
       }

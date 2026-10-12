@@ -202,7 +202,7 @@ describe("requestEmailChangeSelf — approval from the confirmed address first",
     expect(hoisted.docs.get(`users/${UID}`).email).toBe("old@example.com");
   });
 
-  it("caregiver: the caregivers doc is canonical and the users doc mirrors the confirmed state", async () => {
+  it("care provider: the care providers doc is canonical and the users doc mirrors the confirmed state", async () => {
     hoisted.docs.set("caregivers/cg1", { phone: PHONE, email: "cg@example.com" });
     hoisted.docs.set("users/cg1", { phone: PHONE, userType: "caregiver", email: "cg@example.com" });
     hoisted.docs.set(`agent_sessions/${PHONE}`, { optedIn: true });

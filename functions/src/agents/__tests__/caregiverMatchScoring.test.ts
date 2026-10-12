@@ -40,7 +40,7 @@ describe("availabilityOverlap", () => {
     expect(availabilityOverlap({ monday: ["9-5"] }, null)).toBe(0);
   });
 
-  it("scores array-form client schedule against WeeklySchedule caregiver availability", () => {
+  it("scores array-form client schedule against WeeklySchedule care provider availability", () => {
     const score = availabilityOverlap(
       { monday: ["9-5"], wednesday: ["9-5"] },
       ["monday", "tuesday"],
@@ -48,7 +48,7 @@ describe("availabilityOverlap", () => {
     expect(score).toBe(0.5);
   });
 
-  it("scores object-form client schedule against array-form caregiver availability", () => {
+  it("scores object-form client schedule against array-form care provider availability", () => {
     const score = availabilityOverlap(
       ["monday", "wednesday"],
       { monday: ["9-5"], tuesday: [] },
@@ -91,7 +91,7 @@ describe("scoreAndRankCaregivers", () => {
   const bookable = { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" };
   const clientLocations = [{ lat: 37.3382, lng: -121.8863 }]; // San Jose
 
-  it("excludes non-bookable caregivers", () => {
+  it("excludes non-bookable care providers", () => {
     const result = scoreAndRankCaregivers(
       [{ id: "a", data: { ...bookable, verificationStatus: "pending", lat: 37.34, lng: -121.89 } }],
       { clientLocations, clientCareNeeds: [], clientSchedule: null, needsTransportation: false },
@@ -119,7 +119,7 @@ describe("scoreAndRankCaregivers", () => {
     expect(result.map(c => c.id).sort()).toEqual(["far", "near"]);
   });
 
-  it("excludes caregivers outside their own serviceRadius even within maxDistance", () => {
+  it("excludes care providers outside their own serviceRadius even within maxDistance", () => {
     const cg = { id: "cg", data: { ...bookable, lat: 37.5, lng: -122.0, serviceRadius: 5 } };
     const result = scoreAndRankCaregivers([cg], {
       clientLocations, clientCareNeeds: [], clientSchedule: null, needsTransportation: false,
@@ -170,7 +170,7 @@ describe("unknown distance (no coords) sorts LAST, never as 0", () => {
     membershipStatus: "active", backgroundCheckStatus: "clear",
   };
 
-  it("distance is null for a caregiver without coordinates and the known one ranks ahead at equal skills/availability/rating", () => {
+  it("distance is null for a care provider without coordinates and the known one ranks ahead at equal skills/availability/rating", () => {
     const noCoords = { id: "no-coords", data: { ...bookable, rating: 5 } };
     const far      = { id: "far",       data: { ...bookable, rating: 5, lat: 37.60, lng: -122.0 } };
     const result = scoreAndRankCaregivers([noCoords, far], {

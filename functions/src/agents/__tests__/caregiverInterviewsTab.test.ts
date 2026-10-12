@@ -122,7 +122,7 @@ describe("listCaregiverInterviews — the tab", () => {
     expect((await listCaregiverInterviews(CG, "bogus")).count).toBe(2); // unknown chip = All
   });
 
-  it("a gated caregiver's pending row keeps Decline and swaps Accept for the gate button", async () => {
+  it("a gated care provider's pending row keeps Decline and swaps Accept for the gate button", async () => {
     hoisted.docState.set(`caregivers/${CG}`, { membershipPaid: false });
     iv("a", { status: "requested", scheduledTime: "2026-10-01T17:00:00.000Z" });
     const tab = await listCaregiverInterviews(CG);

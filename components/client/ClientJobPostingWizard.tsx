@@ -78,7 +78,7 @@ const CARE_NEEDS_OPTIONS = [
 ];
 const JOB_DESCRIPTION_EXAMPLES = [
   "My mom is 78, lives alone, and needs help with morning routines and light housekeeping 3 days a week. She loves gardening and chatting over coffee.",
-  "Looking for a kind, experienced caregiver for my father who has early-stage Alzheimer's. He needs companionship, medication reminders, and help with meals.",
+  "Looking for a kind, experienced care provider for my father who has early-stage Alzheimer's. He needs companionship, medication reminders, and help with meals.",
   "My husband had a stroke 6 months ago. He needs assistance with mobility, bathing, and physical therapy exercises. Patience and positivity are a must.",
 ];
 
@@ -437,7 +437,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
         return (
           <div className="flex flex-col items-center text-center gap-6 py-4">
             <h2 className="text-2xl font-bold text-white leading-snug px-2">
-              Welcome! Ready to find the right caregiver for your loved one?<br />
+              Welcome! Ready to find the right care provider for your loved one?<br />
               <span className="text-indigo-200 text-lg font-normal">Let's get started!</span>
             </h2>
             <div className="w-24 h-24 flex items-center justify-center">
@@ -451,7 +451,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               <div>
                 <p className="text-white font-semibold text-sm">Safety is our top priority</p>
                 <p className="text-indigo-200 text-xs mt-1">
-                  Every caregiver has completed a background check and a profile review.
+                  Every care provider has completed a background check and a profile review.
                 </p>
               </div>
             </div>
@@ -1034,7 +1034,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
 
             {/* How many caregivers needed */}
             <div>
-              <p className="text-slate-600 text-sm font-medium mb-1 text-center">How many caregivers do you need?</p>
+              <p className="text-slate-600 text-sm font-medium mb-1 text-center">How many care providers do you need?</p>
               <div className="flex items-center gap-5 justify-center">
                 <button onClick={() => setForm(f => ({ ...f, caregiversNeeded: Math.max(1, f.caregiversNeeded - 1) }))} disabled={form.caregiversNeeded <= 1}
                   className="w-9 h-9 rounded-full border-2 border-slate-300 flex items-center justify-center text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
@@ -1046,7 +1046,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                   <span className="text-xl leading-none mb-0.5">+</span>
                 </button>
               </div>
-              <p className="text-slate-500 text-xs text-center mt-1">{form.caregiversNeeded === 1 ? 'Caregiver' : 'Caregivers'}</p>
+              <p className="text-slate-500 text-xs text-center mt-1">{form.caregiversNeeded === 1 ? 'Care Provider' : 'Care Providers'}</p>
             </div>
 
             <button
@@ -1244,7 +1244,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center leading-snug">
-              Let's get specific! What else should caregivers know about this job or your loved one?
+              Let's get specific! What else should care providers know about this job or your loved one?
             </h2>
             <textarea
               placeholder="Job description"
@@ -1301,7 +1301,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               <Sparkles size={30} className="text-teal-300" />
             </div>
             <h2 className="text-2xl font-bold text-white">
-              Well done! We'll notify you as caregivers apply for your job.
+              Well done! We'll notify you as care providers apply for your job.
             </h2>
             <p className="text-indigo-200 text-sm leading-relaxed">
               Later, review candidates and easily book an interview or hire if you find a great fit for your family.
@@ -1310,7 +1310,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               <div className="w-full bg-white/15 rounded-2xl px-4 py-3 flex items-center gap-3">
                 <Clock size={18} className="text-teal-300 shrink-0" />
                 <p className="text-white text-sm">
-                  <strong>{nearbyCount}</strong> caregivers in your area are ready to apply.
+                  <strong>{nearbyCount}</strong> care providers in your area are ready to apply.
                 </p>
               </div>
             )}

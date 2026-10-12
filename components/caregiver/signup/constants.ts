@@ -68,18 +68,18 @@ export const US_STATES = [
 
 // Writing ideas for the About Me bio
 export const WRITING_IDEAS = [
-  'What do you enjoy most about caregiving?',
+  'What do you enjoy most about care work?',
   'Describe your approach to caring for seniors with dementia.',
   'What special skills or training do you bring?',
   'How do you handle difficult or stressful situations?',
-  'Share a meaningful caregiving experience.',
+  'Share a meaningful care experience.',
   'What makes you a great match for families?',
 ];
 
 // Example bio for reference
-export const EXAMPLE_BIO = `Hi, I'm Sarah, and I've been a dedicated caregiver for over 8 years. I specialize in companionship and personal care for seniors, with extensive experience in dementia and Alzheimer's care. I'm CNA certified.
+export const EXAMPLE_BIO = `Hi, I'm Sarah, and I've been a dedicated care provider for over 8 years. I specialize in companionship and personal care for seniors, with extensive experience in dementia and Alzheimer's care. I'm CNA certified.
 
-What I love most about caregiving is building genuine connections with the people I care for. I believe every senior deserves dignity, respect, and joy in their daily life. I'm patient, reliable, and always go the extra mile to ensure comfort and safety.
+What I love most about care work is building genuine connections with the people I care for. I believe every senior deserves dignity, respect, and joy in their daily life. I'm patient, reliable, and always go the extra mile to ensure comfort and safety.
 
 I have my own transportation and am flexible with scheduling. In my free time, I enjoy cooking healthy meals and taking walks — activities I love sharing with the seniors in my care.`;
 

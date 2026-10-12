@@ -356,7 +356,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
             }
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-slate-900 text-base">{booking.caregiverName || 'Caregiver'}</p>
+            <p className="font-semibold text-slate-900 text-base">{booking.caregiverName || 'Care Provider'}</p>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               {booking.schedule?.ongoing
                 ? <span className="inline-flex items-center gap-1 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">
@@ -648,7 +648,7 @@ async function fetchReplacementCandidates(
     seenIds.add(cgId);
     candidates.push({
       caregiverId: cgId,
-      name: d.caregiverName || 'Caregiver',
+      name: d.caregiverName || 'Care Provider',
       photoURL: d.caregiverPhotoURL || null,
       hourlyRate: d.rate ?? null,
       source: 'care_team',
@@ -689,7 +689,7 @@ async function fetchReplacementCandidates(
       if (candidates.length >= MAX) break;
       candidates.push({
         caregiverId: c.id,
-        name: c.name || 'Caregiver',
+        name: c.name || 'Care Provider',
         photoURL: c.photoURL || c.photo || c.profilePhoto || c.imageUrl || null,
         hourlyRate: c.hourlyRate ?? null,
         rating: c.rating,
@@ -795,7 +795,7 @@ const ReplacementPickerModal: React.FC<ReplacementPickerModalProps> = ({ shift, 
           {candidates === null ? (
             <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-primary-500" /></div>
           ) : candidates.length === 0 ? (
-            <p className="text-sm text-slate-500 text-center py-6">No caregivers are available for this shift right now.</p>
+            <p className="text-sm text-slate-500 text-center py-6">No care providers are available for this shift right now.</p>
           ) : (
             candidates.map(c => (
               <div key={c.caregiverId} className="flex items-center gap-3 border border-slate-200 rounded-xl px-3 py-2.5">
@@ -814,7 +814,7 @@ const ReplacementPickerModal: React.FC<ReplacementPickerModalProps> = ({ shift, 
                   </p>
                 </div>
                 <a
-                  href={`/client/caregiver/${c.caregiverId}`}
+                  href={`/client/care-provider/${c.caregiverId}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-xl transition-colors shrink-0"
@@ -1043,7 +1043,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
             }
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-slate-900 text-base">{base.caregiverName || 'Caregiver'}</p>
+            <p className="font-semibold text-slate-900 text-base">{base.caregiverName || 'Care Provider'}</p>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               {ongoing
                 ? <span className="inline-flex items-center gap-1 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">
@@ -1353,10 +1353,10 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                               // accept handler — changedBy is who PROPOSED it, changedAt is
                               // when it was ACCEPTED (by the other party) — no proposed-on
                               // date was ever captured, so that half is left blank.
-                              ? <>Requested by {legacy.changedBy === 'caregiver' ? 'caregiver' : 'you'}
-                                  {' · '}Confirmed by {legacy.changedBy === 'caregiver' ? 'you' : 'caregiver'} on {fmtStamp(legacy.changedAt)}</>
-                              : <>Requested by {h.proposedBy === 'caregiver' ? 'caregiver' : 'you'} on {fmtStamp(h.proposedAt)}
-                                  {' · '}Confirmed by {h.acceptedBy === 'caregiver' ? 'caregiver' : 'you'} on {fmtStamp(h.acceptedAt)}</>}
+                              ? <>Requested by {legacy.changedBy === 'caregiver' ? 'care provider' : 'you'}
+                                  {' · '}Confirmed by {legacy.changedBy === 'caregiver' ? 'you' : 'care provider'} on {fmtStamp(legacy.changedAt)}</>
+                              : <>Requested by {h.proposedBy === 'caregiver' ? 'care provider' : 'you'} on {fmtStamp(h.proposedAt)}
+                                  {' · '}Confirmed by {h.acceptedBy === 'caregiver' ? 'care provider' : 'you'} on {fmtStamp(h.acceptedAt)}</>}
                           </div>
                         </li>
                         );
@@ -1376,7 +1376,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                 <div className="px-5 pb-3 -mt-1">
                   {s.replacementRequestId ? (
                     <div className="flex items-center gap-2 flex-wrap text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded-lg px-3 py-2">
-                      <span className="flex-1 min-w-[160px]">Waiting on {s.replacementCaregiverName || 'the new caregiver'} to respond</span>
+                      <span className="flex-1 min-w-[160px]">Waiting on {s.replacementCaregiverName || 'the new care provider'} to respond</span>
                       <button
                         onClick={() => onWithdrawReplacement(s.replacementRequestId!)}
                         className="px-2.5 py-1 border border-amber-300 hover:bg-amber-200 text-amber-800 text-xs font-semibold rounded-lg transition-colors shrink-0"
@@ -1386,7 +1386,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-xs text-amber-800 flex-1 min-w-[160px]">{ds === 'overdue' ? 'Your caregiver cancelled this visit and it passed without a replacement.' : 'Your caregiver cancelled this visit.'}</p>
+                      <p className="text-xs text-amber-800 flex-1 min-w-[160px]">{ds === 'overdue' ? 'Your care provider cancelled this visit and it passed without a replacement.' : 'Your care provider cancelled this visit.'}</p>
                       {ds !== 'overdue' && <button
                         onClick={() => onFindReplacement(s)}
                         className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-colors"
@@ -1410,11 +1410,11 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                   <div className="flex items-center gap-2 flex-wrap text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
                     <span className="flex-1 min-w-[160px]">
                       {s.rescheduledBy === 'caregiver'
-                        ? `${s.caregiverName || 'Your caregiver'} proposed moving this visit to `
+                        ? `${s.caregiverName || 'Your care provider'} proposed moving this visit to `
                         : 'You proposed moving this visit to '}
                       {fmtDate(s.reschedulePendingDate)}, {fmtTime(s.reschedulePendingStartTime)}
                       {s.reschedulePendingEndTime ? ` – ${fmtTime(s.reschedulePendingEndTime)}` : ''}
-                      {s.rescheduledBy === 'client' && ' — waiting on your caregiver to confirm'}
+                      {s.rescheduledBy === 'client' && ' — waiting on your care provider to confirm'}
                     </span>
                     {s.rescheduledBy === 'caregiver' && (
                       <button
@@ -1566,7 +1566,7 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
             }
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-slate-900 text-base">{base.caregiverName || 'Caregiver'}</p>
+            <p className="font-semibold text-slate-900 text-base">{base.caregiverName || 'Care Provider'}</p>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               {completedCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
@@ -1835,7 +1835,7 @@ export const ClientVisitsPage: React.FC = () => {
   };
 
   const handleSkipReplacement = async (shiftId: string) => {
-    if (!db || !window.confirm('Skip this shift? No replacement caregiver will be arranged and it will be marked cancelled.')) return;
+    if (!db || !window.confirm('Skip this shift? No replacement care provider will be arranged and it will be marked cancelled.')) return;
     await db.collection('shifts').doc(shiftId).update({
       status: 'cancelled',
       cancelledBy: 'client',
@@ -1896,7 +1896,7 @@ export const ClientVisitsPage: React.FC = () => {
   };
 
   const handleWithdrawReplacement = async (replacementRequestId: string) => {
-    if (!db || !window.confirm('Cancel this request and choose a different caregiver?')) return;
+    if (!db || !window.confirm('Cancel this request and choose a different care provider?')) return;
     await db.collection('booking_requests').doc(replacementRequestId).update({
       status: 'cancelled',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1973,9 +1973,9 @@ export const ClientVisitsPage: React.FC = () => {
             </p>
             <p className="text-sm text-slate-400">
               {tab === 'requests'
-                ? 'Booking requests you send to caregivers will appear here.'
+                ? 'Booking requests you send to care providers will appear here.'
                 : tab === 'active'
-                ? 'Bookings will appear here once a caregiver accepts your request.'
+                ? 'Bookings will appear here once a care provider accepts your request.'
                 : 'Completed and cancelled bookings will appear here.'}
             </p>
           </div>
@@ -2000,7 +2000,7 @@ export const ClientVisitsPage: React.FC = () => {
                       </span>
                     </div>
                     <div>
-                      <p className="font-semibold text-slate-900">{a.caregiverName || 'Caregiver'}</p>
+                      <p className="font-semibold text-slate-900">{a.caregiverName || 'Care Provider'}</p>
                       <p className="text-xs text-slate-400">Schedule change request · Awaiting response</p>
                     </div>
                   </div>

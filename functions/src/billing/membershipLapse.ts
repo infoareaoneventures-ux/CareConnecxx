@@ -43,17 +43,17 @@ const first = (name: unknown, fallback: string) => { const s = String(name ?? ""
 const onDate = (d: string | null) => (d ? ` through ${formatDateWithWeekday(d)}` : "");
 
 export function freezeFamilyText(caregiverName: unknown, lastVisit: string | null): string {
-  const cg = first(caregiverName, "Your caregiver");
+  const cg = first(caregiverName, "Your care provider");
   return `Your Evia membership isn't active. ${cg}'s visits already on the calendar still happen${onDate(lastVisit)}. After that, no new visits are added until you reactivate — one tap here and the schedule keeps going: ${appLink("/client/membership")}`;
 }
 export function freezeCaregiverText(clientName: unknown, lastVisit: string | null): string {
   return `${first(clientName, "The family")}'s Evia membership has lapsed. Your visits with them${onDate(lastVisit)} still happen as scheduled; nothing new is being added for now. I'll let you know if it resumes.`;
 }
 export function reminderFamilyText(caregiverName: unknown, lastVisit: string): string {
-  return `Heads up — your last scheduled visit with ${first(caregiverName, "your caregiver")} is ${formatDateWithWeekday(lastVisit)}. Reactivate your membership to keep the schedule going: ${appLink("/client/membership")}`;
+  return `Heads up — your last scheduled visit with ${first(caregiverName, "your care provider")} is ${formatDateWithWeekday(lastVisit)}. Reactivate your membership to keep the schedule going: ${appLink("/client/membership")}`;
 }
 export function resumeFamilyText(caregiverName: unknown): string {
-  return `Welcome back — your membership is active again and ${first(caregiverName, "your caregiver")}'s recurring schedule is running again.`;
+  return `Welcome back — your membership is active again and ${first(caregiverName, "your care provider")}'s recurring schedule is running again.`;
 }
 export function resumeCaregiverText(clientName: unknown): string {
   return `${first(clientName, "The family")}'s membership is active again — new visits with them are back on your schedule.`;

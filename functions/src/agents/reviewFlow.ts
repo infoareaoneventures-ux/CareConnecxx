@@ -52,7 +52,7 @@ export type ReviewFlowStep = "rv_ask_rating" | "rv_ask_categories" | "rv_ask_com
 
 const RV_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
 
-const first = (full: string) => (full.trim().split(/\s+/)[0] || "your caregiver");
+const first = (full: string) => (full.trim().split(/\s+/)[0] || "your care provider");
 
 // ── Questions (the modal's fields, in its order) ─────────────────────────────
 export const RATING_QUESTION = (name: string) => `How was your experience with ${first(name)}? Overall rating, 1 to 5 stars.`;
@@ -186,12 +186,12 @@ export async function startReviewFlow(
   // The profile page's own eligibility: a completed shift with them, and no review yet.
   const page = await readCaregiverProfilePage(args.caregiverId, clientId, 1);
   if (!page) {
-    await sendMessage(chatId, "I couldn't find that caregiver's profile.");
+    await sendMessage(chatId, "I couldn't find that care provider's profile.");
     return { started: false, reason: "not_found" };
   }
   const name = page.name;
   if (page.relationship.hasReviewed) {
-    await sendMessage(chatId, `You've already reviewed ${first(name)} — it's on their profile. Each family can leave one review per caregiver.`);
+    await sendMessage(chatId, `You've already reviewed ${first(name)} — it's on their profile. Each family can leave one review per care provider.`);
     return { started: false, reason: "already_reviewed" };
   }
   if (!page.relationship.hasCompletedShift) {
@@ -243,7 +243,7 @@ async function guard(phone: string, chatId: string, text: string, question: stri
 }
 
 async function extractRating(text: string): Promise<number | null> {
-  const raw = await ask('The family is giving a caregiver an overall star rating from 1 to 5. Return ONLY JSON: {"rating": integer 1-5 or null}. "five stars"/"5/5"/"⭐⭐⭐⭐⭐" → 5; "3 out of 5" → 3; null if no clear rating is stated.', text);
+  const raw = await ask('The family is giving a care provider an overall star rating from 1 to 5. Return ONLY JSON: {"rating": integer 1-5 or null}. "five stars"/"5/5"/"⭐⭐⭐⭐⭐" → 5; "3 out of 5" → 3; null if no clear rating is stated.', text);
   const parsed = parseJsonLoose(raw);
   return isValidRating(parsed?.rating) ? parsed.rating : null;
 }
@@ -311,7 +311,7 @@ async function handleRvAskRecommend(phone: string, chatId: string, text: string)
   let verdict: "YES" | "NO" | null = norm === "YES" ? "YES" : norm === "NO" ? "NO" : null; // the stated YES/NO protocol
   if (!verdict) {
     if (await guard(phone, chatId, text, question, data)) return;
-    const raw = (await ask('The family was asked "Would you recommend this caregiver? Reply YES or NO." Reply with exactly YES, NO, or UNCLEAR.', text)).toUpperCase();
+    const raw = (await ask('The family was asked "Would you recommend this care provider? Reply YES or NO." Reply with exactly YES, NO, or UNCLEAR.', text)).toUpperCase();
     verdict = raw.startsWith("YES") ? "YES" : raw.startsWith("NO") ? "NO" : null;
   }
   if (!verdict) { await sendMessage(chatId, `${RV_DIDNT_CATCH} ${question}`); return; }
@@ -333,7 +333,7 @@ async function handleRvConfirm(phone: string, chatId: string, text: string, sess
   } else {
     if (await isBackOutRequest(text, buildReviewRecap(data))) return handleBackOut(phone, chatId, data);
     const raw = await ask(
-      'The family is reviewing their caregiver review before it posts. Return ONLY JSON: {"action": "confirm" | "cancel" | "edit_rating" | "edit_categories" | "edit_comment" | "edit_recommend" | "other", ' +
+      'The family is reviewing their care provider review before it posts. Return ONLY JSON: {"action": "confirm" | "cancel" | "edit_rating" | "edit_categories" | "edit_comment" | "edit_recommend" | "other", ' +
       '"rating": 1-5 or null, "comment": string or null, "recommend": true | false | null}. "confirm" = yes/post it/looks good. "cancel" = no/never mind. ' +
       '"edit_rating" = wants a different overall star count (set rating only if this message states it). "edit_categories" = wants to change the category ratings. ' +
       '"edit_comment" = wants to change the written review (set comment to the exact new text only if this message contains it). "edit_recommend" = wants to flip the recommend answer (set recommend only if stated). ' +

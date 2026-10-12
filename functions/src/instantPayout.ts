@@ -64,8 +64,8 @@ export const getPayoutBalance = functions.https.onCall(async (data, context) => 
                 .catch((e) => console.error("getPayoutBalance: status sync failed:", e));
             const { appLink } = await import("./config/appUrl");
             onboardingUrl = await createConnectOnboardingLink(stripe, stripeAccountId, {
-                returnUrl: appLink("/caregiver/payments?tab=payouts&stripe=success"),
-                refreshUrl: appLink("/caregiver/payments?tab=payouts&stripe=refresh"),
+                returnUrl: appLink("/care-provider/payments?tab=payouts&stripe=success"),
+                refreshUrl: appLink("/care-provider/payments?tab=payouts&stripe=refresh"),
             });
         }
     }

@@ -127,7 +127,7 @@ describe("pause_account / reactivate_account (U1)", () => {
       expect((await handleToolCall("pause_account", { caregiverId: CG, phone: OWNER }) as any)._toolError).toBe(true);
     });
 
-    it("returns NOT_FOUND for an unknown caregiver", async () => {
+    it("returns NOT_FOUND for an unknown care provider", async () => {
       const r = await handleToolCall("pause_account", { caregiverId: "ghost", until: "indefinite", phone: OWNER }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");

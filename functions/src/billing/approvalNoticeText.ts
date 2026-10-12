@@ -43,7 +43,7 @@ export function fmtDuration(hours: number): string {
 }
 
 export function buildApprovalNoticeText(p: ApprovalNoticePayload): string {
-  const caregiverName = p.caregiverName || "Your caregiver";
+  const caregiverName = p.caregiverName || "Your care provider";
   const dateLabel = p.date ? formatDateWithWeekday(String(p.date)) : "the completed visit";
   const startMs = p.submittedStartTime ? Date.parse(p.submittedStartTime) : NaN;
   const endMs = p.submittedEndTime ? Date.parse(p.submittedEndTime) : NaN;

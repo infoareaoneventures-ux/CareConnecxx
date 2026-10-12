@@ -12,7 +12,7 @@ export function humanLabelForStep(step: string): string {
     client_ask_location:                "sharing the location",
     client_ask_schedule:                "setting the schedule",
     client_ask_start:                   "choosing a start date",
-    client_ask_preferences:             "sharing caregiver preferences",
+    client_ask_preferences:             "sharing care provider preferences",
     client_ask_budget:                  "sharing a budget",
     client_confirm_intake:              "confirming the details",
     client_ask_plan:                    "choosing your membership",

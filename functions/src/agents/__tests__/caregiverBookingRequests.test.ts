@@ -169,7 +169,7 @@ describe("the list", () => {
   });
 });
 
-describe("a replacement request shows the caregiver's own rate with no label", () => {
+describe("a replacement request shows the care provider's own rate with no label", () => {
   it("drops '(agreed rate)' when isShiftReplacement", () => {
     const lines = requestCardLines(req({ isShiftReplacement: true, schedule: { startDate: "2099-09-30", endDate: "2099-09-30", ongoing: false, dayShiftTimes: { Wed: [{ start: "00:00", end: "00:15" }] } } }) as any);
     expect(lines).toContain("$25/hr · Card");
@@ -190,7 +190,7 @@ describe("Accept / Decline — the page's exact writes", () => {
     expect(r).toMatchObject({ ok: true, status: "declined", toast: "Request from The Nguyen Family declined" });
     expect(hoisted.updates[0].data).toEqual({ status: "declined", updatedAt: "__serverTimestamp__" });
   });
-  it("refuses another caregiver's request, a missing one, or one no longer pending", async () => {
+  it("refuses another care provider's request, a missing one, or one no longer pending", async () => {
     hoisted.docs.set("booking_requests/br1", { ...req(), caregiverId: "OTHER" });
     expect(await respondToBookingRequest("cg1", "br1", "accept")).toEqual({ ok: false, reason: "not_yours" });
     expect(await respondToBookingRequest("cg1", "nope", "accept")).toEqual({ ok: false, reason: "not_found" });
@@ -270,7 +270,7 @@ describe("schedule-change cards — the page's card and its Accept/Decline, verb
     expect(hoisted.sets).toHaveLength(0);
   });
 
-  it("refuses another caregiver's change, a missing one, or one already answered", async () => {
+  it("refuses another care provider's change, a missing one, or one already answered", async () => {
     hoisted.docs.set("booking_amendments/am1", amendment({ caregiverId: "OTHER" }));
     expect(await acceptAmendment("cg1", "am1")).toEqual({ ok: false, reason: "not_yours" });
     expect(await declineAmendment("cg1", "nope")).toEqual({ ok: false, reason: "not_found" });

@@ -155,7 +155,7 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe("startReplacementFlow", () => {
-  it("never offers a caregiver already in another visit at that hour, or one the family blocked (founder, 2026-10-04)", async () => {
+  it("never offers a care provider already in another visit at that hour, or one the family blocked (founder, 2026-10-04)", async () => {
     seedNeedsReplacement();
     hoisted.docState.set("shifts/sh-other", { clientId: "other-family", caregiverId: "cg-maria", status: "scheduled", date: "2026-09-15", startTime: "12:00", endTime: "15:00" });
     const { startReplacementFlow } = await import("../replacementFlow");

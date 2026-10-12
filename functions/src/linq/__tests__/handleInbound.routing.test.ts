@@ -487,7 +487,7 @@ describe("pending TCPA consent (optedIn:false, web-signup auth trigger)", () => 
   it("non-answer gets ONE re-ask, then goes quiet (deny-by-default)", async () => {
     seedPendingConsentSession();
     parseWithClaude.mockResolvedValueOnce("other");
-    await handleInbound(makeEvent("when is the caregiver coming?"));
+    await handleInbound(makeEvent("when is the care provider coming?"));
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ consentReaskCount: 1 });
 
@@ -535,7 +535,7 @@ describe("cold inbound (no prior session) — consent gate", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const sent = String(sendMessage.mock.calls[0][1]);
     expect(sent).toContain("eviacares.com");
-    expect(sent).not.toContain("caregiver yourself");
+    expect(sent).not.toContain("care provider yourself");
     expect(classifyIntentDetailed).not.toHaveBeenCalled();
     expect(runQaAgent).not.toHaveBeenCalled();
   });
@@ -549,7 +549,7 @@ describe("cold inbound (no prior session) — consent gate", () => {
       onboardingStep: "ask_role",
     });
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0][1])).toContain("caregiver yourself");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("care provider yourself");
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
@@ -569,14 +569,14 @@ describe("cold inbound (no prior session) — consent gate", () => {
   // through client-only conversation logic (they were even shown their own
   // profile as a hireable candidate). Skip straight to "complete" and the
   // correct userType instead of asking a role question Evia already knows.
-  it("YES for an existing CAREGIVER account skips the role question and stamps userType", async () => {
+  it("YES for an existing CARE PROVIDER account skips the role question and stamps userType", async () => {
     seedColdConsentSession();
     createFirebaseAuthAccount.mockResolvedValueOnce("cg-uid-1");
     hoisted.docState.set("users/cg-uid-1", { phone: PHONE, userType: "caregiver" });
     // A pre-existing caregiver profile carries real progress (here: an
     // approved account) — a bare status-less doc is the in-progress wizard
     // shell the web bridge pre-creates and is NOT a returning user (2026-09-26).
-    hoisted.docState.set("caregivers/cg-uid-1", { name: "Test Caregiver", status: "active" });
+    hoisted.docState.set("caregivers/cg-uid-1", { name: "Test Care Provider", status: "active" });
     parseWithClaude.mockResolvedValueOnce("yes");
 
     await handleInbound(makeEvent("Yes please"));
@@ -587,11 +587,11 @@ describe("cold inbound (no prior session) — consent gate", () => {
       userType:       "caregiver",
       onboardingStep: "complete",
     });
-    expect(String(sendMessage.mock.calls[0][1])).not.toContain("caregiver yourself");
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("care provider yourself");
     expect(String(sendMessage.mock.calls[0][1])).toContain("jobs, bookings, or your schedule");
   });
 
-  it("YES for an existing CLIENT account (jobPostingCompleted, no caregivers doc) also skips the role question", async () => {
+  it("YES for an existing CLIENT account (jobPostingCompleted, no care providers doc) also skips the role question", async () => {
     seedColdConsentSession();
     createFirebaseAuthAccount.mockResolvedValueOnce("cl-uid-1");
     hoisted.docState.set("users/cl-uid-1", { phone: PHONE, userType: "client", jobPostingCompleted: true });
@@ -605,7 +605,7 @@ describe("cold inbound (no prior session) — consent gate", () => {
       userType:       "client",
       onboardingStep: "complete",
     });
-    expect(String(sendMessage.mock.calls[0][1])).not.toContain("caregiver yourself");
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("care provider yourself");
     expect(String(sendMessage.mock.calls[0][1])).toContain("book care");
   });
 
@@ -624,7 +624,7 @@ describe("cold inbound (no prior session) — consent gate", () => {
     });
     // Unchanged from the cold_awaiting_consent seed — this code path never sets it.
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).userType).toBeNull();
-    expect(String(sendMessage.mock.calls[0][1])).toContain("caregiver yourself");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("care provider yourself");
   });
 
   it("refusal opts out instead of silently staying pending", async () => {
@@ -887,7 +887,7 @@ describe("web-onboarding name bridge", () => {
     expect(greeting()).toContain("Sarah");
   });
 
-  it("caregiver with a name → first real question (address), seeded FULL name, greeted by FIRST name, account linked", async () => {
+  it("care provider with a name → first real question (address), seeded FULL name, greeted by FIRST name, account linked", async () => {
     seedWebSession({ role: "caregiver", name: "Maria Lopez", firstName: "Maria", lastName: "Lopez" });
     await handleInbound(makeEvent("Hey Evia"));
     expect(session()?.onboardingStep).toBe("caregiver_ask_location");
@@ -916,7 +916,7 @@ describe("web-onboarding name bridge", () => {
       expect(session()?.onboardingData?.email).toBe("sarah@example.com");
     });
 
-    it("caregiver with a name AND email → both seeded onto onboardingData", async () => {
+    it("care provider with a name AND email → both seeded onto onboardingData", async () => {
       seedWebSession({ role: "caregiver", name: "Maria", email: "maria@example.com" });
       await handleInbound(makeEvent("Hey Evia"));
       expect(session()?.onboardingStep).toBe("caregiver_ask_location");
@@ -1127,7 +1127,7 @@ describe("onboarding agent-loop flag routing", () => {
 // ONBOARDING_AGENT_LOOP unset (or naming only "client"), a caregiver mid-
 // signup always runs the scripted runner. Only "caregiver" in the role list
 // routes caregiver collection turns to the loop.
-describe("caregiver onboarding agent-loop flag routing", () => {
+describe("care provider onboarding agent-loop flag routing", () => {
   // = the site wizard's fields (2026-09-25): address, photo, job type, availability,
   // services + experience bucket, rate + travel distance, email, 150+ char bio.
   const FULL_CAREGIVER_DATA = {
@@ -1141,7 +1141,7 @@ describe("caregiver onboarding agent-loop flag routing", () => {
 
   // Loop-only: a caregiver collection step ALWAYS routes to the loop as role
   // caregiver (no flag; scripted collection deleted).
-  it("caregiver collection step routes to the loop as role caregiver", async () => {
+  it("care provider collection step routes to the loop as role care provider", async () => {
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
     await handleInbound(makeEvent("6 years, mostly dementia"));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
@@ -1153,16 +1153,16 @@ describe("caregiver onboarding agent-loop flag routing", () => {
     expect(handleOnboardingStep).not.toHaveBeenCalled();
   });
 
-  it("flag on: a caregiver GATE step (awaiting photo) never routes to the loop", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+  it("flag on: a care provider GATE step (awaiting photo) never routes to the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,care provider";
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_awaiting_photo" });
     await handleInbound(makeEvent("did you get my photo?"));
     expect(runQaAgent).not.toHaveBeenCalled();
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
   });
 
-  it("caregiver persistence net: loop saves nothing → the CAREGIVER absorber captures the answer", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+  it("care provider persistence net: loop saves nothing → the CARE PROVIDER absorber captures the answer", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,care provider";
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
     absorbCaregiverFields.mockResolvedValueOnce({ yearsExperience: 6, specialties: ["dementia"] });
     await handleInbound(makeEvent("6 years, mostly dementia"));
@@ -1174,7 +1174,7 @@ describe("caregiver onboarding agent-loop flag routing", () => {
   });
 
   it("collection completes → drives the membership gate via the scripted runner's __RESUME__ sentinel", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    process.env.ONBOARDING_AGENT_LOOP = "client,care provider";
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_bio", onboardingData: { ...FULL_CAREGIVER_DATA, bio: "" } });
     // Simulate the model saving the bio and complete_collection advancing the
     // cursor to the first gate step (what mcp/server.ts does on complete:true).
@@ -1196,8 +1196,8 @@ describe("caregiver onboarding agent-loop flag routing", () => {
     expect(continueAfterClientCollection).not.toHaveBeenCalled();
   });
 
-  it("stuck-signup net: all caregiver fields present but the model never called complete_collection → cursor advances to the membership gate", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+  it("stuck-signup net: all care provider fields present but the model never called complete_collection → cursor advances to the membership gate", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,care provider";
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_bio", onboardingData: FULL_CAREGIVER_DATA });
     // Loop replies but writes nothing; data is already complete.
     await handleInbound(makeEvent("anything else you need?"));
@@ -1208,8 +1208,8 @@ describe("caregiver onboarding agent-loop flag routing", () => {
     expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
   });
 
-  it("loop throws before replying: caregiver loop is retried once (no scripted fallback)", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+  it("loop throws before replying: care provider loop is retried once (no scripted fallback)", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,care provider";
     seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_name" });
     runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // retry succeeds
     await handleInbound(makeEvent("Maria"));
@@ -1373,7 +1373,7 @@ describe("userHasRealOnboardingProgress", () => {
     })).toBe(true);
   });
 
-  it("caregiver with a caregivers/{uid} doc that progressed (pending_review) → true", async () => {
+  it("care provider with a caregivers/{uid} doc that progressed (pending_review) → true", async () => {
     hoisted.docState.set("caregivers/uid-4", { phone: PHONE, status: "pending_review" });
     expect(await userHasRealOnboardingProgress("uid-4", {
       uid: "uid-4", userType: "caregiver", name: "Imran",
@@ -1384,7 +1384,7 @@ describe("userHasRealOnboardingProgress", () => {
   // "Hey Evia" (status onboarding / in_progress), so a bare doc is NOT progress —
   // treating it as such marked a brand-new caregiver "complete" on their second
   // text and skipped the whole questionnaire.
-  it("caregiver whose caregivers/{uid} doc is still the in-progress wizard shell → false", async () => {
+  it("care provider whose caregivers/{uid} doc is still the in-progress wizard shell → false", async () => {
     hoisted.docState.set("caregivers/uid-7", {
       phone: PHONE, uid: "uid-7", name: "Hamse Mahad", status: "onboarding",
       onboardingStatus: "in_progress", wizardStep: "location", emailVerified: true,
@@ -1399,7 +1399,7 @@ describe("userHasRealOnboardingProgress", () => {
     ["membership paid", { onboardingStatus: "profile_complete", membershipPaid: true }],
     ["background check submitted", { verificationStatus: "submitted" }],
     ["active", { status: "active" }],
-  ])("caregiver doc past the wizard (%s) → true", async (_label, doc) => {
+  ])("care provider doc past the wizard (%s) → true", async (_label, doc) => {
     hoisted.docState.set("caregivers/uid-8", { phone: PHONE, uid: "uid-8", ...doc });
     expect(await userHasRealOnboardingProgress("uid-8", {
       uid: "uid-8", userType: "caregiver", name: "Imran",

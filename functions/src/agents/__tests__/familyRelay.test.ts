@@ -53,8 +53,8 @@ beforeEach(() => {
   hoisted.docs.set("shifts/s1", { caregiverId: "cg1", clientId: "fam1", clientName: "Basra Yousuf", status: "scheduled", date: businessTodayStr(), startTime: "14:00" });
 });
 
-describe("LATE — the caregiver's words, posted as their Inbox message", () => {
-  it("LATE asks what to tell the family and parks; the next text is relayed verbatim as the caregiver's message", async () => {
+describe("LATE — the care provider's words, posted as their Inbox message", () => {
+  it("LATE asks what to tell the family and parks; the next text is relayed verbatim as the care provider's message", async () => {
     expect(await handleLateKeyword("+1", "chat", "cg1", "LATE", {})).toBe("handled");
     expect(hoisted.sent[0]).toBe("What should I tell Basra Yousuf? I'll send it as your message.");
     expect(hoisted.sessionWrites[0].pendingFamilyMessage).toMatchObject({ clientId: "fam1", clientName: "Basra Yousuf" });
@@ -147,7 +147,7 @@ describe("LATE — the caregiver's words, posted as their Inbox message", () => 
     expect(reAsk).toBe("What should I tell Basra Yousuf? I'll send it as your message.");
     expect(opts?.audience).toBe("caregiver");
     expect(opts?.facts).toContain("The family is Basra Yousuf");
-    expect(opts?.facts).toContain("posted into Basra Yousuf's Inbox thread as the caregiver's OWN words, exactly as typed");
+    expect(opts?.facts).toContain("posted into Basra Yousuf's Inbox thread as the care provider's OWN words, exactly as typed");
     expect(opts?.facts).toContain("Nothing has been sent yet");
     // the real reply relays
     expect(await handleLateKeyword("+1", "chat", "cg1", "Running 10 minutes late!", { pendingFamilyMessage: { clientId: "fam1", clientName: "Basra Yousuf" } })).toBe("handled");

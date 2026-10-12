@@ -66,7 +66,7 @@ async function alertTeamDrivingRecordReview(uid: string, eventId: string): Promi
   try {
     const snap = await db.collection("caregivers").doc(uid).get();
     const cg = (snap.data() ?? {}) as Record<string, unknown>;
-    const name = String(cg.name ?? "A caregiver").trim() || "A caregiver";
+    const name = String(cg.name ?? "A care provider").trim() || "A care provider";
     const status = String(cg.mvrStatus ?? "consider");
     await db.collection("admin_alerts").add({
       type: "mvr_review",
@@ -75,7 +75,7 @@ async function alertTeamDrivingRecordReview(uid: string, eventId: string): Promi
       caregiverId: uid,
       caregiverName: name,
       mvrStatus: status,
-      message: `${name}'s driving record check came back "${status}". Transportation is off their profile until you decide — Admin › Caregivers › ${name} › Verification.`,
+      message: `${name}'s driving record check came back "${status}". Transportation is off their profile until you decide — Admin › Care Providers › ${name} › Verification.`,
       dedupeKey: `mvr_review:${uid}:${eventId}`,
       createdAt: new Date().toISOString(),
     });
@@ -93,8 +93,8 @@ async function alertTeamDrivingRecordReview(uid: string, eventId: string): Promi
  * the page's button (MANAGE MEMBERSHIP = the Stripe portal, ACTIVATE = the checkout).
  */
 export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: CaregiverAccountEventContext = {}): { title: string; body: string; text?: string } {
-  const dash = appLink("/caregiver/dashboard");
-  const membership = appLink("/caregiver/settings"); // Membership & verification lives on Account Settings (2026-10-04)
+  const dash = appLink("/care-provider/dashboard");
+  const membership = appLink("/care-provider/settings"); // Membership & verification lives on Account Settings (2026-10-04)
   switch (kind) {
     case "membership_paid":
       return {
@@ -270,7 +270,7 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
     case "payouts_enabled":
       return {
         title: "Payouts set up",
-        body: `Your payout account is set up — earnings land in your bank automatically after each paid visit. ${appLink("/caregiver/payments")}`,
+        body: `Your payout account is set up — earnings land in your bank automatically after each paid visit. ${appLink("/care-provider/payments")}`,
         text: "Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.",
       };
     case "payouts_disabled":

@@ -86,13 +86,13 @@ import { handleToolCall } from "../server";
 describe("discovery tools", () => {
   beforeEach(() => hoisted.reset());
 
-  describe("get_caregiver_info (the caregiver profile page as data, 2026-09-19; reviews folded in 2026-09-03)", () => {
+  describe("get_caregiver_info (the care provider profile page as data, 2026-09-19; reviews folded in 2026-09-03)", () => {
     it("requires caregiverId", async () => {
       const r = await handleToolCall("get_caregiver_info", {}) as any;
       expect(r._toolError).toBe(true);
     });
 
-    it("returns NOT_FOUND for a missing caregiver", async () => {
+    it("returns NOT_FOUND for a missing care provider", async () => {
       const r = await handleToolCall("get_caregiver_info", { caregiverId: "ghost" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");
@@ -139,13 +139,13 @@ describe("discovery tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("returns NOT_FOUND if caregiver doesn't exist", async () => {
+    it("returns NOT_FOUND if care provider doesn't exist", async () => {
       const r = await handleToolCall("save_caregiver_favorite", { clientId: "c1", caregiverId: "ghost" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");
     });
 
-    it("arrayUnions the caregiver into savedCaregiverIds", async () => {
+    it("arrayUnions the care provider into savedCaregiverIds", async () => {
       hoisted.docState.set("caregivers/cg1", { name: "Alice" });
       const r = await handleToolCall("save_caregiver_favorite", { clientId: "c1", caregiverId: "cg1" }) as any;
       expect(r.success).toBe(true);
@@ -156,7 +156,7 @@ describe("discovery tools", () => {
   });
 
   describe("unsave_caregiver_favorite", () => {
-    it("arrayRemoves the caregiver", async () => {
+    it("arrayRemoves the care provider", async () => {
       const r = await handleToolCall("unsave_caregiver_favorite", { clientId: "c1", caregiverId: "cg1" }) as any;
       expect(r.success).toBe(true);
       const userSet = hoisted.sets.find(s => s.path === "users/c1");

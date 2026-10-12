@@ -168,7 +168,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["rescheduleFlowStep",      "moving your visit to a new day/time"],
   ["cancelFlowStep",          "cancelling that visit or request"],
   ["visitRequestFlowStep",    "requesting an extra visit"],
-  ["correctionFlowStep",      "correcting a caregiver's timesheet"],
+  ["correctionFlowStep",      "correcting a care provider's timesheet"],
   ["interviewFlowStep",       "setting up your interview request"],
   ["reviewFlowStep",          "leaving your review"],
   ["applyFlowStep",           "applying to that job"],

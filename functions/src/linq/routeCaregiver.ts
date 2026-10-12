@@ -77,10 +77,10 @@ export async function lastParkedAgentQuestion(phone: string, nowMs: number = Dat
 
 async function keywordAnswersParkedQuestion(question: string, reply: string): Promise<boolean> {
   const raw = await quickComplete(
-    "Evia (a care-work assistant) asked the caregiver a question by text, and the caregiver replied with one word. " +
+    "Evia (a care-work assistant) asked the care provider a question by text, and the care provider replied with one word. " +
       "That same word is also a command that opens a page (for example TODAY opens today's calendar, PENDING opens pending timesheets, SETTINGS opens account settings). " +
       "Decide which it is: reply YES if the word is an answer to Evia's question; reply NO if it is the page command. Reply with exactly one word.",
-    `Evia asked: "${question.slice(-400)}"\nThe caregiver replied: "${reply.trim()}"`,
+    `Evia asked: "${question.slice(-400)}"\nThe care provider replied: "${reply.trim()}"`,
     { maxTokens: 3 },
   ).catch(() => "NO");
   return raw.trim().toUpperCase().startsWith("YES");
@@ -381,7 +381,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       // request is respond_to_interview_request, exactly like the site.)
       PAYOUT:     async () => {
         if (!session.caregiverId) {
-          await sendMessage(chatId, "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again.");
+          await sendMessage(chatId, "I couldn't find your care provider profile. Send the email you used to sign up and I'll try again.");
           return;
         }
         const { startInstantPayout } = await import("../agents/instantPayoutHandler");
@@ -450,7 +450,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     const { caregiverHasVisitSoon } = await import("../agents/familyRelay");
     if (session.caregiverId && await caregiverHasVisitSoon(session.caregiverId).catch(() => false)) {
       const lateRaw = await quickComplete(
-        "Classify this caregiver message: LATE if they are telling someone they're running late / delayed on the way to a visit " +
+        "Classify this care provider message: LATE if they are telling someone they're running late / delayed on the way to a visit " +
           "(e.g. 'running about 10 min late', 'stuck in traffic, be there by 2:15'). Anything else is NONE. Reply with exactly one word.",
         text,
         { maxTokens: 5 },

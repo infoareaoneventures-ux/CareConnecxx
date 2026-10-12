@@ -31,7 +31,7 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = () => {
                             Care you can look into before you book
                         </h2>
                         <p className="text-slate-600 text-[17px] mb-10 leading-relaxed max-w-md">
-                            Every caregiver completes a background check before families can book them.
+                            Every care provider completes a background check before families can book them.
                         </p>
 
                         <ul className="space-y-6">
@@ -50,7 +50,7 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = () => {
                     <div className="w-full lg:w-1/3 flex justify-center z-0 relative">
                         <img
                             src="/assets/caregiver-senior-trust.png"
-                            alt="Caregiver and senior sitting together"
+                            alt="Care provider and senior sitting together"
                             className="w-full max-w-[400px] lg:max-w-[450px] xl:max-w-[500px] h-auto mix-blend-multiply translate-y-4 lg:translate-y-24"
                         />
                     </div>

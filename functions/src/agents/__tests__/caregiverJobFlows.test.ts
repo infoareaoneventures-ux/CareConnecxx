@@ -137,7 +137,7 @@ describe("Apply flow — the Apply for Position modal", () => {
     expect(facts).toContain("Your Profile\nExperience: 3-5 years");
     expect(facts).toContain("Client's budget: $26/hr");
     expect(facts).toContain("the family sees it with the application");
-    expect(facts).toContain("Nothing is sent until the caregiver replies SUBMIT");
+    expect(facts).toContain("Nothing is sent until the care provider replies SUBMIT");
   });
 
   it("the site's gate stands in for Apply Now: background check, then transport docs for a Transportation job (nothing written)", async () => {
@@ -228,7 +228,7 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).interviewRescheduleFlowStep).toBe("rs_confirm");
   });
 
-  it("CANCEL at the end leaves the interview untouched; won't start while the caregiver's own proposal is out", async () => {
+  it("CANCEL at the end leaves the interview untouched; won't start while the care provider's own proposal is out", async () => {
     await startInterviewRescheduleFlow(PHONE, CHAT, session(), { caregiverId: "cg1", interviewId: "iv1" });
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "9/28 at 9am", session());
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "cancel", session());

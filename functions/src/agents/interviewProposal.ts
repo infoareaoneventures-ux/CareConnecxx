@@ -90,7 +90,7 @@ export async function keepInterviewTime(params: KeepInterviewTimeParams): Promis
     interviewId,
     keptBy: by,
     clientName: String(iv.clientName || "the family"),
-    caregiverName: String(iv.caregiverName || "your caregiver"),
+    caregiverName: String(iv.caregiverName || "your care provider"),
     scheduledTime: whenIso,
     scheduledTimeLocal: Number.isFinite(whenMs) && whenMs > 0 ? formatInterviewTime(whenMs) : null,
   };

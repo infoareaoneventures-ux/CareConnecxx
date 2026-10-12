@@ -9,7 +9,7 @@ import {
   SHIFT_PLATFORM_FEE_RATE, SHIFT_PLATFORM_FEE_MIN_DOLLARS, INSTANT_PAYOUT_FEE_RATE, INSTANT_PAYOUT_FEE_MIN_DOLLARS,
 } from "./config";
 
-describe("service fee — 9% of the caregiver total, $1 minimum, integer cents, rounded once", () => {
+describe("service fee — 9% of the care provider total, $1 minimum, integer cents, rounded once", () => {
   it("typical visits", () => {
     expect(serviceFeeCentsFor(10000)).toBe(900);   // $100 → $9.00
     expect(serviceFeeCentsFor(5000)).toBe(450);    // $50 → $4.50
@@ -31,7 +31,7 @@ describe("service fee — 9% of the caregiver total, $1 minimum, integer cents, 
   });
 });
 
-describe("instant payout fee — Stripe's 1%, $0.50 minimum, passed to the caregiver", () => {
+describe("instant payout fee — Stripe's 1%, $0.50 minimum, passed to the care provider", () => {
   it("amounts", () => {
     expect(instantPayoutFeeCentsFor(10000)).toBe(100);
     expect(instantPayoutFeeCentsFor(5000)).toBe(50);

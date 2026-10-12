@@ -102,7 +102,7 @@ describe("createCaregiverMembershipCheckout — the Activate Membership checkout
 });
 
 describe("markCaregiverMembershipPaid — the same record from both origins", () => {
-  it("caregiver doc: paid + verification submitted + mvrPaid when Transportation + subscription id (+ phone); users doc: active + verification; customers mirror; then parks on consent", async () => {
+  it("care provider doc: paid + verification submitted + mvrPaid when Transportation + subscription id (+ phone); users doc: active + verification; customers mirror; then parks on consent", async () => {
     hoisted.docs.set("caregivers/cg1", { services: ["Transportation"] });
     await markCaregiverMembershipPaid("cg1", { subscriptionId: "sub_1", customerId: "cus_1", phone: "+1555" });
     expect(hoisted.docs.get("caregivers/cg1")).toEqual({
@@ -137,8 +137,8 @@ describe("createCaregiverBillingPortalUrl — the Manage button", () => {
   it("customers/{uid}.stripeCustomerId → portal session back to the given page; none → NoBillingAccountError with the page's toast text", async () => {
     hoisted.docs.set("customers/cg1", { stripeCustomerId: "cus_1" });
     const s = stripe();
-    expect(await createCaregiverBillingPortalUrl(s, "cg1", "https://x/caregiver/payments")).toBe("https://billing.stripe/cus_1");
-    expect(s.billingPortal.sessions.create).toHaveBeenCalledWith({ customer: "cus_1", return_url: "https://x/caregiver/payments" });
+    expect(await createCaregiverBillingPortalUrl(s, "cg1", "https://x/care-provider/payments")).toBe("https://billing.stripe/cus_1");
+    expect(s.billingPortal.sessions.create).toHaveBeenCalledWith({ customer: "cus_1", return_url: "https://x/care-provider/payments" });
     await expect(createCaregiverBillingPortalUrl(s, "cg9", "https://x")).rejects.toBeInstanceOf(NoBillingAccountError);
     await expect(createCaregiverBillingPortalUrl(s, "cg9", "https://x")).rejects.toThrow("No billing account found. Please purchase a membership first.");
   });

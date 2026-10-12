@@ -120,7 +120,7 @@ describe("detail panels", () => {
   it("in progress / completed / missed / gated read like the panel's states", () => {
     const base = { id: "a", caregiverId: "cg1", date: "2026-09-30", startTime: "19:30", endTime: "19:45", clientName: "B", careRecipients: [], tasksCompleted: [] } as any;
     expect(shiftDetailText({ ...base, status: "in-progress", startedAt: "2026-10-01T02:31:00.000Z" }, null)).toContain("Started Sep 30, 7:31:00 PM\n\nIn progress — reply DONE n to check off a task, NOTE followed by anything the family should see, TASKS to re-list, or FINISH when the visit is over.");
-    expect(shiftDetailText({ ...base, status: "completed", startedAt: "2026-10-01T02:31:00.000Z", completedAt: "2026-10-01T02:45:00.000Z", completionNotes: "All good.", notesLog: [{ at: "2026-10-01T02:40:00.000Z", text: "Ate well." }] }, null)).toContain("Shift Completed\nVisit notes\n• 7:40 PM — Ate well.\nCaregiver note\nAll good.");
+    expect(shiftDetailText({ ...base, status: "completed", startedAt: "2026-10-01T02:31:00.000Z", completedAt: "2026-10-01T02:45:00.000Z", completionNotes: "All good.", notesLog: [{ at: "2026-10-01T02:40:00.000Z", text: "Ate well." }] }, null)).toContain("Shift Completed\nVisit notes\n• 7:40 PM — Ate well.\nCare Provider note\nAll good.");
     expect(shiftDetailText({ ...base, status: "scheduled", date: "2000-01-01" }, null)).toContain("This visit was missed — reply LOG to log the hours.");
     const soon = new Date(Date.now() + 5 * 60_000);
     const la = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(soon).reduce((o: any, p) => ({ ...o, [p.type]: p.value }), {});

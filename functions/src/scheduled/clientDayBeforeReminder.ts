@@ -55,7 +55,7 @@ export const sendClientDayBeforeReminders = functions.pubsub
         if (!sessionSnap.exists || (sessionSnap.data() as any)?.optedOut) continue;
 
         const cgSnap        = await db.collection("caregivers").doc(caregiverId).get();
-        const cgName        = (cgSnap.data()?.name ?? "your caregiver") as string;
+        const cgName        = (cgSnap.data()?.name ?? "your care provider") as string;
         const cgFirstName   = cgName.split(" ")[0];
         const seniorName    = visitSeniorName(appt);
         const startTime     = (appt.startTime ?? appt.time ?? "") as string;

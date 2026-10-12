@@ -24,6 +24,7 @@
 // checks isBackOutRequest (stepHandler.ts) FIRST, ahead of isQuestionOrOther,
 // so "never mind"/"cancel this" clears the flow immediately at ANY step, not
 // only at the recap.
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -123,7 +124,7 @@ async function answerQuestionMidFlow(text: string, caregiverName: string): Promi
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a family set up an interview with a caregiver named " +
+      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family set up an interview with a care provider named " +
       `${caregiverName}. You see ONLY this one message, not the rest of the conversation — including anything ` +
       "Evia herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. " +
       "If the message is clearly about something OTHER than finishing this interview request — a different topic " +
@@ -131,7 +132,7 @@ async function answerQuestionMidFlow(text: string, caregiverName: string): Promi
       "what it's about. Instead say plainly that it'll have to wait, e.g. \"That sounds like something else — " +
       "let's finish this first, and I'll help with that right after.\" Otherwise answer their actual question " +
       "about this interview briefly (1–2 sentences). Be warm and helpful. NEVER write out a URL or web address, " +
-      "and never claim a video call link exists yet — it doesn't until the caregiver confirms.",
+      "and never claim a video call link exists yet — it doesn't until the care provider confirms.",
     messages: [{ role: "user", content: text }],
   });
   const answer = ((response.content[0] as { text: string }).text ?? "").trim();
@@ -200,7 +201,7 @@ export async function startInterviewFlow(
       const names = (err.candidates ?? []).map((c) => `$${c.hourlyRate}/hr`).join(", ");
       await sendMessage(chatId, `${err.message}${names ? ` (${names})` : ""}`);
     } else {
-      await sendMessage(chatId, "I couldn't find that caregiver to interview. Can you tell me who you'd like to meet?");
+      await sendMessage(chatId, "I couldn't find that care provider to interview. Can you tell me who you'd like to meet?");
     }
     return { started: false, reason: "caregiver_not_found" };
   }
@@ -447,7 +448,7 @@ export function buildInterviewRecap(data: InterviewFlowData): string {
   return [
     `Here's the interview request:`,
     ``,
-    `Caregiver: ${data.caregiverName}`,
+    `Care Provider: ${data.caregiverName}`,
     `Related job post: ${jobLine}`,
     `Date & time: ${dateLabel} at ${timeLabel}`,
     `Notes: ${notesLine}`,
@@ -605,7 +606,7 @@ async function handleIvConfirm(
       const message = err.code === "resource-exhausted"
         ? "You've hit today's limit of interview requests — please try again tomorrow."
         : err.code === "failed-precondition"
-        ? "That caregiver isn't available for interviews right now."
+        ? "That care provider isn't available for interviews right now."
         : "Something went wrong scheduling that interview — please try again.";
       await sendMessage(chatId, message);
       return;

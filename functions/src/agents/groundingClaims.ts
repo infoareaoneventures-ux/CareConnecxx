@@ -129,8 +129,8 @@ const CLAIM_PATTERNS: ReadonlyArray<[GroundingClaimCategory, RegExp]> = [
 
   // ── relationship / identity (HIGH) ──────────────────────────────────────────
   ["relationship_identity", /\b[A-Z][a-z]+\s+is\s+(?:her|his|your|their|the)\s+\w+/],                     // legacy ("Dr. Chen is her primary physician")
-  ["relationship_identity", /\b(?:she|he|they)(?:'s|'re|\s+(?:is|are))\s+(?:your|her|his|their|my)\s+(?:\w+\s+)?(?:daughter|son|mother|father|mom|dad|sister|brother|wife|husband|spouse|partner|aunt|uncle|cousin|grandmother|grandfather|granddaughter|grandson|niece|nephew|neighbor|caregiver|physician|doctor|nurse|guardian|emergency contact)\b/i],
-  ["relationship_identity", /\b(?:her|his|your|their)\s+(?:primary\s+)?(?:physician|doctor|caregiver|nurse|guardian|emergency contact|power of attorney)\s+is\b/i],
+  ["relationship_identity", /\b(?:she|he|they)(?:'s|'re|\s+(?:is|are))\s+(?:your|her|his|their|my)\s+(?:\w+\s+)?(?:daughter|son|mother|father|mom|dad|sister|brother|wife|husband|spouse|partner|aunt|uncle|cousin|grandmother|grandfather|granddaughter|grandson|niece|nephew|neighbor|caregiver|care provider|physician|doctor|nurse|guardian|emergency contact)\b/i],
+  ["relationship_identity", /\b(?:her|his|your|their)\s+(?:primary\s+)?(?:physician|doctor|caregiver|care provider|nurse|guardian|emergency contact|power of attorney)\s+is\b/i],
   ["relationship_identity", /\bis\s+(?:her|his|your|their)\s+power of attorney\b/i],
 
   // ── schedule / appointment (HIGH, 2026-09-06) ───────────────────────────────
@@ -141,7 +141,7 @@ const CLAIM_PATTERNS: ReadonlyArray<[GroundingClaimCategory, RegExp]> = [
 
   // ── caregiver availability (HIGH, 2026-09-06) ───────────────────────────────
   ["caregiver_availability", /\b[A-Z][a-z]+(?:'s| is)\s+(?:free|available|booked|coming|out|sick|here|on|off|done)\b/],   // legacy
-  ["caregiver_availability", /\b(?:she|he|they|your caregiver|the caregiver)(?:'s|'re|\s+(?:is|are))\s+(?:free|available|unavailable|fully booked|booked|off|out sick|on shift|off shift)\b/i],
+  ["caregiver_availability", /\b(?:she|he|they|your caregiver|the caregiver|your care provider|the care provider)(?:'s|'re|\s+(?:is|are))\s+(?:free|available|unavailable|fully booked|booked|off|out sick|on shift|off shift)\b/i],
   ["caregiver_availability", /\b(?:no|a few|several|\d+)\s+caregivers?\s+(?:are|is)\s+(?:free|available|open)\b/i],
 
   // ── action / authorization (HIGH) ───────────────────────────────────────────

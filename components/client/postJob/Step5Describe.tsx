@@ -27,7 +27,7 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
       return;
     }
     if (desc.length < MIN_DESC) {
-      onShowToast(`Description must be at least ${MIN_DESC} characters so caregivers have enough context`, 'error');
+      onShowToast(`Description must be at least ${MIN_DESC} characters so care providers have enough context`, 'error');
       return;
     }
     if (desc.length > MAX_DESC) {
@@ -47,7 +47,7 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
   return (
     <div>
       <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center mb-1">Describe the job</h2>
-      <p className="text-center text-slate-500 mb-8">Strong descriptions help caregivers know if they're the right fit.</p>
+      <p className="text-center text-slate-500 mb-8">Strong descriptions help care providers know if they're the right fit.</p>
 
       <div className="space-y-6">
         {/* Title */}
@@ -79,12 +79,12 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
           <textarea
             value={data.description}
             onChange={e => onChange({ description: e.target.value })}
-            placeholder="Describe any details a caregiver should know. Include job responsibilities such as household tasks, personal care, or transportation assistance. For your own privacy and security, please do not include contact information above."
+            placeholder="Describe any details a care provider should know. Include job responsibilities such as household tasks, personal care, or transportation assistance. For your own privacy and security, please do not include contact information above."
             rows={8}
             className="w-full px-4 py-3 rounded-xl border-2 border-slate-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100 focus:outline-none resize-none"
           />
           <p className="mt-2 text-xs text-slate-500">
-            Caregivers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.
+            Care providers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.
           </p>
         </div>
       </div>

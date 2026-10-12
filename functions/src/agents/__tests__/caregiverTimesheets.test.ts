@@ -121,7 +121,7 @@ describe("the tab — the page's reads and chips", () => {
       { id: "b", status: "paid", submittedStartTime: "2026-08-10T21:00:00.000Z", submittedEndTime: "2026-08-10T22:00:00.000Z", grossPay: 25 },
     ];
     expect(reportText(rows)).toContain("Report · All history\nShifts 2\nTotal hours 3:30:00\nTotal earnings $87.50");
-    expect(reportText(rows)).toContain("https://app.test/caregiver/payments?tab=timesheets");
+    expect(reportText(rows)).toContain("https://app.test/care-provider/payments?tab=timesheets");
     expect(reportText(rows, { from: "2026-09-01", to: "2026-09-30" })).toContain("Shifts 1\nTotal hours 2:30:00\nTotal earnings $62.50");
     expect(reportText(rows, { from: "2026-01-01", to: "2026-01-31" })).toContain(EMPTY_REPORT);
   });
@@ -138,7 +138,7 @@ describe("the tab — the page's reads and chips", () => {
     expect(t).toContain("Rate $25/hr");
     expect(t).toContain("Clock in / out Sep 18, 2:05:09 PM – Sep 18, 5:10:00 PM");
     expect(t).toContain("Base pay $77.02\nMileage · 20 miles +$12.50\nTotal $89.52");
-    expect(t).toContain("History\n• Submitted by caregiver — Sep 18, 5:12 PM · 2:05 PM – 5:10 PM · 3:04:51 · $25/hr · Base pay $77.02 · Mileage +$12.50 · Total $89.52");
+    expect(t).toContain("History\n• Submitted by care provider — Sep 18, 5:12 PM · 2:05 PM – 5:10 PM · 3:04:51 · $25/hr · Base pay $77.02 · Mileage +$12.50 · Total $89.52");
     expect(t).toContain("• Client proposed correction — Sep 18, 8:04 PM · 2:30 PM – 5:00 PM · 2:30:00 · $25/hr · Base pay $62.50 · Mileage +$12.50 · Total $75.00 · \"She left early\"");
     expect(t.endsWith("Reply REVIEW 2 to accept the correction or send a counter.")).toBe(true);
     const p = timesheetDetailText({ id: "b", status: "pending_client_review", clientName: "B", payRate: 25, submittedStartTime: IN, submittedEndTime: OUT, grossPay: 77.02, autoApproveAt: "2026-09-20T00:12:00.000Z" });
@@ -409,7 +409,7 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     expect(lastFacts()).toContain("Mileage · 20 miles $12.50");
     expect(lastFacts()).toContain("Total $89.52");
     expect(lastFacts()).toContain("Payment method: Card.");
-    expect(lastFacts()).toContain("Nothing is submitted until the caregiver replies SUBMIT");
+    expect(lastFacts()).toContain("Nothing is submitted until the care provider replies SUBMIT");
     expect(lastFacts()).toContain("Base pay = the time between the start and end shown × the hourly rate");
     expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("sh_items");
     // the confirm step
@@ -462,7 +462,7 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
     await handleReviewCorrectionFlowStep("+1", "chat", "does the family see this note?", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Answer. Note (optional) — why do you disagree? Reply the note, or SKIP.");
-    expect(lastFacts()).toContain("The note goes to the family with the counter, in the caregiver's own words.");
+    expect(lastFacts()).toContain("The note goes to the family with the counter, in the care provider's own words.");
     expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowStep).toBe("rc_note");
     expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowData.note).toBeUndefined();
     // the real note still lands

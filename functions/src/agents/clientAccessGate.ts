@@ -43,7 +43,7 @@ export async function checkClientAccess(
 function identityGateText(caregiverName?: string): string {
   const lead = caregiverName
     ? `To contact ${caregiverName}, you need to complete a quick identity check. Pick up where you left off!`
-    : "To contact caregivers, you need to complete a quick identity check. Pick up where you left off!";
+    : "To contact care providers, you need to complete a quick identity check. Pick up where you left off!";
   return `${lead} It's a secure check with our safety partner Stripe Identity — you'll take a photo of your government ID and a quick selfie. Here's your link to continue:`;
 }
 

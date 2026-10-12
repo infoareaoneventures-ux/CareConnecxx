@@ -122,7 +122,7 @@ export const sendPendingTimesheetNudges = functions.pubsub
         const cgSnap = oldest.caregiverId
           ? await db.collection("caregivers").doc(oldest.caregiverId as string).get().catch(() => null)
           : null;
-        const cgName = ((cgSnap?.data()?.name ?? "your caregiver") as string).split(" ")[0] || "your caregiver";
+        const cgName = ((cgSnap?.data()?.name ?? "your care provider") as string).split(" ")[0] || "your care provider";
         const isCounter = oldest.status === "caregiver_counter_proposed";
         const cents = isCounter && typeof oldest.counterGrossPay === "number" ? Math.round(oldest.counterGrossPay * 100)
           : typeof oldest.amountCents === "number" ? oldest.amountCents
@@ -145,10 +145,10 @@ export const sendPendingTimesheetNudges = functions.pubsub
           audience: "family",
           context: count === 1
             ? `${cgName}'s hours from ${dateLabel}${amount ? ` (${amount})` : ""} are waiting for the family's approval — and ${cgName} isn't paid until they approve. Gently nudge them to take a look; offer to pull it up. One or two warm sentences, no pressure or guilt.`
-            : `The family has ${count} caregiver timesheets waiting for approval (oldest: ${cgName}, ${dateLabel}) — caregivers aren't paid until approved. Gently nudge them to review; offer to pull them up. One or two warm sentences.`,
+            : `The family has ${count} care provider timesheets waiting for approval (oldest: ${cgName}, ${dateLabel}) — care providers aren't paid until approved. Gently nudge them to review; offer to pull them up. One or two warm sentences.`,
           fallback: count === 1
             ? `${cgName}'s hours${amount ? ` (${amount})` : ""} are waiting for your OK — approving pays them. Want me to pull it up?`
-            : `You've got ${count} timesheets waiting for your OK — approving pays your caregivers. Want me to pull them up?`,
+            : `You've got ${count} timesheets waiting for your OK — approving pays your care providers. Want me to pull them up?`,
           maxTokens: 100,
         });
 
@@ -171,7 +171,7 @@ export const sendPendingTimesheetNudges = functions.pubsub
               ? `${cgName}'s counter on their hours${amount ? ` (${amount})` : ""} is waiting for your answer on your Payments page.`
               : count === 1
                 ? `${cgName}'s hours from ${dateLabel}${amount ? ` (${amount})` : ""} are waiting for your approval — approving pays them.`
-                : `You have ${count} timesheets waiting for your approval (oldest: ${cgName}, ${dateLabel}) — approving pays your caregivers.`,
+                : `You have ${count} timesheets waiting for your approval (oldest: ${cgName}, ${dateLabel}) — approving pays your care providers.`,
             data: { shiftHoursId: docs[0].id },
           }).catch((err) => console.error("[sendPendingTimesheetNudges] bell failed:", clientId, err));
         }

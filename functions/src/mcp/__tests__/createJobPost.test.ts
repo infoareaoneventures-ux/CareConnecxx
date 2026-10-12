@@ -234,7 +234,7 @@ describe("create_job_post", () => {
     it("refuses a description that carries medication instructions — nothing posted (2026-10-04)", async () => {
       lookupZipPlace.mockResolvedValue({ city: "Austin", state: "TX" });
       const r = await handleToolCall("create_job_post", {
-        clientId: CLIENT, title: TITLE, notes: "Looking for a kind caregiver for my mother three mornings a week. Please give her 2 pills with breakfast.", careTypes: ["Mobility Assistance"], hourlyRate: 25, zipCode: "78701",
+        clientId: CLIENT, title: TITLE, notes: "Looking for a kind care provider for my mother three mornings a week. Please give her 2 pills with breakfast.", careTypes: ["Mobility Assistance"], hourlyRate: 25, zipCode: "78701",
       }) as any;
       expect(r.success).toBe(false);
       expect(r.error).toContain("medication instructions can't be saved here");

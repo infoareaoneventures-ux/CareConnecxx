@@ -638,7 +638,7 @@ const RequestCard: React.FC<{
         {/* Actions */}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => navigate(`/caregiver/inbox?client=${req.clientId}`)}
+            onClick={() => navigate(`/care-provider/inbox?client=${req.clientId}`)}
             className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors"
           >
             <MessageSquare className="w-4 h-4" /> Message
@@ -657,7 +657,7 @@ const RequestCard: React.FC<{
                   <Lock className="w-4 h-4" /> Activate Membership
                 </button>
               ) : blockReason === 'background' ? (
-                <button onClick={() => navigate('/caregiver/dashboard')} className="flex items-center gap-1.5 px-4 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-sm font-semibold transition-colors hover:bg-amber-100">
+                <button onClick={() => navigate('/care-provider/dashboard')} className="flex items-center gap-1.5 px-4 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-sm font-semibold transition-colors hover:bg-amber-100">
                   <Lock className="w-4 h-4" /> Complete Verification
                 </button>
               ) : (
@@ -960,7 +960,7 @@ const BookingGroupCard: React.FC<{
           </div>
         </div>
         <button
-          onClick={() => navigate(`/caregiver/inbox?client=${base.clientId}`)}
+          onClick={() => navigate(`/care-provider/inbox?client=${base.clientId}`)}
           className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
         >
           <MessageSquare className="w-4 h-4" /> Message
@@ -1259,7 +1259,7 @@ const BookingGroupCard: React.FC<{
                         <Lock className="w-3 h-3" /> Activate Membership
                       </button>
                     ) : blockReason === 'background' ? (
-                      <button onClick={() => navigate('/caregiver/dashboard')} className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-xs font-semibold transition-colors hover:bg-amber-100">
+                      <button onClick={() => navigate('/care-provider/dashboard')} className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-xs font-semibold transition-colors hover:bg-amber-100">
                         <Lock className="w-3 h-3" /> Complete Verification
                       </button>
                     ) : (
@@ -1632,7 +1632,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
           </div>
         </div>
         <button
-          onClick={() => navigate(`/caregiver/inbox?client=${base.clientId}`)}
+          onClick={() => navigate(`/care-provider/inbox?client=${base.clientId}`)}
           className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
         >
           <MessageSquare className="w-4 h-4" /> Message
@@ -1680,7 +1680,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
                         <Lock className="w-3 h-3" /> Activate Membership
                       </button>
                     ) : blockReason === 'background' ? (
-                      <button onClick={() => navigate('/caregiver/dashboard')} className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg transition-colors hover:bg-amber-100">
+                      <button onClick={() => navigate('/care-provider/dashboard')} className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg transition-colors hover:bg-amber-100">
                         <Lock className="w-3 h-3" /> Complete Verification
                       </button>
                     ) : (
@@ -2145,7 +2145,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                               <Lock className="w-3.5 h-3.5" /> Activate Membership
                             </button>
                           ) : blockReason === 'background' ? (
-                            <button onClick={() => navigate('/caregiver/dashboard')} className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors hover:bg-amber-100">
+                            <button onClick={() => navigate('/care-provider/dashboard')} className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors hover:bg-amber-100">
                               <Lock className="w-3.5 h-3.5" /> Complete Verification
                             </button>
                           ) : (
@@ -2410,7 +2410,7 @@ export const CaregiverBookingsPage: React.FC = () => {
 
               {/* Caregiver Notes */}
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Caregiver Notes <span className="font-normal text-slate-400">(optional)</span></label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Care Provider Notes <span className="font-normal text-slate-400">(optional)</span></label>
                 <textarea value={logNote} onChange={e => setLogNote(e.target.value)} rows={3}
                   placeholder="Any notes about the visit…"
                   className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 resize-none focus:outline-none focus:ring-2 focus:ring-primary-400" />

@@ -1,6 +1,8 @@
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import { quickComplete } from "../utils/openaiClient";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
+import { enforceCareProviderTerm } from "../safety/linter";
 
 export const HUMAN_MIDFLOW_FALLBACK = "I do not want to guess on that.";
 
@@ -25,8 +27,8 @@ export async function answerHumanQuestionOnly(opts: {
 }): Promise<string> {
   const audience = opts.audience ?? "family";
   const answer = await quickComplete(
-    "You are Evia, a care coordinator texting in a live care workflow. " +
-      `Audience: ${audience}. Situation: ${opts.situation}. ` +
+    CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator texting in a live care workflow. " +
+      `Audience: ${audience === "caregiver" ? "care provider" : audience}. Situation: ${opts.situation}. ` +
       "Answer the user's question briefly and honestly in 1-2 sentences. " +
       "Do not use generic assistant phrasing. Do not say you will come back later. " +
       "Do not ask them to continue the workflow; the caller will send that prompt separately. " +
@@ -51,7 +53,7 @@ export async function answerHumanQuestionOnly(opts: {
   if (clean && caraOutputGuardEnabled() && !guardModelOutput(clean).ok) {
     return HUMAN_MIDFLOW_FALLBACK;
   }
-  return clean || HUMAN_MIDFLOW_FALLBACK;
+  return enforceCareProviderTerm(clean) || HUMAN_MIDFLOW_FALLBACK;
 }
 
 export function appendReAsk(answer: string, reAsk: string): string {

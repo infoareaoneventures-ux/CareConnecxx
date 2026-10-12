@@ -263,13 +263,13 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
               {editingSection === 'about' ? (
                 <div className="space-y-4">
                   <p className="text-xs text-slate-500">
-                    Highlight your experience, personality, and what makes you a great caregiver. Min {BIO_MIN_CHARS} characters.
+                    Highlight your experience, personality, and what makes you a great care provider. Min {BIO_MIN_CHARS} characters.
                   </p>
                   <textarea
                     className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-400 min-h-[110px] resize-none"
                     value={editBio}
                     onChange={e => { if (e.target.value.length <= BIO_MAX_CHARS) setEditBio(e.target.value); }}
-                    placeholder={`Describe your caregiving background... at least ${BIO_MIN_CHARS} characters required.`}
+                    placeholder={`Describe your care background... at least ${BIO_MIN_CHARS} characters required.`}
                   />
                   <div className="flex justify-between -mt-3">
                     <span className={`text-xs ${editBio.length < BIO_MIN_CHARS ? 'text-indigo-500' : 'text-slate-400'}`}>{BIO_MAX_CHARS - editBio.length} left</span>

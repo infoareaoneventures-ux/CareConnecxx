@@ -45,7 +45,7 @@ export function buildCapabilityHint(role: DiscoveryRole, hasContext: boolean): s
   const examples = getCapabilityExamples(role, 4);
   const list = joinExamples(examples);
 
-  const roleLabel = role === "caregiver" ? "a caregiver" : "the family's care coordinator-holder";
+  const roleLabel = role === "caregiver" ? "a care provider" : "the family's care coordinator-holder";
 
   const lines: string[] = [
     "CAPABILITY DISCOVERY (use silently):",
@@ -55,7 +55,7 @@ export function buildCapabilityHint(role: DiscoveryRole, hasContext: boolean): s
 
   if (hasContext) {
     lines.push(
-      "Because there is live context for this user (see the operations context above), LEAD with ONE relevant care recipe drawn from that context instead of listing capabilities - e.g. next visit briefing, review hours, care update summary, caregiver pay status, failed-action recovery, or memory correction.",
+      "Because there is live context for this user (see the operations context above), LEAD with ONE relevant care recipe drawn from that context instead of listing capabilities - e.g. next visit briefing, review hours, care update summary, care provider pay status, failed-action recovery, or memory correction.",
     );
   }
 

@@ -23,13 +23,13 @@ export function routeForNotification(n: RoutableNotification, role: Notification
   const tt = String(n.transitionType || "");
   const data = (n.data || {}) as Record<string, unknown>;
   if (role === "client") {
-    if (t === "review_prompt") return data.caregiverId ? `/client/caregiver/${data.caregiverId}?review=1` : "/client/dashboard";
+    if (t === "review_prompt") return data.caregiverId ? `/client/care-provider/${data.caregiverId}?review=1` : "/client/dashboard";
     if (t.startsWith("account")) return "/client/account";
     if (t === "job_application") return "/client/posts";
     if (t.startsWith("interview") || t === "hire_decision") return "/client/posts?tab=interviews";
     // Timesheets (submitted / approved / counter / auto-accepted / payment failed) live on Payments.
     if (t.startsWith("shift_hours")) return "/client/payments";
-    if (t === "booking_declined" || tt === "booking_declined") return "/client/find-caregivers";
+    if (t === "booking_declined" || tt === "booking_declined") return "/client/find-care-providers";
     if (t === "shift_completed") return "/client/bookings?tab=past";
     if (t === "amendment_request") return "/client/bookings?tab=requests";
     if (t.startsWith("booking") || t.startsWith("amendment") || t.startsWith("shift")) return "/client/bookings?tab=active";
@@ -49,33 +49,33 @@ export function routeForNotification(n: RoutableNotification, role: Notification
 // parity test compiles the site file and runs both over every known type).
 function caregiverRoute(t: string, tt: string, data: Record<string, unknown>): string {
   const shiftId = typeof data.shiftId === "string" && data.shiftId ? data.shiftId : "";
-  const active = shiftId ? `/caregiver/bookings?tab=active&visit=${shiftId}` : "/caregiver/bookings?tab=active";
+  const active = shiftId ? `/care-provider/bookings?tab=active&visit=${shiftId}` : "/care-provider/bookings?tab=active";
 
   // Jobs page — the job card itself, My Applications, Interviews.
-  if (t === "new_job") return typeof data.jobId === "string" && data.jobId ? `/caregiver/jobs?job=${data.jobId}` : "/caregiver/jobs";
-  if (t.startsWith("job_application")) return "/caregiver/jobs?tab=applications";
-  if (t.startsWith("interview") || t === "hire_decision") return "/caregiver/jobs?tab=interviews";
+  if (t === "new_job") return typeof data.jobId === "string" && data.jobId ? `/care-provider/jobs?job=${data.jobId}` : "/care-provider/jobs";
+  if (t.startsWith("job_application")) return "/care-provider/jobs?tab=applications";
+  if (t.startsWith("interview") || t === "hire_decision") return "/care-provider/jobs?tab=interviews";
 
   // Payments — Timesheets events (submitted / approved / correction / paid / reminders) and payouts.
-  if (t.startsWith("shift_hours")) return "/caregiver/payments?tab=timesheets";
-  if (t.includes("payout")) return "/caregiver/payments?tab=payouts";
+  if (t.startsWith("shift_hours")) return "/care-provider/payments?tab=timesheets";
+  if (t.includes("payout")) return "/care-provider/payments?tab=payouts";
 
   // Bookings — a request waiting on the caregiver (or withdrawn) → Requests; a finished or
   // unfinished-past visit → Past (Log Hours lives there); every live-visit event → Active.
-  if (t.startsWith("booking") || t.startsWith("amendment")) return "/caregiver/bookings?tab=requests";
-  if (t === "shift_completed" || t === "shift_missed") return "/caregiver/bookings?tab=past";
+  if (t.startsWith("booking") || t.startsWith("amendment")) return "/care-provider/bookings?tab=requests";
+  if (t === "shift_completed" || t === "shift_missed") return "/care-provider/bookings?tab=past";
   if (t.startsWith("shift")) return active;
   if (t === "alert" && (tt.startsWith("shift") || data.appointmentId || data.recurringGroupId)) return active;
 
   // Settings › Membership & verification — membership, background check, driving record,
   // renewal refresh, Transportation live/removed, account standing (the cards moved there 2026-10-04).
-  if (t.includes("membership") || t.includes("bgcheck") || t.includes("mvr") || t.includes("renewal") || t.includes("transport_badge") || t.startsWith("account")) return "/caregiver/settings";
+  if (t.includes("membership") || t.includes("bgcheck") || t.includes("mvr") || t.includes("renewal") || t.includes("transport_badge") || t.startsWith("account")) return "/care-provider/settings";
   // "You're all set — families can now find and book you" → the Jobs page.
-  if (t === "caregiver_now_bookable") return "/caregiver/jobs";
+  if (t === "caregiver_now_bookable") return "/care-provider/jobs";
   // A new review lives on the caregiver's own profile page (Reviews card) — it used to fall through to the dashboard (2026-10-07).
-  if (t === "review_received") return "/caregiver/profile?section=reviews";
+  if (t === "review_received") return "/care-provider/profile?section=reviews";
   // onboarding_reminder ("pick up on your dashboard") and anything unknown → the dashboard.
-  return "/caregiver/dashboard";
+  return "/care-provider/dashboard";
 }
 
 /** The page's name as the nav shows it, for the text. */
@@ -84,21 +84,21 @@ export function pageLabelFor(path: string): string {
   const qs = new URLSearchParams(path.split("?")[1] ?? "");
   const tab = qs.get("tab");
   const section = qs.get("section");
-  if (base.startsWith("/client/caregiver/")) return path.includes("review=1") ? "the caregiver's profile (Leave a Review)" : "the caregiver's profile";
+  if (base.startsWith("/client/care-provider/")) return path.includes("review=1") ? "the care provider's profile (Leave a Review)" : "the care provider's profile";
   const labels: Record<string, string> = {
     "/client/posts": tab === "interviews" ? "Care Requests › Interviews" : "Care Requests › Posts",
     "/client/bookings": tab === "past" ? "My Bookings › Past Bookings" : tab === "requests" ? "My Bookings › Requests" : "My Bookings › Active Bookings",
-    "/client/find-caregivers": "Find Caregivers",
+    "/client/find-care-providers": "Find Care Providers",
     "/client/membership": "Membership",
     "/client/payments": "Payments",
     "/client/dashboard": "Dashboard",
     "/client/account": "Account Settings",
-    "/caregiver/settings": "Account Settings",
-    "/caregiver/jobs": tab === "interviews" ? "Jobs › Interviews" : tab === "applications" ? "Jobs › My Applications" : "Jobs",
-    "/caregiver/bookings": tab === "requests" ? "My Bookings › Requests" : tab === "past" ? "My Bookings › Past Bookings" : tab === "active" ? "My Bookings › Active Bookings" : "My Bookings",
-    "/caregiver/payments": tab === "timesheets" ? "Payments › Timesheets" : tab === "payouts" ? "Payments › Payouts" : "Payments",
-    "/caregiver/profile": section === "reviews" ? "My Profile › Reviews" : "My Profile",
-    "/caregiver/dashboard": "Dashboard",
+    "/care-provider/settings": "Account Settings",
+    "/care-provider/jobs": tab === "interviews" ? "Jobs › Interviews" : tab === "applications" ? "Jobs › My Applications" : "Jobs",
+    "/care-provider/bookings": tab === "requests" ? "My Bookings › Requests" : tab === "past" ? "My Bookings › Past Bookings" : tab === "active" ? "My Bookings › Active Bookings" : "My Bookings",
+    "/care-provider/payments": tab === "timesheets" ? "Payments › Timesheets" : tab === "payouts" ? "Payments › Payouts" : "Payments",
+    "/care-provider/profile": section === "reviews" ? "My Profile › Reviews" : "My Profile",
+    "/care-provider/dashboard": "Dashboard",
   };
   return labels[base] ?? base;
 }

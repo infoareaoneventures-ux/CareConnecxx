@@ -27,13 +27,13 @@ const SERVICE_COPY: Record<Service, { description: string }> = {
         description: 'Planning and cooking everyday meals, and company at the table.',
     },
     'Medication Reminders': {
-        description: 'A reminder when it is time to take what is already prescribed. Caregivers never administer or manage medication.',
+        description: 'A reminder when it is time to take what is already prescribed. Care providers never administer or manage medication.',
     },
     'Mobility Assistance': {
         description: 'A steady arm getting up, moving around the home and heading out the door.',
     },
     'Transportation': {
-        description: 'Rides to appointments, errands and visits by a caregiver whose driving record has been checked.',
+        description: 'Rides to appointments, errands and visits by a care provider whose driving record has been checked.',
     },
     'Dementia / Memory Care': {
         description: 'Companionship and daily-routine support for someone living with memory loss.',
@@ -58,7 +58,7 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
                         Care that fits your needs
                     </h2>
                     <p className="text-lg text-slate-600 leading-relaxed">
-                        Every caregiver on Evia lists the services they offer. Tell Evia what your loved one needs.
+                        Every care provider on Evia lists the services they offer. Tell Evia what your loved one needs.
                     </p>
                 </div>
 
@@ -82,7 +82,7 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
                                 </p>
 
                                 <div className="mt-6 flex items-center text-primary-600 font-semibold text-sm group-hover:gap-2 transition-all">
-                                    Find caregivers <span className="opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+                                    Find care providers <span className="opacity-0 group-hover:opacity-100 transition-opacity">→</span>
                                 </div>
                             </div>
                         );
@@ -91,7 +91,7 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
 
                 <div className="mt-12 max-w-3xl mx-auto text-center">
                     <p className="text-slate-600 leading-relaxed text-[15px]">
-                        Caregivers also offer {alsoLine.slice(0, -1).join(', ')} and {alsoLine[alsoLine.length - 1]}.
+                        Care providers also offer {alsoLine.slice(0, -1).join(', ')} and {alsoLine[alsoLine.length - 1]}.
                     </p>
                 </div>
 
@@ -100,7 +100,7 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
                         onClick={() => onNavigate('client-apply')}
                         className="btn-depth-primary px-8 py-4 rounded-2xl font-semibold text-sm inline-flex items-center justify-center"
                     >
-                        Find Your Caregiver
+                        Find Your Care Provider
                     </button>
                 </div>
             </div>

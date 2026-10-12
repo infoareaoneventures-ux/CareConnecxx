@@ -153,8 +153,8 @@ describe("sendStaleApplicantNudges — bell ⇄ text", () => {
     expect(order).toEqual(["text", "bell"]);
     expect(bells).toEqual([expect.objectContaining({
       sourcePath: "job_posts/job-1", eventId: expect.stringMatching(/^stale-applicant-nudge-\d{4}-\d{2}-\d{2}$/), recipientId: "client-1",
-      transitionType: "stale_applicant_nudge", type: "job_application", title: "Caregivers waiting to hear back",
-      body: "2 caregivers are still waiting to hear back on your Senior care in San Jose post. Review them on your Posts page.",
+      transitionType: "stale_applicant_nudge", type: "job_application", title: "Care Providers waiting to hear back",
+      body: "2 care providers are still waiting to hear back on your Senior care in San Jose post. Review them on your Posts page.",
       data: { jobId: "job-1" },
     })]);
   });

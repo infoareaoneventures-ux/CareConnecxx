@@ -62,7 +62,7 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
     throw new functions.https.HttpsError("invalid-argument", "Invalid ZIP code format.");
   }
   if (!email) {
-    throw new functions.https.HttpsError("failed-precondition", "Caregiver must have an email on file.");
+    throw new functions.https.HttpsError("failed-precondition", "Care Provider must have an email on file.");
   }
 
   try {
@@ -367,7 +367,7 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
     const caregiverUid = await findCaregiverUidByCandidateId(lookupId);
     if (!caregiverUid) {
       await settle("processed");
-      res.status(200).json({ received: true, ignored: "caregiver not found" });
+      res.status(200).json({ received: true, ignored: "care provider not found" });
       return;
     }
 

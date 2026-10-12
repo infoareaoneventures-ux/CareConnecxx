@@ -31,7 +31,7 @@ const META_OUTPUT =
 const SEARCH_FALLBACK_TEXT =
   "I'm having trouble connecting right now, but you can browse the list manually!";
 const BOOKING_FALLBACK_RESPONSE =
-  "I'm here to help you book a caregiver! Could you tell me what type of care you need?";
+  "I'm here to help you book a care provider! Could you tell me what type of care you need?";
 
 const modelReturns = (text: string) => {
   proxyCall.mockResolvedValue({ data: { text } });

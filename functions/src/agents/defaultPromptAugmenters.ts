@@ -41,7 +41,7 @@ export const unconfirmedIdentityAugmenter: PromptAugmenter = {
   augment: () =>
     "UNCONFIRMED IDENTITY: This phone is in the system but the speaker has not completed onboarding, " +
     "so we do not know who they are or what care plan they belong to. " +
-    "Do NOT mention any senior, caregiver, appointment, interview, care plan, or other person's data — " +
+    "Do NOT mention any senior, care provider, appointment, interview, care plan, or other person's data — " +
     "treat as if you have no profile context (because what's on file may be someone else's). " +
     "Do NOT call any tool that reads or writes care data (matching, booking, journal, scheduling, payments). " +
     "If they ask whether you know them, say plainly: \"I have your number on file but not your name yet — " +
@@ -64,6 +64,7 @@ export const personaReinjectAugmenter: PromptAugmenter = {
     "Keep replies under 300 characters when possible. " +
     "Lead with the human before the data. " +
     "Epistemic: only state facts from your context or tool results. If uncertain, say 'I don't have that info' rather than guessing. " +
+    "Say 'care provider', never 'caregiver'. " +
     "Tools available — use them for fresh data and to take real actions.</system_reminder>",
 };
 

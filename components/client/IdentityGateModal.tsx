@@ -45,7 +45,7 @@ export const IdentityGateModal: React.FC<IdentityGateModalProps> = ({
             {caregiverName ? (
               <>To contact <span className="font-semibold text-slate-800">{caregiverName}</span>, you need to complete a quick identity check. Pick up where you left off!</>
             ) : (
-              'To contact caregivers, you need to complete a quick identity check. Pick up where you left off!'
+              'To contact care providers, you need to complete a quick identity check. Pick up where you left off!'
             )}
           </p>
           <p className="text-sm text-slate-600 leading-relaxed mb-5">
@@ -96,10 +96,10 @@ export const IdentityGateModal: React.FC<IdentityGateModalProps> = ({
             {whyOpen && (
               <div className="mt-3 text-xs text-slate-600 leading-relaxed space-y-2">
                 <p>
-                  Evia requires every client to verify their identity before contacting caregivers. This keeps our community safe for vulnerable seniors and the caregivers who serve them.
+                  Evia requires every client to verify their identity before contacting care providers. This keeps our community safe for vulnerable seniors and the care providers who serve them.
                 </p>
                 <ul className="list-disc pl-4 space-y-1 text-slate-500">
-                  <li>Protects caregivers from fake or fraudulent requests</li>
+                  <li>Protects care providers from fake or fraudulent requests</li>
                   <li>Confirms you are who you say you are</li>
                   <li>Information is processed by Stripe and never stored on our servers</li>
                 </ul>

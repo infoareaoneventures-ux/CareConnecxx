@@ -128,7 +128,7 @@ describe("stripe webhook → consent, never a direct Checkr call", () => {
   const req = (event: any) => ({ method: "POST", headers: { "stripe-signature": "sig" }, rawBody: Buffer.from(JSON.stringify(event)) } as any);
   const makeRes = () => { const res: any = { statusCode: 200 }; res.status = vi.fn(() => res); res.json = vi.fn(() => res); res.send = vi.fn(() => res); return res; };
 
-  it("membership checkout for a caregiver marks paid (+ MVR covered when Transportation) and requests initial consent", async () => {
+  it("membership checkout for a care provider marks paid (+ MVR covered when Transportation) and requests initial consent", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     hoisted.docs.set("caregivers/cg1", { name: "Basra Yousuf", zipCode: "95134", state: "CA", services: ["Transportation"], phone: "+15550001111" });

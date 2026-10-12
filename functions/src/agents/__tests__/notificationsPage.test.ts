@@ -11,14 +11,14 @@ vi.mock("firebase-admin", () => ({ firestore: Object.assign(() => ({ collection:
 import { routeForNotification, pageLabelFor, shapeNotificationsPage } from "../notificationsPage";
 
 const CLIENT_CASES: Array<[Record<string, unknown>, string]> = [
-  [{ type: "review_prompt", data: { caregiverId: "cg1" } }, "/client/caregiver/cg1?review=1"],
+  [{ type: "review_prompt", data: { caregiverId: "cg1" } }, "/client/care-provider/cg1?review=1"],
   [{ type: "job_application" }, "/client/posts"],
   [{ type: "interview_accepted" }, "/client/posts?tab=interviews"],
   [{ type: "interview_declined" }, "/client/posts?tab=interviews"],
   [{ type: "interview_rescheduled" }, "/client/posts?tab=interviews"],
   [{ type: "interview_cancelled" }, "/client/posts?tab=interviews"],
-  [{ type: "booking_declined" }, "/client/find-caregivers"],
-  [{ type: "alert", transitionType: "booking_declined", data: { appointmentId: "a1" } }, "/client/find-caregivers"],
+  [{ type: "booking_declined" }, "/client/find-care-providers"],
+  [{ type: "alert", transitionType: "booking_declined", data: { appointmentId: "a1" } }, "/client/find-care-providers"],
   [{ type: "alert", transitionType: "shift_cancelled_by_caregiver", data: { appointmentId: "a1" } }, "/client/bookings?tab=active"],
   [{ type: "booking", transitionType: "booking_confirmed" }, "/client/bookings?tab=active"],
   [{ type: "booking_accepted" }, "/client/bookings?tab=active"],
@@ -50,58 +50,66 @@ describe("routeForNotification — every family type lands on the page that show
 
 // Caregiver sweep C10 (2026-10-11): every caregiver bell lands on the page its body names.
 const CAREGIVER_CASES: Array<[Record<string, unknown>, string]> = [
-  [{ type: "new_job", data: { jobId: "j1" } }, "/caregiver/jobs?job=j1"],
-  [{ type: "new_job" }, "/caregiver/jobs"],
-  [{ type: "job_application_accepted" }, "/caregiver/jobs?tab=applications"],
-  [{ type: "job_application_declined" }, "/caregiver/jobs?tab=applications"],
-  [{ type: "interview_request" }, "/caregiver/jobs?tab=interviews"],
-  [{ type: "interview_confirmed" }, "/caregiver/jobs?tab=interviews"],
-  [{ type: "interview_reminder" }, "/caregiver/jobs?tab=interviews"],
-  [{ type: "hire_decision" }, "/caregiver/jobs?tab=interviews"],
-  [{ type: "shift_hours_approved" }, "/caregiver/payments?tab=timesheets"],
-  [{ type: "shift_hours_paid" }, "/caregiver/payments?tab=timesheets"],
-  [{ type: "shift_hours_unsubmitted" }, "/caregiver/payments?tab=timesheets"],
-  [{ type: "payout_paid" }, "/caregiver/payments?tab=payouts"],
-  [{ type: "payout_initiated" }, "/caregiver/payments?tab=payouts"],
-  [{ type: "caregiver_payouts_enabled" }, "/caregiver/payments?tab=payouts"],
-  [{ type: "booking_request" }, "/caregiver/bookings?tab=requests"],
-  [{ type: "booking_cancelled" }, "/caregiver/bookings?tab=requests"],
-  [{ type: "booking_request_expired" }, "/caregiver/bookings?tab=requests"], // B6: an expired replacement request (the Requests tab is where it sat)
-  [{ type: "amendment_request" }, "/caregiver/bookings?tab=requests"],
-  [{ type: "amendment_cancelled" }, "/caregiver/bookings?tab=requests"],
-  [{ type: "shift_cancelled", data: { shiftId: "s1" } }, "/caregiver/bookings?tab=active&visit=s1"],
-  [{ type: "shift_rescheduled" }, "/caregiver/bookings?tab=active"],
-  [{ type: "shift_starting_soon", data: { shiftId: "s1" } }, "/caregiver/bookings?tab=active&visit=s1"],
-  [{ type: "shift_tomorrow", data: { shiftId: "s1" } }, "/caregiver/bookings?tab=active&visit=s1"],
-  [{ type: "shift_end_reminder", data: { shiftId: "s1" } }, "/caregiver/bookings?tab=active&visit=s1"],
-  [{ type: "shift_missed", data: { shiftId: "s1" } }, "/caregiver/bookings?tab=past"],
-  [{ type: "shift_completed" }, "/caregiver/bookings?tab=past"],
-  [{ type: "alert", transitionType: "shift_cancelled_by_client", data: { appointmentId: "a1" } }, "/caregiver/bookings?tab=active"],
-  [{ type: "caregiver_membership_paid" }, "/caregiver/settings"],
-  [{ type: "caregiver_membership_payment_failed" }, "/caregiver/settings"],
-  [{ type: "caregiver_membership_renewal_upcoming" }, "/caregiver/settings"],
-  [{ type: "membership_payment_failed" }, "/caregiver/settings"],
-  [{ type: "caregiver_bgcheck_clear" }, "/caregiver/settings"],
-  [{ type: "caregiver_bgcheck_document_required" }, "/caregiver/settings"],
-  [{ type: "caregiver_mvr_review" }, "/caregiver/settings"],
-  [{ type: "caregiver_renewal_refresh_locked" }, "/caregiver/settings"],
-  [{ type: "caregiver_transport_badge_earned" }, "/caregiver/settings"],
-  [{ type: "account_email_changed" }, "/caregiver/settings"],
-  [{ type: "caregiver_now_bookable" }, "/caregiver/jobs"],
-  [{ type: "review_received" }, "/caregiver/profile?section=reviews"],
-  [{ type: "onboarding_reminder" }, "/caregiver/dashboard"],
-  [{ type: "system" }, "/caregiver/dashboard"],
+  [{ type: "new_job", data: { jobId: "j1" } }, "/care-provider/jobs?job=j1"],
+  [{ type: "new_job" }, "/care-provider/jobs"],
+  [{ type: "job_application_accepted" }, "/care-provider/jobs?tab=applications"],
+  [{ type: "job_application_declined" }, "/care-provider/jobs?tab=applications"],
+  [{ type: "interview_request" }, "/care-provider/jobs?tab=interviews"],
+  [{ type: "interview_confirmed" }, "/care-provider/jobs?tab=interviews"],
+  [{ type: "interview_reminder" }, "/care-provider/jobs?tab=interviews"],
+  [{ type: "hire_decision" }, "/care-provider/jobs?tab=interviews"],
+  [{ type: "shift_hours_approved" }, "/care-provider/payments?tab=timesheets"],
+  [{ type: "shift_hours_paid" }, "/care-provider/payments?tab=timesheets"],
+  [{ type: "shift_hours_unsubmitted" }, "/care-provider/payments?tab=timesheets"],
+  [{ type: "payout_paid" }, "/care-provider/payments?tab=payouts"],
+  [{ type: "payout_initiated" }, "/care-provider/payments?tab=payouts"],
+  [{ type: "caregiver_payouts_enabled" }, "/care-provider/payments?tab=payouts"],
+  [{ type: "booking_request" }, "/care-provider/bookings?tab=requests"],
+  [{ type: "booking_cancelled" }, "/care-provider/bookings?tab=requests"],
+  [{ type: "booking_request_expired" }, "/care-provider/bookings?tab=requests"], // B6: an expired replacement request (the Requests tab is where it sat)
+  [{ type: "amendment_request" }, "/care-provider/bookings?tab=requests"],
+  [{ type: "amendment_cancelled" }, "/care-provider/bookings?tab=requests"],
+  [{ type: "shift_cancelled", data: { shiftId: "s1" } }, "/care-provider/bookings?tab=active&visit=s1"],
+  [{ type: "shift_rescheduled" }, "/care-provider/bookings?tab=active"],
+  [{ type: "shift_starting_soon", data: { shiftId: "s1" } }, "/care-provider/bookings?tab=active&visit=s1"],
+  [{ type: "shift_tomorrow", data: { shiftId: "s1" } }, "/care-provider/bookings?tab=active&visit=s1"],
+  [{ type: "shift_end_reminder", data: { shiftId: "s1" } }, "/care-provider/bookings?tab=active&visit=s1"],
+  [{ type: "shift_missed", data: { shiftId: "s1" } }, "/care-provider/bookings?tab=past"],
+  [{ type: "shift_completed" }, "/care-provider/bookings?tab=past"],
+  [{ type: "alert", transitionType: "shift_cancelled_by_client", data: { appointmentId: "a1" } }, "/care-provider/bookings?tab=active"],
+  [{ type: "caregiver_membership_paid" }, "/care-provider/settings"],
+  [{ type: "caregiver_membership_payment_failed" }, "/care-provider/settings"],
+  [{ type: "caregiver_membership_renewal_upcoming" }, "/care-provider/settings"],
+  [{ type: "membership_payment_failed" }, "/care-provider/settings"],
+  [{ type: "caregiver_bgcheck_clear" }, "/care-provider/settings"],
+  [{ type: "caregiver_bgcheck_document_required" }, "/care-provider/settings"],
+  [{ type: "caregiver_mvr_review" }, "/care-provider/settings"],
+  [{ type: "caregiver_renewal_refresh_locked" }, "/care-provider/settings"],
+  [{ type: "caregiver_transport_badge_earned" }, "/care-provider/settings"],
+  [{ type: "account_email_changed" }, "/care-provider/settings"],
+  [{ type: "caregiver_now_bookable" }, "/care-provider/jobs"],
+  [{ type: "review_received" }, "/care-provider/profile?section=reviews"],
+  [{ type: "onboarding_reminder" }, "/care-provider/dashboard"],
+  [{ type: "system" }, "/care-provider/dashboard"],
 ];
 
 describe("routeForNotification — every caregiver type lands on the page its body names (C10)", () => {
   it.each(CAREGIVER_CASES)("%j → %s", (n, expected) => {
     expect(routeForNotification(n as any, "caregiver")).toBe(expected);
   });
+  // Founder 2026-10-12: the site's caregiver routes moved to /care-provider/… —
+  // every care-provider bell lands there (the site keeps /caregiver/… as redirects).
+  it("every care-provider route lives under /care-provider/", () => {
+    for (const [n, expected] of CAREGIVER_CASES) {
+      expect(expected.startsWith("/care-provider/"), expected).toBe(true);
+      expect(routeForNotification(n as any, "caregiver").startsWith("/care-provider/"), JSON.stringify(n)).toBe(true);
+    }
+  });
   it("labels name the tab", () => {
-    expect(pageLabelFor("/caregiver/jobs?tab=applications")).toBe("Jobs › My Applications");
-    expect(pageLabelFor("/caregiver/bookings?tab=requests")).toBe("My Bookings › Requests");
-    expect(pageLabelFor("/caregiver/bookings?tab=active&visit=s1")).toBe("My Bookings › Active Bookings");
-    expect(pageLabelFor("/caregiver/payments?tab=payouts")).toBe("Payments › Payouts");
+    expect(pageLabelFor("/care-provider/jobs?tab=applications")).toBe("Jobs › My Applications");
+    expect(pageLabelFor("/care-provider/bookings?tab=requests")).toBe("My Bookings › Requests");
+    expect(pageLabelFor("/care-provider/bookings?tab=active&visit=s1")).toBe("My Bookings › Active Bookings");
+    expect(pageLabelFor("/care-provider/payments?tab=payouts")).toBe("Payments › Payouts");
   });
 });
 
@@ -142,8 +150,8 @@ describe("shapeNotificationsPage — the hook's list", () => {
     expect(shapeNotificationsPage([], "client").summary).toBe("No notifications.");
   });
   it("labels", () => {
-    expect(pageLabelFor("/client/caregiver/cg1?review=1")).toBe("the caregiver's profile (Leave a Review)");
+    expect(pageLabelFor("/client/care-provider/cg1?review=1")).toBe("the care provider's profile (Leave a Review)");
     expect(pageLabelFor("/client/posts?tab=interviews")).toBe("Care Requests › Interviews");
-    expect(pageLabelFor("/client/find-caregivers")).toBe("Find Caregivers");
+    expect(pageLabelFor("/client/find-care-providers")).toBe("Find Care Providers");
   });
 });

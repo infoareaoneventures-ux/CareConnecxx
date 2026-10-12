@@ -119,13 +119,13 @@ export const HANDOFF_GROUNDING_SYSTEM_PROMPT =
   "Paraphrase and warm framing are fine — only flag claims whose substance appears NOWHERE in " +
   "the provided material. " +
   "EXCEPTION: for a claim about a SCHEDULED appointment/interview/visit/shift's current date, " +
-  "time, or status, about a caregiver's current availability, or about WHO currently holds a " +
-  "role or relationship (who is on the family's care team, who their active/confirmed caregiver " +
+  "time, or status, about a care provider's current availability, or about WHO currently holds a " +
+  "role or relationship (who is on the family's care team, who their active/confirmed care provider " +
   "is, who their primary physician or emergency contact is), being consistent with the RECENT " +
   "CONVERSATION alone is NOT enough — that record can change after it was last stated " +
   "(rescheduled, cancelled, completed, edited, removed from the team) independent of anything " +
-  "said in this chat. A caregiver merely SHOWN or DISCUSSED earlier in this conversation (as a " +
-  "candidate, or for a booking) is NOT the same claim as that caregiver currently being an " +
+  "said in this chat. A care provider merely SHOWN or DISCUSSED earlier in this conversation (as a " +
+  "candidate, or for a booking) is NOT the same claim as that care provider currently being an " +
   "active or confirmed care-team member — being mentioned by name is not the same as being on " +
   "the team. The " +
   "CONTEXT is freshly read this turn (not carried over from earlier in the conversation), so it " +

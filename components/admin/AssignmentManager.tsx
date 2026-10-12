@@ -82,7 +82,7 @@ const AssignmentModal: React.FC<AssignmentModalProps> = ({
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <div>
             <h3 className="text-lg font-bold text-slate-900">
-              Assign {type === 'coordinator' ? 'Care Coordinator' : 'Caregiver'}
+              Assign {type === 'coordinator' ? 'Care Coordinator' : 'Care Provider'}
             </h3>
             <p className="text-sm text-slate-500 mt-1">
               for {client.name}
@@ -365,7 +365,7 @@ export const AssignmentManager: React.FC = () => {
           </span>
           <span className="flex items-center gap-2">
             <Briefcase className="w-4 h-4" />
-            {caregivers.length} Caregivers
+            {caregivers.length} Care Providers
           </span>
         </div>
       </div>
@@ -377,7 +377,7 @@ export const AssignmentManager: React.FC = () => {
             <tr>
               <th className="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-4">Client</th>
               <th className="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-4">Care Coordinator</th>
-              <th className="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-4">Assigned Caregivers</th>
+              <th className="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-4">Assigned Care Providers</th>
               <th className="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-4">Status</th>
               <th className="text-right text-xs font-semibold text-slate-500 uppercase px-6 py-4">Actions</th>
             </tr>
@@ -447,13 +447,13 @@ export const AssignmentManager: React.FC = () => {
                           </div>
                         ))
                       ) : (
-                        <span className="text-sm text-slate-400">No caregivers assigned</span>
+                        <span className="text-sm text-slate-400">No care providers assigned</span>
                       )}
                       <button
                         onClick={() => setAssignmentModal({ client, type: 'caregiver' })}
                         className="text-sm text-primary-600 hover:text-primary-700 font-medium block"
                       >
-                        + Add Caregiver
+                        + Add Care Provider
                       </button>
                     </div>
                   </td>

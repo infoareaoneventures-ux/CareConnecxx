@@ -170,7 +170,7 @@ describe("resendStuckStep — Checkr invite reuse (Fix 2)", () => {
     );
   }, 20_000);
 
-  it("re-points the pre-created caregiver doc at the NEW candidate on consent confirm", async () => {
+  it("re-points the pre-created care provider doc at the NEW candidate on consent confirm", async () => {
     // Restart / expired-invite scenario: cache cleared, but the doc (and its old
     // checkrCandidateId) still exist. The webhook matches on checkrCandidateId,
     // so the doc must follow the invitation the caregiver will actually complete.
@@ -185,7 +185,7 @@ describe("resendStuckStep — Checkr invite reuse (Fix 2)", () => {
     );
   }, 20_000);
 
-  it("a COMPLETED caregiver authorizing the yearly refresh keeps her finished session (never parked back into onboarding)", async () => {
+  it("a COMPLETED care provider authorizing the yearly refresh keeps her finished session (never parked back into onboarding)", async () => {
     // Membership renewal / rejoin (2026-10-03): the record is parked on consent
     // (consentRequired) while the text session is already 'complete'.
     delete (hoisted.sessionData as any).bgcheckInviteUrl;
@@ -197,7 +197,7 @@ describe("resendStuckStep — Checkr invite reuse (Fix 2)", () => {
     expect(r.status).toBe("ok");
     expect(hoisted.checkrInvite).toHaveBeenCalledTimes(1); // the check still runs (candidate reused by authorizeBackgroundCheck)
     const stepWrites = hoisted.updateMock.mock.calls.map((c: any[]) => c[0]).filter((u: any) => u && "onboardingStep" in u);
-    expect(stepWrites, "no onboarding step write for a completed caregiver").toEqual([]);
+    expect(stepWrites, "no onboarding step write for a completed care provider").toEqual([]);
   }, 20_000);
 
   it("caches a fresh bgcheckInviteSentAt stamp on consent confirm (so the reuse guard can age it)", async () => {
@@ -295,7 +295,7 @@ describe("handleCaregiverSendBgcheck — invite expiry re-mint (U5)", () => {
   }, 20_000);
 });
 
-describe("resendStuckStep — stripeAccountId mirrored onto caregiver doc (Fix 1)", () => {
+describe("resendStuckStep — stripeAccountId mirrored onto care provider doc (Fix 1)", () => {
   it("merges { stripeAccountId, phone } onto caregivers/{caregiverId} so the Connect webhook can match", async () => {
     hoisted.sessionData.onboardingStep = "caregiver_awaiting_stripe";
     const { resendStuckStep } = await import("./onboardingConversation");

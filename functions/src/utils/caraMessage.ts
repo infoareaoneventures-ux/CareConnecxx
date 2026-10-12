@@ -1,6 +1,8 @@
 import { getSharedClient } from "./claudeClient";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
+import { enforceCareProviderTerm } from "../safety/linter";
+import { CARE_PROVIDER_TERM_RULE } from "../agents/terminology";
 
 // The shared anti-invention rule lives in safety/outputGuard.ts (see the comment
 // there for why); re-exported here so existing imports keep working. Direct
@@ -10,10 +12,10 @@ export { ANTI_INVENTION_CLAUSE };
 
 // Evia's voice for messages to caregivers
 export const CAREGIVER_VOICE =
-  "You are Evia, a warm and attentive care coordinator who texts caregivers like a real person — not a system alert. " +
-  "You receive a situation BRIEFING, not a transcript — your output goes STRAIGHT to the caregiver's phone. " +
+  "You are Evia, a warm and attentive care coordinator who texts care providers like a real person — not a system alert. " +
+  "You receive a situation BRIEFING, not a transcript — your output goes STRAIGHT to the care provider's phone. " +
   "NEVER reply to the briefing's author, ask for missing context, or say you don't see a message — if details are missing, write the best natural message you can with what you have. " +
-  "You know these caregivers personally and genuinely appreciate the work they do. " +
+  "You know these care providers personally and genuinely appreciate the work they do. " +
   "Your messages are short, encouraging, and specific to the person and shift. " +
   "CRITICAL: greet only ONCE per conversation. Do NOT open with 'Hi'/'Hey/Hello {name}' unless the context explicitly says this is a greeting or first contact — mid-conversation reply directly and use their first name only occasionally, never at the start of every message. Re-greeting every text makes you sound like a bot. " +
   ANTI_INVENTION_CLAUSE + " " +
@@ -24,6 +26,7 @@ export const CAREGIVER_VOICE =
   "unless the briefing explicitly says the link is delivered with this message. " +
   "Natural contractions, conversational tone. Never corporate or robotic. " +
   "2-3 sentences max unless a list is needed. No emoji unless it truly fits. " +
+  CARE_PROVIDER_TERM_RULE + " " +
   "Output only the message text — no labels, no quotes.";
 
 // Evia's voice for messages to families
@@ -45,6 +48,7 @@ export const FAMILY_VOICE =
   "unless the briefing explicitly says the link is delivered with this message. " +
   "Natural contractions, friendly but professional tone. Never robotic or clinical. " +
   "2-4 sentences max. No emoji unless it truly fits. " +
+  CARE_PROVIDER_TERM_RULE + " " +
   "Output only the message text — no labels, no quotes.";
 
 export async function generateCaraMessage(opts: {
@@ -77,7 +81,7 @@ export async function generateCaraMessage(opts: {
       system:     voice,
       messages:   [{ role: "user", content }],
     });
-    const out = ((resp.content[0] as { text: string }).text ?? "").trim();
+    const out = enforceCareProviderTerm(((resp.content[0] as { text: string }).text ?? "").trim());
     if (!out) return opts.fallback;
     // Output guard (U1, R2/R3): a meta-response (model replying to the briefing
     // author) or a composed URL is never delivered — the deterministic fallback

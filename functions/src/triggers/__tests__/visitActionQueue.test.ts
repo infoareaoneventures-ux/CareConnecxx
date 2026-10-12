@@ -64,7 +64,7 @@ describe("processVisitActionQueue", () => {
     expect(endVisit).toHaveBeenLastCalledWith({ caregiverId: "cg1", shiftId: "s1", closingNote: "" });
   });
 
-  it("cancel_visit → cancelVisit as the caregiver (never 'system'); the resulting status comes back", async () => {
+  it("cancel_visit → cancelVisit as the care provider (never 'system'); the resulting status comes back", async () => {
     const snap = makeSnap({ type: "cancel_visit", caregiverId: "cg1", shiftId: "s1", cancelledBy: "system" });
     await (processVisitActionQueue as any)(snap);
     expect(cancelVisit).toHaveBeenCalledWith({ caregiverId: "cg1", shiftId: "s1", cancelledBy: "caregiver" });

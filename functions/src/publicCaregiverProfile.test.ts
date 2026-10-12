@@ -48,11 +48,11 @@ describe("toPublicProfile", () => {
   });
 
   it("passes __seedTag through so isSeededCaregiver() still works on this projection", () => {
-    const out = toPublicProfile("cg1", { name: "Fake Test Caregiver", __seedTag: "cara-test" });
+    const out = toPublicProfile("cg1", { name: "Fake Test Care Provider", __seedTag: "cara-test" });
     expect(out.__seedTag).toBe("cara-test");
   });
 
-  it("omits __seedTag for a real caregiver (no key present)", () => {
+  it("omits __seedTag for a real care provider (no key present)", () => {
     const out = toPublicProfile("cg1", { name: "Alice" });
     expect(out).not.toHaveProperty("__seedTag");
   });
@@ -79,7 +79,7 @@ describe("toPublicProfile", () => {
     expect(out.pausedUntil).toBe("2026-10-01");
   });
 
-  it("omits pausedUntil for a caregiver who isn't paused", () => {
+  it("omits pausedUntil for a care provider who isn't paused", () => {
     const out = toPublicProfile("cg1", { name: "Alice" });
     expect(out).not.toHaveProperty("pausedUntil");
   });

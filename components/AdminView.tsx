@@ -177,7 +177,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       label: 'People',
       items: [
         { id: 'clients' as TabId, label: 'Clients', icon: Heart },
-        { id: 'caregivers' as TabId, label: 'Caregivers', icon: UserCheck },
+        { id: 'caregivers' as TabId, label: 'Care Providers', icon: UserCheck },
         { id: 'verification' as TabId, label: 'Verification', icon: ShieldCheck },
         // Admin + coordinator accounts in one place (2026-09-26) — neither
         // shows under Clients (userType client) or Caregivers (caregivers coll.).
@@ -336,7 +336,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
               <>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   <StatCard icon={Heart}     label="Clients"      value={stats.clients}      trend={5}  color="bg-teal-500"    onClick={() => setActiveTab('clients')} />
-                  <StatCard icon={UserCheck} label="Caregivers"   value={stats.caregivers}   trend={8}  color="bg-primary-500" onClick={() => setActiveTab('caregivers')} />
+                  <StatCard icon={UserCheck} label="Care Providers"   value={stats.caregivers}   trend={8}  color="bg-primary-500" onClick={() => setActiveTab('caregivers')} />
                   <StatCard icon={Calendar}  label="Appointments" value={stats.appointments}  trend={-3} color="bg-blue-500"  onClick={() => setActiveTab('appointments')} />
                   <StatCard icon={DollarSign}label="Revenue"      value={`$${stats.revenue.toLocaleString()}`} trend={24} color="bg-green-500" onClick={() => setActiveTab('finance')} />
                 </div>

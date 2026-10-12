@@ -192,7 +192,7 @@ export function visitDetailText(s: PastShift): string {
     for (const n of notes) { const ms = typeof n.at === "string" ? Date.parse(n.at) : NaN; const t = Number.isFinite(ms) ? new Date(ms).toLocaleTimeString("en-US", { timeZone: DEFAULT_TZ, hour: "numeric", minute: "2-digit" }) : ""; lines.push(`• ${t ? `${t} — ` : ""}${String(n.text).trim()}`); }
   }
   const closing = typeof s.completionNotes === "string" ? s.completionNotes.trim() : "";
-  if (closing) lines.push("", "Caregiver note", closing);
+  if (closing) lines.push("", "Care Provider note", closing);
   return lines.join("\n");
 }
 
@@ -248,7 +248,7 @@ async function parse(prompt: string, text: string): Promise<string> {
 async function parseWhen(text: string, keepTime: string, defaultDate: string): Promise<{ time: string; date: string } | null> {
   const norm = text.trim().toUpperCase();
   if (norm === "KEEP" || norm === "SAME") return { time: keepTime, date: defaultDate };
-  const raw = await parse(`Today is ${businessTodayStr()} (Pacific). The caregiver is naming the ACTUAL clock time of a visit that already happened. Reply "YYYY-MM-DD HH:MM" (24-hour) when they gave a date too, otherwise "HH:MM" alone. Reply NONE if no time is given.`, text);
+  const raw = await parse(`Today is ${businessTodayStr()} (Pacific). The care provider is naming the ACTUAL clock time of a visit that already happened. Reply "YYYY-MM-DD HH:MM" (24-hour) when they gave a date too, otherwise "HH:MM" alone. Reply NONE if no time is given.`, text);
   const dt = /(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})/.exec(raw);
   if (dt) return { date: dt[1], time: `${dt[2].padStart(2, "0")}:${dt[3]}` };
   const t = /(\d{1,2}):(\d{2})/.exec(raw);
@@ -346,8 +346,8 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     const norm = text.trim().toUpperCase();
     let note = "";
     if (norm !== "SKIP" && norm !== "NONE" && norm !== "NO") {
-      const kind = await parse("A caregiver was asked: \"Any notes about the visit? Reply with the note, or SKIP.\" Classify: NOTE if the message is the note itself, QUESTION if it is a question or something else.", text);
-      if (kind.toUpperCase().startsWith("Q")) { await sendMessage(chatId, await answerMidFlow(text, NOTE_Q, { facts: `${VISIT_FACTS(data)} The note is saved on the visit with the logged hours, in the caregiver's own words, and the family can see it.` })); return; }
+      const kind = await parse("A care provider was asked: \"Any notes about the visit? Reply with the note, or SKIP.\" Classify: NOTE if the message is the note itself, QUESTION if it is a question or something else.", text);
+      if (kind.toUpperCase().startsWith("Q")) { await sendMessage(chatId, await answerMidFlow(text, NOTE_Q, { facts: `${VISIT_FACTS(data)} The note is saved on the visit with the logged hours, in the care provider's own words, and the family can see it.` })); return; }
       note = text.trim();
     }
     const merged = { ...data, note };
@@ -364,7 +364,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
     else {
-      const v = await parse("Evia asked the caregiver to reply LOG to save the hours, or CANCEL. Classify: LOG (save), CANCEL (don't), or OTHER (a question / a change).", text);
+      const v = await parse("Evia asked the care provider to reply LOG to save the hours, or CANCEL. Classify: LOG (save), CANCEL (don't), or OTHER (a question / a change).", text);
       action = v.toUpperCase().startsWith("LOG") ? "log" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();

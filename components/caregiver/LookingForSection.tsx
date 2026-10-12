@@ -41,7 +41,7 @@ export const LookingForSection: React.FC<LookingForSectionProps> = ({ profile })
             <span className={partTime ? 'text-slate-900 font-medium' : 'text-slate-400'}>Part-time &amp; Full-time jobs</span>
           </div>
           <a
-            href="/caregiver/calendar"
+            href="/care-provider/calendar"
             className="inline-flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-semibold mt-2"
           >
             <Calendar className="w-3.5 h-3.5" /> See occasional calendar

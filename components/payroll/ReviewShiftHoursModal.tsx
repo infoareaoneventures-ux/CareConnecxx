@@ -55,9 +55,9 @@ function fmtDuration(hours: number): string {
 }
 
 const HISTORY_ACTION_LABEL: Record<string, string> = {
-  submitted:           'Submitted by caregiver',
+  submitted:           'Submitted by care provider',
   proposed_correction: 'Client proposed correction',
-  counter_proposed:    'Caregiver sent counter',
+  counter_proposed:    'Care provider sent counter',
   accepted:            'Accepted',
   escalated:           'Escalated to admin',
   admin_resolved:      'Resolved by admin',
@@ -300,7 +300,7 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
           <div className="space-y-4">
             {/* Caregiver's counter — full receipt */}
             <div className="bg-yellow-50 border border-yellow-200 rounded-xl overflow-hidden">
-              <p className="text-xs font-semibold text-yellow-700 uppercase tracking-wide px-4 pt-3 pb-1">Caregiver's counter-proposal</p>
+              <p className="text-xs font-semibold text-yellow-700 uppercase tracking-wide px-4 pt-3 pb-1">Care provider's counter-proposal</p>
               <div className="divide-y divide-yellow-200">
                 {shift.payRate != null && (
                   <div className="flex items-center justify-between px-4 py-2 text-xs">
@@ -472,7 +472,7 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
               />
             </div>
             <p className="text-xs text-slate-500">
-              Caregiver has 24h to accept or send a counter. If they don't respond, your proposal is auto-accepted.
+              Care provider has 24h to accept or send a counter. If they don't respond, your proposal is auto-accepted.
             </p>
             <div className="flex gap-2">
               <button onClick={() => setMode('menu')} disabled={busy} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-700 font-medium">

@@ -202,8 +202,8 @@ describe("startInterviewFlow", () => {
     expect(stored.interviewFlowData.applicationId).toBe("app1");
   });
 
-  it("fails cleanly when the caregiver can't be resolved", async () => {
-    resolveCaregiverForInterviewMock.mockRejectedValueOnce(new VideoInterviewRequestError("failed-precondition", "Caregiver is not available for interviews"));
+  it("fails cleanly when the care provider can't be resolved", async () => {
+    resolveCaregiverForInterviewMock.mockRejectedValueOnce(new VideoInterviewRequestError("failed-precondition", "Care Provider is not available for interviews"));
     const res = await startInterviewFlow(PHONE, CHAT, session(), { caregiverId: "bad-id" });
     expect(res.started).toBe(false);
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toBeUndefined();
@@ -246,7 +246,7 @@ describe("handleInterviewFlowStep — happy path through every step", () => {
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.interviewFlowStep).toBe("iv_confirm");
     const recap = String(sendMessage.mock.calls.at(-1)![1]);
-    expect(recap).toContain("Caregiver: Basra Yousuf");
+    expect(recap).toContain("Care Provider: Basra Yousuf");
     expect(recap).toContain("Related job post: Senior care in San Jose");
     expect(recap).toContain("Date & time: September 20, 2099 at 2:00 PM");
     expect(recap).toContain("Notes: None");
@@ -356,7 +356,7 @@ describe("buildInterviewRecap", () => {
       caregiverId: CG_ID, caregiverName: "Basra Yousuf", jobTitle: "Senior care in San Jose",
       date: "2026-09-20", time: "14:00", notes: "discuss meal prep",
     });
-    const order = ["Caregiver:", "Related job post:", "Date & time:", "Notes:"];
+    const order = ["Care Provider:", "Related job post:", "Date & time:", "Notes:"];
     let lastIdx = -1;
     for (const marker of order) {
       const idx = recap.indexOf(marker);

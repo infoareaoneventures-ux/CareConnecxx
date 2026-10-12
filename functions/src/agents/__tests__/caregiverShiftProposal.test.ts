@@ -70,7 +70,7 @@ describe("display", () => {
 });
 
 describe("Accept new time — the page's handleAcceptReschedule", () => {
-  it("checks the caregiver's OTHER visits that day first (fetchOwnShiftsForDate + rangeConflicts) and refuses with the page's alert", async () => {
+  it("checks the care provider's OTHER visits that day first (fetchOwnShiftsForDate + rangeConflicts) and refuses with the page's alert", async () => {
     hoisted.docs.set("shifts/s1", familyProposal);
     hoisted.docs.set("shifts/s2", { caregiverId: CG, status: "in-progress", date: "2099-10-06", startTime: "14:30", endTime: "16:00" });
     const r = await acceptFamilyShiftProposal(CG, "s1", "2099-10-01T00:00:00.000Z", "test");

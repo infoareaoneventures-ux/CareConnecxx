@@ -31,8 +31,8 @@ export const CARA_CAPABILITIES: Record<CapabilityRole, CapabilityEntry[]> = {
   client: [
     {
       id: "find_caregiver",
-      label: "Find a caregiver",
-      example: "Find me a caregiver for weekday mornings",
+      label: "Find a care provider",
+      example: "Find me a care provider for weekday mornings",
       labelEs: "Encontrar un cuidador",
       exampleEs: "Búscame un cuidador para las mañanas entre semana",
       featured: true,
@@ -71,7 +71,7 @@ export const CARA_CAPABILITIES: Record<CapabilityRole, CapabilityEntry[]> = {
     },
     {
       id: "message_caregiver",
-      label: "Message a caregiver",
+      label: "Message a care provider",
       example: "Send a message to Sarah",
       labelEs: "Enviar un mensaje a un cuidador",
       exampleEs: "Envía un mensaje a Sarah",

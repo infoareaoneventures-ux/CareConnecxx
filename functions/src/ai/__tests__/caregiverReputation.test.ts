@@ -35,7 +35,7 @@ describe("decayScore (U6)", () => {
 });
 
 describe("reputationBoost (U6)", () => {
-  it("is neutral (0) for a caregiver with no reputation", () => {
+  it("is neutral (0) for a care provider with no reputation", () => {
     expect(reputationBoost(null, NOW)).toBe(0);
     expect(reputationBoost(undefined, NOW)).toBe(0);
     expect(reputationBoost({ score: 0, lastOutcomeAt: 0 }, NOW)).toBe(0);
@@ -54,7 +54,7 @@ describe("reputationBoost (U6)", () => {
     expect(small).toBeGreaterThanOrEqual(-MAX_REPUTATION_BOOST);
   });
 
-  it("ranks a recently-hired caregiver above an equally-scored but stale one", () => {
+  it("ranks a recently-hired care provider above an equally-scored but stale one", () => {
     const fresh = reputationBoost({ score: 3, lastOutcomeAt: daysAgo(5) }, NOW);
     const stale = reputationBoost({ score: 3, lastOutcomeAt: daysAgo(700) }, NOW);
     expect(fresh).toBeGreaterThan(stale);

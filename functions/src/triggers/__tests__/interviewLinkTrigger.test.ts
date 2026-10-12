@@ -213,7 +213,7 @@ describe("onVideoInterviewLinkEnsure", () => {
     expect(bells[0].body).toContain('Note: "testing for interview" Join from your Interviews tab: https://meet.google.com/abc-defg-hij');
   });
 
-  it("C11: no bell for the caregiver when the link text did not go (opted out)", async () => {
+  it("C11: no bell for the care provider when the link text did not go (opted out)", async () => {
     bells.length = 0;
     trySendMock.mockResolvedValue({ sent: false, reason: "recipient_opted_out" });
     hoisted.docState.set("video_interviews/iv3", { status: "accepted", clientId: "cl1", caregiverId: "cg1", clientName: "The Nguyen Family", caregiverName: "Maria", scheduledTime: FUTURE_ISO });
@@ -375,7 +375,7 @@ describe("onVideoInterviewLinkEnsure", () => {
     expect(hoisted.docState.get("video_interviews/iv9").remindersScheduledAt).toBeTruthy();
   });
 
-  it("missing caregiver phone → terminal missing_phone outcome + ops alert, no retry loop", async () => {
+  it("missing care provider phone → terminal missing_phone outcome + ops alert, no retry loop", async () => {
     hoisted.docState.delete("caregivers/cg1");
     hoisted.docState.set("caregivers/cg1", { name: "Maria" }); // no phone
     hoisted.docState.set("video_interviews/iv10", {

@@ -11,7 +11,7 @@ export const ERROR_MESSAGES = {
     },
 
     BOOKING: {
-        CAREGIVER_UNAVAILABLE: 'This caregiver is not available at the selected time.',
+        CAREGIVER_UNAVAILABLE: 'This care provider is not available at the selected time.',
         PAYMENT_FAILED: 'Payment could not be processed. Please check your card details.',
         DUPLICATE_BOOKING: 'You already have a booking at this time.',
         INVALID_DATE: 'Please select a future date and time.',

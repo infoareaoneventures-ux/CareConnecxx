@@ -40,10 +40,10 @@ export async function absorbCaregiverFields(
   existing: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const raw = await parseWithClaude(
-    "You are extracting onboarding details from one message a caregiver sent to Evia while signing up for work. " +
+    "You are extracting onboarding details from one message a care provider sent to Evia while signing up for work. " +
       "Return JSON only with the fields you can confidently extract. Omit fields not present. " +
       "Schema: " +
-      `{"name":"the caregiver's own first/full name (the person texting; never a client's or senior's name)",` +
+      `{"name":"the care provider's own first/full name (the person texting; never a client's or senior's name)",` +
       `"street":"street address line only (number + street), never the city or zip",` +
       `"city":"city name",` +
       `"state":"2-letter US state code",` +
@@ -211,12 +211,12 @@ export async function absorbCaregiverProfileUpdate(
   // they were already filled. One more parse only when the first pass returned
   // no array fields (the common "adds to an existing list" case).
   const raw = await parseWithClaude(
-    "A caregiver already signed up with Evia texted a message. Extract ONLY details about the caregiver themselves " +
+    "A care provider already signed up with Evia texted a message. Extract ONLY details about the care provider themselves " +
       "that they are adding or stating in THIS message. Return JSON only; omit anything not present. Schema: " +
       `{"specialties":["care service or specialty they say they offer, e.g. 'transportation' or 'dementia care'"],` +
       `"availabilityDays":["day of week they say they're available"],` +
       `"availabilityHours":"hours they say they're available, e.g. 'mornings'"}. ` +
-      "Be conservative — only include what is unambiguously about the caregiver's own offering. Reply with raw JSON, no markdown.",
+      "Be conservative — only include what is unambiguously about the care provider's own offering. Reply with raw JSON, no markdown.",
     text,
   ).catch(() => "{}");
 

@@ -303,7 +303,7 @@ describe("additional charges in a correction", () => {
 });
 
 describe("counter that changed the additional charges", () => {
-  it("shows the caregiver's charge amounts, not the submitted ones", async () => {
+  it("shows the care provider's charge amounts, not the submitted ones", async () => {
     hoisted.docState.set("shiftHours/sh-1", {
       ...SUBMITTED, status: "caregiver_counter_proposed",
       lineItems: [{ type: "mileage", label: "mileage", amount: 5 }],

@@ -417,7 +417,7 @@ export const AdminMessages: React.FC = () => {
               <Send className="w-7 h-7 text-slate-300 ml-0.5" />
             </div>
             <p className="font-medium text-slate-500">Select a conversation</p>
-            <p className="text-sm mt-1">Or start a new one with any client or caregiver</p>
+            <p className="text-sm mt-1">Or start a new one with any client or care provider</p>
             <button
               onClick={() => setShowNewConvo(true)}
               className="mt-4 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-xl transition-colors flex items-center gap-2"
@@ -440,7 +440,7 @@ export const AdminMessages: React.FC = () => {
               </button>
             </div>
             <div className="p-5">
-              <p className="text-sm text-slate-500 mb-4">Search for a client or caregiver to message them as Evia Team.</p>
+              <p className="text-sm text-slate-500 mb-4">Search for a client or care provider to message them as Evia Team.</p>
               <div className="relative mb-3">
                 <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                 <input

@@ -13,7 +13,7 @@ export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
     <div className="min-h-screen bg-paper-50 flex items-center justify-center px-4">
       <SEO
         title="Page Not Found"
-        description="Sorry, the page you're looking for doesn't exist. Return to Evia home or search for caregivers."
+        description="Sorry, the page you're looking for doesn't exist. Return to Evia home or search for care providers."
         noindex={true}
       />
       
@@ -47,7 +47,7 @@ export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
             className="flex items-center justify-center"
           >
             <Search className="w-5 h-5 mr-2" />
-            Find a Caregiver
+            Find a Care Provider
           </Button>
 
           <button

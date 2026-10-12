@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 describe("sessionRole", () => {
-  it("reads the caregiver from userType or caregiverId; everything else is the family", () => {
+  it("reads the care provider from userType or caregiverId; everything else is the family", () => {
     expect(sessionRole({ userType: "caregiver" })).toBe("caregiver");
     expect(sessionRole({ caregiverId: "cg1" })).toBe("caregiver");
     expect(sessionRole({ userId: "fam" })).toBe("client");
@@ -63,7 +63,7 @@ describe("sessionRole", () => {
 });
 
 describe("fixedString sends", () => {
-  it("go out exactly as written: the rewriting reviewer is never called, the block-only review is, with the caregiver role", async () => {
+  it("go out exactly as written: the rewriting reviewer is never called, the block-only review is, with the care provider role", async () => {
     const ok = await sendViaInteractionAgent(PHONE, { content: NOTICE, urgency: "immediate", sourceAgent: "caregiver_account_event", canDrop: false, fixedString: true });
     expect(ok).toBe(true);
     expect(supervise).not.toHaveBeenCalled();
@@ -85,20 +85,20 @@ describe("fixedString sends", () => {
   });
 
   it("model-generated text keeps the rewriting reviewer, now told the session's role", async () => {
-    await sendViaInteractionAgent(PHONE, { content: "Here are two caregivers.", urgency: "immediate", sourceAgent: "qa", canDrop: false });
-    expect(supervise).toHaveBeenCalledWith("Here are two caregivers.", { phone: PHONE, role: "caregiver" });
-    expect(sendMessage).toHaveBeenCalledWith("chat-1", "Here are two caregivers. (rewritten)", {});
+    await sendViaInteractionAgent(PHONE, { content: "Here are two care providers.", urgency: "immediate", sourceAgent: "qa", canDrop: false });
+    expect(supervise).toHaveBeenCalledWith("Here are two care providers.", { phone: PHONE, role: "caregiver" });
+    expect(sendMessage).toHaveBeenCalledWith("chat-1", "Here are two care providers. (rewritten)", {});
   });
 });
 
 describe("the SEND/WAIT judge is role-aware", () => {
-  it("a caregiver's droppable nudge is judged as a message to a caregiver, not 'a care update to a family'", async () => {
+  it("a care provider's droppable nudge is judged as a message to a care provider, not 'a care update to a family'", async () => {
     await sendViaInteractionAgent(PHONE, { content: "Still waiting on you: a booking request from The Nguyens.", urgency: "standard", sourceAgent: "pending_decision_nudge", canDrop: true });
     expect(quickComplete).toHaveBeenCalledTimes(1);
     const [system, user] = quickComplete.mock.calls[0] as unknown as [string, string];
-    expect(system).toContain("to a caregiver");
+    expect(system).toContain("to a care provider");
     expect(system).not.toContain("to a family");
-    expect(user).toContain("Current local time for this caregiver");
+    expect(user).toContain("Current local time for this care provider");
   });
 
   it("a family session is still judged as a family", async () => {

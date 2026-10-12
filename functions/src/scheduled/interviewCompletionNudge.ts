@@ -123,7 +123,7 @@ export const sendInterviewCompletionNudges = functions.pubsub
         if (sessionData.onboardingStep !== "complete") continue;
         const phone = (sessionData.phone ?? sessionDoc.id) as string;
 
-        const caregiverName = ((interview.caregiverName ?? "your caregiver") as string).split(" ")[0] || "your caregiver";
+        const caregiverName = ((interview.caregiverName ?? "your care provider") as string).split(" ")[0] || "your care provider";
 
         // 2026-09-08 (live-caught): interview.scheduledTime is a raw UTC ISO
         // string ("2026-09-08T00:00:00.000Z") — interpolated as-is, the model

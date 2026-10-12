@@ -13,25 +13,25 @@ import { BloomMark } from '../ui/BloomMark';
 import { useUnreadMessageCount } from '../../hooks/useUnreadMessageCount';
 import type { Caregiver } from '../../types';
 
-const BOOKINGS_ROUTES = ['/caregiver/bookings', '/caregiver/families'];
+const BOOKINGS_ROUTES = ['/care-provider/bookings', '/care-provider/families'];
 
 const AUTH_PATHS = [
   '/login',
-  '/caregiver/login',
-  '/caregiver/signup',
-  '/caregiver/forgot-password',
+  '/care-provider/login',
+  '/care-provider/signup',
+  '/care-provider/forgot-password',
 ];
 
 // The one support door (desktop ? popover and the mobile More sheet): the support chat room in the Inbox —
 // Evia's twin is contact_support (the same room). No mailto anywhere: support@eviacares.com is suppressed (2026-10-07).
 async function openCaregiverSupportRoom(navigate: (path: string) => void): Promise<void> {
   const user = authService.getCurrentUser();
-  if (!user) { navigate('/caregiver/inbox'); return; }
+  if (!user) { navigate('/care-provider/inbox'); return; }
   try {
     const { chatService } = await import('../../services/chatService');
-    const roomId = await chatService.createOrGetSupportRoom(user.uid, user.displayName || user.email?.split('@')[0] || 'Caregiver');
-    navigate(`/caregiver/inbox?room=${roomId}`);
-  } catch { navigate('/caregiver/inbox'); }
+    const roomId = await chatService.createOrGetSupportRoom(user.uid, user.displayName || user.email?.split('@')[0] || 'Care Provider');
+    navigate(`/care-provider/inbox?room=${roomId}`);
+  } catch { navigate('/care-provider/inbox'); }
 }
 
 export const CaregiverTopNav: React.FC = () => {
@@ -45,8 +45,8 @@ export const CaregiverTopNav: React.FC = () => {
   const path = location.pathname;
 
   const isActive = (p: string) => {
-    if (p === '/caregiver/dashboard') {
-      return path === '/caregiver/dashboard' || path === '/caregiver';
+    if (p === '/care-provider/dashboard') {
+      return path === '/care-provider/dashboard' || path === '/care-provider';
     }
     return path.startsWith(p);
   };
@@ -76,9 +76,9 @@ export const CaregiverTopNav: React.FC = () => {
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t hairline bg-paper-50 safe-area-pb">
         <div className="flex justify-around py-1">
           {([
-            { icon: <Home className="w-5 h-5" />, label: 'Home', path: '/caregiver/dashboard' },
-            { icon: <Briefcase className="w-5 h-5" />, label: 'Jobs', path: '/caregiver/jobs' },
-            { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/caregiver/calendar' },
+            { icon: <Home className="w-5 h-5" />, label: 'Home', path: '/care-provider/dashboard' },
+            { icon: <Briefcase className="w-5 h-5" />, label: 'Jobs', path: '/care-provider/jobs' },
+            { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/care-provider/calendar' },
           ] as Array<{ icon: React.ReactNode; label: string; path: string; badge?: number }>).map(item => (
             <button
               key={item.path}
@@ -99,7 +99,7 @@ export const CaregiverTopNav: React.FC = () => {
           <button
             onClick={() => setMoreOpen(o => !o)}
             className={`flex flex-col items-center gap-0.5 px-3 py-2 text-xs font-medium transition-colors ${
-              moreOpen || isActive('/caregiver/bookings') || isActive('/caregiver/profile') || isActive('/caregiver/settings') || isActive('/caregiver/families') || isActive('/caregiver/payments')
+              moreOpen || isActive('/care-provider/bookings') || isActive('/care-provider/profile') || isActive('/care-provider/settings') || isActive('/care-provider/families') || isActive('/care-provider/payments')
                 ? 'text-primary-600'
                 : 'text-slate-500'
             }`}
@@ -132,12 +132,12 @@ export const CaregiverTopNav: React.FC = () => {
             <div className="overflow-y-auto flex-1">
               <div className="px-4 pb-3 space-y-1">
                 {[
-                  { icon: <MessageSquare className="w-4 h-4" />, label: 'Messages', path: '/caregiver/inbox' },
-                  { icon: <BookOpen className="w-4 h-4" />, label: 'Bookings', path: '/caregiver/bookings' },
-                  { icon: <User className="w-4 h-4" />, label: 'Profile', path: '/caregiver/profile' },
-                  { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/caregiver/settings' },
-                  { icon: <Users className="w-4 h-4" />, label: 'My Families', path: '/caregiver/families' },
-                  { icon: <Wallet className="w-4 h-4" />, label: 'Payments', path: '/caregiver/payments' },
+                  { icon: <MessageSquare className="w-4 h-4" />, label: 'Messages', path: '/care-provider/inbox' },
+                  { icon: <BookOpen className="w-4 h-4" />, label: 'Bookings', path: '/care-provider/bookings' },
+                  { icon: <User className="w-4 h-4" />, label: 'Profile', path: '/care-provider/profile' },
+                  { icon: <Settings className="w-4 h-4" />, label: 'Settings', path: '/care-provider/settings' },
+                  { icon: <Users className="w-4 h-4" />, label: 'My Families', path: '/care-provider/families' },
+                  { icon: <Wallet className="w-4 h-4" />, label: 'Payments', path: '/care-provider/payments' },
                   // Help & Support used to be a mailto to support@eviacares.com — an inbox whose mail Resend suppresses (dead
                   // end; same reason the avatar menu's Give feedback went on 2026-09-30). The one support door is the support
                   // chat room, the same as the desktop ? popover's Message our team (2026-10-07).
@@ -200,14 +200,14 @@ const DesktopNav: React.FC<{
   // Flat centered tabs — Bookings covers its family (My Families reachable
   // from the bookings page and the mobile More drawer).
   const DESKTOP_TABS: Array<{ label: string; icon: React.ReactNode; path: string; active: boolean; badge?: number }> = [
-    { label: 'Jobs', icon: <Briefcase className="w-4 h-4" />, path: '/caregiver/jobs', active: isActive('/caregiver/jobs') },
-    { label: 'Bookings', icon: <BookOpen className="w-4 h-4" />, path: '/caregiver/bookings', active: BOOKINGS_ROUTES.some(r => isActive(r)) },
-    { label: 'Calendar', icon: <Calendar className="w-4 h-4" />, path: '/caregiver/calendar', active: isActive('/caregiver/calendar') },
+    { label: 'Jobs', icon: <Briefcase className="w-4 h-4" />, path: '/care-provider/jobs', active: isActive('/care-provider/jobs') },
+    { label: 'Bookings', icon: <BookOpen className="w-4 h-4" />, path: '/care-provider/bookings', active: BOOKINGS_ROUTES.some(r => isActive(r)) },
+    { label: 'Calendar', icon: <Calendar className="w-4 h-4" />, path: '/care-provider/calendar', active: isActive('/care-provider/calendar') },
   ];
 
   return (
     <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-      <Link to="/caregiver/dashboard" className="flex items-center gap-2">
+      <Link to="/care-provider/dashboard" className="flex items-center gap-2">
         <div className="w-9 h-9 rounded-xl bg-ink-900 flex items-center justify-center shadow-sm"><BloomMark className="w-5 h-5 text-white" /></div>
         <span className="font-display font-semibold text-ink-900 tracking-tight text-lg">Evia</span>
       </Link>
@@ -228,8 +228,8 @@ const DesktopNav: React.FC<{
 
       {/* Right side: Messages + Bell + Help + Avatar */}
       <div className="hidden md:flex items-center gap-1">
-        <button onClick={() => navigate('/caregiver/inbox')} aria-label={`Messages${unreadMessages > 0 ? ` (${unreadMessages} unread)` : ''}`}
-          className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${isActive('/caregiver/inbox') ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>
+        <button onClick={() => navigate('/care-provider/inbox')} aria-label={`Messages${unreadMessages > 0 ? ` (${unreadMessages} unread)` : ''}`}
+          className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${isActive('/care-provider/inbox') ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>
           <MessageSquare className="w-4 h-4" />
           {unreadMessages > 0 && (
             <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold">

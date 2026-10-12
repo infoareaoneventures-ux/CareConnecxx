@@ -101,7 +101,7 @@ const sentTexts = () => sendMessage.mock.calls.map((c: any[]) => String(c[1]));
 
 beforeEach(() => { hoisted.reset(); sendMessage.mockClear(); });
 
-describe("find_nearby_caregivers — the Find Caregivers page", () => {
+describe("find_nearby_caregivers — the Find Care Providers page", () => {
   it("requires clientId", async () => {
     const r = await handleToolCall("find_nearby_caregivers", {}) as any;
     expect(r._toolError).toBe(true);
@@ -128,7 +128,7 @@ describe("find_nearby_caregivers — the Find Caregivers page", () => {
     expect(r.hasLocation).toBe(false);
   });
 
-  it("applies the page's filters: distance (default 25 mi + the caregiver's own radius), max rate, rating, experience, background checked, transportation, specialties (any), languages (any), search", async () => {
+  it("applies the page's filters: distance (default 25 mi + the care provider's own radius), max rate, rating, experience, background checked, transportation, specialties (any), languages (any), search", async () => {
     nearSanJose();
     hoisted.collState.set("publicCaregiverProfiles", [
       caregiver("near"),
@@ -194,7 +194,7 @@ describe("find_nearby_caregivers — the Find Caregivers page", () => {
   });
 
   describe("texting the page (live chat)", () => {
-    it("texts '<N> caregivers found', one card per caregiver (page fields + profile link), records pendingMatches, and tells the agent not to repeat", async () => {
+    it("texts '<N> care providers found', one card per care provider (page fields + profile link), records pendingMatches, and tells the agent not to repeat", async () => {
       withChat();
       hoisted.collState.set("publicCaregiverProfiles", [
         caregiver("b", { rating: 4.9, reviewCount: 12, firstName: "Basra", lastName: "Yousuf", experience: 10, skills: ["Mobility Assistance", "Dementia / Memory Care", "A", "B"], city: "San Jose", zipCode: "95134" }),
@@ -204,7 +204,7 @@ describe("find_nearby_caregivers — the Find Caregivers page", () => {
       expect(r).toMatchObject({ success: true, total: 2, shownCount: 2, hasMore: false });
       expect(r.instruction).toContain("do NOT repeat");
       const texts = sentTexts();
-      expect(texts[0]).toBe("2 caregivers found:");
+      expect(texts[0]).toBe("2 care providers found:");
       expect(texts[1]).toBe("Basra Yousuf — $25/hr · $27.25/hr billed\n★ 4.9 (12 reviews) · 10 yrs experience · San Jose, CA 95134 · Mobility Assistance, Dementia / Memory Care +2 · Background checked\nTap to view Basra's profile: https://app.test/p/b");
       expect(texts[2]).toContain("No reviews yet");
       const sess = hoisted.docState.get(`agent_sessions/${PHONE}`);
@@ -220,25 +220,25 @@ describe("find_nearby_caregivers — the Find Caregivers page", () => {
       expect(first.shown.map((c: any) => c.id)).toEqual(["a", "b", "c", "d"]);
       expect(first.hasMore).toBe(true);
       expect(first.instruction).toContain("offset = 4");
-      expect(sentTexts()[0]).toBe("6 caregivers found — here are the first 4:");
+      expect(sentTexts()[0]).toBe("6 care providers found — here are the first 4:");
       sendMessage.mockClear();
       const more = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, offset: 4 }) as any;
       expect(more.shown.map((c: any) => c.id)).toEqual(["e", "f"]);
       expect(more.hasMore).toBe(false);
-      expect(sentTexts()[0]).toBe("6 caregivers found — here are the next 2:");
+      expect(sentTexts()[0]).toBe("6 care providers found — here are the next 2:");
     });
 
-    it("texts the page's empty state: filters set → 'No caregivers match your filters'; none set → 'No caregivers available yet' + offer to post a care request", async () => {
+    it("texts the page's empty state: filters set → 'No care providers match your filters'; none set → 'No care providers available yet' + offer to post a care request", async () => {
       withChat();
       hoisted.collState.set("publicCaregiverProfiles", [caregiver("a", { hourlyRate: 60 })]);
       const filtered = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, maxHourlyRate: 30 }) as any;
       expect(filtered.total).toBe(0);
-      expect(sentTexts()[0]).toContain("No caregivers match your filters (up to $30/hr)");
+      expect(sentTexts()[0]).toContain("No care providers match your filters (up to $30/hr)");
       sendMessage.mockClear();
       hoisted.collState.set("publicCaregiverProfiles", []);
       const none = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE }) as any;
       expect(none.total).toBe(0);
-      expect(sentTexts()[0]).toContain("No caregivers available yet");
+      expect(sentTexts()[0]).toContain("No care providers available yet");
       expect(sentTexts()[0]).toContain("post a care request");
     });
   });

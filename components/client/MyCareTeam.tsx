@@ -134,7 +134,7 @@ export const MyCareTeam: React.FC = () => {
               bookingData.caregiverName ||
               cgData.name ||
               `${cgData.firstName || ''} ${cgData.lastName || ''}`.trim() ||
-              'Caregiver';
+              'Care Provider';
 
             const imageUrl =
               bookingData.caregiverPhotoURL ||
@@ -261,7 +261,7 @@ export const MyCareTeam: React.FC = () => {
 
           <div className="flex-1">
             <h2 className="text-xl font-bold text-gray-900">{caregiver.name}</h2>
-            <p className="text-sm text-gray-500 mb-2">Caregiver</p>
+            <p className="text-sm text-gray-500 mb-2">Care Provider</p>
             {activeTab === 'active' && (
               <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 px-2.5 py-0.5 rounded-full mb-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
@@ -353,7 +353,7 @@ export const MyCareTeam: React.FC = () => {
           </Button>
           <Button
             variant="outline"
-            onClick={() => navigate(`/client/caregiver/${caregiver.id}`)}
+            onClick={() => navigate(`/client/care-provider/${caregiver.id}`)}
             className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50"
           >
             <User className="w-4 h-4 mr-2" />
@@ -447,17 +447,17 @@ export const MyCareTeam: React.FC = () => {
             </div>
             {activeTab === 'active' ? (
               <>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No active caregivers</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No active care providers</h3>
                 <p className="text-gray-600 mb-6">
-                  Your care team will appear here once a caregiver accepts your booking.
+                  Your care team will appear here once a care provider accepts your booking.
                 </p>
-                <Button onClick={() => navigate('/client/find-caregivers')}>
-                  Find a Caregiver
+                <Button onClick={() => navigate('/client/find-care-providers')}>
+                  Find a Care Provider
                 </Button>
               </>
             ) : (
               <>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No past caregivers</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No past care providers</h3>
                 <p className="text-gray-600">Past or ended bookings will appear here.</p>
               </>
             )}

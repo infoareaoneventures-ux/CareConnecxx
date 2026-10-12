@@ -69,38 +69,38 @@ export function clientAccountEventCopy(kind: ClientAccountEventKind, ctx: Client
       return ctx.needsMembership
         ? {
             title: "Identity verified",
-            body: `Your identity check is verified. Next: activate your membership to message and book caregivers. ${appLink("/client/membership")}`,
-            text: "Evia: your identity check is verified ✅ Next: activate your membership to message, interview and book the caregivers you've seen — the link is right below.",
+            body: `Your identity check is verified. Next: activate your membership to message and book care providers. ${appLink("/client/membership")}`,
+            text: "Evia: your identity check is verified ✅ Next: activate your membership to message, interview and book the care providers you've seen — the link is right below.",
             linkType: "client_payment",
             fallbackPath: "/client/membership",
           }
         : {
             title: "Identity verified",
-            body: "Your identity check is verified. You're all set to message and book caregivers.",
-            text: "Evia: your identity check is verified ✅ You're all set to message, interview and book the caregivers you've seen.",
+            body: "Your identity check is verified. You're all set to message and book care providers.",
+            text: "Evia: your identity check is verified ✅ You're all set to message, interview and book the care providers you've seen.",
             fallbackPath: "/client/dashboard",
           };
     case "identity_revoked":
       return {
         title: "Identity check needed",
-        body: `Your identity verification was reset. Redo the quick ID check to message and book caregivers: ${appLink("/client/dashboard")}`,
-        text: "Evia: your identity verification was reset. Redo the quick ID check to message and book caregivers — the link is right below.",
+        body: `Your identity verification was reset. Redo the quick ID check to message and book care providers: ${appLink("/client/dashboard")}`,
+        text: "Evia: your identity verification was reset. Redo the quick ID check to message and book care providers — the link is right below.",
         linkType: "client_identity",
         fallbackPath: "/client/dashboard",
       };
     case "membership_revoked":
       return {
         title: "Membership inactive",
-        body: `Your membership is inactive. Activate it to message, interview and book caregivers: ${appLink("/client/membership")}`,
-        text: "Evia: your membership is inactive. Activate it to message, interview and book caregivers — the link is right below.",
+        body: `Your membership is inactive. Activate it to message, interview and book care providers: ${appLink("/client/membership")}`,
+        text: "Evia: your membership is inactive. Activate it to message, interview and book care providers — the link is right below.",
         linkType: "client_payment",
         fallbackPath: "/client/membership",
       };
     case "membership_reactivated":
       return {
         title: "Membership active",
-        body: "Your membership is active again. You can message and book caregivers.",
-        text: "Evia: your membership is active again — you're all set to message, interview and book caregivers.",
+        body: "Your membership is active again. You can message and book care providers.",
+        text: "Evia: your membership is active again — you're all set to message, interview and book care providers.",
         fallbackPath: "/client/dashboard",
       };
   }

@@ -38,7 +38,7 @@ export async function fulfillNarratedInterviewPromise(input: {
   // interview WITHOUT actually asking what day or time works?
   const verdict = await quickComplete(
     "You will read one SMS an assistant just sent to a user. Decide if it tells the user it is " +
-      "scheduling, arranging, or setting up an interview with a caregiver — e.g. \"I'm lining up an " +
+      "scheduling, arranging, or setting up an interview with a care provider — e.g. \"I'm lining up an " +
       "interview with Basra\", \"let me schedule that interview for you\", \"I'll set up a meeting with her\" " +
       "— WITHOUT actually asking the user what day or time works for the interview. " +
       "Reply NO if the reply already asks for a date/time, only references an interview already scheduled " +

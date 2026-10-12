@@ -106,7 +106,7 @@ export const VisitProgressPanel: React.FC<{ shift: VisitProgressShift; live?: bo
               )}
             </div>
           ) : (
-            <p className="text-xs text-slate-400 italic">No notes yet — they appear here as your caregiver adds them.</p>
+            <p className="text-xs text-slate-400 italic">No notes yet — they appear here as your care provider adds them.</p>
           )}
         </div>
       )}

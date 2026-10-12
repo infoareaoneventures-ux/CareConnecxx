@@ -91,12 +91,12 @@ const caregiverTurn = (extra: Record<string, unknown> = {}) => ({ phone: "+15550
 
 beforeEach(() => hoisted.reset());
 
-describe("get_senior_profile for a caregiver (E4)", () => {
+describe("get_senior_profile for a care provider (E4)", () => {
   beforeEach(() => {
     hoisted.docState.set("senior_profiles/s1", { userId: FAMILY, name: "Mary", age: 82, careNeeds: ["Companionship"] });
   });
 
-  it("allows a caregiver with an accepted booking request from that family", async () => {
+  it("allows a care provider with an accepted booking request from that family", async () => {
     hoisted.collState.set("booking_requests", [{ id: "br1", caregiverId: CG, clientId: FAMILY, status: "accepted" }]);
     hoisted.collState.set("shifts", []);
     const r = await handleToolCallForCaregiver("get_senior_profile", caregiverTurn({ seniorId: "s1" })) as any;
@@ -104,14 +104,14 @@ describe("get_senior_profile for a caregiver (E4)", () => {
     expect(r.results?.name).toBe("Mary");
   });
 
-  it("allows a caregiver with a completed visit for that family (no booking row needed)", async () => {
+  it("allows a care provider with a completed visit for that family (no booking row needed)", async () => {
     hoisted.collState.set("booking_requests", []);
     hoisted.collState.set("shifts", [{ id: "sh1", caregiverId: CG, clientId: FAMILY, status: "completed", date: "2026-10-01" }]);
     const r = await handleToolCallForCaregiver("get_senior_profile", caregiverTurn({ seniorId: "s1" })) as any;
     expect(r.success).toBe(true);
   });
 
-  it("denies a caregiver with no booking or visit with that family — even when the model passes the family's clientId", async () => {
+  it("denies a care provider with no booking or visit with that family — even when the model passes the family's clientId", async () => {
     hoisted.collState.set("booking_requests", [{ id: "br1", caregiverId: CG, clientId: "client-B", status: "accepted" }]);
     hoisted.collState.set("shifts", [{ id: "sh1", caregiverId: "other-cg", clientId: FAMILY, status: "scheduled", date: "2099-01-01" }]);
     const r = await handleToolCallForCaregiver("get_senior_profile", caregiverTurn({ seniorId: "s1", clientId: FAMILY })) as any;
@@ -144,8 +144,8 @@ describe("get_senior_profile for a caregiver (E4)", () => {
   });
 });
 
-describe("get_upcoming_appointments for a caregiver (E5)", () => {
-  it("returns only the caregiver's OWN upcoming visits with that family — never another caregiver's, never a needs_replacement one", async () => {
+describe("get_upcoming_appointments for a care provider (E5)", () => {
+  it("returns only the care provider's OWN upcoming visits with that family — never another care provider's, never a needs_replacement one", async () => {
     hoisted.collState.set("shifts", [
       { id: "mine-1",   caregiverId: CG,         clientId: FAMILY,     status: "scheduled",         date: "2099-01-02", startTime: "09:00" },
       { id: "mine-2",   caregiverId: CG,         clientId: FAMILY,     status: "in-progress",       date: "2099-01-01", startTime: "09:00" },
@@ -159,7 +159,7 @@ describe("get_upcoming_appointments for a caregiver (E5)", () => {
     expect(r.results.map((x: any) => x.id)).toEqual(["mine-2", "mine-1"]);
   });
 
-  it("a caregiver with no visits with that family gets an empty list, not the family's schedule", async () => {
+  it("a care provider with no visits with that family gets an empty list, not the family's schedule", async () => {
     hoisted.collState.set("shifts", [
       { id: "theirs", caregiverId: "other-cg", clientId: FAMILY, status: "scheduled", date: "2099-01-03", startTime: "09:00" },
     ]);

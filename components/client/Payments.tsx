@@ -150,9 +150,9 @@ const NEEDS_REVIEW_STATUSES: ShiftHoursStatus[] = [
 ];
 
 const HISTORY_ACTION_LABEL: Record<string, string> = {
-  submitted:           'Submitted by caregiver',
+  submitted:           'Submitted by care provider',
   proposed_correction: 'Client proposed correction',
-  counter_proposed:    'Caregiver sent counter',
+  counter_proposed:    'Care provider sent counter',
   accepted:            'Accepted',
   escalated:           'Escalated to admin',
   admin_resolved:      'Resolved by admin',
@@ -432,7 +432,7 @@ const ShiftRow: React.FC<{
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Your card</p>
             <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-500">Caregiver total</span>
+                <span className="text-slate-500">Care provider total</span>
                 <span className="font-semibold text-slate-700">${shownPay.toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
@@ -582,7 +582,7 @@ const ShiftRow: React.FC<{
             <div className="flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
               <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
               <p className="text-xs text-orange-700 font-medium">
-                You proposed a correction. Waiting for the caregiver to accept or send a counter.
+                You proposed a correction. Waiting for the care provider to accept or send a counter.
               </p>
             </div>
           )}
@@ -740,7 +740,7 @@ export const Payments: React.FC = () => {
   }, [rows, statusFilter, showReport, reportFrom, reportTo, reportedRows, historyRows]);
 
   const handleExportCSV = () => {
-    const header = ['Caregiver', 'Date', 'Clock In', 'Clock Out', 'Duration', 'Pay ($)', 'Service fee ($)', 'Charged ($)', 'Method', 'Status'];
+    const header = ['Care Provider', 'Date', 'Clock In', 'Clock Out', 'Duration', 'Pay ($)', 'Service fee ($)', 'Charged ($)', 'Method', 'Status'];
     const lines = reportedRows.map(r => {
       const startTs = r.finalStartTime ?? r.submittedStartTime;
       const endTs   = r.finalEndTime   ?? r.submittedEndTime;
@@ -916,7 +916,7 @@ export const Payments: React.FC = () => {
                     {[
                       { label: 'Shifts',         value: String(reportSummary.shifts) },
                       { label: 'Total hours',    value: fmtDuration(reportSummary.hours) },
-                      { label: 'To caregivers',  value: `$${reportSummary.pay.toFixed(2)}` },
+                      { label: 'To care providers',  value: `$${reportSummary.pay.toFixed(2)}` },
                       { label: 'Charged to you', value: `$${reportSummary.charged.toFixed(2)}` },
                     ].map(s => (
                       <div key={s.label}>
@@ -949,7 +949,7 @@ export const Payments: React.FC = () => {
                 <p className="text-sm text-slate-400">
                   {statusFilter === 'history'
                     ? 'Approved and paid shifts will appear here.'
-                    : "When a caregiver completes a shift and submits their hours, they'll appear here for your review."}
+                    : "When a care provider completes a shift and submits their hours, they'll appear here for your review."}
                 </p>
               </div>
             ) : (
@@ -984,7 +984,7 @@ export const Payments: React.FC = () => {
                     // Group by caregiver within the month
                     const cgGroups = monthGroup.rows.reduce((acc, row) => {
                       const key = row.caregiverId || row.caregiverName || 'unknown';
-                      if (!acc[key]) acc[key] = { name: row.caregiverName ?? 'Caregiver', photo: row.caregiverPhotoURL ?? undefined, rows: [] };
+                      if (!acc[key]) acc[key] = { name: row.caregiverName ?? 'Care Provider', photo: row.caregiverPhotoURL ?? undefined, rows: [] };
                       acc[key].rows.push(row);
                       return acc;
                     }, {} as Record<string, { name: string; photo?: string; rows: typeof filteredRows }>);
@@ -994,7 +994,7 @@ export const Payments: React.FC = () => {
                         {/* Month header */}
                         <div className="flex items-center justify-between px-1 pt-2 border-t border-slate-100 first:border-t-0 first:pt-0">
                           <span className="text-sm font-bold text-slate-800">{monthGroup.label}</span>
-                          <span className="text-xs text-slate-500">{monthGroup.rows.length} shift{monthGroup.rows.length !== 1 ? 's' : ''} · ${monthTotal.toFixed(2)} to caregivers · ${monthCharged.toFixed(2)} charged</span>
+                          <span className="text-xs text-slate-500">{monthGroup.rows.length} shift{monthGroup.rows.length !== 1 ? 's' : ''} · ${monthTotal.toFixed(2)} to care providers · ${monthCharged.toFixed(2)} charged</span>
                         </div>
                         {/* Caregivers within month */}
                         {Object.entries(cgGroups).map(([cgKey, cgGroup]) => {
@@ -1042,7 +1042,7 @@ export const Payments: React.FC = () => {
                   });
                   const grouped = sorted.reduce((acc, row) => {
                     const key = row.caregiverId || row.caregiverName || 'unknown';
-                    if (!acc[key]) acc[key] = { name: row.caregiverName ?? 'Caregiver', photo: row.caregiverPhotoURL ?? undefined, rows: [] };
+                    if (!acc[key]) acc[key] = { name: row.caregiverName ?? 'Care Provider', photo: row.caregiverPhotoURL ?? undefined, rows: [] };
                     acc[key].rows.push(row);
                     return acc;
                   }, {} as Record<string, { name: string; photo?: string; rows: typeof filteredRows }>);
@@ -1093,7 +1093,7 @@ export const Payments: React.FC = () => {
                 <div className="px-6 pt-6 pb-4">
                   <p className="font-semibold text-slate-900 mb-1">Card on file</p>
                   <p className="text-sm text-slate-500">
-                    Your card is used for automatic payment when you approve a caregiver's hours. We never store your full card number — it's managed securely by Stripe.
+                    Your card is used for automatic payment when you approve a care provider's hours. We never store your full card number — it's managed securely by Stripe.
                   </p>
                 </div>
 
@@ -1119,7 +1119,7 @@ export const Payments: React.FC = () => {
                       <div className="flex-1">
                         <p className="font-semibold text-amber-800 text-sm">No card on file</p>
                         <p className="text-xs text-amber-600 mt-0.5">
-                          Add a card to pay caregivers when you approve their hours.
+                          Add a card to pay care providers when you approve their hours.
                         </p>
                       </div>
                     </div>
@@ -1139,7 +1139,7 @@ export const Payments: React.FC = () => {
 
                 <div className="border-t border-slate-100 px-6 py-4 bg-slate-50">
                   <p className="text-xs text-slate-400">
-                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a caregiver's hours, or 24 hours pass without you reviewing them, your card is automatically charged for the caregiver's total plus Evia's {SERVICE_FEE_PERCENT_LABEL} service fee (minimum $1). Caregivers keep 100% of their rate.
+                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a care provider's hours, or 24 hours pass without you reviewing them, your card is automatically charged for the care provider's total plus Evia's {SERVICE_FEE_PERCENT_LABEL} service fee (minimum $1). Care providers keep 100% of their rate.
                   </p>
                 </div>
               </div>

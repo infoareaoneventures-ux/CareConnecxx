@@ -115,7 +115,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
             ) : (
               <div className="text-center py-3">
                 <Briefcase className="w-6 h-6 text-slate-200 mx-auto mb-1.5" />
-                <p className="text-xs text-ink-400 leading-snug">Create a care request so caregivers can apply to you</p>
+                <p className="text-xs text-ink-400 leading-snug">Create a care request so care providers can apply to you</p>
                 <button
                   onClick={() => navigate('/client/post-job')}
                   className="mt-2 text-xs text-primary-600 font-medium hover:underline"
@@ -142,10 +142,10 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
               <div key={i} className="bg-slate-50 rounded-lg px-3 py-2">
                 <p className="text-xs font-semibold text-slate-800 truncate">{s.name}</p>
                 <p className="text-xs text-ink-400 mt-0.5 truncate">
-                  {s.filters?.searchTerm || 'All caregivers'}
+                  {s.filters?.searchTerm || 'All care providers'}
                 </p>
                 <button
-                  onClick={() => navigate('/client/find-caregivers')}
+                  onClick={() => navigate('/client/find-care-providers')}
                   className="mt-1.5 flex items-center gap-1 text-xs text-primary-600 font-medium hover:underline"
                 >
                   <Search className="w-3 h-3" />View saved search

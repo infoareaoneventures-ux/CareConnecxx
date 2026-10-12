@@ -52,7 +52,7 @@ function normalizeField(v: unknown): ProfileUpdateField | undefined {
 const answerMidFlow = (text: string, reAsk: string, facts: string) => answerMidFlowShared(text, reAsk, { audience: "caregiver", facts });
 
 // The My Profile page's facts, section by section — what each editor saves and the page's own rules.
-const SAVE_RULE = "Nothing is saved until the caregiver replies YES to the recap; NO leaves the profile as it is.";
+const SAVE_RULE = "Nothing is saved until the care provider replies YES to the recap; NO leaves the profile as it is.";
 export const RATES_FACTS = (current: RatesDraft) =>
   `${RATE_RULE_TEXT} — any amount above $0 is fine, there is no floor and no ceiling; $${RATE_EXAMPLE} is only an example. ` +
   `The Rates section holds the hourly rate for 1 person, 2 people and 3+ people (2 and 3+ may be left unset), the years of experience ` +
@@ -60,8 +60,8 @@ export const RATES_FACTS = (current: RatesDraft) =>
   `The Rates section currently reads:\n${ratesRecap(current)}\n${SAVE_RULE}`;
 export const SKILLS_FACTS =
   `The Care Services editor offers exactly these eight services: ${SERVICE_LABELS.join(", ")} — nothing else can be added. ` +
-  "Medication Reminders Only means reminding when it is time, never giving medication; caregivers here do not give medication or medical treatment. " +
-  `Families see the saved services on the caregiver's profile and in matching. ${SAVE_RULE}`;
+  "Medication Reminders Only means reminding when it is time, never giving medication; care providers here do not give medication or medical treatment. " +
+  `Families see the saved services on the care provider's profile and in matching. ${SAVE_RULE}`;
 export const LANGUAGES_FACTS =
   `The languages are chosen from this list only: ${LANGUAGE_OPTIONS.join(", ")}; at least one language stays on the profile. Families see them under About. ${SAVE_RULE}`;
 export const JOB_TYPE_FACTS =
@@ -69,14 +69,14 @@ export const JOB_TYPE_FACTS =
 export const TRAVEL_FACTS =
   `The travel distance is one of ${TRAVEL_OPTIONS.join(", ")} miles, measured from the address in Account Settings; families further away are not matched. ${SAVE_RULE}`;
 export const BIO_FACTS =
-  `The bio is what families see on the profile, in the caregiver's own words. This editor has no minimum length (the signup questionnaire asked for at least ${BIO_MIN_CHARS} characters); ` +
+  `The bio is what families see on the profile, in the care provider's own words. This editor has no minimum length (the signup questionnaire asked for at least ${BIO_MIN_CHARS} characters); ` +
   `the new bio replaces the old one. ${SAVE_RULE}`;
 // The Account Settings page's own words: "Stop showing up for new matches without deleting your profile. Reversible anytime."
 export const PAUSE_FACTS =
-  "Pausing stops the caregiver showing up for new matches without deleting the profile. It does NOT cancel anything that already exists — " +
-  "upcoming visits, accepted bookings, interviews and messages all stay exactly as they are, and the caregiver is still expected at them. " +
+  "Pausing stops the care provider showing up for new matches without deleting the profile. It does NOT cancel anything that already exists — " +
+  "upcoming visits, accepted bookings, interviews and messages all stay exactly as they are, and the care provider is still expected at them. " +
   "Fully reversible anytime: text REACTIVATE, or use the Reactivate button on the Account Settings page. With an end date, the account becomes " +
-  "active again on that date automatically; with no date, it stays paused until reactivated. Nothing is paused until the caregiver replies YES.";
+  "active again on that date automatically; with no date, it stays paused until reactivated. Nothing is paused until the care provider replies YES.";
 
 
 async function clearProfileFlow(phone: string): Promise<void> {
@@ -125,7 +125,7 @@ export async function handleCaregiverProfileUpdate(
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",
       language: (session.preferredLanguage as string) === "es" ? "es" : "en",
-      context: "The caregiver wants to update their profile but you couldn't tell which part. Warmly ask them to clarify, and give a couple of concrete examples like \"change my rate to $25\" or \"add dementia care to my skills\". You MUST include those example phrasings.",
+      context: "The care provider wants to update their profile but you couldn't tell which part. Warmly ask them to clarify, and give a couple of concrete examples like \"change my rate to $25\" or \"add dementia care to my skills\". You MUST include those example phrasings.",
       fallback: "I'm not sure what you wanted to update. Try something like \"change my rate to $25\" or \"add dementia care to my skills\".",
       maxTokens: 80,
     }));
@@ -232,7 +232,7 @@ async function handleRatesUpdate(
     // CHANGE → fall through and parse the new values onto the draft
   }
   const raw = await parseWithClaude(
-    "Extract the caregiver's requested changes to her Rates section. Reply with raw JSON only: " +
+    "Extract the care provider's requested changes to her Rates section. Reply with raw JSON only: " +
       '{"hourlyRate": number or null, "rateFor2": number or null, "rateFor3": number or null, ' +
       `"experience": one of [${EXPERIENCE_BUCKETS.map((b) => `"${b}"`).join(", ")}] or null, "maxClients": "1" | "2" | "3+" or null}. ` +
       'hourlyRate is the rate for ONE person ("my rate", "$28", "28 an hour"). rateFor2 is for 2 people, rateFor3 for 3 or more; ' +
@@ -295,7 +295,7 @@ async function handleSkillsUpdate(
       return;
     }
     const raw = await parseWithClaude(
-      "Parse the caregiver's request to change the care services on her profile. Reply JSON: " +
+      "Parse the care provider's request to change the care services on her profile. Reply JSON: " +
         '{"action":"add"|"remove"|"replace","skills":["each service or kind of care she named, in her words"]}. ' +
         "If she hasn't said yet, reply: __none__.",
       text,
@@ -320,7 +320,7 @@ async function handleSkillsUpdate(
 
     const mapping = words.length ? await mapCaregiverServices(words) : { matched: [], medical: [], unmapped: [], unresolved: [] };
     const notes: string[] = [];
-    if (mapping.medical.length) notes.push(`Caregivers here don't administer medication or give medical treatment, so "${mapping.medical.join('", "')}" isn't a service I can add — the closest one on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
+    if (mapping.medical.length) notes.push(`Care Providers here don't administer medication or give medical treatment, so "${mapping.medical.join('", "')}" isn't a service I can add — the closest one on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
     if (mapping.unmapped.length) notes.push(`"${mapping.unmapped.join('", "')}" isn't one of the services on the list, so I've left it off.`);
     if (mapping.unresolved.length) notes.push(`I couldn't place "${mapping.unresolved.join('", "')}" — which of the list did you mean?`);
     if (mapping.matched.length === 0) {
@@ -407,7 +407,7 @@ async function handleLanguagesUpdate(
   if (step === "collect") {
     if (await isQuestionOrOther(text, LANGUAGES_Q)) { await sendMessage(chatId, await answerMidFlow(text, LANGUAGES_Q, LANGUAGES_FACTS)); return; }
     const raw = await parseWithClaude(
-      "The caregiver is choosing the languages she speaks from a FIXED list: " + LANGUAGE_OPTIONS.map((l) => `"${l}"`).join(", ") + ". " +
+      "The care provider is choosing the languages she speaks from a FIXED list: " + LANGUAGE_OPTIONS.map((l) => `"${l}"`).join(", ") + ". " +
         'Reply with raw JSON only: {"action": "set" | "add" | "remove", "languages": [exact names from the list], "other": [anything she named that is not on the list]}. ' +
         '"I speak X and Y" is set; "add X" / "also X" is add; "remove X" / "not X" is remove. If she named nothing, reply {"action":"set","languages":[],"other":[]}.',
       text, 120,
@@ -461,7 +461,7 @@ async function handleJobTypeUpdate(
   if (step === "collect") {
     if (await isQuestionOrOther(text, JOB_TYPE_Q)) { await sendMessage(chatId, await answerMidFlow(text, JOB_TYPE_Q, JOB_TYPE_FACTS)); return; }
     const raw = await parseWithClaude(
-      'Which ONE job type is the caregiver choosing? "occasional" / "now and then" / "as needed" → occasional. "part time" / "a few days a week" → part-time. "full time" / "every day" → full-time. ' +
+      'Which ONE job type is the care provider choosing? "occasional" / "now and then" / "as needed" → occasional. "part time" / "a few days a week" → part-time. "full time" / "every day" → full-time. ' +
         "Reply exactly occasional, part-time, full-time, or none.",
       text, 10,
     );
@@ -615,7 +615,7 @@ async function handlePauseAccount(
     // Friday" style pause dates a day late.
     const todayIso = businessTodayStr();
     const raw = await parseWithClaude(
-      `Parse the caregiver's pause-until date. Today is ${todayIso}. Reply JSON: ` +
+      `Parse the care provider's pause-until date. Today is ${todayIso}. Reply JSON: ` +
         '{"until":"YYYY-MM-DD"} for a specific end date, or {"until":"indefinite"} for an open-ended pause. ' +
         'If you cannot extract any date or duration, reply: __none__.',
       text,
@@ -686,7 +686,7 @@ async function handleReactivate(
   await clearProfileFlow(phone);
   const msg = await generateCaraMessage({
     audience: "caregiver",
-    context: "A caregiver just reactivated their account after being paused. Welcome them back warmly in one short sentence.",
+    context: "A care provider just reactivated their account after being paused. Welcome them back warmly in one short sentence.",
     fallback: "Welcome back — you're set to receive job matches again.",
     maxTokens: 60,
   });

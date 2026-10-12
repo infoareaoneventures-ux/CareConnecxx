@@ -120,7 +120,7 @@ describe("requestVideoInterview", () => {
     expect(stored).toMatchObject({ status: "requested", clientId: CLIENT, caregiverId: CAREGIVER });
   });
 
-  it("rejects a caregiver who isn't in publicCaregiverProfiles (not bookable) — the site's own eligibility gate", async () => {
+  it("rejects a care provider who isn't in publicCaregiverProfiles (not bookable) — the site's own eligibility gate", async () => {
     await expect(requestVideoInterview({
       clientId: CLIENT, caregiverId: "not_bookable", scheduledTime: FUTURE_ISO, source: "test",
     })).rejects.toMatchObject({ code: "failed-precondition" } satisfies Partial<VideoInterviewRequestError>);
@@ -178,9 +178,9 @@ describe("requestVideoInterview", () => {
     expect(hoisted.docState.get("job_applications/app_1")).toMatchObject({ interviewId: result.id });
   });
 
-  it("enforces the same 5-per-day cap the site's callable enforces, across 5 DIFFERENT caregivers", async () => {
+  it("enforces the same 5-per-day cap the site's callable enforces, across 5 DIFFERENT care providers", async () => {
     for (let i = 0; i < 5; i++) {
-      hoisted.docState.set(`publicCaregiverProfiles/cg_new_${i}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: `New Caregiver ${i}` });
+      hoisted.docState.set(`publicCaregiverProfiles/cg_new_${i}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: `New Care Provider ${i}` });
       await requestVideoInterview({ clientId: CLIENT, caregiverId: `cg_new_${i}`, scheduledTime: FUTURE_ISO, source: "test" });
     }
     hoisted.docState.set("publicCaregiverProfiles/cg_new_6", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "One Too Many" });
@@ -195,7 +195,7 @@ describe("requestVideoInterview", () => {
   // counter-proposed time and re-submitting once they agree) — every round of
   // that negotiation used to burn the same daily quota as contacting a
   // stranger.
-  it("does NOT cap repeated requests to the SAME caregiver (rescheduling/counter-proposal negotiation)", async () => {
+  it("does NOT cap repeated requests to the SAME care provider (rescheduling/counter-proposal negotiation)", async () => {
     for (let i = 0; i < 8; i++) {
       await requestVideoInterview({ clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO, source: "test" });
     }
@@ -204,7 +204,7 @@ describe("requestVideoInterview", () => {
     })).resolves.toMatchObject({ caregiverId: CAREGIVER });
   });
 
-  it("still caps at 5 distinct caregivers even when some requests are repeats of an already-contacted one", async () => {
+  it("still caps at 5 distinct care providers even when some requests are repeats of an already-contacted one", async () => {
     // Contact CAREGIVER (already-seeded) 3 times, then 4 NEW distinct caregivers —
     // 5 distinct caregivers total, the repeats to CAREGIVER shouldn't count.
     for (let i = 0; i < 3; i++) {
@@ -223,7 +223,7 @@ describe("requestVideoInterview", () => {
   it("does not cap a DIFFERENT client's requests", async () => {
     hoisted.docState.set("users/client_2", { name: "Another Family" });
     for (let i = 0; i < 5; i++) {
-      hoisted.docState.set(`publicCaregiverProfiles/cg_c1_${i}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: `Caregiver ${i}` });
+      hoisted.docState.set(`publicCaregiverProfiles/cg_c1_${i}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: `Care Provider ${i}` });
       await requestVideoInterview({ clientId: CLIENT, caregiverId: `cg_c1_${i}`, scheduledTime: FUTURE_ISO, source: "test" });
     }
     await expect(requestVideoInterview({
@@ -239,7 +239,7 @@ describe("requestVideoInterview", () => {
   describe("name-shaped caregiverId fallback, scoped to this family (2026-09-09)", () => {
     const PHONE = "+15551234567";
 
-    it("resolves a caregiver by exact name when the id lookup misses, scoped to this family's shownCaregiverIds", async () => {
+    it("resolves a care provider by exact name when the id lookup misses, scoped to this family's shownCaregiverIds", async () => {
       hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER] });
       const result = await requestVideoInterview({
         clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
@@ -251,7 +251,7 @@ describe("requestVideoInterview", () => {
       expect(stored).toMatchObject({ caregiverId: CAREGIVER });
     });
 
-    it("still fails when no caregiver matches that name within this family's shown list", async () => {
+    it("still fails when no care provider matches that name within this family's shown list", async () => {
       hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER] });
       await expect(requestVideoInterview({
         clientId: CLIENT, caregiverId: "Nobody Real", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
@@ -277,7 +277,7 @@ describe("requestVideoInterview", () => {
     // The exact risk flagged before shipping: an unscoped name match could
     // book a complete stranger who happens to share a name with the
     // caregiver the family actually meant.
-    it("SAFETY: never matches a same-named caregiver this family was never shown (a stranger), even though a global name search would find them", async () => {
+    it("SAFETY: never matches a same-named care provider this family was never shown (a stranger), even though a global name search would find them", async () => {
       // A second, unrelated caregiver with the identical name, never shown to
       // this family — only reachable via a global (unscoped) name search.
       hoisted.docState.set("publicCaregiverProfiles/cg_stranger", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice Rivera" });
@@ -292,7 +292,7 @@ describe("requestVideoInterview", () => {
     // a dead end. It still fails closed (never guesses), but now surfaces
     // the tied candidates so the agent can ask which one, then retry with
     // the correct id.
-    it("SAFETY: fails closed (does not guess) when two caregivers this family has BOTH been shown share the same name, but surfaces both as candidates", async () => {
+    it("SAFETY: fails closed (does not guess) when two care providers this family has BOTH been shown share the same name, but surfaces both as candidates", async () => {
       hoisted.docState.set("publicCaregiverProfiles/cg_alice2", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice Rivera", hourlyRate: 25 });
       hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER, "cg_alice2"] });
       await expect(requestVideoInterview({

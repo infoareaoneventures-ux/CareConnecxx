@@ -365,8 +365,8 @@ describe("isTrivialQuickReply", () => {
   it.each([
     "What is the care address",
     "I think you do",
-    "Who is my caregiver",
-    "Is my caregiver active",
+    "Who is my care provider",
+    "Is my care provider active",
     "Are you sure",
     "Do you have my address",
     "What's my membership status",
@@ -494,7 +494,7 @@ describe("memory source priority prompt", () => {
 // → Anthropic 400 on iteration 1 → fallback path. The guard must never return "".
 describe("ensureNonEmptyTurnText — no empty Claude content (BadRequestError guard)", () => {
   it("passes real text through unchanged", () => {
-    expect(ensureNonEmptyTurnText("I need a caregiver for my mom")).toBe("I need a caregiver for my mom");
+    expect(ensureNonEmptyTurnText("I need a care provider for my mom")).toBe("I need a care provider for my mom");
   });
 
   it.each(["", "   ", "\n\t ", null, undefined])("substitutes a descriptor for blank input %j", (input) => {
@@ -532,7 +532,7 @@ describe("sanitizeAnthropicMessages — keeps the history window API-valid", () 
   it("leaves a well-formed array untouched and preserves block-array content", () => {
     const blocks = [{ type: "tool_result", tool_use_id: "t1", content: "ok" }];
     const msgs = [
-      { role: "user", content: "find a caregiver" },
+      { role: "user", content: "find a care provider" },
       { role: "assistant", content: "Checking…" },
       { role: "user", content: blocks },
     ];
@@ -547,7 +547,7 @@ describe("buildCaregiverSystemPrompt — earnings line (R9, no fabricated money 
   it("states the real rate when hourlyRate is on file", () => {
     const prompt = buildCaregiverSystemPrompt({ name: "Maria", hourlyRate: 27 }, null);
     expect(prompt).toContain("$27");
-    expect(prompt).toContain("The caregiver earns $27/hr.");
+    expect(prompt).toContain("The care provider earns $27/hr.");
   });
 
   it("omits the earnings line entirely when hourlyRate is unset (no $22 default)", () => {
@@ -589,7 +589,7 @@ describe("buildCaregiverCoreContext", () => {
     backgroundCheckData: { status: "clear" },
   };
 
-  it("returns empty string for a missing caregiver doc", () => {
+  it("returns empty string for a missing care provider doc", () => {
     expect(buildCaregiverCoreContext(null)).toBe("");
     expect(buildCaregiverCoreContext(undefined)).toBe("");
   });
@@ -619,9 +619,9 @@ describe("buildCaregiverCoreContext", () => {
     const out = buildCaregiverCoreContext({
       name: "Imran", backgroundCheckStatus: "clear", membershipPaid: true, stripeAccountId: "acct_1", payoutsEnabled: true, chargesEnabled: true,
     });
-    expect(out).toContain("CAREGIVER NAME: Imran.");
+    expect(out).toContain("CARE PROVIDER NAME: Imran.");
     expect(out).toContain("background check CLEARED");
-    expect(out).toContain("caregiver membership active"); // the ONE rule (sweep C1): membershipPaid with no status
+    expect(out).toContain("care provider membership active"); // the ONE rule (sweep C1): membershipPaid with no status
     expect(out).toContain("payout account connected");
   });
 
@@ -786,7 +786,7 @@ describe("buildClientCoreContext — CARE TEAM roster", () => {
     for (const k of Object.keys(qaHarness.collectionDocs)) delete qaHarness.collectionDocs[k];
   });
 
-  it("includes a caregiver known only through booking_requests/shifts (new pipeline)", async () => {
+  it("includes a care provider known only through booking_requests/shifts (new pipeline)", async () => {
     qaHarness.collectionDocs["booking_requests"] = [
       { id: "br1", data: { clientId: "client-1", caregiverName: "Basra Yousuf", status: "accepted" } },
     ];
@@ -798,7 +798,7 @@ describe("buildClientCoreContext — CARE TEAM roster", () => {
     expect(out).toContain("Basra Yousuf (next 2999-01-01)");
   });
 
-  it("includes a caregiver known only from a scheduled shift (the site's collection; the appointments model is retired)", async () => {
+  it("includes a care provider known only from a scheduled shift (the site's collection; the appointments model is retired)", async () => {
     qaHarness.collectionDocs["shifts"] = [
       { id: "s0", data: { clientId: "client-1", caregiverName: "Alice", status: "scheduled", date: "2999-01-01" } },
     ];
@@ -806,7 +806,7 @@ describe("buildClientCoreContext — CARE TEAM roster", () => {
     expect(out).toContain("CARE TEAM: Alice (next 2999-01-01).");
   });
 
-  it("merges both pipelines without duplicating a caregiver present in both", async () => {
+  it("merges both pipelines without duplicating a care provider present in both", async () => {
     qaHarness.collectionDocs["booking_requests"] = [
       { id: "br1", data: { clientId: "client-1", caregiverName: "Basra Yousuf", status: "accepted" } },
     ];
@@ -1427,7 +1427,7 @@ describe("applyZepContextResult", () => {
     expect(metrics.zepContextEmpty).toBeUndefined();
   });
 
-  it("client and caregiver produce identical outputs and metric fields for every status", () => {
+  it("client and care provider produce identical outputs and metric fields for every status", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const statuses: Array<ZepContextResult["status"]> = ["loaded", "empty", "unavailable", "timeout"];
@@ -1582,7 +1582,7 @@ describe("runQaAgent U4a wiring (source scan)", () => {
   // SAME applyReconciliationMasking gating as the client branch: the Zep fetch
   // is skipped while the caregiver's Zep targets are unresolved, and the
   // non-outage reconciliation instruction is injected instead.
-  it("caregiver branch gates its Zep fetch behind reconciliation masking (U4b)", () => {
+  it("care provider branch gates its Zep fetch behind reconciliation masking (U4b)", () => {
     expect(src).toContain(
       "cgReconciliationMask = applyReconciliationMasking(await getMemoryReconciliationState(userId), metrics)",
     );

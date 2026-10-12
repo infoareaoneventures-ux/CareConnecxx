@@ -400,7 +400,7 @@ export const dbService = {
                     throw new Error('Access denied. Please check your account permissions.');
                 }
                 console.error("Firestore read failed", err);
-                throw new Error('Failed to fetch caregivers. Please try again.');
+                throw new Error('Failed to fetch care providers. Please try again.');
             }
         }
         return { caregivers: [], lastDoc: null };

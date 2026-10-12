@@ -42,9 +42,9 @@ export async function guardInterviewIdentityConsistency(
   if (!reply.trim()) return reply;
 
   const verdict = await quickComplete(
-    "An assistant just scheduled a caregiver interview. The interview was actually created with a " +
-      `caregiver named "${caregiverName}". Does the DRAFT REPLY below claim the interview was ` +
-      "scheduled, sent, or requested with a DIFFERENT, specifically-named caregiver (not that person)? " +
+    "An assistant just scheduled a care provider interview. The interview was actually created with a " +
+      `care provider named "${caregiverName}". Does the DRAFT REPLY below claim the interview was ` +
+      "scheduled, sent, or requested with a DIFFERENT, specifically-named care provider (not that person)? " +
       `Reply YES only if it names a different specific person. Reply NO if it correctly names "${caregiverName}", ` +
       "or names no one specific.",
     reply,
@@ -90,7 +90,7 @@ export async function guardInterviewIdentityConsistency(
     severity: "high",
     phone,
     source:   "qaAgent",
-    message:  `Evia scheduled an interview with the wrong caregiver (actually ${caregiverName}) and self-corrected by cancelling it.`,
+    message:  `Evia scheduled an interview with the wrong care provider (actually ${caregiverName}) and self-corrected by cancelling it.`,
     context:  { interviewId, caregiverId },
   }).catch(() => {});
 

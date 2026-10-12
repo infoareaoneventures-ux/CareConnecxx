@@ -151,7 +151,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
       loadVerificationQueue();
     } catch (error) {
       console.error('Failed to approve caregiver:', error);
-      onShowToast('Failed to approve caregiver', 'error');
+      onShowToast('Failed to approve care provider', 'error');
     } finally {
       setIsProcessing(false);
     }
@@ -183,7 +183,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
       loadVerificationQueue();
     } catch (error) {
       console.error('Failed to reject caregiver:', error);
-      onShowToast('Failed to reject caregiver', 'error');
+      onShowToast('Failed to reject care provider', 'error');
     } finally {
       setIsProcessing(false);
     }
@@ -243,9 +243,9 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
     <div className="max-w-7xl mx-auto p-6">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-900 mb-2">Caregiver Verification</h1>
+        <h1 className="text-3xl font-bold text-slate-900 mb-2">Care Provider Verification</h1>
         <p className="text-slate-500">
-          Checkr-clear caregivers are approved automatically — review document submissions and background-check exceptions here
+          Checkr-clear care providers are approved automatically — review document submissions and background-check exceptions here
         </p>
       </div>
 
@@ -306,7 +306,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
           <input
             type="text"
-            placeholder="Search caregivers..."
+            placeholder="Search care providers..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
@@ -323,14 +323,14 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
       ) : filteredQueue.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-2xl border border-slate-200">
           <Shield className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-          <p className="text-slate-500">No caregivers in this queue</p>
+          <p className="text-slate-500">No care providers in this queue</p>
         </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="text-left p-4 font-semibold text-slate-700">Caregiver</th>
+                <th className="text-left p-4 font-semibold text-slate-700">Care Provider</th>
                 <th className="text-left p-4 font-semibold text-slate-700">Status</th>
                 <th className="text-left p-4 font-semibold text-slate-700">Submitted</th>
                 <th className="text-left p-4 font-semibold text-slate-700">Documents</th>
@@ -691,7 +691,7 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                           // paused — checked first here so admin doesn't misread a caregiver's
                           // own pause as an onboarding problem.
                           : (selectedCaregiver as any).pausedUntil && (selectedCaregiver as any).pausedUntil > new Date().toISOString()
-                          ? 'Not bookable — caregiver has paused their own account.'
+                          ? 'Not bookable — care provider has paused their own account.'
                           : selectedCaregiver.verificationStatus === 'checkr_clear'
                           ? 'Not yet bookable — legacy "checkr_clear" status; bookability requires verificationStatus "approved".'
                           : 'Not yet bookable — profile onboarding incomplete (requires onboardingStatus "profile_complete").'}

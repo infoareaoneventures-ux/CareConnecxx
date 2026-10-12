@@ -37,8 +37,8 @@ beforeEach(() => { hoisted.reset(); hoisted.docs.set("users/u1", { firstName: "H
 
 // 2026-09-27 live: a caregiver's Evia-handoff room showed "Member" in Admin ›
 // Messages — the name is on caregivers/{uid}, not users/{uid}.
-describe("the room is named the way the site names it — caregivers included", () => {
-  it("falls back to the caregiver record's name when the users record has none", async () => {
+describe("the room is named the way the site names it — care providers included", () => {
+  it("falls back to the care provider record's name when the users record has none", async () => {
     hoisted.docs.set("users/cg1", { phone: "+1408" });
     hoisted.docs.set("caregivers/cg1", { name: "Mahad" });
     const { roomId } = await escalateToTeam({ userId: "cg1", note: "n", source: "evia_handoff", role: "caregiver" });
@@ -84,7 +84,7 @@ describe("the room", () => {
   });
 
   it("escalateToTeam posts a system note (never texted back) and raises the team alert", async () => {
-    const { roomId } = await escalateToTeam({ userId: "u1", note: "Evia wasn't confident: \"is my caregiver insured?\"", source: "evia_handoff", role: "client" });
+    const { roomId } = await escalateToTeam({ userId: "u1", note: "Evia wasn't confident: \"is my care provider insured?\"", source: "evia_handoff", role: "client" });
     const msg = hoisted.added.find((a) => a.coll === `chatRooms/${roomId}/messages`)!.data;
     expect(msg).toMatchObject({ senderId: SUPPORT_AGENT_ID, senderName: "Evia", type: "system" });
     const alert = hoisted.added.find((a) => a.coll === "admin_alerts")!.data;

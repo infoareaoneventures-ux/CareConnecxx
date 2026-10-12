@@ -57,7 +57,7 @@ export interface ActiveBookingShift {
     date: string; startTime: string | null; endTime: string | null;
     proposedBy: "client" | "caregiver" | null; proposedAt: string | null;
     /** "you" = the caregiver proposed and the family must accept/decline; "caregiver" = the family's own proposal is out. */
-    waitingOn: "you" | "caregiver";
+    waitingOn: "you" | "care provider";
   };
   rescheduleHistory?: unknown[];
   replacement?: { status: "waiting_on_caregiver"; requestId: string; caregiverName: string | null } | { status: "needs_choice" };
@@ -128,7 +128,7 @@ function shiftRow(s: ShiftDoc, bookingNote: string | null): ActiveBookingShift {
         endTime: (s.reschedulePendingEndTime as string | undefined) ?? null,
         proposedBy: (s.rescheduledBy as "client" | "caregiver" | undefined) ?? null,
         proposedAt: (s.reschedulePendingAt as string | undefined) ?? null,
-        waitingOn: s.rescheduledBy === "client" ? "caregiver" as const : "you" as const,
+        waitingOn: s.rescheduledBy === "client" ? "care provider" as const : "you" as const,
       },
     } : {}),
     ...(Array.isArray(s.rescheduleHistory) && s.rescheduleHistory.length > 0 ? { rescheduleHistory: s.rescheduleHistory as unknown[] } : {}),

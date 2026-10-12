@@ -303,7 +303,7 @@ describe("handleWebChatTurn", () => {
     }
   });
 
-  it("caregiver session: agent gets caregiver persona and missing userId self-heals to the auth uid", async () => {
+  it("care provider session: agent gets care provider persona and missing userId self-heals to the auth uid", async () => {
     seedUser();
     seedSession({ userId: undefined, userType: "caregiver", caregiverId: "cg-9" });
 
@@ -382,7 +382,7 @@ describe("handleWebChatTurn", () => {
       expect(outbound[0][0]).toMatchObject({ userId: UID, text: "capability help for client", source: "cara_web" });
     });
 
-    it("is role-aware: caregiver sessions get the caregiver reply", async () => {
+    it("is role-aware: care provider sessions get the care provider reply", async () => {
       seedUser();
       seedSession({ userType: "caregiver", caregiverId: "cg-9" });
 
@@ -392,11 +392,11 @@ describe("handleWebChatTurn", () => {
       expect(hoisted.helpMock).toHaveBeenCalledWith("caregiver", undefined, "en");
     });
 
-    it("only an exact command triggers - 'help me find a caregiver' still goes to the agent", async () => {
+    it("only an exact command triggers - 'help me find a care provider' still goes to the agent", async () => {
       seedUser();
       seedSession();
 
-      const res = await handleWebChatTurn({ uid: UID, message: "help me find a caregiver" });
+      const res = await handleWebChatTurn({ uid: UID, message: "help me find a care provider" });
 
       expect(res.reply).toBe("Here's what I found!");
       expect(hoisted.qaMock).toHaveBeenCalledOnce();
@@ -641,7 +641,7 @@ describe("handleWebChatTurn", () => {
         .toBeLessThan(hoisted.persistTurnMock.mock.invocationCallOrder[0]);
     });
 
-    it("caregiver session: turn persists but family-fact extraction is OFF (R8)", async () => {
+    it("care provider session: turn persists but family-fact extraction is OFF (R8)", async () => {
       seedUser();
       seedSession({ userType: "caregiver", caregiverId: "cg-9" });
 

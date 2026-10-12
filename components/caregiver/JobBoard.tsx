@@ -888,7 +888,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                         </button>
                                                     );
                                                     if (reason === 'background') return (
-                                                        <button onClick={() => navigate('/caregiver/dashboard')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold transition-colors">
+                                                        <button onClick={() => navigate('/care-provider/dashboard')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-xs font-semibold transition-colors">
                                                             <Lock className="w-3 h-3" /> Complete Verification
                                                         </button>
                                                     );
@@ -1245,7 +1245,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                                         Activate Membership
                                                                     </button>
                                                                 ) : (
-                                                                    <button onClick={() => navigate('/caregiver/dashboard')} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors">
+                                                                    <button onClick={() => navigate('/care-provider/dashboard')} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors">
                                                                         <Lock className="w-3 h-3" />
                                                                         Complete Verification
                                                                     </button>
@@ -1529,7 +1529,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                         </button>
                                     );
                                     if (reason === 'background') return (
-                                        <button onClick={() => navigate('/caregiver/dashboard')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold transition-colors">
+                                        <button onClick={() => navigate('/care-provider/dashboard')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 text-sm font-semibold transition-colors">
                                             <Lock className="w-3.5 h-3.5" /> Complete Verification
                                         </button>
                                     );

@@ -348,7 +348,7 @@ describe("startBookingFlow", () => {
       expect(lastMsg).toContain("no completed interview");
     });
 
-    it("blocks with a caregiver-agnostic message when no caregiver was named and nothing is eligible for any of them", async () => {
+    it("blocks with a caregiver-agnostic message when no care provider was named and nothing is eligible for any of them", async () => {
       const result = await startBookingFlow(PHONE, CHAT, session(), {});
 
       expect(result.started).toBe(false);
@@ -357,7 +357,7 @@ describe("startBookingFlow", () => {
       expect(lastMsg).toContain("don't see any completed interviews");
     });
 
-    it("scopes across every caregiver and shows a mixed list when no caregiverId is given and 2+ are eligible", async () => {
+    it("scopes across every care provider and shows a mixed list when no caregiverId is given and 2+ are eligible", async () => {
       hoisted.docState.set(`caregivers/cg-2`, { name: "Maria Santos" });
       hoisted.docState.set("video_interviews/iv1", {
         clientId: UID, caregiverId: CG_ID, status: "completed", applicationId: "app1",
@@ -389,7 +389,7 @@ describe("startBookingFlow", () => {
       expect(updated.bookingFlowStep).toBe("bk_ask_rate");
     });
 
-    it("auto-links across every caregiver with no ask at all when no caregiverId is given and exactly one is eligible", async () => {
+    it("auto-links across every care provider with no ask at all when no caregiverId is given and exactly one is eligible", async () => {
       hoisted.docState.set(`caregivers/cg-2`, { name: "Maria Santos" });
       hoisted.docState.set("video_interviews/iv2", {
         clientId: UID, caregiverId: "cg-2", status: "completed",
@@ -783,7 +783,7 @@ describe("resend — startResendBookingFlow / bk_ask_resend / commit", () => {
     expect(messagesCreate).not.toHaveBeenCalled();
   });
 
-  it("a newer pending request for the same caregiver+job hides the Resend, like the site", async () => {
+  it("a newer pending request for the same care provider+job hides the Resend, like the site", async () => {
     hoisted.docState.set("booking_requests/br-cancelled", CANCELLED);
     hoisted.docState.set("booking_requests/br-newer", { ...CANCELLED, status: "pending", createdAt: "2026-09-12T09:00:00.000Z", agentTaskId: undefined });
     hoisted.docState.set(`agent_sessions/${PHONE}`, {});
@@ -803,7 +803,7 @@ describe("resend — startResendBookingFlow / bk_ask_resend / commit", () => {
     expect(stored.bookingFlowStep).toBe("bk_ask_resend");
     const list = String(sendMessage.mock.calls.at(-1)![1]);
     expect(list).toContain("Which booking request would you like to resend?");
-    expect(list).toContain("1. Basra Yousuf — Senior care in San Jose — Caregiver declined");
+    expect(list).toContain("1. Basra Yousuf — Senior care in San Jose — Care Provider declined");
     expect(list).toContain("2. Basra Yousuf — Senior care in San Jose — Visit cancelled");
 
     await handleBookingFlowStep(PHONE, CHAT, "2", session({ bookingFlowStep: "bk_ask_resend" }));
@@ -923,7 +923,7 @@ describe("bk_confirm", () => {
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).bookingFlowStep).toBeUndefined();
   });
 
-  it("a caregiver whose background check is still in review gets nothing sent, and the family is told so", async () => {
+  it("a care provider whose background check is still in review gets nothing sent, and the family is told so", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
     sendBookingRequest.mockResolvedValueOnce({ ok: false, reason: "caregiver_not_bookable", daysInReview: 3 });
 
@@ -1263,7 +1263,7 @@ describe("buildBookingRecap", () => {
       ],
       emergencyContact: { name: "Bo", phone: "4086370483", relationship: "Daughter" },
     });
-    const order = ["Caregiver:", "Agreed rate:", "Schedule:", "Care recipients:", "Care location:", "Emergency contact:", "Message to"];
+    const order = ["Care Provider:", "Agreed rate:", "Schedule:", "Care recipients:", "Care location:", "Emergency contact:", "Message to"];
     let lastIndex = -1;
     for (const label of order) {
       const idx = recap.indexOf(label);

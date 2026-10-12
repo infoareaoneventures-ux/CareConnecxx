@@ -10,7 +10,7 @@ import { sanitizeAiText } from "../utils/sanitizeAiText";
 const SEARCH_FALLBACK_TEXT =
   "I'm having trouble connecting right now, but you can browse the list manually!";
 const BOOKING_FALLBACK_RESPONSE =
-  "I'm here to help you book a caregiver! Could you tell me what type of care you need?";
+  "I'm here to help you book a care provider! Could you tell me what type of care you need?";
 
 const apptCostToHours = (cost: number, rate: number = 25) => Math.round(cost / rate);
 
@@ -62,7 +62,7 @@ Respond with valid JSON only. No markdown, no explanation.`,
     try {
       const sanitized = sanitizeForAI(shorthand);
       const text = await askClaude(
-        `Rewrite the following caregiver notes into a professional, HIPAA-compliant medical shift log.
+        `Rewrite the following care provider notes into a professional, HIPAA-compliant medical shift log.
 Keep it factual, concise, and objective. Use medical terminology where appropriate (e.g. "ambulated", "consumed").`,
         `Raw Notes: "${sanitized}"`,
         "claude-haiku-4-5-20251001",
@@ -97,11 +97,11 @@ Keep it factual, concise, and objective. Use medical terminology where appropria
 
     try {
       const raw = await askClaude(
-        `You are an expert care matching assistant. Find the best caregivers for the client's needs and explain WHY each is a great match.
-Prioritize verified caregivers, closer distance, higher rating, relevant skills.
+        `You are an expert care matching assistant. Find the best care providers for the client's needs and explain WHY each is a great match.
+Prioritize verified care providers, closer distance, higher rating, relevant skills.
 Respond with valid JSON only. No markdown, no explanation.
 JSON shape: { "responseText": string, "recommendedIds": string[], "recommendations": [{ "id": string, "reason": string, "highlights": string[] }], "suggestions": string[] }`,
-        `CLIENT REQUEST: "${sanitizedQuery}"${seniorContext}\n\nAVAILABLE CAREGIVERS:\n${caregiverList}`,
+        `CLIENT REQUEST: "${sanitizedQuery}"${seniorContext}\n\nAVAILABLE CARE PROVIDERS:\n${caregiverList}`,
         "claude-sonnet-4-6",
         1500
       );
@@ -134,7 +134,7 @@ JSON shape: { "responseText": string, "recommendedIds": string[], "recommendatio
   }) => {
     try {
       const raw = await askClaude(
-        `You are a market rate analyst for caregiving services. Analyze the caregiver profile and suggest a competitive hourly rate.
+        `You are a market rate analyst for care services. Analyze the care provider profile and suggest a competitive hourly rate.
 Respond with valid JSON only. No markdown, no explanation.
 JSON shape: { "suggestedRate": number, "explanation": string, "marketRange": { "low": number, "average": number, "high": number } }`,
         `Location: ${caregiverProfile.location}
@@ -199,19 +199,19 @@ Experience: ${caregiverProfile.experience || "Not specified"} years`,
         : "No specific preferences recorded yet.";
 
       const scheduleContext = userContext?.targetCaregiverSchedule
-        ? `CAREGIVER WEEKLY SCHEDULE:\n${Object.entries(userContext.targetCaregiverSchedule)
+        ? `CARE PROVIDER WEEKLY SCHEDULE:\n${Object.entries(userContext.targetCaregiverSchedule)
             .map(([day, slots]) => `- ${day.toUpperCase()}: ${(slots as any[]).length > 0 ? (slots as any[]).map((s: any) => `${s.start}-${s.end}`).join(", ") : "Not available"}`)
             .join("\n")}`
-        : "No specific caregiver schedule provided.";
+        : "No specific care provider schedule provided.";
 
       const seniorCtx = userContext?.seniorProfile
         ? `SENIOR PROFILE:\n- Name: ${sanitizeName(userContext.seniorProfile.name)}\n- Needs: ${userContext.seniorProfile.needs?.join(", ") || "None"}\n- Gender Preference: ${userContext.seniorProfile.genderPreference || "None"}`
         : "";
 
-      const system = `You are an expert care booking assistant. Make booking caregivers effortless and personalized.
+      const system = `You are an expert care booking assistant. Make booking care providers effortless and personalized.
 Today: ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.
 Be proactive, contextual, and efficient. Minimize back-and-forth. Detect urgency keywords (ASAP, emergency, fall, hurt, help now).
-Check the caregiver schedule before confirming times.
+Check the care provider schedule before confirming times.
 Respond with valid JSON only. No markdown, no explanation.
 JSON shape: { "response": string, "isEmergency": boolean, "missingInfo": string[], "nextQuestion": string|null, "readyToShowMatches": boolean, "readyToConfirm": boolean, "extractedInfo": { "service": string, "date": string, "time": string, "duration": number }, "suggestions": string[] }`;
 
@@ -225,7 +225,7 @@ CURRENT BOOKING STATE:
 - Date: ${currentBookingState.date || "Not specified"}
 - Time: ${currentBookingState.time || "Not specified"}
 - Duration: ${currentBookingState.duration ? currentBookingState.duration + " hours" : "Not specified"}
-- Selected caregiver: ${currentBookingState.selectedCaregiverId || "Not selected"}
+- Selected care provider: ${currentBookingState.selectedCaregiverId || "Not selected"}
 
 CONVERSATION:
 ${conversationHistory}`;

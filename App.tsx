@@ -4,6 +4,7 @@ import { ViewType } from './types';
 
 // Eager load critical landing page for faster first paint
 import { LandingView as LandingViewComponent } from './components/LandingView';
+import { LegacyCaregiverRedirect, LegacyClientCaregiverRedirect } from './components/LegacyCaregiverRedirect';
 
 // Lazy Load Pages with prefetching
 const ClientDashboard = lazy(() => import('./components/client/ClientDashboard').then(module => ({ default: module.ClientDashboard })));
@@ -85,7 +86,7 @@ const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element })
   const { authResolved, currentUser } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (currentUser?.userType === 'client') return <Navigate to="/client/dashboard" replace />;
-  if (currentUser?.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  if (currentUser?.userType === 'caregiver') return <Navigate to="/care-provider/dashboard" replace />;
   if (currentUser?.userType === 'admin') return <Navigate to="/admin" replace />;
   return element;
 };
@@ -94,7 +95,7 @@ const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => 
   const { currentUser, authResolved } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
-  if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  if (currentUser.userType === 'caregiver') return <Navigate to="/care-provider/dashboard" replace />;
   if (!currentUser.eviaConnected) return <Navigate to="/client/connect" replace />;
   return (
     <>
@@ -113,7 +114,7 @@ const ClientAuthRoute: React.FC<{ element: React.ReactElement }> = ({ element })
   const { currentUser, authResolved } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
-  if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  if (currentUser.userType === 'caregiver') return <Navigate to="/care-provider/dashboard" replace />;
   if (currentUser.eviaConnected) return <Navigate to="/client/dashboard" replace />;
   return element;
 };
@@ -124,7 +125,7 @@ const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) 
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
-  if (!currentUser.eviaConnected) return <Navigate to="/caregiver/connect" replace />;
+  if (!currentUser.eviaConnected) return <Navigate to="/care-provider/connect" replace />;
   // Same default as ClientRoute's jobPostingCompleted check: treat "no record
   // yet" as "still needs the wizard", not as "wait until one shows up". A
   // caregiver's record is now created the moment they connect (webhooks.ts
@@ -142,7 +143,7 @@ const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) 
           <CaregiverOnboardingWizard
             uid={currentUser.uid}
             firstName={(caregiverProfile as any)?.firstName || currentUser.displayName?.split(' ')[0] || ''}
-            onComplete={() => navigate('/caregiver/dashboard', { replace: true })}
+            onComplete={() => navigate('/care-provider/dashboard', { replace: true })}
             onShowToast={addToast}
           />
         </Suspense>
@@ -151,13 +152,13 @@ const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) 
   );
 };
 
-// Auth-only wrapper for /caregiver/connect — no eviaConnected check (avoids redirect loop)
+// Auth-only wrapper for /care-provider/connect — no eviaConnected check (avoids redirect loop)
 const CaregiverAuthRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
   const { currentUser, authResolved } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
-  if (currentUser.eviaConnected) return <Navigate to="/caregiver/dashboard" replace />;
+  if (currentUser.eviaConnected) return <Navigate to="/care-provider/dashboard" replace />;
   return element;
 };
 
@@ -221,23 +222,23 @@ const AppContent: React.FC = () => {
       case 'forgot-password-client':
       case 'forgot-password-caregiver': navigate('/login'); break;
       case 'client-intake': navigate('/client/dashboard'); break;
-      case 'caregiver-signup': navigate('/caregiver/signup'); break;
+      case 'caregiver-signup': navigate('/care-provider/signup'); break;
       case 'client-apply': navigate('/start?role=client'); break;
-      case 'caregiver-apply': navigate('/start?role=caregiver'); break;
+      case 'caregiver-apply': navigate('/start?role=care-provider'); break;
       case 'client': navigate('/client/dashboard'); break;
       case 'client-inbox': navigate('/client/inbox'); break;
       case 'care-plan': navigate('/client/care-plan'); break;
-      case 'caregiver': navigate('/caregiver/dashboard'); break;
-      case 'caregiver-profile': navigate('/caregiver/profile'); break;
-      case 'caregiver-inbox': navigate('/caregiver/inbox'); break;
-      case 'caregiver-calendar': navigate('/caregiver/calendar'); break;
+      case 'caregiver': navigate('/care-provider/dashboard'); break;
+      case 'caregiver-profile': navigate('/care-provider/profile'); break;
+      case 'caregiver-inbox': navigate('/care-provider/inbox'); break;
+      case 'caregiver-calendar': navigate('/care-provider/calendar'); break;
       case 'caregiver-membership': setMembershipModalOpen(true); break;
-      case 'caregiver-jobs': navigate('/caregiver/jobs'); break;
-      case 'caregiver-bookings': navigate('/caregiver/bookings'); break;
-      case 'caregiver-families': navigate('/caregiver/families'); break;
-      case 'caregiver-settings': navigate('/caregiver/settings'); break;
-      case 'caregiver-transactions': navigate('/caregiver/payments'); break;
-      case 'caregiver-payout': navigate('/caregiver/payments?tab=payouts'); break;
+      case 'caregiver-jobs': navigate('/care-provider/jobs'); break;
+      case 'caregiver-bookings': navigate('/care-provider/bookings'); break;
+      case 'caregiver-families': navigate('/care-provider/families'); break;
+      case 'caregiver-settings': navigate('/care-provider/settings'); break;
+      case 'caregiver-transactions': navigate('/care-provider/payments'); break;
+      case 'caregiver-payout': navigate('/care-provider/payments?tab=payouts'); break;
       case 'admin': navigate('/admin'); break;
       case 'stripe-callback': navigate('/stripe/callback'); break;
       case 'payment-success': navigate('/payment/success'); break;
@@ -257,7 +258,7 @@ const AppContent: React.FC = () => {
   );
 
   const isCaregiverFlow = (
-    path.startsWith('/caregiver') ||
+    path.startsWith('/care-provider') ||
     (path.includes('care-plan') && isCaregiverContext)
   );
 
@@ -327,24 +328,26 @@ const AppContent: React.FC = () => {
               users/ and caregivers/ by email. */}
           <Route path="/client/forgot-password" element={<RequestAccountRecoveryPage />} />
 
-          <Route path="/caregiver/signup" element={<Navigate to="/start?role=caregiver" replace />} />
+          <Route path="/care-provider/signup" element={<Navigate to="/start?role=care-provider" replace />} />
           <Route path="/client/apply" element={<Navigate to="/start?role=client" replace />} />
-          <Route path="/caregiver/apply-web" element={<Navigate to="/start?role=caregiver" replace />} />
+          <Route path="/care-provider/apply-web" element={<Navigate to="/start?role=care-provider" replace />} />
           {/* Web caregiver signup retired — Evia SMS (/start) is the canonical onboarding. Redirect preserves any existing bookmarks/links. */}
-          <Route path="/caregiver/apply" element={<Navigate to="/start?role=caregiver" replace />} />
-          <Route path="/caregiver/login" element={<Navigate to="/login" replace />} />
-          <Route path="/caregiver/forgot-password" element={<RequestAccountRecoveryPage />} />
+          <Route path="/care-provider/apply" element={<Navigate to="/start?role=care-provider" replace />} />
+          <Route path="/care-provider/login" element={<Navigate to="/login" replace />} />
+          <Route path="/care-provider/forgot-password" element={<RequestAccountRecoveryPage />} />
           <Route path="/verify-phone-change" element={<VerifyPhoneChangePage />} />
           <Route path="/verify-email-change" element={<VerifyEmailChangePage />} />
           <Route path="/approve-email-change" element={<ApproveEmailChangePage />} />
 
           <Route path="/client/connect" element={<ClientAuthRoute element={<ClientConnectPage />} />} />
-          <Route path="/caregiver/connect" element={<CaregiverAuthRoute element={<CaregiverConnectPage />} />} />
+          <Route path="/care-provider/connect" element={<CaregiverAuthRoute element={<CaregiverConnectPage />} />} />
           <Route path="/client/dashboard" element={<ClientRoute element={<ClientDashboard onNavigate={handleNavigation} />} />} />
           <Route path="/client/account" element={<ClientRoute element={<AccountSettings />} />} />
           <Route path="/client/payments" element={<ClientRoute element={<Payments />} />} />
           <Route path="/client/my-care-team" element={<ClientRoute element={<MyCareTeam />} />} />
-          <Route path="/client/find-caregivers" element={<ClientRoute element={<FindCaregivers />} />} />
+          <Route path="/client/find-care-providers" element={<ClientRoute element={<FindCaregivers />} />} />
+          {/* Old /client/find-caregivers address (bells written before 2026-10-12, bookmarks) → the same page. */}
+          <Route path="/client/find-caregivers" element={<LegacyClientCaregiverRedirect />} />
           <Route path="/client/post-job" element={<ClientRoute element={<PostJobFlow />} />} />
           <Route path="/client/posts" element={<ClientRoute element={<PostsPage />} />} />
           <Route path="/client/membership" element={<ClientRoute element={<Membership />} />} />
@@ -354,7 +357,10 @@ const AppContent: React.FC = () => {
           <Route path="/client/visits" element={<Navigate to="/client/bookings" replace />} />
           <Route path="/client/interviews" element={<Navigate to="/client/posts" replace />} />
           <Route path="/client/hire/:caregiverId" element={<Navigate to="/client/posts" replace />} />
-          <Route path="/client/caregiver/:caregiverId" element={<ClientRoute element={<ClientCaregiverProfile />} />} />
+          <Route path="/client/care-provider/:caregiverId" element={<ClientRoute element={<ClientCaregiverProfile />} />} />
+          {/* Old /client/caregiver/:id address (review_prompt bells with ?review=1, links Evia texted) → the same page, query intact. */}
+          <Route path="/client/caregiver" element={<LegacyClientCaregiverRedirect />} />
+          <Route path="/client/caregiver/*" element={<LegacyClientCaregiverRedirect />} />
           {/* Public on purpose: SMS-originated clients return here from Stripe Identity
               without a web session. The component already handles the no-auth case
               (waits for the webhook). Gating it behind ClientRoute bounced them to login. */}
@@ -364,29 +370,34 @@ const AppContent: React.FC = () => {
             onNavigate={handleNavigation}
             onShowToast={addToast}
             onViewProfile={(caregiverId) => {
-              navigate(`/client/caregiver/${caregiverId}`);
+              navigate(`/client/care-provider/${caregiverId}`);
             }}
           />} />} />
 
-          <Route path="/caregiver/dashboard" element={<CaregiverRoute element={<CaregiverDashboard onNavigate={handleNavigation} />} />} />
-          <Route path="/caregiver/profile" element={<CaregiverRoute element={<CaregiverProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />
-          <Route path="/caregiver/inbox" element={<CaregiverRoute element={<InboxView userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />} />
-          <Route path="/caregiver/calendar" element={<CaregiverRoute element={<CaregiverCalendarPage onNavigate={handleNavigation} />} />} />
-          <Route path="/caregiver/membership" element={<CaregiverRoute element={<Navigate to="/caregiver/dashboard" replace />} />} />
-          <Route path="/caregiver/bookings" element={<CaregiverRoute element={<CaregiverBookingsPage />} />} />
-          <Route path="/caregiver/jobs" element={<CaregiverRoute element={<CaregiverJobBoardPage />} />} />
-          <Route path="/caregiver/families" element={<CaregiverRoute element={<CaregiverFamiliesPage />} />} />
-          <Route path="/caregiver/settings" element={<CaregiverRoute element={<CaregiverAccountSettings />} />} />
-          <Route path="/caregiver/payments" element={<CaregiverRoute element={<CaregiverPaymentsPage />} />} />
+          <Route path="/care-provider/dashboard" element={<CaregiverRoute element={<CaregiverDashboard onNavigate={handleNavigation} />} />} />
+          <Route path="/care-provider/profile" element={<CaregiverRoute element={<CaregiverProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/care-provider/inbox" element={<CaregiverRoute element={<InboxView userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />} />
+          <Route path="/care-provider/calendar" element={<CaregiverRoute element={<CaregiverCalendarPage onNavigate={handleNavigation} />} />} />
+          <Route path="/care-provider/membership" element={<CaregiverRoute element={<Navigate to="/care-provider/dashboard" replace />} />} />
+          <Route path="/care-provider/bookings" element={<CaregiverRoute element={<CaregiverBookingsPage />} />} />
+          <Route path="/care-provider/jobs" element={<CaregiverRoute element={<CaregiverJobBoardPage />} />} />
+          <Route path="/care-provider/families" element={<CaregiverRoute element={<CaregiverFamiliesPage />} />} />
+          <Route path="/care-provider/settings" element={<CaregiverRoute element={<CaregiverAccountSettings />} />} />
+          <Route path="/care-provider/payments" element={<CaregiverRoute element={<CaregiverPaymentsPage />} />} />
           {/* Legacy payout pages (2026-10-01): ONE Payouts surface — Payments › Payouts. Stripe's onboarding return
               (?stripe=success / refresh) lands here too; the query string is carried over. */}
-          <Route path="/caregiver/transactions" element={<Navigate to={`/caregiver/payments?tab=payouts${window.location.search ? '&' + window.location.search.slice(1) : ''}`} replace />} />
-          <Route path="/caregiver/payout" element={<Navigate to={`/caregiver/payments?tab=payouts${window.location.search ? '&' + window.location.search.slice(1) : ''}`} replace />} />
+          <Route path="/care-provider/transactions" element={<Navigate to={`/care-provider/payments?tab=payouts${window.location.search ? '&' + window.location.search.slice(1) : ''}`} replace />} />
+          <Route path="/care-provider/payout" element={<Navigate to={`/care-provider/payments?tab=payouts${window.location.search ? '&' + window.location.search.slice(1) : ''}`} replace />} />
           {/* Public shareable caregiver profile. /p/:id is the canonical share
               path — hosting rewrites it through v1-caregiverProfileMeta so texted
-              links get per-caregiver OG previews; /caregiver/:id kept for old links. */}
+              links get per-caregiver OG previews; /care-provider/:id (and the old /caregiver/:id,
+              via the redirect below) kept for old links. */}
           <Route path="/p/:id" element={<PublicCaregiverProfile />} />
-          <Route path="/caregiver/:id" element={<PublicCaregiverProfile />} />
+          <Route path="/care-provider/:id" element={<PublicCaregiverProfile />} />
+          {/* Old /caregiver/… addresses (links Evia texted, bookmarks, bells written before
+              2026-10-12) → the same page under /care-provider/, query string intact. */}
+          <Route path="/caregiver" element={<LegacyCaregiverRedirect />} />
+          <Route path="/caregiver/*" element={<LegacyCaregiverRedirect />} />
 
           <Route path="/client/care-plan" element={
             <CarePlan
@@ -394,7 +405,7 @@ const AppContent: React.FC = () => {
                 // Smart back navigation
                 if (viewingClientId) {
                   setViewingClientId(null);
-                  navigate('/caregiver/dashboard');
+                  navigate('/care-provider/dashboard');
                 } else {
                   handleNavigation(view);
                 }

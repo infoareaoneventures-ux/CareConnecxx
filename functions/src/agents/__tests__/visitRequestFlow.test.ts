@@ -137,7 +137,7 @@ describe("startVisitRequestFlow", () => {
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.visitRequestFlowStep).toBeUndefined();
   });
 
-  it("one caregiver, one booking, and the family's words carry the day + time → straight to the start-date question", async () => {
+  it("one care provider, one booking, and the family's words carry the day + time → straight to the start-date question", async () => {
     seed();
     modelReplies(JSON.stringify({ days: ["Thu"], dayTimes: { Thu: [{ start: "09:00", end: "13:00" }] }, allDays: null }));
     const r = await startVisitRequestFlow(PHONE, CHAT, session(), { initialText: "add Thursdays 9am to 1pm with Basra" });
@@ -148,7 +148,7 @@ describe("startVisitRequestFlow", () => {
     expect(amendmentSets()).toHaveLength(0);
   });
 
-  it("started from a booking (the My Bookings card button, 2026-10-07): skips the caregiver and booking questions even with two caregivers", async () => {
+  it("started from a booking (the My Bookings card button, 2026-10-07): skips the care provider and booking questions even with two care providers", async () => {
     seed();
     hoisted.docState.set("booking_requests/br-ali", {
       clientId: UID, caregiverId: "cg-ali", caregiverName: "Ali Hassan", status: "accepted", jobTitle: "Weekend help",
@@ -162,7 +162,7 @@ describe("startVisitRequestFlow", () => {
     expect(lastSent()).toContain("Adding a visit for Ali Hassan.");
   });
 
-  it("with no day given, asks which days and shows the caregiver's current schedule like the modal", async () => {
+  it("with no day given, asks which days and shows the care provider's current schedule like the modal", async () => {
     seed();
     const r = await startVisitRequestFlow(PHONE, CHAT, session(), {});
     expect(r.started).toBe(true);
@@ -193,7 +193,7 @@ describe("vr_ask_times — the modal's availability checks", () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, visitRequestFlowStep: "vr_ask_times", visitRequestFlowData: { ...PICKED, days } });
   }
 
-  it("refuses a time that overlaps a visit the family already has with the caregiver", async () => {
+  it("refuses a time that overlaps a visit the family already has with the care provider", async () => {
     seed(); atTimes(["Tue"]);
     modelReplies("NO", "NO", JSON.stringify({ dayTimes: { Tue: [{ start: "12:00", end: "14:00" }] }, allDays: null }));
     await handleVisitRequestFlowStep(PHONE, CHAT, "12 to 2", session({ visitRequestFlowStep: "vr_ask_times" }));
@@ -201,7 +201,7 @@ describe("vr_ask_times — the modal's availability checks", () => {
     expect(lastSent()).toContain("Tuesday 12:00 PM–2:00 PM overlaps a visit you already have with Basra Yousuf (11:00 AM–1:00 PM)");
   });
 
-  it("refuses a time the caregiver is booked elsewhere (the modal's greyed-out slots)", async () => {
+  it("refuses a time the care provider is booked elsewhere (the modal's greyed-out slots)", async () => {
     seed(); atTimes(["Thu"]);
     modelReplies("NO", "NO", JSON.stringify({ dayTimes: { Thu: [{ start: "15:00", end: "17:00" }] }, allDays: null }));
     await handleVisitRequestFlowStep(PHONE, CHAT, "3 to 5", session({ visitRequestFlowStep: "vr_ask_times" }));
@@ -209,7 +209,7 @@ describe("vr_ask_times — the modal's availability checks", () => {
     expect(lastSent()).toContain("Basra Yousuf is already booked Thursday 2:00 PM–4:00 PM");
   });
 
-  it("a time outside the caregiver's usual availability is allowed with a warning carried into the recap", async () => {
+  it("a time outside the care provider's usual availability is allowed with a warning carried into the recap", async () => {
     seed(); atTimes(["Sat"]);
     modelReplies("NO", "NO", JSON.stringify({ dayTimes: { Sat: [{ start: "10:00", end: "12:00" }] }, allDays: null }));
     await handleVisitRequestFlowStep(PHONE, CHAT, "10 to 12", session({ visitRequestFlowStep: "vr_ask_times" }));
@@ -249,7 +249,7 @@ describe("vr_ask_start / vr_ask_end / vr_ask_notes", () => {
     await handleVisitRequestFlowStep(PHONE, CHAT, "no", session({ visitRequestFlowStep: "vr_ask_notes" }));
     expect(sess().visitRequestFlowStep).toBe("vr_confirm");
     const recap = lastSent();
-    expect(recap).toContain("Caregiver: Basra Yousuf");
+    expect(recap).toContain("Care Provider: Basra Yousuf");
     expect(recap).toContain("Booking: Senior care in San Jose");
     expect(recap).toContain("Days & times: Thursday 9:00 AM–1:00 PM (4h)");
     expect(recap).toContain("Starting: Tuesday, September 22, 2026 (ongoing)");

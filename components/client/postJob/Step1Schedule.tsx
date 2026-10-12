@@ -64,7 +64,7 @@ export const Step1Schedule: React.FC<StepProps> = ({ data, onChange, onContinue,
   return (
     <div>
       <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center mb-1">When do you need care?</h2>
-      <p className="text-center text-slate-500 mb-8">Tell caregivers when the job starts and how often.</p>
+      <p className="text-center text-slate-500 mb-8">Tell care providers when the job starts and how often.</p>
 
       <div className="space-y-6">
         {/* Job frequency — large vertical cards */}

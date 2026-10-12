@@ -17,6 +17,7 @@
 // number / yes / no before any model call, one recap + explicit YES gate.
 // Nothing is written until that YES. Shares every check and write with the
 // MCP tool (manage_booking propose_reschedule) via agents/shiftReschedule.ts.
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -104,7 +105,7 @@ async function answerQuestionMidFlow(text: string): Promise<string> {
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a family move one of their scheduled care visits to a different " +
+      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family move one of their scheduled care visits to a different " +
       "day or time. You see ONLY this one message, not the rest of the conversation — including anything Evia " +
       "herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. NEVER " +
       "state whether a visit exists on a given day — you cannot see the schedule. If the message is clearly about " +
@@ -240,7 +241,7 @@ export async function startRescheduleFlow(
   if (visits.length === 0) {
     const message =
       "I don't see any upcoming scheduled visits to move right now. If you're expecting one, check your My Bookings page — " +
-      "a visit still waiting on a caregiver's acceptance or a replacement can't be rescheduled yet.";
+      "a visit still waiting on a care provider's acceptance or a replacement can't be rescheduled yet.";
     if (!args.quiet) await sendMessage(chatId, message);
     return { started: false, reason: "no_visits", message };
   }

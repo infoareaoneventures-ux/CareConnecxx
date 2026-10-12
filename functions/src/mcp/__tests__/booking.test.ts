@@ -149,7 +149,7 @@ describe("booking tools", () => {
   // These must NEVER write — the whole point is that Evia can look up a rate and
   // quote a cost without committing. Each test asserts no booking task is created.
   describe("get_caregiver_booking_rate (U9b)", () => {
-    it("returns the caregiver's name + hourly rate, writing nothing", async () => {
+    it("returns the care provider's name + hourly rate, writing nothing", async () => {
       hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 25 });
       const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg1", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
@@ -162,7 +162,7 @@ describe("booking tools", () => {
     // U6 (hallucination hardening 2026-07-17, R9): the old silent $20 fallback
     // is GONE — a missing rate is a structured RATE_UNKNOWN error telling the
     // agent to confirm the real rate, never a fabricated number.
-    it("returns RATE_UNKNOWN (not a fabricated $20) when the caregiver has no rate on file", async () => {
+    it("returns RATE_UNKNOWN (not a fabricated $20) when the care provider has no rate on file", async () => {
       hoisted.docState.set("caregivers/cg2", { name: "Sam" });
       const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg2" }) as any;
       expect(r._toolError).toBe(true);
@@ -202,7 +202,7 @@ describe("booking tools", () => {
       }
     });
 
-    it("returns NOT_FOUND for an unknown caregiver", async () => {
+    it("returns NOT_FOUND for an unknown care provider", async () => {
       const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "ghost" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");

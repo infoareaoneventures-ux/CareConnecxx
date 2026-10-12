@@ -711,7 +711,7 @@ export default function FindCaregivers() {
           <div>
             <div className="flex items-center gap-2">
               <Sparkles className="w-6 h-6 text-primary-600" />
-              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Find Caregivers</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Find Care Providers</h1>
             </div>
           </div>
         </div>
@@ -795,7 +795,7 @@ export default function FindCaregivers() {
             </div>
 
             <p className="text-sm text-slate-500 mb-3">
-              {filteredCaregivers.length} caregiver{filteredCaregivers.length !== 1 ? 's' : ''} found
+              {filteredCaregivers.length} care provider{filteredCaregivers.length !== 1 ? 's' : ''} found
             </p>
 
             {filteredCaregivers.length === 0 ? (
@@ -904,7 +904,7 @@ export default function FindCaregivers() {
                 onClick={() => setMobileFiltersOpen(false)}
                 className="w-full py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700"
               >
-                Show {filteredCaregivers.length} caregivers
+                Show {filteredCaregivers.length} care providers
               </button>
             </div>
           </div>
@@ -932,7 +932,7 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
   caregiver, isFavorite, isBestMatch, isBooked, isRequested, isRebookable, onToggleFavorite, onViewProfile, onMessage, onRequestInterview,
 }) => {
   const navigate = useNavigate();
-  const fullName = `${caregiver.firstName} ${caregiver.lastName}`.trim() || 'Caregiver';
+  const fullName = `${caregiver.firstName} ${caregiver.lastName}`.trim() || 'Care Provider';
 
   return (
     <div className="bg-white rounded-[1.5rem] border border-slate-200 hover:border-slate-300 shadow-sm hover:shadow-md transition-all overflow-hidden flex flex-col relative">
@@ -1080,12 +1080,12 @@ const EmptyState: React.FC<{ hasFilters: boolean; onClear: () => void; onPostJob
       <Search className="w-7 h-7 text-slate-400" />
     </div>
     <h3 className="text-lg font-semibold text-slate-900 mb-1">
-      {hasFilters ? 'No caregivers match your filters' : 'No caregivers available yet'}
+      {hasFilters ? 'No care providers match your filters' : 'No care providers available yet'}
     </h3>
     <p className="text-sm text-slate-500 mb-5 max-w-md mx-auto">
       {hasFilters
         ? 'Try widening your distance, raising your rate, or removing some specialties.'
-        : "We're growing our caregiver network in your area. Post a job to invite matching caregivers to apply directly."}
+        : "We're growing our care provider network in your area. Post a job to invite matching care providers to apply directly."}
     </p>
     <div className="flex gap-2 justify-center">
       {hasFilters && (

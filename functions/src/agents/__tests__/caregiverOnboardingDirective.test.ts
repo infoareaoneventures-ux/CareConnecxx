@@ -19,12 +19,12 @@ const BANNED = [
 ];
 
 describe("buildCaregiverOnboardingDirective", () => {
-  it("is what buildOnboardingDirective returns for the caregiver role (runner selection)", () => {
+  it("is what buildOnboardingDirective returns for the care provider role (runner selection)", () => {
     const data = { name: "Maria" };
     expect(buildOnboardingDirective("caregiver", data)).toBe(buildCaregiverOnboardingDirective(data));
   });
 
-  it("labels every required caregiver field (contract completeness)", () => {
+  it("labels every required care provider field (contract completeness)", () => {
     for (const f of CAREGIVER_REQUIRED_FIELDS) {
       expect(CAREGIVER_FIELD_LABEL[f], `missing label for required field '${f}'`).toBeTruthy();
     }
@@ -33,11 +33,11 @@ describe("buildCaregiverOnboardingDirective", () => {
   it("mid-collection lists only the unfilled fields and instructs save_onboarding_field", () => {
     const d = buildCaregiverOnboardingDirective({ name: "Maria", city: "San Jose" });
     expect(d).toContain("save_onboarding_field");
-    expect(d).toContain("years of caregiving experience");
+    expect(d).toContain("years of care experience");
     expect(d).toContain("hourly rate");
     expect(d).toContain("email address");
     // name + city are known -> shown as known, not still-needed
-    expect(d).toMatch(/already have it[\s\S]*caregiver's own name|caregiver's own name[\s\S]*already have it/i);
+    expect(d).toMatch(/already have it[\s\S]*care provider's own name|care provider's own name[\s\S]*already have it/i);
     // never the client checklist
     expect(d).not.toContain("the senior's age");
     expect(d).not.toContain("how many days a week care is needed");
@@ -119,7 +119,7 @@ describe("buildCaregiverOnboardingDirective", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
     expect(d).toContain("money / trust questions");
     expect(d).toContain("they set their own rate");
-    expect(d).toContain("background check is required for all caregivers");
+    expect(d).toContain("background check is required for all care providers");
     expect(d).toContain("never dodge, never oversell");
   });
 
@@ -255,7 +255,7 @@ describe("buildCaregiverOnboardingDirective — fields captured from the current
     const d = buildCaregiverOnboardingDirective({ name: "Hamse" }, "$18–$28/hr", []);
     expect(d).not.toContain("Their LAST message answered");
   });
-  it("routes through buildOnboardingDirective for the caregiver role", () => {
+  it("routes through buildOnboardingDirective for the care provider role", () => {
     const d = buildOnboardingDirective("caregiver", { name: "Hamse" }, "$18–$28/hr", ["name"]);
     expect(d).toContain("Their LAST message answered");
   });

@@ -65,7 +65,7 @@ describe("clientJobPostingContract — parity with the web wizard's job_postings
       careNeeds: ["companionship", "meal prep"],
       petsInHome: true, smokingHousehold: false,
       rate: 26, paymentMethod: "credit_card",
-      jobDescription: "Warm, patient caregiver needed.",
+      jobDescription: "Warm, patient care provider needed.",
     });
 
     const keys = new Set(Object.keys(doc));
@@ -243,7 +243,7 @@ describe("clientJobPostingContract — reverse mapping (site → Evia onboarding
       careNeeds: ["companionship", "meal prep"],
       petsInHome: true, smokingHousehold: false,
       rate: 26, caregiversNeeded: 2,
-      jobDescription: "Warm, patient caregiver needed.",
+      jobDescription: "Warm, patient care provider needed.",
     });
 
     const back = mapJobPostingsDocToOnboardingData(doc as unknown as Record<string, unknown>);
@@ -266,7 +266,7 @@ describe("clientJobPostingContract — reverse mapping (site → Evia onboarding
     expect(back.smokingHousehold).toBe(false);
     expect(back.rate).toBe(26);
     expect(back.caregiversNeeded).toBe(2);
-    expect(back.jobDescription).toBe("Warm, patient caregiver needed.");
+    expect(back.jobDescription).toBe("Warm, patient care provider needed.");
   });
 
   it("maps relationship 'myself' back to Evia's self sentinel; a legacy rateFlexible doc maps back to NO rate (never the string 'flexible')", () => {

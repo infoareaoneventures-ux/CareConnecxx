@@ -129,14 +129,14 @@ export async function resolveCaregiverForInterview(
       } else if (matches.length > 1) {
         throw new VideoInterviewRequestError(
           "ambiguous",
-          `This family has been shown ${matches.length} caregivers named "${caregiverId}" — ask which one they mean, then retry with the correct caregiverId.`,
+          `This family has been shown ${matches.length} care providers named "${caregiverId}" — ask which one they mean, then retry with the correct caregiverId.`,
           matches.map((d) => ({ id: d.id, hourlyRate: (d.data().hourlyRate as number | undefined) ?? 0 })),
         );
       }
     }
   }
   if (!caregiverSnap.exists) {
-    throw new VideoInterviewRequestError("failed-precondition", "Caregiver is not available for interviews");
+    throw new VideoInterviewRequestError("failed-precondition", "Care Provider is not available for interviews");
   }
   // Founder, 2026-10-06: no interview with a caregiver whose background check isn't
   // clear / approved — the same rule the site's profile page and the chat rules use.

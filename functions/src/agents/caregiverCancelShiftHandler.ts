@@ -76,9 +76,9 @@ const listText = (opts: CancelOption[]) => `What do you need to cancel?\n${opts.
 const answerMidFlow = (text: string, reAsk: string, facts: string) => answerMidFlowShared(text, reAsk, { audience: "caregiver", facts });
 /** What the Bookings page's cancel actually does (verified: it writes status, cancelledBy, updatedAt and nothing else). */
 export const CANCEL_RULES =
-  "A visit that starts within 24 hours is marked needs_replacement — the family is offered a replacement caregiver; any other visit is marked cancelled. " +
-  "It is recorded as cancelled by the caregiver and the family is notified, exactly as when the site's cancel button is used. " +
-  "No fee, charge or penalty is applied to the caregiver — only the visit's status changes. " +
+  "A visit that starts within 24 hours is marked needs_replacement — the family is offered a replacement care provider; any other visit is marked cancelled. " +
+  "It is recorded as cancelled by the care provider and the family is notified, exactly as when the site's cancel button is used. " +
+  "No fee, charge or penalty is applied to the care provider — only the visit's status changes. " +
   "Within 24 hours of a visit, cancelling is the only option (rescheduling is not offered that close to the start). " +
   "'This visit only' cancels one visit and the rest of the booking stays active; 'the whole booking' cancels this visit and every future scheduled visit of that booking, and the booking itself is closed when none of them was urgent.";
 /** The dialog's facts: nothing has happened yet, what YES would do for THIS option, and the page's rules. */
@@ -148,7 +148,7 @@ export async function cancelBookingLikeThePage(caregiverId: string, shiftId: str
 export async function resolveOptionFromText(text: string, options: CancelOption[]): Promise<CancelOption | null> {
   if (options.length === 0) return null;
   const raw = await parseWithClaude(
-    `A caregiver wrote a message about cancelling. These are the things they could cancel:\n${options.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n` +
+    `A care provider wrote a message about cancelling. These are the things they could cancel:\n${options.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n` +
       `Today is ${businessTodayStr()}. If the message clearly refers to exactly ONE of these (by day, date, family, or "the whole booking" / "all my shifts with"), reply with its number. ` +
       `If it just says they need to cancel something, or it is unclear which, reply 0. Reply with only the number.`,
     text,
@@ -232,7 +232,7 @@ export async function handleCaregiverCancelShift(
         const r = await cancelShiftLikeThePage(chosen.id, "caregiver", caregiverId);
         if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That shift is already ${r.status} — nothing to cancel.` : "That shift isn't on your bookings any more."); return; }
         await sendMessage(chatId, r.status === "needs_replacement"
-          ? `Cancelled — ${optionLine(chosen)}. It starts within 24 hours, so the family is being offered a replacement caregiver.`
+          ? `Cancelled — ${optionLine(chosen)}. It starts within 24 hours, so the family is being offered a replacement care provider.`
           : `Cancelled — ${optionLine(chosen)}. The family has been notified.`);
         return;
       }

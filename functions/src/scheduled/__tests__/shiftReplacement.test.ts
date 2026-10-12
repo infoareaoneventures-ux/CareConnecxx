@@ -155,7 +155,7 @@ describe("onBookingAccepted — single-shift replacement resolution", () => {
     expect(hoisted.docState.get("shifts/shift1").replacementRequestId).toBe("br1");
   });
 
-  it("marks the original shift cancelled/superseded once the replacement caregiver accepts", async () => {
+  it("marks the original shift cancelled/superseded once the replacement care provider accepts", async () => {
     hoisted.docState.set("shifts/shift1", { status: "needs_replacement", replacementRequestId: "br1" });
 
     await onBookingAccepted(

@@ -47,7 +47,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    }, [currentUser?.uid]);
 
    // Return from the membership checkout (CaregiverMembership.tsx successUrl
-   // `/caregiver/dashboard?membership=success`): same pattern as the client
+   // `/care-provider/dashboard?membership=success`): same pattern as the client
    // Membership page's `?success=true` — acknowledge once, strip the param.
    // The membership fields themselves arrive through the live caregivers/{uid}
    // listener above once the payment webhook writes them.
@@ -55,7 +55,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
       const params = new URLSearchParams(window.location.search);
       if (params.get('membership') !== 'success') return;
       onShowToast('Membership payment complete — thank you.', 'success');
-      window.history.replaceState({}, '', '/caregiver/dashboard');
+      window.history.replaceState({}, '', '/care-provider/dashboard');
       // eslint-disable-next-line react-hooks/exhaustive-deps
    }, []);
 
@@ -98,7 +98,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
                   <div className="text-center space-y-2">
                      <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">One step left</h2>
                      <p className="text-ink-600 text-sm leading-relaxed">
-                        Text Evia to finish setting up your caregiver profile. She'll walk you through the rest.
+                        Text Evia to finish setting up your care provider profile. She'll walk you through the rest.
                      </p>
                   </div>
 

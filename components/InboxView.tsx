@@ -176,7 +176,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
     if (existing) { setSelectedRoomId(existing.id); return; }
     let cancelled = false;
     (async () => {
-      let name = 'Caregiver';
+      let name = 'Care Provider';
       let photo = '';
       const cgSnap = await db.collection('publicCaregiverProfiles').doc(caregiverParam).get().catch(() => null);
       if (cgSnap?.exists) {
@@ -361,7 +361,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   useEffect(() => {
     if (!selectedRoomId) return;
     const careTeamLabel = isClient ? 'My Care Team' : 'My Families';
-    const otherLabel = isClient ? 'Other Caregivers' : 'Other Clients';
+    const otherLabel = isClient ? 'Other Care Providers' : 'Other Clients';
     if (careTeamRooms.findIndex(r => r.id === selectedRoomId) >= 3)
       setExpandedSections(prev => prev[careTeamLabel] ? prev : { ...prev, [careTeamLabel]: true });
     if (otherRooms.findIndex(r => r.id === selectedRoomId) >= 3)
@@ -422,7 +422,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
             <>
               {[
                 { label: isClient ? 'My Care Team' : 'My Families', rooms: careTeamRooms, collapsible: true },
-                { label: isClient ? 'Other Caregivers' : 'Other Clients', rooms: otherRooms, collapsible: true },
+                { label: isClient ? 'Other Care Providers' : 'Other Clients', rooms: otherRooms, collapsible: true },
                 { label: 'Support', rooms: supportRooms, collapsible: false },
               ].map(({ label, rooms: sectionRooms, collapsible }) => {
                 if (sectionRooms.length === 0) return null;

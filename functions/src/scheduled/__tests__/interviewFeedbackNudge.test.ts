@@ -258,7 +258,7 @@ describe("sendInterviewFeedbackNudges — only counts a nudge when it actually s
     expect(store.updates).toHaveLength(0);
   });
 
-  it("a booking for a different caregiver or job does not count; keys fall back to the interview id when there is no job", async () => {
+  it("a booking for a different care provider or job does not count; keys fall back to the interview id when there is no job", async () => {
     seedInterview("iv-open", { caregiverId: "cg-1", jobId: null });
     seedSession("+15550000011");
     store.bookings.set("other-cg",  { clientId: "client-1", caregiverId: "cg-2", jobId: null, interviewId: "iv-open" });

@@ -16,6 +16,7 @@
 // bare number / yes / no before any model call, one recap + explicit YES
 // gate. Nothing is written until that YES. Shares every check and write with
 // the MCP tool (request_schedule_amendment) via agents/visitRequest.ts.
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -103,10 +104,10 @@ async function answerQuestionMidFlow(text: string): Promise<string> {
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a family request an additional care visit (a new day/time) on one of " +
+      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family request an additional care visit (a new day/time) on one of " +
       "their existing bookings. You see ONLY this one message, not the rest of the conversation — including anything " +
       "Evia herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. NEVER " +
-      "state whether a caregiver is available at a time — you cannot see their schedule. If the message is clearly " +
+      "state whether a care provider is available at a time — you cannot see their schedule. If the message is clearly " +
       "about something OTHER than finishing this visit request, say plainly that it'll have to wait, e.g. \"That sounds " +
       "like something else — let's finish this first, and I'll help with that right after.\" Otherwise answer briefly " +
       "(1–2 sentences). Be warm. NEVER write out a URL. " + ANTI_INVENTION_CLAUSE,
@@ -161,7 +162,7 @@ function fullDays(days: readonly string[]): string {
   return days.map((d) => ABBR_TO_FULL[d] ?? d).join(", ");
 }
 function CAREGIVER_QUESTION(d: VisitRequestFlowData): string {
-  return `Which caregiver is this visit for?\n\n${d.caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\nReply with a number.`;
+  return `Which care provider is this visit for?\n\n${d.caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\nReply with a number.`;
 }
 function BOOKING_QUESTION(d: VisitRequestFlowData): string {
   const cg = chosenCaregiver(d);
@@ -184,7 +185,7 @@ function TIMES_QUESTION(d: VisitRequestFlowData): string {
 const START_QUESTION = 'When should this start? (e.g. "this week", "September 22", or "today")';
 const END_QUESTION = "Is this ongoing, or should it end on a certain date?";
 function NOTES_QUESTION(d: VisitRequestFlowData): string {
-  return `Any notes for ${d.caregiverName ?? "the caregiver"}? Reply NO to skip.`;
+  return `Any notes for ${d.caregiverName ?? "the care provider"}? Reply NO to skip.`;
 }
 // "Tuesday 2:00 PM–3:00 PM (1h)" — the modal shows each day's hours next to it.
 function describeDayLine(d: VisitRequestFlowData, a: string): string {
@@ -200,7 +201,7 @@ export function buildVisitRequestRecap(d: VisitRequestFlowData): string {
   return [
     "Here's your visit request:",
     "",
-    `Caregiver: ${d.caregiverName}`,
+    `Care Provider: ${d.caregiverName}`,
     `Booking: ${d.jobTitle}`,
     `Days & times: ${lines.join("; ")}`,
     `Starting: ${d.startDate ? formatDateWithWeekday(d.startDate) : "today"}${span ? ` (${span})` : ""}`,
@@ -227,7 +228,7 @@ export async function startVisitRequestFlow(
   if (caregivers.length === 0) {
     await sendMessage(chatId,
       "A visit request adds a day to a booking that's already active, and I don't see an active booking with visits on the calendar right now. " +
-      "Once a caregiver has accepted a booking, I can add days to it — or I can help you send a new booking request.");
+      "Once a care provider has accepted a booking, I can add days to it — or I can help you send a new booking request.");
     return { started: false, reason: "no_active_booking" };
   }
   const data: VisitRequestFlowData = { caregivers };
@@ -245,8 +246,8 @@ export async function startVisitRequestFlow(
   if (!cg && caregivers.length === 1) cg = caregivers[0];
   if (!cg && args.initialText?.trim()) {
     const raw = await parseWithClaude(
-      `Caregivers, numbered:\n${caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\n` +
-      "If the family's message clearly names one of these caregivers, return ONLY that number. Otherwise return 0.",
+      `Care Providers, numbered:\n${caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\n` +
+      "If the family's message clearly names one of these care providers, return ONLY that number. Otherwise return 0.",
       args.initialText,
     );
     const n = parseInt(raw.trim(), 10);
@@ -334,7 +335,7 @@ async function handlePickCaregiver(phone: string, chatId: string, text: string, 
   if (idx === null) {
     if (await guarded(phone, chatId, text, session, question)) return;
     const raw = await parseWithClaude(
-      `Caregivers, numbered:\n${data.caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\nReturn ONLY the number (1-based) the family picked, or 0 if unclear. Never guess.`,
+      `Care Providers, numbered:\n${data.caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\nReturn ONLY the number (1-based) the family picked, or 0 if unclear. Never guess.`,
       text,
     );
     idx = parseInt(raw.trim(), 10);
@@ -545,7 +546,7 @@ async function handleAskNotes(phone: string, chatId: string, text: string, sessi
   const words = text.trim().split(/\s+/).length;
   if (words <= 4) {
     const verdict = await parseWithClaude(
-      'The family was asked for an optional note to their caregiver. Reply DECLINE only if this short message is purely declining to add one ' +
+      'The family was asked for an optional note to their care provider. Reply DECLINE only if this short message is purely declining to add one ' +
       '("no thanks", "nothing", "no notes", "skip it", "none"). Reply NOTE if it contains anything they might want passed along. Only reply DECLINE or NOTE.',
       text,
     );

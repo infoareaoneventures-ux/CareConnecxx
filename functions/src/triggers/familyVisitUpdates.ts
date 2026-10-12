@@ -35,7 +35,7 @@ const toMs = (v: unknown): number => {
   return Date.parse(String(v));
 };
 
-export function firstName(full: unknown, fallback = "Your caregiver"): string {
+export function firstName(full: unknown, fallback = "Your care provider"): string {
   const s = String(full ?? "").trim();
   return s ? s.split(/\s+/)[0] : fallback;
 }
@@ -113,7 +113,7 @@ export function buildFamilyUpdateText(caregiverName: unknown, items: FamilyUpdat
 
 // The Past Booking card in words.
 export function buildVisitCompletionText(shift: Record<string, unknown>): string {
-  const cgFull = String(shift.caregiverName ?? "Your caregiver").trim() || "Your caregiver";
+  const cgFull = String(shift.caregiverName ?? "Your care provider").trim() || "Your care provider";
   const cg = firstName(cgFull);
   const startMs = toMs(shift.startedAt);
   const endMs = toMs(shift.completedAt) || Date.now();
@@ -161,7 +161,7 @@ export function buildVisitCompletionText(shift: Record<string, unknown>): string
   const log = ((Array.isArray(shift.notesLog) ? shift.notesLog : []) as VisitNoteEntry[])
     .map((n) => String(n.text ?? "").trim()).filter(Boolean);
   if (log.length) sections.push(["Visit notes", ...log.map((t) => `· ${t}`)].join("\n"));
-  if (typeof shift.completionNotes === "string" && shift.completionNotes.trim()) sections.push(`Caregiver note\n${shift.completionNotes.trim()}`);
+  if (typeof shift.completionNotes === "string" && shift.completionNotes.trim()) sections.push(`Care Provider note\n${shift.completionNotes.trim()}`);
   if (lines.length) sections.push(lines.join("\n"));
   sections.push(`${cg} will submit the hours next; you'll get them here to review.`);
   return sections.join("\n\n");

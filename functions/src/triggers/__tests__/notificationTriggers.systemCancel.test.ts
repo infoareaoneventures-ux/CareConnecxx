@@ -71,28 +71,28 @@ beforeEach(() => {
   hoisted.docState.set(`agent_sessions/${CL_PHONE}`, { userId: CLIENT });
 });
 
-describe("C8 — a 'system' release (caregiver locked) tells the FAMILY, never the caregiver", () => {
+describe("C8 — a 'system' release (care provider locked) tells the FAMILY, never the care provider", () => {
   const base = { clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", clientName: "The Nguyens", date: "2099-03-04" };
 
-  it("> 24h out (status cancelled): the family hears the visit is released and is offered another caregiver; the reason is never stated; the caregiver gets nothing", async () => {
+  it("> 24h out (status cancelled): the family hears the visit is released and is offered another care provider; the reason is never stated; the care provider gets nothing", async () => {
     await (onShiftStatusChanged as any)(change({ ...base, status: "scheduled" }, "s1", { ...base, status: "cancelled", cancelledBy: "system" }), ctx());
     expect(textsTo(CG_PHONE)).toEqual([]);
     expect(bellsFor(CAREGIVER)).toEqual([]);
     const family = textsTo(CL_PHONE);
     expect(family).toHaveLength(1);
-    expect(family[0]).toBe("Alice isn't available for the visit on Wed, Mar 4, so it's been released. Text me to find another caregiver for that day, or to skip it.");
+    expect(family[0]).toBe("Alice isn't available for the visit on Wed, Mar 4, so it's been released. Text me to find another care provider for that day, or to skip it.");
     expect(family[0]).not.toMatch(/membership|background|locked|cancelled the visit/i);
-    expect(bellsFor(CLIENT)[0]).toMatchObject({ type: "shift_cancelled", title: "Visit Released", sourcePath: "shifts/s1", eventId: "evt-1", body: "Alice isn't available for the visit on Wed, Mar 4 — it's been released. Book another caregiver or skip it." });
+    expect(bellsFor(CLIENT)[0]).toMatchObject({ type: "shift_cancelled", title: "Visit Released", sourcePath: "shifts/s1", eventId: "evt-1", body: "Alice isn't available for the visit on Wed, Mar 4 — it's been released. Book another care provider or skip it." });
   });
 
-  it("within 24h (status needs_replacement): the family gets the replacement offer in the released wording; the caregiver is not told anything", async () => {
+  it("within 24h (status needs_replacement): the family gets the replacement offer in the released wording; the care provider is not told anything", async () => {
     await (onShiftStatusChanged as any)(change({ ...base, status: "scheduled" }, "s1", { ...base, status: "needs_replacement", cancelledBy: "system" }), ctx());
     expect(textsTo(CG_PHONE)).toEqual([]);
     expect(textsTo(CL_PHONE)).toEqual(["Alice isn't available for the visit on Wed, Mar 4. Text me to find a replacement, or to skip that visit."]);
     expect(bellsFor(CLIENT)[0]).toMatchObject({ type: "shift_needs_replacement", body: "Alice isn't available for the visit on Wed, Mar 4 — find a replacement or skip it." });
   });
 
-  it("the caregiver's own cancellation and the family's own cancellation keep their directions", async () => {
+  it("the care provider's own cancellation and the family's own cancellation keep their directions", async () => {
     await (onShiftStatusChanged as any)(change({ ...base, status: "scheduled" }, "s1", { ...base, status: "cancelled", cancelledBy: "caregiver" }), ctx());
     expect(textsTo(CL_PHONE)).toEqual(["Alice cancelled the visit on Wed, Mar 4."]);
     expect(textsTo(CG_PHONE)).toEqual([]);
@@ -108,7 +108,7 @@ describe("C8 — a 'system' release (caregiver locked) tells the FAMILY, never t
 });
 
 describe("C11 — bell ⇄ text in lockstep on the booking pipeline", () => {
-  it("the caregiver's bell is written only after the text went; a dropped text writes no bell", async () => {
+  it("the care provider's bell is written only after the text went; a dropped text writes no bell", async () => {
     const after = { status: "pending", clientId: CLIENT, caregiverId: CAREGIVER, clientName: "A Family" };
     await (onBookingRequestWrite as any)(change(null, "br1", after), ctx());
     expect(bellsFor(CAREGIVER)).toHaveLength(1);

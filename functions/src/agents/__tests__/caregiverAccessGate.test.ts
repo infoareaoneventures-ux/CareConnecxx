@@ -15,7 +15,7 @@ import {
 } from "../caregiverAccessGate";
 import { isCaregiverMembershipActiveForFamilies } from "../../utils/caregiverEligibility";
 
-describe("the ONE caregiver membership rule (sweep C1, 2026-10-11)", () => {
+describe("the ONE care provider membership rule (sweep C1, 2026-10-11)", () => {
   it("active / trialing / past_due / payment_failed = active; canceled, unpaid, inactive are not; the legacy paid flag only with no status", () => {
     for (const s of ["active", "trialing", "past_due", "payment_failed"]) expect(isCaregiverMembershipActive({ membershipStatus: s })).toBe(true);
     for (const s of ["canceled", "unpaid", "inactive", "incomplete_expired"]) expect(isCaregiverMembershipActive({ membershipStatus: s, membershipPaid: true })).toBe(false);

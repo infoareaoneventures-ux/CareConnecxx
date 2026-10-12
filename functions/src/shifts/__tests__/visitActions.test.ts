@@ -90,7 +90,7 @@ describe("pure rules", () => {
 describe("startRefusal — the Start Shift button's conditions, in order", () => {
   const base = () => { const w = inMinutes(5); return { date: w.date, startTime: w.time, endTime: "23:59", status: "scheduled", caregiverId: CG, clientName: "Basra Yousuf" }; };
   const ok = { caregiverId: CG, gateBlock: null, caregiver: {}, otherOpen: null };
-  it("not the shift's caregiver → not_yours", () => {
+  it("not the shift's care provider → not_yours", () => {
     expect(startRefusal({ ...ok, shift: { ...base(), caregiverId: "someone" } })).toMatchObject({ reason: "not_yours" });
   });
   it("not scheduled → not_scheduled (with the status)", () => {
@@ -222,7 +222,7 @@ describe("endVisit", () => {
 });
 
 describe("cancelVisit — the ✕", () => {
-  it("within 24h → needs_replacement; further out → cancelled; cancelledBy caregiver; updatedAt", async () => {
+  it("within 24h → needs_replacement; further out → cancelled; cancelledBy care provider; updatedAt", async () => {
     const soon = inMinutes(2 * 60), far = inMinutes(30 * 60);
     shift("a", { date: soon.date, startTime: soon.time, endTime: "23:59" });
     shift("b", { date: far.date, startTime: far.time, endTime: "23:59" });

@@ -52,7 +52,7 @@ export async function respondToInterviewRequest(
   if (!ivSnap.exists) throw new InterviewResponseError("not-found", "Interview not found");
   const iv = ivSnap.data()!;
   if (iv.caregiverId !== caregiverId) {
-    throw new InterviewResponseError("permission-denied", "Interview does not belong to this caregiver");
+    throw new InterviewResponseError("permission-denied", "Interview does not belong to this care provider");
   }
 
   // The tab shows Accept / Decline only on a PENDING row. An accepted interview

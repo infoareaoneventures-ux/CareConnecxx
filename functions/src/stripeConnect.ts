@@ -26,8 +26,8 @@ const buildAccountLink = async (accountId: string) => {
     const base = appUrl();
     // Shared with Evia's Setup links and the Manage-in-Stripe fallback (connectAccount.ts).
     const url = await createConnectOnboardingLink(stripe, accountId, {
-        returnUrl: `${base}/caregiver/payments?tab=payouts&stripe=success`,
-        refreshUrl: `${base}/caregiver/payments?tab=payouts&stripe=refresh`,
+        returnUrl: `${base}/care-provider/payments?tab=payouts&stripe=success`,
+        refreshUrl: `${base}/care-provider/payments?tab=payouts&stripe=refresh`,
     });
     return { url };
 };

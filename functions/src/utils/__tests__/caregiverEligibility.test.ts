@@ -20,7 +20,7 @@ describe("isCaregiverBookable", () => {
     expect(isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", membershipPaid: true })).toBe(true); // legacy paid flag, no status
   });
 
-  it("returns false for undefined / null / empty caregiver", () => {
+  it("returns false for undefined / null / empty care provider", () => {
     expect(isCaregiverBookable(undefined)).toBe(false);
     expect(isCaregiverBookable(null)).toBe(false);
     expect(isCaregiverBookable({})).toBe(false);

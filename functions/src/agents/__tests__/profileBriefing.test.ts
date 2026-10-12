@@ -39,7 +39,7 @@ describe("describeLocation", () => {
   });
 });
 
-describe("describeSharedProfile — caregiver", () => {
+describe("describeSharedProfile — care provider", () => {
   it("carries every recall-worthy fact Hamse actually shared", () => {
     const brief = describeSharedProfile(HAMSE);
     expect(brief).toContain("THEY'VE ALREADY SHARED");
@@ -180,7 +180,7 @@ describe("describeSharedProfile — canonical profile pinning", () => {
   // ignored entirely for caregivers (a real bug: a caregiver's own corrected
   // name/rate/availability could go stale for the account's whole lifetime);
   // it now follows the same canonical-wins rule the client branch already has.
-  it("canonical caregiver fields win over the stale signup snapshot", () => {
+  it("canonical care provider fields win over the stale signup snapshot", () => {
     const withCanon = describeSharedProfile(HAMSE, {
       name: "Hamse M.", city: "San Jose", zipCode: "95110", hourlyRate: 32,
     });
@@ -192,7 +192,7 @@ describe("describeSharedProfile — canonical profile pinning", () => {
     expect(withCanon).not.toContain("$27/hr");
   });
 
-  it("snapshot still fills caregiver fields the canonical profile does not carry", () => {
+  it("snapshot still fills care provider fields the canonical profile does not carry", () => {
     // Canonical carries only the name — specialties/availability/rate/email
     // still come from the signup snapshot (fill, don't override).
     const brief = describeSharedProfile(HAMSE, { name: "Hamse M." });
@@ -202,7 +202,7 @@ describe("describeSharedProfile — canonical profile pinning", () => {
     expect(brief).toContain("rate: $27/hr");
   });
 
-  it("without a canonical profile the caregiver snapshot is unchanged", () => {
+  it("without a canonical profile the care provider snapshot is unchanged", () => {
     const bare = describeSharedProfile(HAMSE);
     expect(bare).toBe(describeSharedProfile(HAMSE, null));
     expect(bare).toContain("name: Hamse mahad");

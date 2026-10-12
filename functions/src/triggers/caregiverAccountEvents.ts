@@ -151,11 +151,11 @@ export async function releaseUpcomingVisitsOnLock(uid: string): Promise<number> 
     severity: released > 0 ? "high" : "medium",
     resolved: false,
     caregiverId: uid,
-    caregiverName: String(cg.name ?? "A caregiver"),
+    caregiverName: String(cg.name ?? "A care provider"),
     releasedVisits: released,
     membershipStatus: cg.membershipStatus ?? null,
     backgroundCheckStatus: cg.backgroundCheckStatus ?? null,
-    message: `${String(cg.name ?? "A caregiver")} is locked (membership ${cg.membershipStatus ?? "unknown"}, background ${cg.backgroundCheckStatus ?? "unknown"}); ${released} upcoming visit${released === 1 ? "" : "s"} released to the families.`,
+    message: `${String(cg.name ?? "A care provider")} is locked (membership ${cg.membershipStatus ?? "unknown"}, background ${cg.backgroundCheckStatus ?? "unknown"}); ${released} upcoming visit${released === 1 ? "" : "s"} released to the families.`,
     createdAt: new Date().toISOString(),
   }).catch(() => {});
   return released;

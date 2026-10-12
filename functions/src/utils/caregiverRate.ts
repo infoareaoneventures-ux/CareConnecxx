@@ -46,17 +46,17 @@ export async function resolveCaregiverName(
 ): Promise<{ ok: true; caregiverName: string } | { ok: false; message: string }> {
   if (!caregiverId) return { ok: false, message: "caregiverId is required" };
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-  if (!cgSnap.exists) return { ok: false, message: "caregiver not found" };
+  if (!cgSnap.exists) return { ok: false, message: "care provider not found" };
   const cg = cgSnap.data() || {};
-  return { ok: true, caregiverName: (cg.name ?? cg.fullName ?? "your caregiver") as string };
+  return { ok: true, caregiverName: (cg.name ?? cg.fullName ?? "your care provider") as string };
 }
 
 export async function resolveCaregiverRate(caregiverId: string): Promise<CaregiverRateResult> {
   if (!caregiverId) return { ok: false, message: "caregiverId is required" };
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-  if (!cgSnap.exists) return { ok: false, message: "caregiver not found" };
+  if (!cgSnap.exists) return { ok: false, message: "care provider not found" };
   const cg = cgSnap.data() || {};
-  const caregiverName = (cg.name ?? cg.fullName ?? "your caregiver") as string;
+  const caregiverName = (cg.name ?? cg.fullName ?? "your care provider") as string;
   const hourlyRate = coerceHourlyRate(cg.hourlyRate);
   if (hourlyRate === null) {
     return {
@@ -64,8 +64,8 @@ export async function resolveCaregiverRate(caregiverId: string): Promise<Caregiv
       message:
         `${caregiverName} has no hourly rate on file, so nothing was quoted or booked. ` +
         `Do NOT assume, invent, or state any dollar rate. Tell the family you need to confirm ` +
-        `this caregiver's rate first, and do not quote or book until a real rate is on file. ` +
-        `If the family needs this resolved now, use contact_support so the team can confirm the caregiver's rate.`,
+        `this care provider's rate first, and do not quote or book until a real rate is on file. ` +
+        `If the family needs this resolved now, use contact_support so the team can confirm the care provider's rate.`,
     };
   }
   return { ok: true, caregiverName, hourlyRate };

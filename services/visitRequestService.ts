@@ -54,7 +54,7 @@ export async function fetchRequestVisitTargets(uid: string): Promise<RequestVisi
       if (!d.caregiverId) return;
       if (!seenCg.has(d.caregiverId)) {
         seenCg.add(d.caregiverId);
-        cgList.push({ id: d.caregiverId, name: d.caregiverName || 'Caregiver' });
+        cgList.push({ id: d.caregiverId, name: d.caregiverName || 'Care Provider' });
       }
       if (!bookingMap[d.caregiverId]) bookingMap[d.caregiverId] = [];
       bookingMap[d.caregiverId].push({

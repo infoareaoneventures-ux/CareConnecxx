@@ -60,7 +60,7 @@ describe("get_care_team", () => {
     hoisted.collState.set("appointments", []);
   });
 
-  it("a caregiver accepted via the new pipeline WITH a scheduled shift shows as active", async () => {
+  it("a care provider accepted via the new pipeline WITH a scheduled shift shows as active", async () => {
     hoisted.collState.set("booking_requests", [
       { id: "br1", clientId: CLIENT, caregiverId: "cg1", caregiverName: "Alice", status: "accepted", careRecipients: [{ firstName: "Mom" }] },
     ]);
@@ -78,7 +78,7 @@ describe("get_care_team", () => {
     expect(r.past).toHaveLength(0);
   });
 
-  it("a caregiver accepted but with NO scheduled shifts left shows as past, not active", async () => {
+  it("a care provider accepted but with NO scheduled shifts left shows as past, not active", async () => {
     hoisted.collState.set("booking_requests", [
       { id: "br1", clientId: CLIENT, caregiverId: "cg1", caregiverName: "Alice", status: "accepted" },
     ]);
@@ -105,13 +105,13 @@ describe("get_care_team", () => {
     expect(r.careTeam[0].active).toBe(true);
   });
 
-  it("a declined request is NOT a past caregiver (the page lists only cancelled/completed/finished bookings)", async () => {
+  it("a declined request is NOT a past care provider (the page lists only cancelled/completed/finished bookings)", async () => {
     hoisted.collState.set("booking_requests", [{ id: "br1", clientId: CLIENT, caregiverId: "cg1", caregiverName: "Alice", status: "declined" }]);
     const r = await handleToolCall("get_care_team", { clientId: CLIENT }) as any;
     expect(r.careTeam).toEqual([]);
   });
 
-  it("Past keeps the most recent booking per caregiver and offers Re-book only after a completed interview; card fields come from the booking + publicCaregiverProfiles like the page", async () => {
+  it("Past keeps the most recent booking per care provider and offers Re-book only after a completed interview; card fields come from the booking + publicCaregiverProfiles like the page", async () => {
     hoisted.collState.set("booking_requests", [
       { id: "old", clientId: CLIENT, caregiverId: "cg1", caregiverName: "Alice", status: "cancelled", rate: 20, createdAt: { seconds: 1 }, schedule: { days: ["Mon"] } },
       { id: "new", clientId: CLIENT, caregiverId: "cg1", caregiverName: "Alice", status: "completed", rate: 5, createdAt: { seconds: 9 }, schedule: { dayShiftTimes: { Tue: [], Thu: [] } }, careRecipients: [{ name: "Samira M" }, { firstName: "Imran" }] },

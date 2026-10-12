@@ -9,7 +9,7 @@ import {
 import { NotificationDropdown } from '../ui/NotificationDropdown';
 import { BloomMark } from '../ui/BloomMark';
 
-const FIND_CARE_ROUTES = ['/client/find-caregivers', '/client/browse-caregivers', '/client/posts', '/client/post-job'];
+const FIND_CARE_ROUTES = ['/client/find-care-providers', '/client/browse-caregivers', '/client/posts', '/client/post-job'];
 import { authService, dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
 
@@ -134,7 +134,7 @@ export const ClientNavigation: React.FC = () => {
               {findCareOpen && (
                 <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
                   {[
-                    { icon: <Search className="w-4 h-4" />, label: 'Browse Caregivers', path: '/client/find-caregivers' },
+                    { icon: <Search className="w-4 h-4" />, label: 'Browse Care Providers', path: '/client/find-care-providers' },
                     { icon: <Briefcase className="w-4 h-4" />, label: 'Care Requests', path: '/client/posts' },
                   ].map(item => (
                     <button key={item.path} onClick={() => { navigate(item.path); setFindCareOpen(false); }}
@@ -249,10 +249,10 @@ export const ClientNavigation: React.FC = () => {
           <div className="absolute bottom-[57px] left-4 right-4 bg-white rounded-2xl shadow-xl overflow-hidden"
             onClick={e => e.stopPropagation()}>
             <button
-              onClick={() => { setMobileFindCareOpen(false); navigate('/client/find-caregivers'); }}
+              onClick={() => { setMobileFindCareOpen(false); navigate('/client/find-care-providers'); }}
               className="w-full flex items-center gap-3 px-4 py-4 text-sm font-medium text-gray-800 hover:bg-gray-50 transition-colors border-b border-gray-100"
             >
-              <Search className="w-4 h-4 text-primary-600" /><span>Browse Caregivers</span>
+              <Search className="w-4 h-4 text-primary-600" /><span>Browse Care Providers</span>
             </button>
             <button
               onClick={() => { setMobileFindCareOpen(false); navigate('/client/posts'); }}

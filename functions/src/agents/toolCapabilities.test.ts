@@ -250,7 +250,7 @@ describe("LAUNCH_ACTION_PARITY", () => {
     expect(ids.length).toBe(new Set(ids).size);
   });
 
-  it("shipped caregiver tools are reachable by the caregiver prompt filter", () => {
+  it("shipped care provider tools are reachable by the care provider prompt filter", () => {
     // A shipped caregiver action must be exposed to the caregiver prompt — i.e.
     // tagged in TOOL_CAPABILITIES or in the core allowlist. A silently
     // unreachable tool would make Evia claim parity it can't deliver.

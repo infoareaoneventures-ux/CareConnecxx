@@ -166,7 +166,7 @@ export const AdminTeamManager: React.FC = () => {
                 <p className="text-sm text-slate-700">
                   {selected.role === 'admin'
                     ? 'Full access to this admin panel. Granted on the user record (user type "admin" or the isAdmin flag).'
-                    : 'Coordinator — will manage client and caregiver accounts. Granted on the user record (user type "coordinator").'}
+                    : 'Coordinator — will manage client and care provider accounts. Granted on the user record (user type "coordinator").'}
                 </p>
                 <p className="text-xs text-slate-400">Roles are changed on the user record; there is no grant or revoke button here yet.</p>
               </div>

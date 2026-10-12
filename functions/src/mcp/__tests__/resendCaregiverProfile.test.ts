@@ -75,7 +75,7 @@ describe("resend_caregiver_profile", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it("fails NOT_FOUND when the caregiver isn't in publicCaregiverProfiles", async () => {
+  it("fails NOT_FOUND when the care provider isn't in publicCaregiverProfiles", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: "chat_1" });
     const r = await handleToolCall("resend_caregiver_profile", baseInput) as any;
     expect(r._toolError).toBe(true);
@@ -83,7 +83,7 @@ describe("resend_caregiver_profile", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it("sends the profile card with the caregiver's name, rate, and tappable /p/{id} link", async () => {
+  it("sends the profile card with the care provider's name, rate, and tappable /p/{id} link", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: "chat_1" });
     hoisted.docState.set(`publicCaregiverProfiles/${CAREGIVER}`, {
       name: "Basra Yousuf",

@@ -53,7 +53,7 @@ export const Step6Review: React.FC<Step6Props> = ({
   return (
     <div>
       <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center mb-1">Review your post</h2>
-      <p className="text-center text-slate-500 mb-8">Take a last look before caregivers can see it.</p>
+      <p className="text-center text-slate-500 mb-8">Take a last look before care providers can see it.</p>
 
       <div className="bg-white rounded-2xl border border-slate-200 px-4 sm:px-6 py-1">
         <Row label="Title" value={data.title || '—'} onEdit={() => onEditStep(4)} />

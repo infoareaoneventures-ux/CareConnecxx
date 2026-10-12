@@ -15,6 +15,7 @@
 // number / yes / no before any model call, one recap + explicit YES gate.
 // Nothing is written until that YES. Shares every write with the MCP tools
 // (get_callout_backups / select_callout_backup) via agents/shiftReplacement.ts.
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -109,7 +110,7 @@ async function answerQuestionMidFlow(text: string): Promise<string> {
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a family send a replacement request for a visit their caregiver " +
+      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family send a replacement request for a visit their care provider " +
       "cancelled. You see ONLY this one message, not the rest of the conversation — including anything Evia herself " +
       "said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. If the message is " +
       "clearly about something OTHER than finishing this replacement — a different visit, billing, a job post — do " +
@@ -195,7 +196,7 @@ function TIME_QUESTION(d: ReplacementFlowData): string {
 
 function RECAP(d: ReplacementFlowData): string {
   return `Send a replacement request to ${d.caregiverName}${d.caregiverRate ? ` ($${d.caregiverRate}/hr · $${billedHourly(d.caregiverRate).toFixed(2)}/hr billed)` : ""} for ${effectiveWindow(d)}?\n\n` +
-    `Reply YES to send it, NO to cancel, or tell me what to change (a different caregiver or day/time).`;
+    `Reply YES to send it, NO to cancel, or tell me what to change (a different care provider or day/time).`;
 }
 
 // ── Entry ─────────────────────────────────────────────────────────────────────

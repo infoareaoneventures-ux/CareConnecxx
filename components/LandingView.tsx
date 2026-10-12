@@ -22,9 +22,9 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
    return (
       <div className="flex flex-col min-h-screen bg-paper-50 font-sans">
          <SEO
-            title="Find a Caregiver in Santa Clara County"
-            description="Evia connects families in Santa Clara County with local caregivers who have completed a background check. Non-medical help at home, coordinated entirely over text."
-            keywords="senior care, caregiver, elderly care, in-home care, companionship, personal care, dementia care, Santa Clara County"
+            title="Find a Care Provider in Santa Clara County"
+            description="Evia connects families in Santa Clara County with local care providers who have completed a background check. Non-medical help at home, coordinated entirely over text."
+            keywords="senior care, care provider, elderly care, in-home care, companionship, personal care, dementia care, Santa Clara County"
             schema={{
               '@context': 'https://schema.org',
               '@graph': [
@@ -33,7 +33,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                 {
                   '@type': 'WebPage',
                   name: 'Evia - Senior Care Marketplace',
-                  description: 'Connect with local caregivers who have completed a background check. Matching by your care needs, schedule and distance.',
+                  description: 'Connect with local care providers who have completed a background check. Matching by your care needs, schedule and distance.',
                   url: 'https://www.eviacares.com/'
                 }
               ]

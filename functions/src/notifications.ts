@@ -157,8 +157,8 @@ export async function notifyAdminNewCaregiverSignup(params: {
         severity:    "low",
     });
     await sendAdminEmail(
-        `New caregiver signup: ${params.name}`,
-        `<p>A new caregiver just signed up via Evia iMessage.</p>` +
+        `New care provider signup: ${params.name}`,
+        `<p>A new care provider just signed up via Evia iMessage.</p>` +
         `<p><strong>Name:</strong> ${params.name}<br>` +
         `<strong>Phone:</strong> ${params.phone}<br>` +
         `<strong>City:</strong> ${params.city}</p>`
@@ -205,7 +205,7 @@ export async function notifyAdminInterviewScheduled(params: {
     await sendAdminEmail(
         `Interview scheduled: ${params.caregiverName}`,
         `<p>An interview was scheduled via Evia.</p>` +
-        `<p><strong>Caregiver:</strong> ${params.caregiverName}<br>` +
+        `<p><strong>Care Provider:</strong> ${params.caregiverName}<br>` +
         `<strong>Time:</strong> ${params.scheduledTime}</p>`
     );
 }
@@ -227,7 +227,7 @@ export async function notifyAdminBookingConfirmed(params: {
     await sendAdminEmail(
         `Booking confirmed: ${params.appointmentCount} appts with ${params.caregiverName}`,
         `<p>A booking was confirmed via Evia.</p>` +
-        `<p><strong>Caregiver:</strong> ${params.caregiverName}<br>` +
+        `<p><strong>Care Provider:</strong> ${params.caregiverName}<br>` +
         `<strong>Appointments:</strong> ${params.appointmentCount}<br>` +
         `<strong>Total:</strong> $${params.totalCost.toFixed(2)}</p>`
     );
@@ -268,10 +268,10 @@ export async function notifyAdminCaregiverIssue(params: {
         severity:  "high",
     });
     await sendAdminEmail(
-        `Caregiver issue reported: ${params.caregiverName}`,
+        `Care Provider issue reported: ${params.caregiverName}`,
         `<p><strong>Description:</strong> ${params.description}</p>` +
-        `<p>Caregiver: ${params.caregiverName} (${params.caregiverId})<br>` +
+        `<p>Care Provider: ${params.caregiverName} (${params.caregiverId})<br>` +
         `Appointment: ${params.appointmentId}</p>`
     );
-    await textAdmin(`[Evia] Issue from caregiver ${params.caregiverName}: ${params.description}`);
+    await textAdmin(`[Evia] Issue from care provider ${params.caregiverName}: ${params.description}`);
 }

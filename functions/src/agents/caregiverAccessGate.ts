@@ -168,7 +168,7 @@ export async function textCaregiverGateBlock(
   }
   // Membership & verification lives on Account Settings (2026-10-04): Activate and
   // Authorize have their card there (external steps = a link is the twin).
-  const fallback = "/caregiver/settings";
+  const fallback = "/care-provider/settings";
   await sendMessage(chatId, { parts: [{ type: "link", value: appLink(fallback) }] });
 }
 

@@ -68,7 +68,7 @@ describe("counters wait on the family too", () => {
   it("both Needs Review statuses that wait on the family are nudged", () => {
     expect([...WAITING_ON_FAMILY]).toEqual(["pending_client_review", "caregiver_counter_proposed"]);
   });
-  it("a counter ages from when the caregiver countered, not from the original submission", () => {
+  it("a counter ages from when the care provider countered, not from the original submission", () => {
     expect(waitingSinceMs({ status: "pending_client_review", submittedAt: "2026-09-18T05:40:00.000Z" })).toBe(Date.parse("2026-09-18T05:40:00.000Z"));
     expect(waitingSinceMs({ status: "caregiver_counter_proposed", submittedAt: "2026-09-18T05:40:00.000Z", counterProposedAt: "2026-09-19T01:00:00.000Z" })).toBe(Date.parse("2026-09-19T01:00:00.000Z"));
     expect(waitingSinceMs({ status: "caregiver_counter_proposed", submittedAt: "2026-09-18T05:40:00.000Z", updatedAt: "2026-09-19T02:00:00.000Z" })).toBe(Date.parse("2026-09-19T02:00:00.000Z"));

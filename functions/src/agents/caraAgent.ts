@@ -96,14 +96,14 @@ async function shouldSend(
       // Role-aware (C12): the prompt used to say "to a family" for every send,
       // so a caregiver's nudge was judged as if it were a family care update.
       const role = sessionRole(session);
-      const who = role === "caregiver" ? "a caregiver (about their own jobs, visits, timesheets, pay or account)" : "a family";
+      const who = role === "caregiver" ? "a care provider (about their own jobs, visits, timesheets, pay or account)" : "a family";
       const raw = await quickComplete(
         `You decide if a message from a care coordinator should be sent to ${who} right now.\n` +
           "Consider: Is this new info? Is it timely? Would a human coordinator send this now?\n" +
           "Reply SEND or WAIT — one word only.",
         `Message: "${output.content.slice(0, 200)}"\n` +
           `Last sent: ${lastSentAt ?? "never"}\n` +
-          `Current local time for this ${role === "caregiver" ? "caregiver" : "family"}: ${localTime} (${tz})`,
+          `Current local time for this ${role === "caregiver" ? "care provider" : "family"}: ${localTime} (${tz})`,
         { maxTokens: 5, signal: controller.signal },
       );
       clearTimeout(timer);

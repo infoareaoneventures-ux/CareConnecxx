@@ -90,7 +90,7 @@ describe("the one public page says only what the product does", () => {
 
   it("the trust section lists only what happens: background check, optional interview, Stripe, text", () => {
     const src = copyOf(read("components/landing/TrustSafetySection.tsx"));
-    expect(src).toContain("Every caregiver completes a background check before families can book them.");
+    expect(src).toContain("Every care provider completes a background check before families can book them.");
     expect(src).toContain("Annual background check by Checkr"); // provider named since 2026-10-12 (team confirmed)
     expect(src).toContain("Interview before you book"); // the parenthetical came out 2026-10-12 (founder)
     expect(src).toContain("Payments through Stripe");
@@ -114,13 +114,13 @@ describe("the one public page says only what the product does", () => {
   it("the footer is the mark, one line and five links", () => {
     const src = copyOf(read("components/landing/Footer.tsx"));
     for (const label of [">Privacy<", ">Terms<", ">Log in<", ">Get started<", ">Admin<"]) expect(src).toContain(label);
-    expect(src).not.toMatch(/Twitter|Facebook|Instagram|For Families|For Caregivers|Family FAQ|Help Center|How It Works|LegalDocs/);
+    expect(src).not.toMatch(/Twitter|Facebook|Instagram|For Families|For Caregivers|For Care Providers|Family FAQ|Help Center|How It Works|LegalDocs/);
     expect(src).toContain("supportPhone"); // the help phone lives in the footer (2026-10-12)
   });
 
   it("the site header is Log in + Get started only (shared by every pre-login page), and the removed sections are not rendered", () => {
     const header = read("components/landing/SiteHeader.tsx");
-    expect(header).not.toMatch(/Find Care|For Caregivers|Find Jobs|>Help</);
+    expect(header).not.toMatch(/Find Care|For Caregivers|For Care Providers|Find Jobs|>Help</);
     for (const label of ["Log in", "Get started"]) expect(header).toContain(label);
     for (const page of ["components/auth/TaskPageBar.tsx", "components/pages/PrivacyPolicyPage.tsx", "components/pages/TermsOfServicePage.tsx"]) expect(read(page)).toContain("SiteHeader");
     for (const page of ["components/auth/LoginPage.tsx", "components/auth/onboarding/OnboardingFlow.tsx", "components/pages/PrivacyPolicyPage.tsx", "components/pages/TermsOfServicePage.tsx"]) expect(read(page)).toContain("<Footer />");
@@ -214,4 +214,49 @@ describe("Privacy and Terms", () => {
       expect(src).not.toMatch(/HIPAA[- ]compliant|compl(y|ies|iance) with HIPAA|business associate/i);
     });
   }
+});
+
+// Founder's wording decision 2026-10-12: the person who gives care is a
+// "care provider" everywhere a person reads it. Machine names (collections,
+// fields, `userType: 'caregiver'`, identifiers, the `role=caregiver` value the
+// server reads, component/file names) keep the old word — this rule is about
+// COPY, so comments, imports and identifier/path/kebab contexts are excluded.
+describe("the public page and the legal pages say \"care provider\", never \"caregiver\"", () => {
+  const CAREGIVER_IN_COPY = /(?<![\w/\-])caregiv(?:er|ers|ing)(?![\w\-])/i;
+  for (const rel of [...LANDING_FILES, ...LEGAL_FILES, "public/manifest.json", "public/sitemap.xml"]) {
+    it(`${rel}: no "caregiver" in visible copy`, () => {
+      expect(copyOf(read(rel)).match(CAREGIVER_IN_COPY), rel).toBeNull();
+    });
+  }
+
+  it("the site's signup link says role=care-provider; /start still accepts role=caregiver for the links already texted", () => {
+    expect(copyOf(read("App.tsx"))).not.toMatch(/\/start\?role=caregiver\b/);
+    expect(read("public/sitemap.xml")).toContain("/start?role=care-provider");
+    const start = read("components/auth/PhoneSignupPage.tsx");
+    expect(start).toContain("'care-provider': 'caregiver'");
+    expect(start).toContain("caregiver: 'caregiver'");
+  });
+
+  it("the caregiver pages live under /care-provider/, the old /caregiver/* addresses redirect, and the bell map uses the new prefix", () => {
+    // The redirect lines are checked on the raw source: copyOf() would read the `/*` in the
+    // catch-all path as a comment opener.
+    const rawApp = read("App.tsx");
+    expect(rawApp).toContain('<Route path="/caregiver/*" element={<LegacyCaregiverRedirect />} />');
+    expect(rawApp).toContain('<Route path="/caregiver" element={<LegacyCaregiverRedirect />} />');
+    // The family's two provider addresses moved too (/client/find-care-providers, /client/care-provider/:caregiverId) — the old ones redirect.
+    expect(rawApp).toContain('<Route path="/client/find-care-providers" element={<ClientRoute element={<FindCaregivers />} />} />');
+    expect(rawApp).toContain('<Route path="/client/care-provider/:caregiverId" element={<ClientRoute element={<ClientCaregiverProfile />} />} />');
+    expect(rawApp).toContain('<Route path="/client/find-caregivers" element={<LegacyClientCaregiverRedirect />} />');
+    expect(rawApp).toContain('<Route path="/client/caregiver/*" element={<LegacyClientCaregiverRedirect />} />');
+    const app = rawApp.split('path="/caregiver/*"').join('path="LEGACY_CATCH_ALL"');
+    // Every other caregiver route is under the new prefix — no page is still served at /caregiver/<page>.
+    expect(app.match(/path="\/caregiver\/(?!\*")/g)).toBeNull();
+    for (const page of ["dashboard", "profile", "inbox", "calendar", "bookings", "jobs", "families", "settings", "payments", "connect"]) {
+      expect(app, page).toContain(`path="/care-provider/${page}"`);
+    }
+    const routes = copyOf(read("utils/notificationRoutes.ts"));
+    const caregiverSide = routes.slice(routes.indexOf("function caregiverRoute"));
+    expect(caregiverSide.match(/['"`]\/care-provider\//g)?.length ?? 0).toBeGreaterThan(0);
+    expect(caregiverSide).not.toMatch(/['"`]\/caregiver\//);
+  });
 });

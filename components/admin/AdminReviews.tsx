@@ -111,7 +111,7 @@ export const AdminReviews: React.FC = () => {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search by client, caregiver, or comment…"
+            placeholder="Search by client, care provider, or comment…"
             className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>
@@ -172,7 +172,7 @@ export const AdminReviews: React.FC = () => {
                       <div className="flex items-center gap-2 text-sm mb-2">
                         <span className="font-medium text-slate-800">{r.clientName || 'Client'}</span>
                         <span className="text-slate-400">→</span>
-                        <span className="font-medium text-primary-700">{r.caregiverName || 'Caregiver'}</span>
+                        <span className="font-medium text-primary-700">{r.caregiverName || 'Care Provider'}</span>
                       </div>
                       {r.comment && <p className="text-sm text-slate-600 leading-relaxed">{r.comment}</p>}
                       {r.categories && Object.keys(r.categories).length > 0 && (
@@ -186,7 +186,7 @@ export const AdminReviews: React.FC = () => {
                       )}
                       {r.response && (
                         <div className="mt-3 pl-4 border-l-2 border-primary-200">
-                          <p className="text-xs text-primary-600 font-medium mb-1">Caregiver Response</p>
+                          <p className="text-xs text-primary-600 font-medium mb-1">Care Provider Response</p>
                           <p className="text-sm text-slate-600 leading-relaxed">{r.response.text}</p>
                         </div>
                       )}

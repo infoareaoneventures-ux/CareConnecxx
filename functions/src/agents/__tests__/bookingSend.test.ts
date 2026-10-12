@@ -121,7 +121,7 @@ describe("sendBookingRequest — the site's handleSendBooking write", () => {
     expect(hoisted.adds.some((a) => a.path === "shift_offers")).toBe(false);
   });
 
-  it("records the site's hire_decisions row and marks the caregiver's job application accepted (by caregiverId + jobId)", async () => {
+  it("records the site's hire_decisions row and marks the care provider's job application accepted (by caregiverId + jobId)", async () => {
     hoisted.docState.set("job_applications/app-1", { caregiverId: "cg1", jobId: "job-1", status: "pending" });
     hoisted.docState.set("job_applications/app-other", { caregiverId: "cg2", jobId: "job-1", status: "pending" });
 
@@ -155,7 +155,7 @@ describe("sendBookingRequest — the site's handleSendBooking write", () => {
     expect(br.data.caregiverPhotoURL).toBeNull();
   });
 
-  it("refuses an unbookable caregiver (background check still in review) BEFORE any write", async () => {
+  it("refuses an unbookable care provider (background check still in review) BEFORE any write", async () => {
     // 2 days 23h ago → Math.ceil lands on 3 regardless of the milliseconds the test takes.
     const submittedAt = new Date(Date.now() - (3 * 24 - 1) * 60 * 60 * 1000).toISOString();
     hoisted.docState.set("caregivers/cg1", { ...BOOKABLE_CG, verificationStatus: "submitted", backgroundCheckStatus: "pending", backgroundCheckData: { submittedAt } });
@@ -164,7 +164,7 @@ describe("sendBookingRequest — the site's handleSendBooking write", () => {
     expect(hoisted.adds).toHaveLength(0);
   });
 
-  it("the site's duplicate guard: a pending request for the same caregiver + job pairing blocks a second doc", async () => {
+  it("the site's duplicate guard: a pending request for the same care provider + job pairing blocks a second doc", async () => {
     hoisted.docState.set("booking_requests/br-old", { clientId: "c1", caregiverId: "cg1", jobId: "job-1", status: "pending", createdAt: "2026-09-10T00:00:00Z" });
     const res = await sendBookingRequest(baseInput(), { source: "bookingFlow" });
     expect(res).toEqual({ ok: false, reason: "already_pending", bookingRequestId: "br-old" });
@@ -182,7 +182,7 @@ describe("sendBookingRequest — the site's handleSendBooking write", () => {
     expect(res.ok).toBe(true);
   });
 
-  it("a declined or cancelled prior request never blocks, and a different job pairing with the same caregiver is independent", async () => {
+  it("a declined or cancelled prior request never blocks, and a different job pairing with the same care provider is independent", async () => {
     hoisted.docState.set("booking_requests/br-dec", { clientId: "c1", caregiverId: "cg1", jobId: "job-1", status: "declined", createdAt: "2026-09-05T00:00:00Z" });
     hoisted.docState.set("booking_requests/br-other-job", { clientId: "c1", caregiverId: "cg1", jobId: "job-2", status: "pending", createdAt: "2026-09-12T00:00:00Z" });
     expect(await findBlockingBookingRequest("c1", "cg1", "job-1", "iv-1")).toBeNull();

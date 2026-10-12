@@ -41,7 +41,7 @@ describe("humanReply", () => {
 
     await expect(answerHumanQuestionOnly({
       audience: "caregiver",
-      situation: "caregiver is choosing a shift",
+      situation: "care provider is choosing a shift",
       text: "will I still be paid?",
     })).resolves.toBe(HUMAN_MIDFLOW_FALLBACK);
   });
@@ -70,7 +70,7 @@ describe("humanReply", () => {
 
     await answerHumanQuestionOnly({
       audience: "caregiver",
-      situation: "caregiver is updating their profile",
+      situation: "care provider is updating their profile",
       text: "did you change my rate?",
     });
 
@@ -82,12 +82,12 @@ describe("humanReply", () => {
   it("routes a guard-rejected meta-response to the deterministic fallback", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     quickComplete.mockResolvedValue(
-      "Got it, but I need the briefing context to write this message — who's the caregiver here?",
+      "Got it, but I need the briefing context to write this message — who's the care provider here?",
     );
 
     await expect(answerHumanQuestionOnly({
       audience: "caregiver",
-      situation: "caregiver is choosing a shift",
+      situation: "care provider is choosing a shift",
       text: "will I still be paid?",
     })).resolves.toBe(HUMAN_MIDFLOW_FALLBACK);
 

@@ -52,7 +52,7 @@ const FIELD_LABEL: Record<string, string> = {
   seniorName:     "the first and last name of the person who needs care",
   age:            "their age",
   additionalRecipients: "every OTHER person needing care when it's more than one (e.g. both mom and dad) — [{name, relationship, age}]",
-  caregiversNeeded: "how many caregivers they think they'll need (most families need 1) — optional, default 1",
+  caregiversNeeded: "how many care providers they think they'll need (most families need 1) — optional, default 1",
   // Step 10
   emergencyContactName:         "the emergency contact's full name",
   emergencyContactPhone:        "the emergency contact's phone number",
@@ -64,10 +64,10 @@ const FIELD_LABEL: Record<string, string> = {
   // Step 12
   rate:           "what they'd like to pay per hour — a number (e.g. 26); there is no 'flexible' option, so if they're unsure gently ask for a number they'd be comfortable with",
   // Step 13
-  jobDescription: "a short free-text description caregivers see on the job post (optional) — caregivers browsing jobs can read it, so no medical details, addresses, or anything private",
+  jobDescription: "a short free-text description care providers see on the job post (optional) — care providers browsing jobs can read it, so no medical details, addresses, or anything private",
   // Not a wizard step — recovery-only, so the account has a way back in if
   // the phone is ever lost. Ask for it naturally, near the end.
-  email:          "their email address — used only for account recovery if they ever lose access to this phone number, never shared with caregivers",
+  email:          "their email address — used only for account recovery if they ever lose access to this phone number, never shared with care providers",
   // Collected throughout
   firstName:      "the family member's first name (the person texting)",
   hoursPerDay:    "how many hours per day",
@@ -169,18 +169,18 @@ export function buildOnboardingDirective(
       `else this turn, then send ONE short warm line saying you've got what you need and you're ` +
       `about to read it back to confirm everything's right (a separate message with the full ` +
       `summary and a confirmation question follows automatically right after yours — do NOT ` +
-      `also list the fields back yourself, and do NOT promise caregivers yet, that comes only ` +
+      `also list the fields back yourself, and do NOT promise care providers yet, that comes only ` +
       `after they confirm the summary — matching the website's own Care Plan review step, which ` +
-      `also happens before caregivers/membership). Keep it to one sentence, do NOT ask ANY ` +
+      `also happens before care providers/membership). Keep it to one sentence, do NOT ask ANY ` +
       `question, and do NOT announce what you'll ask next. NEVER say anything like "next step is ` +
       `membership payment" or "once that's active I can move you into matching" here or anywhere ` +
-      `else in this flow — membership is what lets them message/book a caregiver once matched, it ` +
+      `else in this flow — membership is what lets them message/book a care provider once matched, it ` +
       `does not gate whether matching happens at all.`
     : missing.length > 0
     ? `Ask for the SINGLE most natural next item — the first one listed above, in that exact ` +
       `order, whether it's required or optional. Do NOT skip an earlier optional item to reach a ` +
       `later required one (e.g. don't jump from the senior's name straight to emergency contact — ` +
-      `age/additional loved ones and how many caregivers are needed come first, in that order). ` +
+      `age/additional loved ones and how many care providers are needed come first, in that order). ` +
       `As soon as they give you a value (even partially, even several at once), call ` +
       `save_onboarding_field for each one, then look at what's still needed and continue. If they ` +
       `decline or skip an optional item, don't push — just move to the next item in the list, and ` +
@@ -227,12 +227,12 @@ export function buildOnboardingDirective(
     `  7. Whether they'd like to add a profile photo of THEMSELVES — the person you're texting with, matching the wizard's own Step 8 (optional, but ASK ONCE) — make clear it's completely optional, accept a texted image directly as careRecipientPhotoURL, move on immediately either way`,
     `  8. Their relationship to the person needing care`,
     `  9. The senior's name and age, and anyone else needing care ("both mom and dad")`,
-    ` 10. How many caregivers they think they'll need (optional, but ASK — lightly, most people say 1)`,
+    ` 10. How many care providers they think they'll need (optional, but ASK — lightly, most people say 1)`,
     ` 11. Emergency contact — name, phone, and their relationship`,
     ` 12. What kind of help is needed day to day`,
     ` 13. Whether there are pets or smoking in the home (optional, but ASK both — not just pets)`,
     ` 14. What they'd like to pay per hour`,
-    ` 15. A short description they'd like caregivers to see (optional, but ASK)`,
+    ` 15. A short description they'd like care providers to see (optional, but ASK)`,
     ` 16. The family member's own first name (if not already collected)`,
     ``,
     `Items marked "optional" are optional for the FAMILY to skip — never for you to skip asking. Ask every numbered item at least once, even the optional ones, before you're done.`,
@@ -241,7 +241,7 @@ export function buildOnboardingDirective(
     `  - You are mid-conversation. You already greeted them. NEVER greet again, never re-introduce yourself, never open with "Hi"/"Hey <name>". Reply directly.`,
     `  - EVERY turn: first call save_onboarding_field for whatever they just told you, THEN reply. A short or one-word answer to your last question IS that field's value — save it immediately.`,
     `  - fieldName is ALWAYS the exact key shown before the dash in the lists above (smokingHousehold, petsInHome, jobDescription, emergencyContactRelationship, careNeeds…) — never a word of your own like "smoking", "pets" or "description". If the tool rejects a key, retry at once with one from the list it gives you; never tell the family you "hit a snag" over a field name.`,
-    `  - Pets and smoking are two saves: save_onboarding_field("petsInHome", true/false) and save_onboarding_field("smokingHousehold", true/false). The note for caregivers is save_onboarding_field("jobDescription", their words).`,
+    `  - Pets and smoking are two saves: save_onboarding_field("petsInHome", true/false) and save_onboarding_field("smokingHousehold", true/false). The note for care providers is save_onboarding_field("jobDescription", their words).`,
     `  - Every item on this list is the family's OWN information about their own household. There is never a privacy reason to decline asking or recording one, and no other client or family is ever involved — never say you "can't share details about other clients" or anything like it.`,
     `  - careNeeds is the KIND of help (bathing, meals, rides, medication reminders, company…), saved as the site's category names. How OFTEN care is needed (occasional / part-time / full-time) is careFrequency, never a care need — do not save "occasional" or similar into careNeeds, and do not treat the "what kind of help" question as answered because the frequency was.`,
     `  - Acknowledge what they just said before you ask the next thing. Reflect the story back when it's heavy — then ask.`,
@@ -249,8 +249,8 @@ export function buildOnboardingDirective(
     `  - For selectedDays: save as an array of uppercase 3-letter codes e.g. ['MON','WED','FRI']. If they say "weekdays" save ['MON','TUE','WED','THU','FRI']; "weekends" → ['SAT','SUN']; "every day" → ['SUN','MON','TUE','WED','THU','FRI','SAT'].`,
     `  - For careFrequency: "a few times a month"/"occasionally" → "occasional"; "1-4 days/week"/"part time" → "part_time"; "5+ days"/"full time"/"every day" → "full_time".`,
     `  - PHOTO: ask once, warmly, whether they'd like to add a profile photo of THEMSELVES (the family member you're texting with) — same as their Account Settings profile picture, matching the wizard's own Step 8. Only mention it doubles as their loved one's photo too if they said the care is for themselves (relationship 'myself'). Make clear it's totally optional. If they send an image, that's the photo (save as careRecipientPhotoURL) — never ask again. If they decline or don't send one, move on immediately, don't push.`,
-    `  - CARE TYPES (careNeeds, step 12): the website's step is "What type of care is needed? Select all that apply." with EXACTLY these eight — no others: ${SERVICE_LABELS.join(", ")}. Ask it the same way: one short line in your own voice ("What type of care does ${"${seniorName}"} need? Pick as many as apply:") followed by the eight, one per line, by name — no numbers, no explanation:\n${serviceMenuText()}\n    They can answer by name or in their own words — "help with bathing" is Personal Care, "someone to cook" is Meal Preparation, "rides to the doctor" is Transportation. Save exactly what they said as careNeeds; the save maps it onto the eight and tells you what landed, what fit nothing, and what was medical. READ BACK the names that saved in your acknowledgment ("Got it — Personal Care and Meal Preparation."). Anything that fits none of the eight is NOT saved: say it isn't one of the types of care on the list so you've left it off, then show the list again. All care is NON-MEDICAL — administering or giving medication, injections, insulin, wound care, vitals, nursing: say caregivers here don't do that, and that the closest type is Medication Reminders Only (reminding when it's time, not giving them) — ask if that fits BEFORE saving it. Never suggest they put medical details anywhere else. A vague answer → ask which of the names they mean rather than guess. More types named later are ADDED automatically; a correction is saved as careNeeds with {"replace": [the corrected list]}. NO follow-up sweep — once they've answered, move on to pets and smoking.`,
-    `  - DESCRIPTION (jobDescription, step 15): ask it the way the website's step does — "What else should caregivers know about this job or your loved one?" — and say, in the same line, that caregivers browsing jobs can read it, so no contact info, medical details or addresses. It is the job POST's description only — not the care plan (the family adds private care notes later on their Care Plan page). Save their words as typed; never add to or rewrite them. If they ask what to write, offer the website's own example once: "My mom is 78, lives alone, and needs help with morning routines and light housekeeping 3 days a week. She loves gardening and chatting over coffee."`,
+    `  - CARE TYPES (careNeeds, step 12): the website's step is "What type of care is needed? Select all that apply." with EXACTLY these eight — no others: ${SERVICE_LABELS.join(", ")}. Ask it the same way: one short line in your own voice ("What type of care does ${"${seniorName}"} need? Pick as many as apply:") followed by the eight, one per line, by name — no numbers, no explanation:\n${serviceMenuText()}\n    They can answer by name or in their own words — "help with bathing" is Personal Care, "someone to cook" is Meal Preparation, "rides to the doctor" is Transportation. Save exactly what they said as careNeeds; the save maps it onto the eight and tells you what landed, what fit nothing, and what was medical. READ BACK the names that saved in your acknowledgment ("Got it — Personal Care and Meal Preparation."). Anything that fits none of the eight is NOT saved: say it isn't one of the types of care on the list so you've left it off, then show the list again. All care is NON-MEDICAL — administering or giving medication, injections, insulin, wound care, vitals, nursing: say care providers here don't do that, and that the closest type is Medication Reminders Only (reminding when it's time, not giving them) — ask if that fits BEFORE saving it. Never suggest they put medical details anywhere else. A vague answer → ask which of the names they mean rather than guess. More types named later are ADDED automatically; a correction is saved as careNeeds with {"replace": [the corrected list]}. NO follow-up sweep — once they've answered, move on to pets and smoking.`,
+    `  - DESCRIPTION (jobDescription, step 15): ask it the way the website's step does — "What else should care providers know about this job or your loved one?" — and say, in the same line, that care providers browsing jobs can read it, so no contact info, medical details or addresses. It is the job POST's description only — not the care plan (the family adds private care notes later on their Care Plan page). Save their words as typed; never add to or rewrite them. If they ask what to write, offer the website's own example once: "My mom is 78, lives alone, and needs help with morning routines and light housekeeping 3 days a week. She loves gardening and chatting over coffee."`,
     `  - Pets and smoking are their own question (step 13) — ask both together as one light question ("Any pets in the home, or does anyone smoke?"), don't fold it into the care-needs question and don't skip it once care needs are answered.`,
     `  - For the emergency contact: ask naturally ("In case of an emergency, who should we reach out to?"). Save name as emergencyContactName, phone as emergencyContactPhone, their relation as emergencyContactRelationship.`,
     `  - For email: when you confirm it back, always repeat the COMPLETE address exactly as they sent it (e.g. "Got it, hamse143@gmail.com") — never truncate it at the @ or drop the domain. A partial echo reads as if only part of it was saved, even when the full address was.`,
@@ -264,7 +264,7 @@ export function buildOnboardingDirective(
   - Age is optional — ask it naturally once but if they skip it or ask if it's required, tell them it's not and move on. Never insist on it.`,
     `  - SELF-CARE: if care is for themselves, save relationship as "self" and seniorName the same as firstName — never ask who they're caring for.`,
     `  - MULTIPLE LOVED ONES: first person → seniorName/relationship/age; everyone else → save_onboarding_field("additionalRecipients", [{name, relationship, age}]).`,
-    `  - caregiversNeeded is a light, easy-to-skip question — most families need just one caregiver covering their schedule, so frame it that way ("most families just need one caregiver — is that right for you, or are you looking to cover more ground with a couple people?"). If they don't have an answer or seem unsure, save 1 and move on — never insist.`,
+    `  - caregiversNeeded is a light, easy-to-skip question — most families need just one care provider covering their schedule, so frame it that way ("most families just need one care provider — is that right for you, or are you looking to cover more ground with a couple people?"). If they don't have an answer or seem unsure, save 1 and move on — never insist.`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I assist you today", or call yourself an AI assistant.`,
     `  - Voice memos: offer ONCE warmly if their replies look effortful — "if typing is a pain, you can tap-and-hold to send a voice memo." Never repeat the offer.`,
     ``,

@@ -47,7 +47,7 @@ export async function loadShiftWithProposal(caregiverId: string, shiftId: string
   const snap = await ref.get();
   if (!snap.exists) return { ok: false, code: "NOT_FOUND", message: "Visit not found" };
   const shift = snap.data()!;
-  if (shift.caregiverId !== caregiverId) return { ok: false, code: "PERMISSION_DENIED", message: "Visit does not belong to this caregiver" };
+  if (shift.caregiverId !== caregiverId) return { ok: false, code: "PERMISSION_DENIED", message: "Visit does not belong to this care provider" };
   if (!shift.reschedulePendingDate) return { ok: false, code: "INVALID_INPUT", message: "There's no pending reschedule proposal on this visit" };
   if (shift.status !== "scheduled") return { ok: false, code: "INVALID_INPUT", message: `Only a scheduled visit carries a reschedule proposal (status: ${shift.status})` };
   return { ok: true, shift, ref };

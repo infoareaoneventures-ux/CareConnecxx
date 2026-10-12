@@ -30,7 +30,7 @@ vi.mock("../../utils/scheduledTime", () => ({ businessTodayStr: () => "2026-09-1
 import { hasTimesheetAwaitingClient } from "../timesheetsPage";
 
 describe("hasTimesheetAwaitingClient — the Needs Review tab, as a yes/no", () => {
-  it("true for a submission awaiting the family, true for a caregiver counter, false otherwise", async () => {
+  it("true for a submission awaiting the family, true for a care provider counter, false otherwise", async () => {
     hoisted.rows.set("pending_client_review", [{ clientId: "c1" }]);
     hoisted.rows.set("caregiver_counter_proposed", [{ clientId: "c2" }]);
     expect(await hasTimesheetAwaitingClient("c1")).toBe(true);

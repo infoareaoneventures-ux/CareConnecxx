@@ -63,7 +63,7 @@ describe("completion gate (R18/AE6)", () => {
     const obj = base({
       steps: [
         { id: "s1", label: "update visit", status: "done" },
-        { id: "s2", label: "notify caregiver", status: "pending" },
+        { id: "s2", label: "notify care provider", status: "pending" },
       ],
     });
     expect(() => applyTransition(obj, "completed")).toThrow(/unfinished step/);

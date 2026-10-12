@@ -129,7 +129,7 @@ describe("buildLivePhotoFact", () => {
 });
 
 describe("buildLiveBgcheckConsentFact", () => {
-  it("says ALREADY authorized when the caregiver doc shows consent", async () => {
+  it("says ALREADY authorized when the care provider doc shows consent", async () => {
     fresh({ caregiverId: "cg" });
     store.caregivers.set("cg", { backgroundCheckData: { consentGiven: true } });
     expect(await buildLiveBgcheckConsentFact(PHONE, sess({}))).toContain("ALREADY reviewed");
@@ -139,7 +139,7 @@ describe("buildLiveBgcheckConsentFact", () => {
     store.caregivers.set("cg", { backgroundCheckData: { checkrCandidateId: "cand" } });
     expect(await buildLiveBgcheckConsentFact(PHONE, sess({}))).toContain("ALREADY reviewed");
   });
-  it("says not-yet-authorized without a caregiver doc", async () => {
+  it("says not-yet-authorized without a care provider doc", async () => {
     fresh({});
     expect(await buildLiveBgcheckConsentFact(PHONE, sess({}))).toContain("haven't authorized");
   });

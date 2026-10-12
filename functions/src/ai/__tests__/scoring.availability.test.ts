@@ -6,7 +6,7 @@ import { availabilityOverlap } from "../scoring";
 // the family's schedule blocks.
 
 describe("availabilityOverlap — the site's overnight slot crosses midnight", () => {
-  it("a caregiver stored 23:00–06:00 (the site's overnight block) overlaps a family's overnight need", () => {
+  it("a care provider stored 23:00–06:00 (the site's overnight block) overlaps a family's overnight need", () => {
     const caregiver = { monday: [{ start: "23:00", end: "06:00" }] };
     const family = { monday: ["overnight"] };
     const score = availabilityOverlap(caregiver, family);

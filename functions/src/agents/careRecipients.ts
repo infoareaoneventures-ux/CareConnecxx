@@ -130,7 +130,7 @@ export function describeWhoIsWho(d: Record<string, unknown>): string {
       .map((r) => r.relationship ? `${r.name} (their ${r.relationship})` : r.name)
       .join(" and ");
     return `WHO'S WHO: the person texting is ${who}, the family member coordinating care — NOT the one receiving it. ` +
-      `The care recipient${recipients.length > 1 ? "s are" : " is"} ${list}: all visits, caregivers, and care are for ` +
+      `The care recipient${recipients.length > 1 ? "s are" : " is"} ${list}: all visits, care providers, and care are for ` +
       `${recipients.length > 1 ? "them" : list.split(" (")[0]}, never for ${who}. ` +
       `Never write phrases like "${who}'s visits" or "${who}'s care".`;
   }

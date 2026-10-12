@@ -316,7 +316,7 @@ describe("caregiverProfileHandler", () => {
       expect(sendMessage.mock.calls[0][1]).toMatch(/until 2026-07-12/);
     });
 
-    it("confirm YES writes pausedUntil to caregiver doc", async () => {
+    it("confirm YES writes pausedUntil to care provider doc", async () => {
       parseWithClaude
         .mockResolvedValueOnce("NO")
         .mockResolvedValueOnce("YES");
@@ -372,11 +372,11 @@ describe("caregiverProfileHandler", () => {
         CHAT, "pause",
       );
       expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No — your existing bookings stay exactly as they are.\n\nPause your account until 2026-07-12? Reply YES to pause, or NO to cancel.");
-      expect(briefing()).toContain("Audience: caregiver");
+      expect(briefing()).toContain("Audience: care provider");
       expect(briefing()).toContain("Pause your account until 2026-07-12? Reply YES to pause, or NO to cancel.");
       expect(briefing()).toContain("It does NOT cancel anything that already exists");
       expect(briefing()).toContain("Fully reversible anytime: text REACTIVATE, or use the Reactivate button on the Account Settings page");
-      expect(briefing()).toContain("Nothing is paused until the caregiver replies YES");
+      expect(briefing()).toContain("Nothing is paused until the care provider replies YES");
       expect(briefing()).toContain("NEVER say you changed, updated, saved, fixed, cancelled, sent or removed anything");
       expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ pausedUntil: expect.anything() }));
     });

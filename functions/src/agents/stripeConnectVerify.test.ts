@@ -108,7 +108,7 @@ describe("verifyStripeConnectComplete — the /done activation gate", () => {
     expect(linkArgs.refresh_url).not.toContain("/done");
   }, 20_000);
 
-  it("returns complete and stamps the caregiver doc when charges+payouts are enabled", async () => {
+  it("returns complete and stamps the care provider doc when charges+payouts are enabled", async () => {
     hoisted.accountsRetrieve.mockResolvedValue({
       id: "acct_1", charges_enabled: true, payouts_enabled: true, details_submitted: true,
     } as any);

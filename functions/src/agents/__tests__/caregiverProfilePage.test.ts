@@ -57,7 +57,7 @@ describe("shapeCaregiverProfilePage", () => {
       { label: "1 Person", rate: 25, billed: 27.25 },
       { label: "2 People", rate: 35, billed: 38.15 },
     ]);
-    expect(page.ratesNote).toBe("Billed includes Evia's 9% service fee. The caregiver keeps 100% of their rate.");
+    expect(page.ratesNote).toBe("Billed includes Evia's 9% service fee. The care provider keeps 100% of their rate.");
     expect(page.careServices).toEqual(["Companionship", "Transportation"]); // live → Transportation shown as a service
     expect((page.badges as Record<string, unknown>).transportation).toBeUndefined(); // not a badge (2026-10-06)
     expect(page.available).toBe(true);
@@ -123,14 +123,14 @@ describe("billedHourly matches the site's billedHourlyRate", () => {
 });
 
 describe("not cleared for families (founder, 2026-10-06)", () => {
-  it("a caregiver whose background check isn't approved → not available, no buttons, no reason given", async () => {
+  it("a care provider whose background check isn't approved → not available, no buttons, no reason given", async () => {
     const { mapRawToProfileRecord, shapeCaregiverProfilePage } = await import("../caregiverProfilePage");
     const rec = mapRawToProfileRecord("cg9", { firstName: "Pat", lastName: "Lee", onboardingStatus: "profile_complete", verificationStatus: "submitted", skills: ["Companionship"], hourlyRate: 25 });
     expect(rec.clearedForFamilies).toBe(false);
     const page = shapeCaregiverProfilePage(rec, [], { isBooked: false, isRequested: false, hasPastBooking: false, hasCompletedInterview: false, hasCompletedShift: false, hasReviewed: false } as any, { appUrl: "https://eviacares.com" });
     expect(page.available).toBe(false);
     expect(page.actions.message).toBe(false);
-    expect(page.summary).toContain("This caregiver isn't available yet.");
+    expect(page.summary).toContain("This care provider isn't available yet.");
     expect(page.summary).not.toMatch(/background|approved|cleared/i);
   });
 });

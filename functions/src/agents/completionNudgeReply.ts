@@ -61,7 +61,7 @@ async function defaultDeps(): Promise<CompletionNudgeDeps> {
   };
 }
 
-const first = (name: unknown, fallback = "your caregiver") => { const s = String(name ?? "").trim(); return s ? s.split(/\s+/)[0] : fallback; };
+const first = (name: unknown, fallback = "your care provider") => { const s = String(name ?? "").trim(); return s ? s.split(/\s+/)[0] : fallback; };
 
 /**
  * Returns the reply text when this turn was a bare yes/no to a fresh check-in

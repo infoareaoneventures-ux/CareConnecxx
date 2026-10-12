@@ -6,7 +6,7 @@ vi.mock('../../hooks/useCaregiverGate', () => ({
   caregiverMembershipActive: (p: any) => ['active', 'trialing', 'past_due', 'payment_failed'].includes(p?.membershipStatus),
   caregiverMembershipPaymentFailed: (p: any) => ['past_due', 'payment_failed'].includes(p?.membershipStatus),
   MEMBERSHIP_PAYMENT_FAILED_NOTICE: 'notice',
-  ADD_TRANSPORTATION_PATH: '/caregiver/profile?edit=services',
+  ADD_TRANSPORTATION_PATH: '/care-provider/profile?edit=services',
 }));
 
 import { backgroundCheckState, driverCardFor, DRIVER_CARD_TEXT } from './AccountStandingSection';

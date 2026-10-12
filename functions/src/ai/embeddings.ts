@@ -39,7 +39,7 @@ export function composeCaregiverText(caregiver: any): string {
     const parts: string[] = [];
 
     const years = caregiver.yearsExperience || caregiver.experience || 0;
-    if (years > 0) parts.push(`Caregiver with ${years} years of professional experience.`);
+    if (years > 0) parts.push(`Care Provider with ${years} years of professional experience.`);
 
     const skills = [
         ...(caregiver.skills || []),
@@ -84,7 +84,7 @@ export function composeCaregiverText(caregiver: any): string {
 
     // Additional profile details
     if (caregiver.gender) parts.push(`Gender: ${caregiver.gender}.`);
-    if (caregiver.petFriendly) parts.push("Pet-friendly caregiver.");
+    if (caregiver.petFriendly) parts.push("Pet-friendly care provider.");
     if (caregiver.hasTransportation || caregiver.hasCar) parts.push("Has own transportation.");
     if (caregiver.smokingStatus === "non-smoker" || caregiver.nonSmoker) parts.push("Non-smoker.");
 
@@ -172,7 +172,7 @@ export function composeIntakeText(intake: any): string {
 
     // Preferences
     if (intake.genderPreference && intake.genderPreference !== "No Preference") {
-        parts.push(`Prefers a ${intake.genderPreference} caregiver.`);
+        parts.push(`Prefers a ${intake.genderPreference} care provider.`);
     }
     if (intake.languagePreference) {
         parts.push(`Language preference: ${intake.languagePreference}.`);

@@ -134,7 +134,7 @@ export async function executeInstantPayout(opts: {
     const caregiverRef = db.collection("caregivers").doc(caregiverId);
     const caregiverSnap = await caregiverRef.get();
     if (!caregiverSnap.exists) {
-        throw new InstantPayoutError("NOT_FOUND", "Caregiver profile not found");
+        throw new InstantPayoutError("NOT_FOUND", "Care Provider profile not found");
     }
     const { getCaregiverPayoutFields } = await import("./caregiverPrivate");
     const payoutFields = await getCaregiverPayoutFields(caregiverId, caregiverSnap.data() ?? null);

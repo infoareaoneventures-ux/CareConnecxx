@@ -106,7 +106,7 @@ async function processSeededShift(appointmentId: string, shift: Record<string, u
 describe("U1 — charge-before-transfer settlement", () => {
   beforeEach(() => { hoisted.reset(); seedPayableEnv(); });
 
-  it("pays the caregiver when the charge settles synchronously", async () => {
+  it("pays the care provider when the charge settles synchronously", async () => {
     hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_sync", status: "succeeded" } as any);
     const r = await processSeededShift("a1", { ...baseShift });
     expect(r.ok).toBe(true);

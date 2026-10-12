@@ -1,3 +1,4 @@
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { isMvrCheckConfigured } from "../mvrConfig";
@@ -190,7 +191,7 @@ async function sendOnboardingLinkFailureMessage(
   await sendMessage(chatId, await generateCaraMessage({
     audience,
     language: session.preferredLanguage === "es" ? "es" : "en",
-    context: `A ${isClient ? "family" : "caregiver"} needs a ${linkLabel} link, but Evia could not generate the real external link. Be honest, warm, and brief. Say you are on it and will text the link once it is ready. Do not include any URL.`,
+    context: `A ${isClient ? "family" : "care provider"} needs a ${linkLabel} link, but Evia could not generate the real external link. Be honest, warm, and brief. Say you are on it and will text the link once it is ready. Do not include any URL.`,
     fallback: `I hit a snag pulling up your ${linkLabel} link — I'm on it and I'll text you the moment it's ready.`,
     maxTokens: 70,
   }));
@@ -387,7 +388,7 @@ async function tryAbsorbGateProfileUpdate(
     audience: "caregiver",
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
-      `Mid-signup, the caregiver just texted: "${text}". You saved what they volunteered to their profile (${human}). ` +
+      `Mid-signup, the care provider just texted: "${text}". You saved what they volunteered to their profile (${human}). ` +
       `In 1-2 short sentences: acknowledge the SPECIFIC thing they added — families will see it on their profile — ` +
       `then remind them of the one thing you're still waiting on: ${stillWaitingOn}.`,
     fallback: `Got it — added to your profile! And whenever you're ready: ${stillWaitingOn}.`,
@@ -500,15 +501,15 @@ async function detectRoleSwitch(
   if (text.trim().length < 6) return null; // too short to be a switch
   const raw = await parseWithClaude(
     `The user is mid-onboarding as a ${currentRole}. Reply with JSON: ` +
-    "{\"switchTo\": \"client\" | \"caregiver\" | \"none\"}. " +
+    "{\"switchTo\": \"client\" | \"care provider\" | \"none\"}. " +
     "Use \"client\" if they are clearly saying they need care for a loved one (not their own job). " +
-    "Use \"caregiver\" if they are clearly saying they are a caregiver looking for work. " +
+    "Use \"care provider\" if they are clearly saying they are a care provider looking for work. " +
     `Use \"none\" if their message is just answering the current question or is ambiguous. ` +
-    "Only flag clear role-switch intent; do NOT flag a client mentioning they have a caregiver background, " +
-    "or a caregiver mentioning their own elderly parent in passing. The word \"caregiver\" appearing in the " +
-    "message is NOT enough by itself — a client asking about caregiver MATCHES (e.g. \"any more caregivers?\", " +
-    "\"are there more caregivers in my area?\") is asking about candidates for their loved one, not declaring " +
-    "themselves a caregiver — that is \"none\", never \"caregiver\".",
+    "Only flag clear role-switch intent; do NOT flag a client mentioning they have a care provider background, " +
+    "or a care provider mentioning their own elderly parent in passing. The word \"care provider\" appearing in the " +
+    "message is NOT enough by itself — a client asking about care provider MATCHES (e.g. \"any more care providers?\", " +
+    "\"are there more care providers in my area?\") is asking about candidates for their loved one, not declaring " +
+    "themselves a care provider — that is \"none\", never \"care provider\".",
     text,
   );
   if (raw === "__parse_error__" || !raw.startsWith("{")) return null;
@@ -796,7 +797,7 @@ async function tryAbsorbClientGateUpdate(
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
       `Mid-signup, the family member just texted: "${text}". You saved the care detail(s) they volunteered (${human}) — ` +
-      `these will shape the caregiver match. In 1-2 short sentences: acknowledge the SPECIFIC detail, ` +
+      `these will shape the care provider match. In 1-2 short sentences: acknowledge the SPECIFIC detail, ` +
       `then remind them of the one thing you're still waiting on: ${stillWaitingOn}.`,
     fallback: `Got it — I've added that to the care plan. And whenever you're ready: ${stillWaitingOn}.`,
     maxTokens: 90,
@@ -821,7 +822,7 @@ async function isGreetingOnly(text: string): Promise<boolean> {
 // onboarding step — used when a user greets mid-flow so the pickup matches the real
 // prompt instead of resetting. Reuses each step's own reask() text where possible.
 function currentStepQuestion(step: string, session: AgentSession): string {
-  if (step === "ask_role") return "are you looking for care for a loved one, or are you a caregiver looking for work?";
+  if (step === "ask_role") return "are you looking for care for a loved one, or are you a care provider looking for work?";
   // Post-collection client steps (start/preferences/budget/confirm_intake) still
   // run on CLIENT_STEPS. Conversational collection steps are owned by the agent
   // loop and never reach this scripted helper.
@@ -923,7 +924,7 @@ export async function handleOnboardingStep(
     await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {}, userType: null, waitlisted: false, bgcheckInviteUrl: null, bgcheckInviteSentAt: null });
     await sendMessage(chatId,
       "No problem, let's start fresh.\n\n" +
-      "Are you looking for care for a loved one, or are you a caregiver looking for work?"
+      "Are you looking for care for a loved one, or are you a care provider looking for work?"
     );
     return;
   }
@@ -1019,8 +1020,8 @@ export async function handleOnboardingStep(
       });
       await sendMessage(chatId,
         switchTo === "caregiver"
-          ? "Got it, let's switch you over. Just to be sure I've got it right — are you a caregiver looking for work, or did you mean you need care for a loved one?"
-          : "Got it, let's switch you over. Just to be sure I've got it right — do you need care for a loved one, or did you mean you're a caregiver looking for work?"
+          ? "Got it, let's switch you over. Just to be sure I've got it right — are you a care provider looking for work, or did you mean you need care for a loved one?"
+          : "Got it, let's switch you over. Just to be sure I've got it right — do you need care for a loved one, or did you mean you're a care provider looking for work?"
       );
       return;
     }
@@ -1108,8 +1109,8 @@ export async function handleOnboardingStep(
       const idReplyKind = await classifyAwaitingReply(text, "wait for their identity verification to clear");
       if (idReplyKind === "ack") {
         await sendAwaitingAck(chatId, session,
-          "The family member just acknowledged your last message (a thanks or 'sounds good') while their identity verification is in progress — you'll send their caregiver options as soon as it clears.",
-          "You're welcome! I'll send your caregiver options as soon as it clears.");
+          "The family member just acknowledged your last message (a thanks or 'sounds good') while their identity verification is in progress — you'll send their care provider options as soon as it clears.",
+          "You're welcome! I'll send your care provider options as soon as it clears.");
         return;
       }
       if (idReplyKind === "question") {
@@ -1127,7 +1128,7 @@ export async function handleOnboardingStep(
         return;
       }
       if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
-        "the quick identity check — I'll send your caregiver options as soon as it clears")) return;
+        "the quick identity check — I'll send your care provider options as soon as it clears")) return;
       if (await wantsGateLinkResend(text)) {
         if (await resendGateLink(phone, chatId, "client_awaiting_identity", "client_identity",
           "Here's a fresh link for the quick 30-second identity check:", { throttled: true })) return;
@@ -1135,8 +1136,8 @@ export async function handleOnboardingStep(
       const msgIdentity = await generateCaraMessage({
         audience: "family",
         context: `The family member just texted: "${text}". ` +
-          "Reassure them it's still being verified and that Evia will send their caregiver options as soon as it clears.",
-        fallback: "Still verifying — I'll send your caregiver options as soon as it clears.",
+          "Reassure them it's still being verified and that Evia will send their care provider options as soon as it clears.",
+        fallback: "Still verifying — I'll send your care provider options as soon as it clears.",
         maxTokens: 80,
       });
       await sendMessage(chatId, msgIdentity);
@@ -1238,7 +1239,7 @@ export async function handleOnboardingStep(
       const bgReplyKind = await classifyAwaitingReply(text, "finish the background-check form Checkr emailed them (Evia texts them the moment results are in)");
       if (bgReplyKind === "ack") {
         await sendAwaitingAck(chatId, session,
-          "The caregiver just acknowledged your last message (a thanks or 'sounds good') while their background check is with Checkr — you'll text them the moment results are in.",
+          "The care provider just acknowledged your last message (a thanks or 'sounds good') while their background check is with Checkr — you'll text them the moment results are in.",
           "Anytime! I'll text you the moment your results are in.");
         return;
       }
@@ -1270,7 +1271,7 @@ export async function handleOnboardingStep(
       const stripeReplyKind = await classifyAwaitingReply(text, "set up their payout account via the link Evia sent");
       if (stripeReplyKind === "ack") {
         await sendAwaitingAck(chatId, session,
-          "The caregiver just acknowledged your payout-setup ask (a thanks or 'will do') — you're here when it's done.",
+          "The care provider just acknowledged your payout-setup ask (a thanks or 'will do') — you're here when it's done.",
           "Sounds good — I'm here when it's done!");
         return;
       }
@@ -1409,16 +1410,16 @@ async function findConflictingRoleAccount(
 
 async function handleAskRole(phone: string, chatId: string, text: string, session?: AgentSession): Promise<void> {
   const raw = await parseWithClaude(
-    'The user was just asked: "Are you looking for care for a loved one, or are you a caregiver yourself?" ' +
+    'The user was just asked: "Are you looking for care for a loved one, or are you a care provider yourself?" ' +
     'client = they need care for a LOVED ONE (someone else): "1", "family", "need care", "looking for care", ' +
     '"care for my mom/dad/parent/wife/husband", "for my loved one". ' +
     'self = they need care for THEMSELVES: "for myself", "for me", "I need help at home", "I\'m 78 and need a hand", ' +
     '"it\'s for me". ' +
-    'caregiver = they PROVIDE care professionally and want work: "2", "I\'m a caregiver", "CNA", "HHA", "nurse", ' +
+    'care provider = they PROVIDE care professionally and want work: "2", "I\'m a care provider", "CNA", "HHA", "nurse", ' +
     '"looking for work", "looking for a job", "I want to work". ' +
     'CRITICAL: "looking for care" or "need care" means they NEED care → client (or self if clearly for themselves). ' +
-    'Only "looking for WORK" or "looking for a JOB" means caregiver. ' +
-    'Reply with exactly one word: client, self, or caregiver. If truly unclear, reply: unclear',
+    'Only "looking for WORK" or "looking for a JOB" means care provider. ' +
+    'Reply with exactly one word: client, self, or care provider. If truly unclear, reply: unclear',
     text
   );
   const emotionalDirective = (session as any)?._emotionalDirective as string | undefined;
@@ -1436,12 +1437,12 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       const msgConflict = await generateCaraMessage({
         audience: conflict.role === "caregiver" ? "caregiver" : "family",
         context: `This phone number is already registered with us as a ${conflict.role} account, but they just said ` +
-          `they're looking for ${claimedRole === "caregiver" ? "caregiver work" : "care for a loved one or themselves"} ` +
+          `they're looking for ${claimedRole === "caregiver" ? "care provider work" : "care for a loved one or themselves"} ` +
           `instead — a mismatch with the existing account. Warmly clarify that this number is already set up as a ` +
           `${conflict.role}, and ask what they'd like help with using that existing account. Do NOT start a new signup ` +
           `or ask any onboarding questions.`,
         fallback: conflict.role === "caregiver"
-          ? "Looks like this number's already set up with us as a caregiver — want help with that account instead of starting a new signup?"
+          ? "Looks like this number's already set up with us as a care provider — want help with that account instead of starting a new signup?"
           : "Looks like this number's already set up with us as a family/client account — want help with that account instead of starting a new signup?",
         maxTokens: 90,
         emotionalDirective,
@@ -1559,7 +1560,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       await updateSession(phone, { onboardingStep: "caregiver_ask_location", userType: "caregiver" });
       const msgKnownCg = await generateCaraMessage({
         audience: "caregiver",
-        context: `${knownName} just said they're a caregiver looking for work, and you already know their name is ${knownName}. ` +
+        context: `${knownName} just said they're a care provider looking for work, and you already know their name is ${knownName}. ` +
           `You ALREADY introduced yourself — never say "I'm Evia" or re-introduce yourself. ` +
           `Warmly acknowledge them BY NAME — do NOT ask their name again — let them know setup takes about 3 minutes right here, ` +
           `then ask the first question — their street address, city, and zip code (families only ever see the city).`,
@@ -1573,7 +1574,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     await updateSession(phone, { onboardingStep: "caregiver_ask_name", userType: "caregiver" });
     const msg2 = await generateCaraMessage({
       audience: "caregiver",
-      context: "A new caregiver just said they're looking for work. You ALREADY introduced yourself in the previous " +
+      context: "A new care provider just said they're looking for work. You ALREADY introduced yourself in the previous " +
         "message — do NOT say your name or re-introduce yourself. Let them know profile setup takes about 3 minutes " +
         "and everything happens right here over text. Then ask their first and last name (once).",
       fallback: "Great — let's get your profile set up. Takes about 3 minutes and everything happens right here.\n\nWhat's your first and last name?",
@@ -1584,7 +1585,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     return;
   }
   await sendMessage(chatId,
-    "Just so I point you the right way, are you looking for care for a loved one, or are you a caregiver looking for work?"
+    "Just so I point you the right way, are you looking for care for a loved one, or are you a care provider looking for work?"
   );
 }
 
@@ -1703,7 +1704,7 @@ async function dispatchGateTurnToQaAgent(
   }
   const shared = describeSharedProfile(session, canonicalProfile);
   (session as any).__gateContext = [
-    `CAREGIVER MID-SETUP (${step}). Their profile is done; what's left is the website dashboard's three cards, in order: ` +
+    `CARE PROVIDER MID-SETUP (${step}). Their profile is done; what's left is the website dashboard's three cards, in order: ` +
       `membership → background check → payouts. Exactly like the website, they can browse and ask about anything right now — ` +
       `nearby jobs, their applications, their profile, how things work — so use your tools. The actions the website blocks until ` +
       `setup is done (applying, accepting an interview or booking, starting or logging a shift, messaging a family) are blocked ` +
@@ -1770,7 +1771,7 @@ export async function resumeCaregiverCollection(
   try {
     const fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as AgentSession | undefined;
     if (!fresh) return;
-    const note = "[System note — this is NOT a message from the caregiver: they just uploaded their profile photo through the secure link and it is saved. In ONE short warm line say the photo is in, then ask the next STILL NEEDED item. Never ask them to resend or repeat anything.]";
+    const note = "[System note — this is NOT a message from the care provider: they just uploaded their profile photo through the secure link and it is saved. In ONE short warm line say the photo is in, then ask the next STILL NEEDED item. Never ask them to resend or repeat anything.]";
     await dispatchOnboardingToLoop(phone, chatId, note, { ...fresh, chatId } as AgentSession, "caregiver", { absorb: false });
   } catch (err) {
     console.error("resumeCaregiverCollection failed:", err instanceof Error ? err.message : err);
@@ -1927,7 +1928,7 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   if (budget) pieces.push(`budget ${budget}`);
   // The wizard's "What would you like caregivers to know" answer — the Care Plan
   // page shows it as the recipient's Notes, so the family sees it here too.
-  if (typeof d.jobDescription === "string" && d.jobDescription.trim()) pieces.push(`note for caregivers: "${d.jobDescription.trim()}"`);
+  if (typeof d.jobDescription === "string" && d.jobDescription.trim()) pieces.push(`note for care providers: "${d.jobDescription.trim()}"`);
 
   return `Here's what I've got: ${pieces.join("; ")}. Did I get that right? Say yes and I'll show you who can help, or tell me what to fix.`;
 }
@@ -1995,7 +1996,7 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
 /** "fix the note" with the new text in the same message → that text; a bare ask → null; "remove it" → "". */
 async function noteReplacementFromReply(text: string): Promise<string | null> {
   const raw = await parseWithClaude(
-    'The family asked to change the short note caregivers read about the job. If their message CONTAINS the new note text (e.g. "change the note to: mom needs help mornings", "the note should say …"), return ONLY that text, verbatim, nothing else. ' +
+    'The family asked to change the short note care providers read about the job. If their message CONTAINS the new note text (e.g. "change the note to: mom needs help mornings", "the note should say …"), return ONLY that text, verbatim, nothing else. ' +
     'If they want the note removed, return exactly NONE. If they only asked to change it without giving the new text, return exactly EMPTY.',
     text,
   ).catch(() => "EMPTY");
@@ -2032,8 +2033,8 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     'Evia sent the family a summary of their care request and asked "Did I get that right?". Classify their reply with exactly one word: ' +
     'confirm — yes / correct / looks good / go ahead. ' +
     'edit — they correct or change a detail that is IN the summary (a day, time, rate, name, age, address, care need). ' +
-    'fix_note — they want the note / description for caregivers changed, rewritten, replaced or removed ("fix the note", "change the note to …", "remove the note"), with or without giving the new text. ' +
-    'note — they ADD something for the caregivers to know rather than correcting anything (e.g. "my son is amazing", "she loves gardening", "please be patient with him", "he is hard of hearing"). ' +
+    'fix_note — they want the note / description for care providers changed, rewritten, replaced or removed ("fix the note", "change the note to …", "remove the note"), with or without giving the new text. ' +
+    'note — they ADD something for the care providers to know rather than correcting anything (e.g. "my son is amazing", "she loves gardening", "please be patient with him", "he is hard of hearing"). ' +
     'question — they ask something, or say something unrelated. Reply with one word: confirm, edit, fix_note, note, or question.',
     text,
   );
@@ -2049,7 +2050,7 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     const given = await noteReplacementFromReply(text);
     if (given === null) {
       await db.collection("agent_sessions").doc(phone).set({ clientIntakeAwaitingNote: true }, { merge: true }).catch(() => {});
-      await sendMessage(chatId, "Sure — what should the note say instead? Caregivers browsing jobs can read it, so leave out contact info, medical details and addresses. (Reply NONE to remove it.)");
+      await sendMessage(chatId, "Sure — what should the note say instead? Care Providers browsing jobs can read it, so leave out contact info, medical details and addresses. (Reply NONE to remove it.)");
       return;
     }
     await mergeOnboardingData(phone, { jobDescription: given });
@@ -2063,7 +2064,7 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     const note = [prev, text.trim()].filter(Boolean).join(" ").slice(0, 2500);
     await mergeOnboardingData(phone, { jobDescription: note });
     const refreshed = await db.collection("agent_sessions").doc(phone).get();
-    await sendMessage(chatId, "Lovely — I'll make sure caregivers see that.");
+    await sendMessage(chatId, "Lovely — I'll make sure care providers see that.");
     await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
     return;
   }
@@ -2432,7 +2433,7 @@ async function handleClientShowCaregivers(
     // no stalled-work copy — voice contract R1).
     console.error("[handleClientShowCaregivers] caregiver preview failed:", err);
     await sendMessage(chatId,
-      `My system hiccuped pulling up caregivers for ${seniorName} — that's on me. Text me "ready" in a minute and I'll show you the matches.`
+      `My system hiccuped pulling up care providers for ${seniorName} — that's on me. Text me "ready" in a minute and I'll show you the matches.`
     );
     return;
   }
@@ -2455,7 +2456,7 @@ async function handleClientShowCaregivers(
     const introLabel = preview.locationLabel || "you";
     await sendMessage(chatId,
       preview.widened
-        ? `I don't have caregivers right in ${introLabel} yet, but here's who's nearby for ${seniorName} 👇`
+        ? `I don't have care providers right in ${introLabel} yet, but here's who's nearby for ${seniorName} 👇`
         : `Here's who's available near ${introLabel} for ${seniorName} 👇`
     );
   }
@@ -2524,7 +2525,7 @@ async function notifyWaitlistedFamilies(caregiverCity: string): Promise<void> {
       const seniorName = (s.onboardingData?.seniorName as string) ?? "your loved one";
       await db.collection("agent_sessions").doc(doc.id).update({ awaitingSupply: false }).catch(() => {});
       await sendMessage(chatId,
-        `Good news — a caregiver just became available near ${caregiverCity}! Let me show you who can help ${seniorName}.`
+        `Good news — a care provider just became available near ${caregiverCity}! Let me show you who can help ${seniorName}.`
       );
       await handleClientShowCaregivers(doc.id, chatId, s);
     } catch (err) {
@@ -2655,19 +2656,19 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
   const msg = await generateCaraMessage({
     audience: "family",
     context:
-      `Evia already showed this family real local caregivers for ${seniorName} (photos + profiles, sent earlier ` +
+      `Evia already showed this family real local care providers for ${seniorName} (photos + profiles, sent earlier ` +
       `in this conversation). The FAMILY MEMBER texting just finished their own identity check — Evia already told them ` +
       `"you're verified" one message ago, so do NOT repeat or rephrase that. It was NOT a background check and it is not about ${seniorName} ` +
       `(${seniorName} is the person receiving care); never use the words "background check" here. ` +
       pricePart +
-      `plus a 9% service fee on each visit (the caregiver keeps 100% of their rate), and for that Evia coordinates everything for ${seniorName} — ` +
+      `plus a 9% service fee on each visit (the care provider keeps 100% of their rate), and for that Evia coordinates everything for ${seniorName} — ` +
       `scheduling and live visit updates. State both the membership price and the 9% fee. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
       `already set up, and do NOT mention sending any link. Membership is what lets the family actually message ` +
-      `and book one of the caregivers just shown — do NOT say or imply that matching only starts once membership ` +
+      `and book one of the care providers just shown — do NOT say or imply that matching only starts once membership ` +
       `is active, that would contradict the real matches you just sent them. END with one clear yes/no question ` +
       `asking if they'd like to get set up (e.g. "Want me to get you set up?").`,
     fallback:
-      `Evia is ${priceLabel || "one simple monthly membership"} plus a 9% service fee on each visit — the caregiver keeps 100% of their rate. ` +
+      `Evia is ${priceLabel || "one simple monthly membership"} plus a 9% service fee on each visit — the care provider keeps 100% of their rate. ` +
       `I coordinate everything for ${seniorName}: scheduling and live visit updates. Want me to get you set up?`,
     emotionalDirective: (session as any)._emotionalDirective,
     maxTokens: 130,
@@ -2765,7 +2766,7 @@ async function handleClientPlanReply(
     return;
   }
   if (intent !== "confirm") {
-    await sendMessage(chatId, "When you're ready, say yes and I'll get you connected with caregivers — happy to answer anything first.");
+    await sendMessage(chatId, "When you're ready, say yes and I'll get you connected with care providers — happy to answer anything first.");
     return;
   }
 
@@ -2790,7 +2791,7 @@ export async function handleClientSendPayment(phone: string, chatId: string, ses
     const alreadyActive = md?.subscriptionActive === true || md?.membershipStatus === "active" || md?.membershipStatus === "trialing";
     if (alreadyActive) {
       await updateSession(phone, { onboardingStep: "complete" });
-      await sendMessage(chatId, "Looks like your membership is already active — you're all set! I'll keep finding great caregiver matches for you.");
+      await sendMessage(chatId, "Looks like your membership is already active — you're all set! I'll keep finding great care provider matches for you.");
       return;
     }
   }
@@ -2835,8 +2836,8 @@ export async function handleClientSendPayment(phone: string, chatId: string, ses
   const whoIsWho = describeWhoIsWho(d as Record<string, unknown>);
   const msg7 = await generateCaraMessage({
     audience: "family",
-    context: (whoIsWho ? whoIsWho + " " : "") + `Evia has collected everything needed to start finding caregivers for ${d.seniorName ?? "a loved one"}. Let the family know warmly, then tell them the last step is to start their membership so Evia can begin coordinating care, and that it takes about 30 seconds.`,
-    fallback: `Perfect — I have everything I need to start finding caregivers for ${d.seniorName ?? "your loved one"}.\n\nLast step: start your membership so I can begin coordinating care.\nTakes about 30 seconds:`,
+    context: (whoIsWho ? whoIsWho + " " : "") + `Evia has collected everything needed to start finding care providers for ${d.seniorName ?? "a loved one"}. Let the family know warmly, then tell them the last step is to start their membership so Evia can begin coordinating care, and that it takes about 30 seconds.`,
+    fallback: `Perfect — I have everything I need to start finding care providers for ${d.seniorName ?? "your loved one"}.\n\nLast step: start your membership so I can begin coordinating care.\nTakes about 30 seconds:`,
     maxTokens: 100,
   });
   await sendMessage(chatId, msg7);
@@ -2844,8 +2845,8 @@ export async function handleClientSendPayment(phone: string, chatId: string, ses
   await sendMessage(chatId, await generateCaraMessage({
     audience: "family",
     language: session.preferredLanguage === "es" ? "es" : "en",
-    context: (whoIsWho ? whoIsWho + " " : "") + `You just sent the family their payment setup link. Warmly reassure them that the moment it's active they can message, interview and book the caregivers they've seen${d.seniorName ? ` for ${d.seniorName}` : ""} — you'll be right here. One short line. Never promise that you are searching or finding caregivers in the meantime. ${d.seniorName ? `The ONLY care-recipient name you may use is "${d.seniorName}" — never invent or substitute any other name.` : `You do NOT know the care recipient's name — refer to them only as "your loved one" and NEVER invent a name.`}`,
-    fallback: `As soon as it's active you can message, interview and book the caregivers you've seen${d.seniorName ? ` for ${d.seniorName}` : ""} — I'll be right here.`,
+    context: (whoIsWho ? whoIsWho + " " : "") + `You just sent the family their payment setup link. Warmly reassure them that the moment it's active they can message, interview and book the care providers they've seen${d.seniorName ? ` for ${d.seniorName}` : ""} — you'll be right here. One short line. Never promise that you are searching or finding care providers in the meantime. ${d.seniorName ? `The ONLY care-recipient name you may use is "${d.seniorName}" — never invent or substitute any other name.` : `You do NOT know the care recipient's name — refer to them only as "your loved one" and NEVER invent a name.`}`,
+    fallback: `As soon as it's active you can message, interview and book the care providers you've seen${d.seniorName ? ` for ${d.seniorName}` : ""} — I'll be right here.`,
     maxTokens: 60,
   }));
 }
@@ -2877,7 +2878,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",
       language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "The caregiver asked to include the optional driving-record MVR add-on, but it is not configured. Warmly explain that Evia will continue with the standard background check and the team can follow up about adding the driving check later.",
+      context: "The care provider asked to include the optional driving-record MVR add-on, but it is not configured. Warmly explain that Evia will continue with the standard background check and the team can follow up about adding the driving check later.",
       fallback: "Heads up - I couldn't add the driving-record check to your membership right now, so I'm setting you up with the standard background check. Our team can follow up if you'd like to add it later.",
       maxTokens: 90,
     }));
@@ -2933,8 +2934,8 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     audience: "caregiver",
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
-      "The caregiver's profile is done — the last stretch is activating their membership. Facts you MUST convey, woven in naturally (not as a list): " +
-      `it's ${caregiverAnnualDisplay()}, it INCLUDES the background check every caregiver completes (the next step right after payment — no separate charge for it), ` +
+      "The care provider's profile is done — the last stretch is activating their membership. Facts you MUST convey, woven in naturally (not as a list): " +
+      `it's ${caregiverAnnualDisplay()}, it INCLUDES the background check every care provider completes (the next step right after payment — no separate charge for it), ` +
       "and it unlocks applying to jobs, getting booked, and Evia's scheduling + payout tools. Once their background check comes back clear, they're approved to care for clients" +
       (mvrCharged ? ". Their order also includes the driving-record (MVR) check they asked for" : "") +
       ". End leading into the activation link you're sending right after this message. Do NOT include any URL.",
@@ -3096,8 +3097,8 @@ async function wantsGateLinkResend(text: string): Promise<boolean> {
 async function wantsMoreCaregivers(text: string): Promise<boolean> {
   const raw = await parseWithClaude(
     "The user is texting Evia, a care coordinator, mid-signup. Is their message asking to see " +
-      "(more) caregivers, caregiver options, or matches — e.g. \"any more caregivers\", \"show me other " +
-      "options\", \"who else is available\", \"can I see more caregivers\", \"any other caregivers nearby\"? " +
+      "(more) care providers, care provider options, or matches — e.g. \"any more care providers\", \"show me other " +
+      "options\", \"who else is available\", \"can I see more care providers\", \"any other care providers nearby\"? " +
       "Reply YES only for that. Reply NO for a plain acknowledgment, a question about payment/identity/the " +
       "process itself, or anything else. Reply with exactly one word: YES or NO.",
     text,
@@ -3204,7 +3205,7 @@ async function handleCaregiverResendMembership(
     const kind = await classifyAwaitingReply(text, "finish their membership payment via the link Evia sent");
     if (kind === "ack") {
       await sendAwaitingAck(chatId, session,
-        "The caregiver just acknowledged your membership-payment ask (a thanks or 'will do') — you're here when it's done.",
+        "The care provider just acknowledged your membership-payment ask (a thanks or 'will do') — you're here when it's done.",
         "Sounds good — I'm here when it's done!");
       return false;
     }
@@ -3265,7 +3266,7 @@ async function handleInboundMedia(
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",
       language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "The caregiver texted a picture during signup. Warmly explain that photos are saved through the secure upload link (so they land on their profile correctly), and that you're sending the link again right below. Do NOT include any URL.",
+      context: "The care provider texted a picture during signup. Warmly explain that photos are saved through the secure upload link (so they land on their profile correctly), and that you're sending the link again right below. Do NOT include any URL.",
       fallback: "Thanks for sending that! Photos are saved through the secure upload link so they land on your profile — here it is again:",
       maxTokens: 70,
     }));
@@ -3442,7 +3443,7 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
     audience: "caregiver",
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
-      "The caregiver just paid their membership — they're nearly done. Naturally explain: the last big step is the background check every caregiver completes, and it's already included in the membership they just paid (no extra charge). The link coming right below opens Evia's secure page where they review the disclosure and authorize the check — takes about a minute. After they authorize, Checkr emails them a secure link to finish; their SSN and date of birth are entered directly with Checkr, never with Evia. Evia texts them the moment results come back clear — then they're approved and families can book them. Never promise a specific turnaround time. Do NOT include any URL.",
+      "The care provider just paid their membership — they're nearly done. Naturally explain: the last big step is the background check every care provider completes, and it's already included in the membership they just paid (no extra charge). The link coming right below opens Evia's secure page where they review the disclosure and authorize the check — takes about a minute. After they authorize, Checkr emails them a secure link to finish; their SSN and date of birth are entered directly with Checkr, never with Evia. Evia texts them the moment results come back clear — then they're approved and families can book them. Never promise a specific turnaround time. Do NOT include any URL.",
     fallback:
       "Almost done! Last big step: your background check — it's already included in your membership, no extra charge. " +
       "Tap the link below to review and authorize it (about a minute). Checkr will then email you a secure link to finish — your SSN and date of birth go directly to Checkr, never to me. " +
@@ -3467,7 +3468,7 @@ async function handleCaregiverResendBgcheckConsent(phone: string, chatId: string
     const kind = await classifyAwaitingReply(text, "review and authorize their background check via the link Evia sent");
     if (kind === "ack") {
       await sendAwaitingAck(chatId, session,
-        "The caregiver just acknowledged your background-check authorization ask (a thanks or 'will do') — you're here when it's done.",
+        "The care provider just acknowledged your background-check authorization ask (a thanks or 'will do') — you're here when it's done.",
         "Sounds good — I'm here when it's done!");
       return;
     }
@@ -3542,7 +3543,7 @@ export async function confirmBgcheckConsent(
     recordSideEffect("auth.createUser", { phone });
     uid = "dryrun-uid";
   }
-  if (!uid) throw new Error(`confirmBgcheckConsent: no caregiver account for ${phone}`);
+  if (!uid) throw new Error(`confirmBgcheckConsent: no care provider account for ${phone}`);
   const cgSnap = await db.collection("caregivers").doc(uid).get();
   const cgData = (cgSnap.data() ?? {}) as Record<string, any>;
   const email = (((cgData.email as string | undefined) || (d.email as string | undefined)) ?? "").trim();
@@ -3648,7 +3649,7 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
     // webhook (account.updated → charges+payouts enabled) can MATCH this caregiver
     // and finalize onboarding server-side.
     const accountId = await ensureCaregiverConnectAccount(phone, session);
-    if (!accountId) throw new Error("no caregiver record on this session yet — cannot set up payouts");
+    if (!accountId) throw new Error("no care provider record on this session yet — cannot set up payouts");
 
     const link = await getStripe().accountLinks.create({
       account:     accountId,
@@ -3676,7 +3677,7 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
     audience: "caregiver",
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
-      "The caregiver's background check just cleared — this is the very last step of signup. Naturally tell them to set up their payout account via the link below so they get paid after every visit. Keep it celebratory but brief. Do NOT include any URL.",
+      "The care provider's background check just cleared — this is the very last step of signup. Naturally tell them to set up their payout account via the link below so they get paid after every visit. Keep it celebratory but brief. Do NOT include any URL.",
     fallback: "Last step — set up your payout account so you can get paid after every visit:",
     maxTokens: 90,
   }));
@@ -3884,7 +3885,7 @@ export async function sendOnboardingLink(
       // mid-flow: advanceOnboardingStep's stripe_connect step guard refuses to
       // finalize unless the session is at the Connect step.
       const accountId = await ensureCaregiverConnectAccount(phone, session);
-      if (!accountId) throw new Error("sendOnboardingLink caregiver_payouts: no caregiver record on this session yet");
+      if (!accountId) throw new Error("sendOnboardingLink caregiver_payouts: no care provider record on this session yet");
       const link = await getStripe().accountLinks.create({
         account:     accountId,
         type:        "account_onboarding",
@@ -4151,7 +4152,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         await sendMessage(chatId, await generateCaraMessage({
           audience: "caregiver",
           language: session.preferredLanguage === "es" ? "es" : "en",
-          context: "The caregiver just uploaded a new profile photo (an update to their existing profile — they are NOT in onboarding). ONE short warm line confirming the new photo is saved on their profile.",
+          context: "The care provider just uploaded a new profile photo (an update to their existing profile — they are NOT in onboarding). ONE short warm line confirming the new photo is saved on their profile.",
           fallback: "Got it — your new profile photo is saved on your profile.",
           maxTokens: 40,
         }));
@@ -4643,7 +4644,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         caregiverId,
         name:        d.name,
         phone,
-        note:        "Caregiver completed onboarding — profile is live and ready to match.",
+        note:        "Care Provider completed onboarding — profile is live and ready to match.",
         createdAt:   new Date().toISOString(),
         resolved:    false,
       });
@@ -4726,7 +4727,7 @@ async function presentPrefilledJobPost(phone: string, chatId: string, session: A
   const existing = await db.collection("job_posts").where("clientId", "==", uid).limit(1).get().catch(() => null);
   if (existing && !existing.empty) {
     await updateSession(phone, { onboardingStep: "complete", optedIn: true });
-    await sendMessage(chatId, "Your care request is already live — caregivers nearby can apply, and I'll reach out as applications come in.");
+    await sendMessage(chatId, "Your care request is already live — care providers nearby can apply, and I'll reach out as applications come in.");
     return;
   }
   try {
@@ -4772,7 +4773,7 @@ async function handleJobConfirmPrefill(
   const already = await db.collection("job_posts").where("clientId", "==", uid).limit(1).get().catch(() => null);
   if (already && !already.empty) {
     await updateSession(phone, { onboardingStep: "complete", optedIn: true });
-    await sendMessage(chatId, "Your care request is already live — caregivers nearby can apply, and I'll reach out as applications come in.");
+    await sendMessage(chatId, "Your care request is already live — care providers nearby can apply, and I'll reach out as applications come in.");
     return;
   }
   try {
@@ -4799,7 +4800,7 @@ async function handleJobAskStart(
 ): Promise<void> {
   const d = session.onboardingData ?? {};
   await sendMessage(chatId,
-    `Your membership is active! 🎉 Let's find the perfect caregiver for ${(d.seniorName as string) ?? "your loved one"}.\n\n` +
+    `Your membership is active! 🎉 Let's find the perfect care provider for ${(d.seniorName as string) ?? "your loved one"}.\n\n` +
     `When would you like care to start? (e.g. "next Monday", "ASAP", "June 1")`
   );
   await updateSession(phone, { onboardingStep: "job_ask_frequency" });
@@ -5054,7 +5055,7 @@ async function handleJobAskPayMethod(
   await updateSession(phone, { onboardingStep: "job_confirm_post" });
   await sendMessage(chatId,
     `${rateLabel} — sounds good! Last step: in 1–3 sentences, describe a typical day of care for ` +
-    `${(d.seniorName as string) ?? "your loved one"}. What should a caregiver know?`
+    `${(d.seniorName as string) ?? "your loved one"}. What should a care provider know?`
   );
 }
 
@@ -5114,7 +5115,7 @@ async function handleJobConfirmPost(
       await updateSession(phone, { onboardingStep: "complete", optedIn: true });
       await sendMessage(chatId,
         `${jobLiveMessage}\n\n` +
-        `You can also browse caregivers and manage everything at ${APP_URL}/client/dashboard`
+        `You can also browse care providers and manage everything at ${APP_URL}/client/dashboard`
       );
       await sendMessage(chatId, buildHelpSmsReply("client", undefined, languageFromSession(session as unknown as Record<string, unknown>)));
       const { presentCaregiverSearch } = await import("./caregiverSearch");
@@ -5148,7 +5149,7 @@ async function handleJobConfirmPost(
 // an entry fall back to the generic prompt. Money/compliance facts only — keep
 // each entry short, the model weaves in what's relevant.
 const MEMBERSHIP_STEP_FACTS =
-  `The ${caregiverAnnualDisplay()} caregiver membership INCLUDES their required background check (no separate charge) and unlocks applying to jobs, ` +
+  `The ${caregiverAnnualDisplay()} care provider membership INCLUDES their required background check (no separate charge) and unlocks applying to jobs, ` +
   "getting booked, and Evia's scheduling + payout tools. It renews yearly. Right after payment comes the background-check step; " +
   `Evia texts them the moment it clears — then they're approved and families can book them (never promise a specific turnaround time). ` +
   `It is ONE flat fee (${caregiverAnnualAmount()} a year): if they offer transportation, the driving-record (MVR) check is included in the same background check at no extra charge.`;
@@ -5165,8 +5166,8 @@ const PAYOUTS_STEP_FACTS =
   "Their background check cleared — they're approved on Evia. The payout link sets up their Stripe account so they get paid after each visit: " +
   "earnings pay out daily automatically (free); an optional instant payout carries Stripe's 1% fee (min $0.50).";
 const CLIENT_PAYMENT_STEP_FACTS =
-  `The family membership is ${clientMonthlyDisplay()} — it's what lets Evia coordinate care: finding, vetting, and matching caregivers plus scheduling and secure payments. ` +
-  "It's a recurring monthly membership and setup takes about 30 seconds. Once it's active, you can message, interview and book the caregivers you've seen.";
+  `The family membership is ${clientMonthlyDisplay()} — it's what lets Evia coordinate care: finding, vetting, and matching care providers plus scheduling and secure payments. ` +
+  "It's a recurring monthly membership and setup takes about 30 seconds. Once it's active, you can message, interview and book the care providers you've seen.";
 const CLIENT_IDENTITY_STEP_FACTS =
   "Before payment, Evia runs a quick one-time identity check through Stripe Identity — it's secure, takes about 30 seconds, and keeps every family on the platform " +
   "real and safe. Their details go directly to Stripe, never stored by Evia. Once it clears, the next step is starting the membership.";
@@ -5225,14 +5226,14 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
     if (live) stepFacts = `${live} ${stepFacts ?? ""}`.trim();
   }
   return (await quickComplete(
-    "You are Evia, a warm human-feeling care coordinator at Evia. You help people entirely over text — " +
-      "YOU do the work for them: you find, vet, and match caregivers and set everything up through this conversation. " +
-      `The person you're texting is ${session.userType === "caregiver" ? "a caregiver looking for work" : "a family member looking for care for a loved one"}` +
+    CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a warm human-feeling care coordinator at Evia. You help people entirely over text — " +
+      "YOU do the work for them: you find, vet, and match care providers and set everything up through this conversation. " +
+      `The person you're texting is ${session.userType === "caregiver" ? "a care provider looking for work" : "a family member looking for care for a loved one"}` +
       `${name ? ` named ${name}` : ""}, and they're in the middle of signing up with you. They just said something — it may be a question, or just a comment. ` +
       "Reply in ONE warm, specific sentence. " +
       "HARD RULES: " +
       "(1) Everything can be done right here by text — you handle the searching and matching yourself, so never send them off to go search or fill something in. They also have an account on the Evia website with the same information; if they ask about it, say so plainly, but never invent features, filters, or tools you don't know exist. " +
-      "(2) If they named a place or a need (e.g. 'I'm looking for caregivers in San Jose'), reassure them you'll handle finding caregivers there — do NOT tell them to search. " +
+      "(2) If they named a place or a need (e.g. 'I'm looking for care providers in San Jose'), reassure them you'll handle finding care providers there — do NOT tell them to search. " +
       // LAUNCH: wording pending counsel review (R15)
       "(3) Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot) and never refer to yourself in the third person. But if directly asked whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question. Also never use phrases like 'I'm here to help' or 'let me know if you need further assistance'. " +
       "(4) If you don't actually know the answer, say you'll get it sorted — never make up a feature or process. " +

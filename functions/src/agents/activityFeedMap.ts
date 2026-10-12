@@ -44,7 +44,7 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   message_sent:               { included: true,  description: "Evia sent a message to your care team." },
   booking_created:            { included: true,  description: "Evia booked a visit." },
   booking_cancelled:          { included: true,  description: "Evia cancelled a visit." },
-  caregiver_matched:          { included: true,  description: "Evia matched you with a caregiver." },
+  caregiver_matched:          { included: true,  description: "Evia matched you with a care provider." },
   interview_scheduled:        { included: true,  description: "Evia scheduled an interview." },
   // interview_responded is logged keyed to the CAREGIVER (mcp/server.ts), not the
   // family — it can never resolve to the family owner, so it is excluded (like the

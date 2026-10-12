@@ -83,13 +83,13 @@ describe("detectAgentSelfRepeat (ch10 broken-record)", () => {
   });
 
   it("only compares against ASSISTANT messages, not the user's", () => {
-    const msg = "please send the caregiver setup link for my mother today";
+    const msg = "please send the care provider setup link for my mother today";
     // Same text but spoken by the USER — not a self-repeat.
     expect(detectAgentSelfRepeat(msg, [{ role: "user", content: msg }]).repeated).toBe(false);
   });
 
   it("does not flag genuinely different replies", () => {
-    const r = detectAgentSelfRepeat("Your caregiver Maria is confirmed for 9am Tuesday.", [
+    const r = detectAgentSelfRepeat("Your care provider Maria is confirmed for 9am Tuesday.", [
       { role: "assistant", content: "Do you go by Anahi, or another name?" },
     ]);
     expect(r.repeated).toBe(false);

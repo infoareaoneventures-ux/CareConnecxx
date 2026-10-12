@@ -140,7 +140,7 @@ export async function mapCaregiverServices(raw: unknown): Promise<ServiceMapping
 
   const enumList = CANONICAL_SERVICES.map((s) => `"${s}"`).join(", ");
   const reply = await parseWithClaude(
-    "You sort a caregiver's words about the care she offers into a FIXED list of eight services. " +
+    "You sort a care provider's words about the care she offers into a FIXED list of eight services. " +
       `Allowed services (use these exact strings): [${enumList}]. ` +
       'Reply with raw JSON only: {"services": [allowed strings her words clearly describe], ' +
       '"medical": [her phrases that describe hands-on medical or nursing care], ' +

@@ -52,7 +52,7 @@ export async function detectMatchRefilter(
   let raw = "";
   try {
     raw = await quickComplete(
-      "Evia just showed a family member 3 caregiver options. They replied — is their reply a request " +
+      "Evia just showed a family member 3 care provider options. They replied — is their reply a request " +
       "to change the search criteria (e.g. \"cheaper\", \"any with dementia experience\", \"available Saturday\", " +
       "\"a woman\", \"Spanish-speaking\")?\n" +
       contextLine + "\n" +

@@ -76,7 +76,7 @@ function applyTransportFilter(
 
 export const getCaregiverPreviewCaraAction = defineCaraAction({
   name: "get_caregiver_preview",
-  description: "Read active caregivers and return a short curated preview for client onboarding.",
+  description: "Read active care providers and return a short curated preview for client onboarding.",
   inputSchema: caregiverPreviewInputSchema,
   outputSchema: caregiverPreviewOutputSchema,
   readOnly: true,
@@ -257,7 +257,7 @@ export function buildCaregiverPreviewResult(opts: {
         items: [],
         alreadyShownNames,
         message:
-          `You've already met the caregivers I have for ${needsLabel} in ${locationLabel} — ${namesLabel}. ` +
+          `You've already met the care providers I have for ${needsLabel} in ${locationLabel} — ${namesLabel}. ` +
           `No one new has joined since. Want me to reach back out to them, or keep watching for someone new?`,
       };
     }
@@ -269,7 +269,7 @@ export function buildCaregiverPreviewResult(opts: {
       needsLabel,
       items: [],
       message:
-        `I don't have caregivers available in ${locationLabel} just yet, but I've saved everything about ` +
+        `I don't have care providers available in ${locationLabel} just yet, but I've saved everything about ` +
         `${seniorName}'s care, and I'll text you the moment the right person is available. No charge until then.`,
     };
   }
@@ -282,9 +282,9 @@ export function buildCaregiverPreviewResult(opts: {
   );
 
   const message = opts.widened
-    ? `I don't have caregivers right in ${locationLabel} yet, but I do have nearby options for ${seniorName}: ${previewText}. ` +
+    ? `I don't have care providers right in ${locationLabel} yet, but I do have nearby options for ${seniorName}: ${previewText}. ` +
       "I would start with the best fit, confirm the schedule, and keep the family updated here."
-    : `I found ${caregivers.length} caregiver${caregivers.length !== 1 ? "s" : ""} near ${locationLabel} ` +
+    : `I found ${caregivers.length} care provider${caregivers.length !== 1 ? "s" : ""} near ${locationLabel} ` +
       `who can help with ${needsLabel}. ${previewText}. ` +
       "I would start with the best fit, confirm the schedule, and keep the family updated here.";
 

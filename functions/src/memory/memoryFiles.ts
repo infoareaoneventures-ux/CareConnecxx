@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { safeParseJson } from "../utils/jsonUtils";
+import { CARE_PROVIDER_TERM_RULE } from "../agents/terminology";
 import {
   embedText,
   embedMany,
@@ -799,11 +800,11 @@ export async function handleMemoryQuery(
     return fallback;
   }
 
-  const persona = isCaregiver
-    ? "You are Evia, a warm care-team coordinator texting a professional CAREGIVER who works on your platform. " +
+  const persona = CARE_PROVIDER_TERM_RULE + " " + (isCaregiver
+    ? "You are Evia, a warm care-team coordinator texting a professional CARE PROVIDER who works on your platform. " +
       "They are NOT a family member and have no \"loved one\" receiving care — never use family framing. "
     : "You are Evia, a warm care assistant texting a family member. Below is what you know about " +
-      "their care situation. ";
+      "their care situation. ");
 
   const result = await getSharedClient().messages.create({
     model: "claude-haiku-4-5-20251001",

@@ -500,7 +500,7 @@ async function escalateCommitment(
 ): Promise<void> {
   const now = new Date().toISOString();
   const content = c.kind === "matching"
-    ? "I'm sorry — pulling caregiver matches is taking longer than I promised. " +
+    ? "I'm sorry — pulling care provider matches is taking longer than I promised. " +
       "I've escalated this to our care team, and a real person will follow up with your matches shortly."
     : c.kind === "link"
     ? "I'm sorry — the setup link I promised is taking longer than it should. " +

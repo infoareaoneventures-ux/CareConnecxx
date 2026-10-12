@@ -165,7 +165,7 @@ describe("cx_pick → cx_confirm → YES", () => {
   it("Skip on a Needs Replacement visit uses the same in-place cancel write", async () => {
     seed();
     await pick("1");
-    expect(lastSent()).toContain("Skip the Tuesday, September 15, 2026, 11:00 AM–1:00 PM visit? No replacement caregiver will be arranged");
+    expect(lastSent()).toContain("Skip the Tuesday, September 15, 2026, 11:00 AM–1:00 PM visit? No replacement care provider will be arranged");
     await handleCancelFlowStep(PHONE, CHAT, "yes", session({ cancelFlowStep: "cx_confirm" }));
     expect(hoisted.docState.get("shifts/sh-tue")).toMatchObject({ status: "cancelled", cancelledBy: "client" });
     // The caregiver dropped this visit — the confirmation must not claim they were notified (2026-10-07).

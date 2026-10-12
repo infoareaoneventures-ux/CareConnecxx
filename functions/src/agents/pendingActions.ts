@@ -130,13 +130,13 @@ export function isHighRisk(toolName: string, toolInput: Record<string, unknown>)
 // own reasoning slips, the same way cancel_interview's enforced confirmation
 // already catches a forgotten/skipped confirmation.
 async function resolveCaregiverNameForPreview(caregiverId: unknown): Promise<string> {
-  if (typeof caregiverId !== "string" || !caregiverId) return "an unspecified caregiver";
+  if (typeof caregiverId !== "string" || !caregiverId) return "an unspecified care provider";
   try {
     const snap = await db.collection("publicCaregiverProfiles").doc(caregiverId).get();
     const name = snap.data()?.name as string | undefined;
-    return name || "this caregiver"; // never the raw id (founder 2026-09-30: names, not numbers, in anything a person reads)
+    return name || "this care provider"; // never the raw id (founder 2026-09-30: names, not numbers, in anything a person reads)
   } catch {
-    return "this caregiver";
+    return "this care provider";
   }
 }
 

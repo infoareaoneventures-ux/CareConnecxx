@@ -381,11 +381,11 @@ const EVAL_CASES: EvalCase[] = [
   // ── caregiver loop (ONBOARDING_AGENT_LOOP=client,caregiver rollout gate) ────
   {
     id: "cg_story",
-    label: "caregiver front-loads their whole story",
+    label: "care provider front-loads their whole story",
     role: "caregiver",
     initialStep: "caregiver_ask_name",
     turns: [
-      "Hi I'm Maria, I'm in San Jose. I've been a caregiver about 6 years, mostly dementia clients, I'm a CNA and CPR certified",
+      "Hi I'm Maria, I'm in San Jose. I've been a care provider about 6 years, mostly dementia clients, I'm a CNA and CPR certified",
       "weekdays 8am to 4pm",
       "part-time is ideal",
       "$25 an hour",
@@ -395,14 +395,14 @@ const EVAL_CASES: EvalCase[] = [
   },
   {
     id: "cg_terse",
-    label: "caregiver gives terse one-word-ish answers",
+    label: "care provider gives terse one-word-ish answers",
     role: "caregiver",
     initialStep: "caregiver_ask_name",
     turns: ["James", "Sunnyvale", "4 years", "mobility and post-surgery", "weekends", "occasional", "22", "james.t@example.com", "I show up on time and keep families in the loop"],
   },
   {
     id: "cg_money_question",
-    label: "caregiver asks about pay and the background check mid-collection",
+    label: "care provider asks about pay and the background check mid-collection",
     role: "caregiver",
     initialStep: "caregiver_ask_name",
     turns: [
@@ -543,7 +543,7 @@ describe("eval harness tool engine (no spend)", () => {
     expect(store.sessions.get(phone)!.onboardingStep).toBe(firstGateStep("client"));
   });
 
-  it("caregiver role: save/complete semantics mirror the caregiver contract (= the site wizard) and hand off to the membership gate", async () => {
+  it("care provider role: save/complete semantics mirror the care provider contract (= the site wizard) and hand off to the membership gate", async () => {
     const { handleToolCall } = await import("../mcp/server");
     const phone = "+15550000002";
     store.ensure(phone, "caregiver_ask_name");

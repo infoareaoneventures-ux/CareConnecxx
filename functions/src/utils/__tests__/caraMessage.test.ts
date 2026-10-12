@@ -22,7 +22,7 @@ const SAVED = { ...process.env };
 
 const META_OUTPUT =
   "Got it, but I need the briefing context to write this message, " +
-  "who's the caregiver, what shift/client situation are we talking about...";
+  "who's the care provider, what shift/client situation are we talking about...";
 
 const modelReturns = (text: string) => {
   messagesCreate.mockResolvedValue({ content: [{ type: "text", text }] });
@@ -30,7 +30,7 @@ const modelReturns = (text: string) => {
 
 const OPTS = {
   audience: "caregiver" as const,
-  context:  "Caregiver finished onboarding.",
+  context:  "Care Provider finished onboarding.",
   fallback: "You're all set — reply here if you need anything.",
 };
 

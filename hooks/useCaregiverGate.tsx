@@ -5,7 +5,7 @@ import { useCareConnex } from '../context/CareConnexContext';
 import { hasValidTransportDocs, offersTransportation } from '../utils/transportDocs';
 
 /** Where "Set Up Transportation" sends a caregiver who has not offered the service yet: the Profile page with the Care Services editor open (2026-10-06). */
-export const ADD_TRANSPORTATION_PATH = '/caregiver/profile?edit=services';
+export const ADD_TRANSPORTATION_PATH = '/care-provider/profile?edit=services';
 
 /**
  * Where "Set Up Transportation" goes — the job-card button, the Apply popup's button and
@@ -15,7 +15,7 @@ export const ADD_TRANSPORTATION_PATH = '/caregiver/profile?edit=services';
  * where it stands (nothing left to do but wait or read the result).
  */
 export function transportSetupPath(profile: any): string {
-  return offersTransportation(profile) ? '/caregiver/settings' : ADD_TRANSPORTATION_PATH;
+  return offersTransportation(profile) ? '/care-provider/settings' : ADD_TRANSPORTATION_PATH;
 }
 import { dbService } from '../services/api';
 
@@ -69,13 +69,13 @@ const REASON_CONFIG = {
     title: 'Membership required',
     desc: 'You need an active membership to take this action. Activate your membership to continue.',
     cta: 'Activate membership',
-    path: '/caregiver/membership',
+    path: '/care-provider/membership',
   },
   background: {
     title: 'Background check required',
     desc: 'Your background check must be cleared before you can take this action.',
     cta: 'Go to dashboard',
-    path: '/caregiver/dashboard',
+    path: '/care-provider/dashboard',
   },
   // 2026-10-06: Transportation = offered on the profile AND the driving record
   // cleared — no documents (founder: only the background check and the MVR).
@@ -86,7 +86,7 @@ const REASON_CONFIG = {
     // Founder, 2026-10-04: states the requirement, never an approval — Evia does not vouch for a driver.
     desc: "This job includes driving. To apply, offer Transportation on your profile and complete the driving record check, included in your membership. See where you stand under Settings › Membership & verification.",
     cta: 'Go to Settings',
-    path: '/caregiver/settings',
+    path: '/care-provider/settings',
   },
 };
 

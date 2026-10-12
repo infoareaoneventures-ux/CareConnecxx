@@ -62,7 +62,7 @@ describe("cardReminderDue — exactly 7 days before the anniversary, once", () =
 
 describe("lockedNow — the one signal that releases upcoming visits to the families", () => {
   const working = { membershipStatus: "active", verified: true, backgroundCheckStatus: "clear" };
-  it("a working caregiver: active (or in Stripe's retry state) AND cleared", () => {
+  it("a working care provider: active (or in Stripe's retry state) AND cleared", () => {
     expect(canWork(working)).toBe(true);
     expect(canWork({ ...working, membershipStatus: "past_due" })).toBe(true);     // no lock while Stripe retries
     expect(canWork({ ...working, membershipStatus: "payment_failed" })).toBe(true);

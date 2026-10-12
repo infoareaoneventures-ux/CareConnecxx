@@ -59,7 +59,7 @@ const APPLY_CONFIRM = (d: ApplyFlowData) =>
 /** The Apply modal's facts at any step: the job as shown, the profile block, the budget, and what SUBMIT does. */
 const APPLY_FACTS = (d: ApplyFlowData) =>
   `The Apply for Position modal on their screen:\nJob: ${d.jobTitle}\n${d.jobLine}\n${d.profile}\nClient's budget: ${d.budget}${d.coverLetter !== undefined ? `\nCover letter: ${d.coverLetter ? `"${d.coverLetter}"` : "(none)"}` : ""}\n\n` +
-  "The cover letter is optional (SKIP sends none); the family sees it with the application. Nothing is sent until the caregiver replies SUBMIT on the recap — the Jobs page's Apply; CANCEL sends nothing and the job stays on the Jobs page. " +
+  "The cover letter is optional (SKIP sends none); the family sees it with the application. Nothing is sent until the care provider replies SUBMIT on the recap — the Jobs page's Apply; CANCEL sends nothing and the job stays on the Jobs page. " +
   "An application can be sent once per job; the family then requests an interview, accepts, or declines, and the application shows on My Applications.";
 
 export async function startApplyFlow(
@@ -124,7 +124,7 @@ export async function handleApplyFlowStep(phone: string, chatId: string, text: s
       return;
     }
     const verdict = await parse(
-      "The caregiver was asked for an OPTIONAL cover letter, or to reply SKIP. Reply SKIP if they declined / want no cover letter " +
+      "The care provider was asked for an OPTIONAL cover letter, or to reply SKIP. Reply SKIP if they declined / want no cover letter " +
       "(\"skip\", \"no\", \"none\", \"no thanks\"). Otherwise reply LETTER — their message IS the cover letter.", text);
     const coverLetter = verdict.trim().toUpperCase().startsWith("SKIP") ? "" : text.trim();
     const next: ApplyFlowData = { ...data, coverLetter };
@@ -140,7 +140,7 @@ export async function handleApplyFlowStep(phone: string, chatId: string, text: s
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, APPLY_CONFIRM(data))) action = "cancel";
     else {
-      const v = await parse("Evia asked the caregiver to reply SUBMIT to send their job application, or CANCEL. Classify: SUBMIT (they want it sent), CANCEL (they don't), or OTHER (a question / something else).", text);
+      const v = await parse("Evia asked the care provider to reply SUBMIT to send their job application, or CANCEL. Classify: SUBMIT (they want it sent), CANCEL (they don't), or OTHER (a question / something else).", text);
       action = v.toUpperCase().startsWith("SUBMIT") ? "submit" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
@@ -241,7 +241,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
     if (await isQuestionOrOther(text, DATE_QUESTION)) { await sendMessage(chatId, await answerMidFlow(text, DATE_QUESTION, { facts: RS_FACTS(data) })); return; }
     const today = businessTodayStr();
     const raw = await parse(
-      `Today is ${today} (Pacific time). The caregiver is naming the DATE for an interview. Reply with that date as YYYY-MM-DD ` +
+      `Today is ${today} (Pacific time). The care provider is naming the DATE for an interview. Reply with that date as YYYY-MM-DD ` +
       "(resolve relative words like tomorrow / next Monday / 9/28 against today, never a past date), or NONE if no date is given.", text);
     const m = /(\d{4}-\d{2}-\d{2})/.exec(raw);
     if (!m || m[1] < today) { await sendMessage(chatId, `${DIDNT_CATCH} ${DATE_QUESTION}`); return; }
@@ -266,7 +266,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
   if (step === "rs_time") {
     if (await isBackOutRequest(text, TIME_QUESTION)) return cancelled();
     if (await isQuestionOrOther(text, TIME_QUESTION)) { await sendMessage(chatId, await answerMidFlow(text, TIME_QUESTION, { facts: RS_FACTS(data) })); return; }
-    const raw = await parse("The caregiver is naming a TIME of day. Reply with it as 24-hour HH:MM (e.g. 10:30, 14:00), or NONE if no time is given.", text);
+    const raw = await parse("The care provider is naming a TIME of day. Reply with it as 24-hour HH:MM (e.g. 10:30, 14:00), or NONE if no time is given.", text);
     const m = /(\d{1,2}):(\d{2})/.exec(raw);
     const time = m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
     if (!time || !isSiteInterviewSlot(time)) { await sendMessage(chatId, `${DIDNT_CATCH} ${TIME_QUESTION}`); return; }
@@ -285,7 +285,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, question)) action = "cancel";
     else {
-      const v = await parse("Evia asked the caregiver to reply SEND to propose the new interview time, or CANCEL. Classify: SEND, CANCEL, or OTHER (a question / a different time / something else).", text);
+      const v = await parse("Evia asked the care provider to reply SEND to propose the new interview time, or CANCEL. Classify: SEND, CANCEL, or OTHER (a question / a different time / something else).", text);
       action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();

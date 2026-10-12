@@ -94,7 +94,7 @@ async function resolveCaregiverRate(
   if (!caregiverId) return { ok: false, code: "INVALID_INPUT", message: "caregiverId is required" };
   const result = await resolveCaregiverRateShared(caregiverId);
   if (result.ok) return result;
-  const code: ToolErrorCode = result.message === "caregiver not found" ? "NOT_FOUND" : "RATE_UNKNOWN";
+  const code: ToolErrorCode = result.message === "care provider not found" ? "NOT_FOUND" : "RATE_UNKNOWN";
   return { ok: false, code, message: result.message };
 }
 
@@ -136,7 +136,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_upcoming_appointments",
-    description: "Get a client's upcoming visits — the same list the website's My Bookings > Active Bookings shows under UPCOMING SHIFTS: scheduled and in-progress visits AND any visit marked 'needs_replacement' (the caregiver cancelled it). Each result carries its id (the shiftId) and status — use that id for manage_booking (cancel_visit/propose_reschedule) and, for a needs_replacement visit, for get_callout_backups.",
+    description: "Get a client's upcoming visits — the same list the website's My Bookings > Active Bookings shows under UPCOMING SHIFTS: scheduled and in-progress visits AND any visit marked 'needs_replacement' (the care provider cancelled it). Each result carries its id (the shiftId) and status — use that id for manage_booking (cancel_visit/propose_reschedule) and, for a needs_replacement visit, for get_callout_backups.",
     input_schema: {
       type: "object",
       properties: {
@@ -148,19 +148,19 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "find_nearby_caregivers",
     description:
-      "The website's Find Caregivers page (Find Care), exactly: the same caregiver pool, the same filter panel and " +
-      "the same sort. Call it ANY time a family asks to see, browse or find caregivers — browsing is not gated on " +
+      "The website's Find Care Providers page (Find Care), exactly: the same care provider pool, the same filter panel and " +
+      "the same sort. Call it ANY time a family asks to see, browse or find care providers — browsing is not gated on " +
       "identity or membership (only Message / Request Interview are, and those tools gate themselves). Filters mirror " +
       "the page: query (name, city or zip search box), maxDistanceMiles (slider, default 25), maxHourlyRate (slider, " +
-      "default 75; 100 = no cap), minRating (Any/3/4/4.5), minExperienceYears (Any/1/3/5/10), transportationOnly (the Specialties › Transportation box: caregivers whose Transportation is live — offered and driving record clear), specialties (any of), languages " +
+      "default 75; 100 = no cap), minRating (Any/3/4/4.5), minExperienceYears (Any/1/3/5/10), transportationOnly (the Specialties › Transportation box: care providers whose Transportation is live — offered and driving record clear), specialties (any of), languages " +
       "(any of), sortBy (rating = Highest rated, the default; price-low; price-high), favoritesOnly (the Favorites tab). " +
-      "Every caregiver shown is already background-check cleared — never ask the family whether they want that. " +
-      "It texts the family the page: a '<N> caregivers found' line, then one card per caregiver (name, rate, rating, " +
+      "Every care provider shown is already background-check cleared — never ask the family whether they want that. " +
+      "It texts the family the page: a '<N> care providers found' line, then one card per care provider (name, rate, rating, " +
       "experience, location, specialties, verification, and the card's button state: Request Interview / Active " +
       "Booking / Interview requested / Re-book) with a tappable profile link, and records them in pendingMatches. It " +
       "does NOT hide anyone the family already met — same as the page; use offset (with the same filters) for 'show " +
       "me more'. Never repeat the names/rates/links in your reply; follow the instruction in its result. NOT for a " +
-      "visit the caregiver cancelled (a 'Needs Replacement' visit) — that is start_replacement_flow.",
+      "visit the care provider cancelled (a 'Needs Replacement' visit) — that is start_replacement_flow.",
     input_schema: {
       type: "object",
       properties: {
@@ -170,11 +170,11 @@ export const MCP_TOOLS: McpTool[] = [
         maxHourlyRate:      { type: "number", description: "Max rate slider (default 75; 100 or more = no cap)." },
         minRating:          { type: "number", description: "Rating pills: 3, 4 or 4.5 (omit for Any)." },
         minExperienceYears: { type: "number", description: "Experience: 1, 3, 5 or 10 (omit for Any)." },
-        transportationOnly: { type: "boolean", description: "Transportation only — caregivers offering it with a cleared driving record (the page's Specialties › Transportation box)." },
+        transportationOnly: { type: "boolean", description: "Transportation only — care providers offering it with a cleared driving record (the page's Specialties › Transportation box)." },
         specialties:        { type: "array", items: { type: "string" }, description: "Senior care specialties — any of (e.g. 'Dementia / Memory Care', 'Mobility Assistance')." },
         languages:          { type: "array", items: { type: "string" }, description: "Languages — any of." },
         sortBy:             { type: "string", enum: ["rating", "price-low", "price-high"], description: "Sort by: Highest rated (default), Price: Low to High, Price: High to Low." },
-        favoritesOnly:      { type: "boolean", description: "The Favorites tab — only caregivers the family has hearted." },
+        favoritesOnly:      { type: "boolean", description: "The Favorites tab — only care providers the family has hearted." },
         offset:             { type: "number", description: "Skip this many results — for 'show me more' with the SAME filters." },
         limit:              { type: "number", description: "Cards to text this turn (default 4, max 10)." },
       },
@@ -188,14 +188,14 @@ export const MCP_TOOLS: McpTool[] = [
     // of two for what's almost always wanted together.
     name: "get_caregiver_info",
     description:
-      "The website's caregiver profile page (/client/caregiver/{id}) as data, exactly as this family sees it: header (name, rating or 'No reviews yet', badges, city, " +
+      "The website's care provider profile page (/client/care-provider/{id}) as data, exactly as this family sees it: header (name, rating or 'No reviews yet', badges, city, " +
       "$rate/hr · $billed/hr), About + languages, Care Services, Rates (1 / 2 / 3+ people, each with the billed figure), experience, Weekly Availability blocks, Background, " +
       "Location & Travel, recent Reviews, and the buttons the page shows this family (Active Booking / Re-book / Interview Requested / Request Interview; Message; Leave a Review). " +
-      "Use for any question about a specific caregiver. Quote only what is in the result; `summary` is the page in one paragraph.",
+      "Use for any question about a specific care provider. Quote only what is in the result; `summary` is the page in one paragraph.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's ID" },
+        caregiverId: { type: "string", description: "The care provider's ID" },
         clientId:    { type: "string", description: "The family viewing the page (auto-injected) — decides which buttons the page shows them" },
         reviewLimit: { type: "number", description: "Max recent reviews to include (default 5, max 20 — the page lists 20)" },
       },
@@ -206,13 +206,13 @@ export const MCP_TOOLS: McpTool[] = [
     name: "contact_support",
     description:
       "Put the person in touch with Evia's human team — the website's 'Message our team' button. Use it the moment someone asks for a person, a human, " +
-      "support, a manager, or to complain about Evia; or when they raise something you must not handle yourself (a safety worry about a caregiver, a billing " +
+      "support, a manager, or to complain about Evia; or when they raise something you must not handle yourself (a safety worry about a care provider, a billing " +
       "dispute you cannot settle, an accusation). Pass their words as `message`. It writes into their support room (the same room the website button opens); " +
       "the team is alerted and replies are texted back to them. Then tell them, in one line, that the team has it and will reply here by text — do NOT promise a time.",
     input_schema: {
       type: "object",
       properties: {
-        userId:  { type: "string", description: "The person's user ID (client or caregiver)" },
+        userId:  { type: "string", description: "The person's user ID (client or care provider)" },
         message: { type: "string", description: "What they want the team to know — their own words, verbatim where possible" },
       },
       required: ["userId", "message"],
@@ -221,14 +221,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_notifications",
     description:
-      "The website's notification bell as data, for a family OR a caregiver: their notifications newest first (chat messages excluded — the Inbox owns them), the unread count, and for each one the " +
-      "page the bell opens (page.label / page.path) — the caregiver's pages for a caregiver (My Bookings, Jobs › Interviews, Payments, Account Settings), the family's for a family. Use when they ask what's new, what a notification was about, or to clear the bell. action: list (default) | mark_all_read " +
+      "The website's notification bell as data, for a family OR a care provider: their notifications newest first (chat messages excluded — the Inbox owns them), the unread count, and for each one the " +
+      "page the bell opens (page.label / page.path) — the care provider's pages for a care provider (My Bookings, Jobs › Interviews, Payments, Account Settings), the family's for a family. Use when they ask what's new, what a notification was about, or to clear the bell. action: list (default) | mark_all_read " +
       "(the bell's Mark all read) | mark_read (one, needs notificationId) | delete (the trash icon on one, needs notificationId).",
     input_schema: {
       type: "object",
       properties: {
-        userId:         { type: "string", description: "The user's ID — the family's userId or the caregiver's caregiverId (the same uid; auto-injected)" },
-        role:           { type: "string", enum: ["client", "caregiver"], description: "Whose bell: 'caregiver' in a caregiver conversation. Defaults to the user's recorded role." },
+        userId:         { type: "string", description: "The user's ID — the family's userId or the care provider's caregiverId (the same uid; auto-injected)" },
+        role:           { type: "string", enum: ["client", "caregiver"], description: "Whose bell: 'caregiver' in a care provider conversation. Defaults to the user's recorded role." },
         action:         { type: "string", enum: ["list", "mark_all_read", "mark_read", "delete"], description: "Default list" },
         notificationId: { type: "string", description: "For mark_read / delete: the id from a previous list" },
         show:           { type: "number", description: "How many to include in the summary line (default 5; items always has all of them)" },
@@ -261,7 +261,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_caregiver_booking_rate",
-    description: "Look up a caregiver's name and hourly rate. Read-only — books nothing. Use this when the family asks what a caregiver charges, before quoting or committing a booking.",
+    description: "Look up a care provider's name and hourly rate. Read-only — books nothing. Use this when the family asks what a care provider charges, before quoting or committing a booking.",
     input_schema: {
       type: "object",
       properties: {
@@ -273,9 +273,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_replacement_flow",
     description:
-      "THE way to handle a visit marked 'Needs Replacement' (the caregiver cancelled it): starts Evia's own scripted " +
+      "THE way to handle a visit marked 'Needs Replacement' (the care provider cancelled it): starts Evia's own scripted " +
       "flow that walks the website's Find Replacement modal step for step — it texts the family each candidate's " +
-      "profile card (Care Team first, then nearby matches, never the caregiver who cancelled), asks which one and " +
+      "profile card (Care Team first, then nearby matches, never the care provider who cancelled), asks which one and " +
       "whether to keep the visit's date/time or change it, shows a recap, and only on the family's YES sends the " +
       "replacement booking request (the same booking_requests write the modal's Request button makes). No interview " +
       "step exists in this flow. Get the shiftId from get_upcoming_appointments (the visit whose status is " +
@@ -308,11 +308,11 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_correction_flow",
     description:
-      "Correct a caregiver's submitted timesheet — clock-in/out AND the additional charges (adjust an amount or remove one, exactly what the modal allows) — the website's Timesheets 'Review submitted hours' modal, step for " +
+      "Correct a care provider's submitted timesheet — clock-in/out AND the additional charges (adjust an amount or remove one, exactly what the modal allows) — the website's Timesheets 'Review submitted hours' modal, step for " +
       "step. Starts Evia's scripted flow: which timesheet (only if more than one is waiting), the proposed clock-in (KEEP = as " +
       "submitted), the proposed clock-out, an optional reason, a recap with the proposed total and pay, then YES sends the " +
-      "SAME propose_correction write the modal makes (the caregiver has 24h to accept or counter; silence auto-accepts). If the " +
-      "caregiver already sent a COUNTER, the flow offers exactly the modal's two buttons: ACCEPT or ESCALATE. Use this the " +
+      "SAME propose_correction write the modal makes (the care provider has 24h to accept or counter; silence auto-accepts). If the " +
+      "care provider already sent a COUNTER, the flow offers exactly the modal's two buttons: ACCEPT or ESCALATE. Use this the " +
       "moment a family says any clock-in/out, hours or pay on a submitted timesheet is wrong ('change the clock in time', " +
       "'she left at 10:30 not 10:38', 'the hours are off') — pass initialText = their message so times they already gave are " +
       "used. This tool ALREADY TEXTS THE FAMILY — send NOTHING else this turn. review_shift_hours stays for a plain approve.",
@@ -328,20 +328,20 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_visit_request_flow",
     description:
-      "Add an extra visit (a new day, or new days, and times) to a booking the caregiver has already accepted — the " +
-      "website's 'Request Visit' button (My Calendar header, My Bookings header and each Active Bookings card), step for step. Starts Evia's scripted flow: which caregiver (only " +
+      "Add an extra visit (a new day, or new days, and times) to a booking the care provider has already accepted — the " +
+      "website's 'Request Visit' button (My Calendar header, My Bookings header and each Active Bookings card), step for step. Starts Evia's scripted flow: which care provider (only " +
       "those with an active booking), which booking if they have more than one, the day(s), the time(s) per day " +
-      "(refusing anything that overlaps an existing visit with that caregiver or a time they're booked elsewhere, and " +
+      "(refusing anything that overlaps an existing visit with that care provider or a time they're booked elsewhere, and " +
       "flagging times outside their usual availability), start date, ongoing or end date, an optional note, then a " +
-      "recap; only on YES does it write the booking_amendments request the caregiver must accept. Pass initialText = " +
+      "recap; only on YES does it write the booking_amendments request the care provider must accept. Pass initialText = " +
       "the family's own message so a day/time they already said is used. This tool ALREADY TEXTS THE FAMILY — send " +
       "NOTHING else this turn. Do NOT call request_schedule_amendment yourself for a family's ask.",
     input_schema: {
       type: "object",
       properties: {
         initialText: { type: "string", description: "The family's own message asking for the visit, verbatim." },
-        caregiverId: { type: "string", description: "Optional — the caregiver the family named." },
-        bookingRequestId: { type: "string", description: "Optional — the booking the family means (from get_active_bookings), e.g. when they point at one booking; the flow then skips the caregiver and booking questions like the card's own Request Visit button." },
+        caregiverId: { type: "string", description: "Optional — the care provider the family named." },
+        bookingRequestId: { type: "string", description: "Optional — the booking the family means (from get_active_bookings), e.g. when they point at one booking; the flow then skips the care provider and booking questions like the card's own Request Visit button." },
       },
     },
   },
@@ -351,7 +351,7 @@ export const MCP_TOOLS: McpTool[] = [
       "The family's My Calendar page for a date range, exactly: every visit (shifts, all statuses) in the range with the " +
       "page's display status (scheduled / in-progress / overdue / completed / cancelled — 'overdue' is a scheduled visit whose " +
       "time has passed with no check-in) plus every interview the page shows (requested/accepted/in-progress/completed). Each " +
-      "visit carries what the page's click-through popover shows — caregiver, time, address, care recipients, care needs vs " +
+      "visit carries what the page's click-through popover shows — care provider, time, address, care recipients, care needs vs " +
       "tasksCompleted, actual start/end and completion notes once done — and 'actions' = its buttons (scheduled: message, " +
       "cancel; completed: message). Each interview carries type, the page's status label (requested → Pending), the linked " +
       "job title/location, the Google Meet link, and 'actions' (join_video_call, message, cancel while pending/accepted). Use " +
@@ -375,8 +375,8 @@ export const MCP_TOOLS: McpTool[] = [
       "My Bookings > Active Bookings > UPCOMING SHIFTS): starts Evia's scripted flow, which reads the family's REAL " +
       "upcoming scheduled visits fresh from the database (never from memory), asks which one if more than one could " +
       "be meant, asks the new day + start/end time if not already given, checks it doesn't overlap another visit " +
-      "with the same caregiver that day (same check as the site), shows a recap, and only on the family's YES writes " +
-      "the proposal (reschedulePending*; the real time changes only when the caregiver accepts). Pass initialText = " +
+      "with the same care provider that day (same check as the site), shows a recap, and only on the family's YES writes " +
+      "the proposal (reschedulePending*; the real time changes only when the care provider accepts). Pass initialText = " +
       "the family's own message so their visit choice and new time are read from what they actually said; pass shiftId " +
       "only when you are certain which visit (a 'scheduled' one — never a 'needs_replacement' one). This tool ALREADY " +
       "TEXTS THE FAMILY itself — send NOTHING else this turn. The flow then owns the conversation until it finishes.",
@@ -394,8 +394,8 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_resend_booking_flow",
     description:
-      "Resend a booking request the caregiver declined or the family cancelled — the website's own 'Resend' row on " +
-      "Care Requests > Interviews ('Visit cancelled' / 'Caregiver declined' + Resend). Starts Evia's scripted booking " +
+      "Resend a booking request the care provider declined or the family cancelled — the website's own 'Resend' row on " +
+      "Care Requests > Interviews ('Visit cancelled' / 'Care Provider declined' + Resend). Starts Evia's scripted booking " +
       "flow PRE-FILLED from that request (same as the site's 'Resend Booking Request' modal): the family sees the full " +
       "recap, can change rate/schedule/location/recipients/note, and on YES the SAME booking_requests doc goes back to " +
       "'pending' (isResend: true). Pass caregiverId when the family named one; omit it to consider every resendable " +
@@ -404,7 +404,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:      { type: "string", description: "Optional — the caregiver the family named." },
+        caregiverId:      { type: "string", description: "Optional — the care provider the family named." },
         bookingRequestId: { type: "string", description: "Optional — only when you already know the exact declined/cancelled booking_requests id." },
       },
     },
@@ -414,12 +414,12 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Start Evia's own scripted, step-by-step booking flow — the PREFERRED way to send a booking request once " +
       "the family is ready to move forward (e.g. right after a 'strong' submit_interview_feedback result, or when " +
-      "they ask to book/hire a caregiver). Every booking must trace back to a completed interview, same as the " +
+      "they ask to book/hire a care provider). Every booking must trace back to a completed interview, same as the " +
       "site (there is no 'Send Booking' button without one) — this tool finds and, if needed, asks which one. " +
-      "Both caregiverId and interviewId are OPTIONAL: pass caregiverId when a specific caregiver was named (still " +
-      "narrows to that caregiver's own eligible interviews); omit it entirely when the family hasn't named one " +
+      "Both caregiverId and interviewId are OPTIONAL: pass caregiverId when a specific care provider was named (still " +
+      "narrows to that care provider's own eligible interviews); omit it entirely when the family hasn't named one " +
       "yet ('let's send a booking') and this will show every completed-interview-ready option across ALL their " +
-      "caregivers to pick from. Pass interviewId only when you already have the exact id (e.g. right after " +
+      "care providers to pick from. Pass interviewId only when you already have the exact id (e.g. right after " +
       "submit_interview_feedback) — otherwise leave it out and this resolves/asks for it itself. This tool then " +
       "asks every remaining question (rate, schedule, care location if ambiguous) one at a time and shows a full " +
       "recap matching the website's 'Send Booking Request' modal before sending — you do NOT need to collect any " +
@@ -429,14 +429,14 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver being booked, if the family named one. Omit when they haven't — Evia will show every eligible caregiver+interview to pick from." },
+        caregiverId: { type: "string", description: "The care provider being booked, if the family named one. Omit when they haven't — Evia will show every eligible care provider+interview to pick from." },
         interviewId: { type: "string", description: "Pass this only when you already have the exact interview id (e.g. right after submit_interview_feedback). Omit otherwise — this tool resolves or asks for it itself from completed interviews." },
       },
     },
   },
   {
     name: "get_callout_backups",
-    description: "THE tool for a visit marked 'Needs Replacement' (the caregiver cancelled it): find and TEXT the family replacement candidates — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating, and it EXCLUDES the caregiver who cancelled. The family's pick then goes to select_callout_backup, which sends that candidate a real replacement booking request for this visit — no interview step, exactly like the website's Request button. Get the shiftId from get_upcoming_appointments (the visit whose status is 'needs_replacement') if you don't already have it. This tool ALREADY SENDS each candidate's profile card itself (same tappable photo-preview link format as find_nearby_caregivers) — do not repeat their names/rates yourself, just follow the instruction in its result. clientId and phone are injected automatically — only the visit's owner may view its candidates.",
+    description: "THE tool for a visit marked 'Needs Replacement' (the care provider cancelled it): find and TEXT the family replacement candidates — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable care providers ranked by care-needs match, distance, and rating, and it EXCLUDES the care provider who cancelled. The family's pick then goes to select_callout_backup, which sends that candidate a real replacement booking request for this visit — no interview step, exactly like the website's Request button. Get the shiftId from get_upcoming_appointments (the visit whose status is 'needs_replacement') if you don't already have it. This tool ALREADY SENDS each candidate's profile card itself (same tappable photo-preview link format as find_nearby_caregivers) — do not repeat their names/rates yourself, just follow the instruction in its result. clientId and phone are injected automatically — only the visit's owner may view its candidates.",
     input_schema: {
       type: "object",
       properties: { shiftId: { type: "string", description: "The shift (visit) that needs a replacement." } },
@@ -445,12 +445,12 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "select_callout_backup",
-    description: "Send a new booking request to a chosen backup caregiver for a visit that needs replacement — matches the website's own flow exactly: this creates a real booking request (the candidate gets the normal accept/decline text) rather than reassigning the visit outright. Omit date/startTime/endTime to keep the same day/time as the original visit; pass them only if the family wants a different day/time for the replacement. clientId is injected automatically.",
+    description: "Send a new booking request to a chosen backup care provider for a visit that needs replacement — matches the website's own flow exactly: this creates a real booking request (the candidate gets the normal accept/decline text) rather than reassigning the visit outright. Omit date/startTime/endTime to keep the same day/time as the original visit; pass them only if the family wants a different day/time for the replacement. clientId is injected automatically.",
     input_schema: {
       type: "object",
       properties: {
         shiftId:           { type: "string", description: "The shift (visit) that needs a replacement." },
-        backupCaregiverId: { type: "string", description: "id of the backup caregiver to send the request to (from get_callout_backups)" },
+        backupCaregiverId: { type: "string", description: "id of the backup care provider to send the request to (from get_callout_backups)" },
         date:              { type: "string", description: "YYYY-MM-DD. Optional — defaults to the original visit's own date." },
         startTime:         { type: "string", description: "HH:MM 24-hour. Optional — defaults to the original visit's own start time." },
         endTime:           { type: "string", description: "HH:MM 24-hour. Optional — defaults to the original visit's own end time." },
@@ -601,20 +601,20 @@ export const MCP_TOOLS: McpTool[] = [
             "withdraw_replacement_request", "propose_reschedule", "accept_reschedule", "clear_reschedule",
           ],
           description:
-            "cancel_pending_request — withdraw a booking still awaiting the caregiver's YES/NO (needs bookingRequestId). " +
+            "cancel_pending_request — withdraw a booking still awaiting the care provider's YES/NO (needs bookingRequestId). " +
             "cancel_whole_booking — cancel an accepted booking, every still-scheduled visit under it (needs bookingRequestId). " +
             "cancel_visit — cancel ONE visit, leaving the rest of the booking active (needs shiftId). Also works on a " +
             "'Needs Replacement' visit (the family deciding they don't need a replacement after all — matches the " +
             "website's own Skip button). " +
-            "cancel_pending_amendment — withdraw a schedule-change request still awaiting the caregiver's response (needs amendmentId). " +
-            "withdraw_replacement_request — cancel a pending replacement booking request you sent to a backup caregiver, so a " +
+            "cancel_pending_amendment — withdraw a schedule-change request still awaiting the care provider's response (needs amendmentId). " +
+            "withdraw_replacement_request — cancel a pending replacement booking request you sent to a backup care provider, so a " +
             "different one can be chosen instead (needs bookingRequestId — the id select_callout_backup returned). " +
             "propose_reschedule — propose moving ONE existing scheduled visit to a new day/time, in place (needs shiftId, " +
-            "date, startTime, endTime) — the caregiver gets a text to confirm or counter; the visit's real time does NOT " +
+            "date, startTime, endTime) — the care provider gets a text to confirm or counter; the visit's real time does NOT " +
             "change until they accept. Use this instead of cancelling and re-requesting a visit. " +
-            "accept_reschedule — confirm a new day/time the CAREGIVER proposed for one of your visits (needs shiftId) — " +
-            "only valid when the pending proposal came from the caregiver, not from you. " +
-            "clear_reschedule — decline the caregiver's proposed new time (the original time stands), OR withdraw your " +
+            "accept_reschedule — confirm a new day/time the CARE PROVIDER proposed for one of your visits (needs shiftId) — " +
+            "only valid when the pending proposal came from the care provider, not from you. " +
+            "clear_reschedule — decline the care provider's proposed new time (the original time stands), OR withdraw your " +
             "own proposal before they've responded — either way just needs shiftId.",
         },
         bookingRequestId: { type: "string", description: "The booking_requests document ID — required for cancel_pending_request, cancel_whole_booking, withdraw_replacement_request" },
@@ -631,10 +631,10 @@ export const MCP_TOOLS: McpTool[] = [
     name: "request_schedule_amendment",
     description:
       "LOW-LEVEL write behind the website's Calendar '+ Request Visit' modal — prefer start_visit_request_flow for a " +
-      "family's ask (it picks the caregiver/booking, checks availability, and confirms). Adds day(s)/time(s) to an " +
-      "ACCEPTED booking as a booking_amendments request the caregiver must accept. Either pass newDays (the modal's " +
+      "family's ask (it picks the care provider/booking, checks availability, and confirms). Adds day(s)/time(s) to an " +
+      "ACCEPTED booking as a booking_amendments request the care provider must accept. Either pass newDays (the modal's " +
       "full shape: 3-letter day → list of {start,end} blocks) with startDate and ongoing/endDate, or the older single " +
-      "date + startTime + endTime. Refuses a block that overlaps an existing visit with that caregiver or a time they're " +
+      "date + startTime + endTime. Refuses a block that overlaps an existing visit with that care provider or a time they're " +
       "booked elsewhere (the same checks the modal enforces).",
     input_schema: {
       type: "object",
@@ -647,7 +647,7 @@ export const MCP_TOOLS: McpTool[] = [
         date:             { type: "string", description: "Legacy single-day form: YYYY-MM-DD" },
         startTime:        { type: "string", description: "Legacy single-day form: HH:MM" },
         endTime:          { type: "string", description: "Legacy single-day form: HH:MM" },
-        notes:            { type: "string", description: "Optional note to the caregiver" },
+        notes:            { type: "string", description: "Optional note to the care provider" },
         ongoing:          { type: "boolean", description: "true for a standing recurring day (default when newDays is given), false for a one-off" },
       },
       required: ["bookingRequestId", "clientId"],
@@ -664,7 +664,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         shiftId:     { type: "string", description: "The shifts document ID. For accept / decline right after the proposal notice it may be omitted — the visit that notice was about is used." },
         action: {
           type: "string",
@@ -686,15 +686,15 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "send_caregiver_message",
     description:
-      "The website Inbox's composer: posts the family's message into their shared thread with that caregiver (the same " +
-      "chatRooms write the page makes). The caregiver is then notified exactly like a website message — in-app and by text " +
+      "The website Inbox's composer: posts the family's message into their shared thread with that care provider (the same " +
+      "chatRooms write the page makes). The care provider is then notified exactly like a website message — in-app and by text " +
       "with the message itself — so do NOT also text them yourself. Same paywall as the page (identity, then membership). " +
       "Tell the family what you're sending before you call this tool.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        message:     { type: "string", description: "The message text to send to the caregiver" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
+        message:     { type: "string", description: "The message text to send to the care provider" },
         clientId:    { type: "string", description: "The client's user ID (for audit log)" },
       },
       required: ["caregiverId", "message", "clientId"],
@@ -730,7 +730,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_active_bookings",
     description:
-      "The website's My Bookings > Active Bookings tab, exactly: one card per active booking — caregiver, Ongoing or " +
+      "The website's My Bookings > Active Bookings tab, exactly: one card per active booking — care provider, Ongoing or " +
       "Until <date>, Starts <date>, the weekly days/times with per-day hours and hours/week, address, rate + payment " +
       "(Card), the booking note, care recipients (with each one's care plan needs/subtasks and lifestyle), emergency " +
       "contact — plus that booking's UPCOMING SHIFTS: every visit with the page's own status pill (scheduled / overdue / " +
@@ -744,7 +744,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's user ID (family side)" },
-        caregiverId: { type: "string", description: "The caregiver's document ID — the caregiver's own Active Bookings tab as data (bookings → visits with shiftId, date, time, status, tasks), for ANSWERING a question in a sentence; to show them the tab, use show_active_bookings instead" },
+        caregiverId: { type: "string", description: "The care provider's document ID — the care provider's own Active Bookings tab as data (bookings → visits with shiftId, date, time, status, tasks), for ANSWERING a question in a sentence; to show them the tab, use show_active_bookings instead" },
       },
       required: [],
     },
@@ -810,7 +810,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "create_job_post",
     description:
-      "Post a new caregiver job for the family so nearby caregivers can apply — matches the website's own 6-step " +
+      "Post a new care provider job for the family so nearby care providers can apply — matches the website's own 6-step " +
       "'Post a Job' wizard field for field. Collect care needs, schedule, a title, a description, and a 5-digit " +
       "zip code (required — never accept a typed city, the zip auto-derives it, same as onboarding); confirm, " +
       "then call. Omit hourlyRate entirely if the family wants a flexible/negotiable rate instead of a set number " +
@@ -819,8 +819,8 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId:      { type: "string", description: "Injected automatically." },
-        title:         { type: "string", description: "Job title shown to caregivers, 10-80 characters — same field as the website's 'Job title' box." },
-        notes:         { type: "string", description: "Description of the job, 50-2500 characters — what a caregiver should know (responsibilities, tasks, etc.). Same as the website's required 'Details' field; never accept phone numbers or emails here." },
+        title:         { type: "string", description: "Job title shown to care providers, 10-80 characters — same field as the website's 'Job title' box." },
+        notes:         { type: "string", description: "Description of the job, 50-2500 characters — what a care provider should know (responsibilities, tasks, etc.). Same as the website's required 'Details' field; never accept phone numbers or emails here." },
         careTypes:     { type: "array", items: { type: "string" } },
         frequency:     { type: "string", description: "e.g. 'weekly', 'one-time'" },
         days:          { type: "array", items: { type: "string" } },
@@ -832,7 +832,7 @@ export const MCP_TOOLS: McpTool[] = [
         endDate:       { type: "string", description: "YYYY-MM-DD — only if this is a date-limited request, not ongoing" },
         careLevel:          { type: "string", description: "Optional overall care level" },
         minHoursPerWeek:    { type: "number", description: "Optional minimum hours per week" },
-        caregiversNeeded:   { type: "number", description: "Optional, 1-4 — how many caregivers this job is looking to hire. Defaults to 1 if not mentioned, same as the website." },
+        caregiversNeeded:   { type: "number", description: "Optional, 1-4 — how many care providers this job is looking to hire. Defaults to 1 if not mentioned, same as the website." },
         careRecipients: {
           type: "array",
           description: "EVERY care recipient this job covers — both someone new AND anyone already on the family's roster/care plan (check the CARE PLAN section of your context first). Including an existing recipient here is safe and expected: it will NOT create a duplicate, it just keeps their care plan (care needs, notes, location) in sync with this job post.",
@@ -872,7 +872,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "resume_execution_agent",
     description:
-      "Route a family message to an active background execution agent (e.g. a matching agent that presented caregivers). " +
+      "Route a family message to an active background execution agent (e.g. a matching agent that presented care providers). " +
       "Use this when the family is asking a follow-up question about an ongoing task — 'tell me more about the second one', " +
       "'what's her experience with dementia?', 'what's her rate again?'. " +
       "The agent has full context of the task. Return its response EXACTLY as-is, without rephrasing or adding to it.",
@@ -889,10 +889,10 @@ export const MCP_TOOLS: McpTool[] = [
     name: "get_pending_tasks",
     description:
       "Everything the website shows the family as pending, in one read — the exact items and conditions of its pages: " +
-      "booking requests and visit requests still awaiting the caregiver (My Bookings > Requests), visits marked Needs Replacement " +
-      "(Find Replacement / Skip) and reschedule proposals (a caregiver's proposal is waiting on the family; the family's own is waiting " +
-      "on the caregiver), interview requests and interview reschedule proposals (Care Requests > Interviews), the Care Plan review " +
-      "banner, and timesheets to review. Each item says waitingOn: 'you' (the family) or 'caregiver', and which page it lives on. " +
+      "booking requests and visit requests still awaiting the care provider (My Bookings > Requests), visits marked Needs Replacement " +
+      "(Find Replacement / Skip) and reschedule proposals (a care provider's proposal is waiting on the family; the family's own is waiting " +
+      "on the care provider), interview requests and interview reschedule proposals (Care Requests > Interviews), the Care Plan review " +
+      "banner, and timesheets to review. Each item says waitingOn: 'you' (the family) or 'care provider', and which page it lives on. " +
       "Call this when the family says hello or asks 'anything going on / anything I need to do?'. Nothing else is ever pending — " +
       "if it isn't here, don't say something is waiting.",
     input_schema: {
@@ -951,7 +951,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_caregiver_profile",
     description:
-      "Update your own caregiver profile — the My Profile page's fields: hourlyRate (1 person), rateFor2Seniors, rateFor3PlusSeniors (any amount above $0 — the caregiver's to set), yearsExperience (one of the five buckets), " +
+      "Update your own care provider profile — the My Profile page's fields: hourlyRate (1 person), rateFor2Seniors, rateFor3PlusSeniors (any amount above $0 — the care provider's to set), yearsExperience (one of the five buckets), " +
       "maxClients ('1' | '2' | '3+'), languages (from the page's six), jobType (occasional | part-time | full-time), serviceRadius (5 | 10 | 15 | 25 | 50 miles), bio; " +
       "and Account Settings' gender and address (street / zipCode / city / state — a 5-digit zipCode fills city and state like the page's ZIP lookup). Weekly availability goes through update_caregiver_availability. " +
       "Only you can update your own profile. Changes take effect immediately. To change your " +
@@ -961,8 +961,8 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:        { type: "string",  description: "Your caregiver Firestore document ID" },
-        hourlyRate:         { type: "number",  description: "Rate for 1 person, in dollars — any amount above $0 (the caregiver's to set)" },
+        caregiverId:        { type: "string",  description: "Your care provider Firestore document ID" },
+        hourlyRate:         { type: "number",  description: "Rate for 1 person, in dollars — any amount above $0 (the care provider's to set)" },
         rateFor2Seniors:    { type: "number",  description: "Rate for 2 people — any amount above $0, or 0 to clear" },
         rateFor3PlusSeniors:{ type: "number",  description: "Rate for 3+ people — any amount above $0, or 0 to clear" },
         yearsExperience:    { type: "string",  description: "One of: < 1 year, 1-2 years, 3-5 years, 5-10 years, 10+ years (a number of years is bucketed)" },
@@ -985,14 +985,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "pause_account",
     description:
-      "Pause your own caregiver account so you stop receiving job matches (e.g. vacation, a break). " +
+      "Pause your own care provider account so you stop receiving job matches (e.g. vacation, a break). " +
       "Reversible at any time with reactivate_account. Only you can pause your own account.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "Your caregiver Firestore document ID" },
+        caregiverId: { type: "string", description: "Your care provider Firestore document ID" },
         until:       { type: "string", description: "When to pause until: an ISO date 'YYYY-MM-DD', or 'indefinite' for an open-ended pause" },
-        phone:       { type: "string", description: "The acting caregiver's phone — auto-injected; used to verify you own this account" },
+        phone:       { type: "string", description: "The acting care provider's phone — auto-injected; used to verify you own this account" },
       },
       required: ["caregiverId", "until"],
     },
@@ -1000,13 +1000,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "reactivate_account",
     description:
-      "Reactivate your own paused caregiver account so you start receiving job matches again. " +
+      "Reactivate your own paused care provider account so you start receiving job matches again. " +
       "Only you can reactivate your own account.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "Your caregiver Firestore document ID" },
-        phone:       { type: "string", description: "The acting caregiver's phone — auto-injected; used to verify you own this account" },
+        caregiverId: { type: "string", description: "Your care provider Firestore document ID" },
+        phone:       { type: "string", description: "The acting care provider's phone — auto-injected; used to verify you own this account" },
       },
       required: ["caregiverId"],
     },
@@ -1032,7 +1032,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "save_onboarding_field",
     description:
       "During onboarding, persist ONE field the user just gave you (e.g. the senior's name, " +
-      "the family relationship, care needs, the caregiver's rate). Call this as soon as you've " +
+      "the family relationship, care needs, the care provider's rate). Call this as soon as you've " +
       "confirmed a value — one call per field. It returns the fields still missing so you know " +
       "what to ask next. Do NOT use this outside an active onboarding turn.",
     input_schema: {
@@ -1050,9 +1050,9 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Signal that you've collected every required onboarding field. It re-checks the required " +
       "set: if anything is still missing it returns the missing list and does NOT advance (keep " +
-      "collecting). If complete (client role), a real caregiver-match preview is sent as a SEPARATE " +
+      "collecting). If complete (client role), a real care provider match preview is sent as a SEPARATE " +
       "message right after this one — so your own closing message must NEVER say or imply that " +
-      "matching/searching for caregivers only starts once membership is paid (that directly " +
+      "matching/searching for care providers only starts once membership is paid (that directly " +
       "contradicts the real match the family is about to see). Frame membership as what lets them " +
       "message and book someone like the match you're about to show, not as what unlocks matching " +
       "itself. Call ONLY when you believe collection is done.",
@@ -1067,14 +1067,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_review_flow",
     description:
-      "Start Evia's scripted Leave a Review flow for a caregiver — the website's review modal, step for step (overall stars 1–5, optional category " +
-      "ratings, a 10–250 character review, would-you-recommend YES/NO, a recap, then YES to post). Use when the family wants to review or rate a caregiver they " +
-      "have had a completed visit with; the flow checks that itself (one review per caregiver per family) and tells them if they can't yet. This tool ALREADY " +
+      "Start Evia's scripted Leave a Review flow for a care provider — the website's review modal, step for step (overall stars 1–5, optional category " +
+      "ratings, a 10–250 character review, would-you-recommend YES/NO, a recap, then YES to post). Use when the family wants to review or rate a care provider they " +
+      "have had a completed visit with; the flow checks that itself (one review per care provider per family) and tells them if they can't yet. This tool ALREADY " +
       "TEXTS THE FAMILY the first question — send NOTHING else this turn. Do not collect the rating or comment yourself.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string",  description: "The caregiver being reviewed" },
+        caregiverId: { type: "string",  description: "The care provider being reviewed" },
         rating:      { type: "integer", minimum: 1, maximum: 5, description: "Only if the family already stated a star count in THIS message" },
       },
       required: ["caregiverId"],
@@ -1100,11 +1100,11 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "delete_account",
-    description: "Permanently delete the family or caregiver's own Evia account — cancels any active subscription, removes their data, and deletes their login. MANDATORY: this is irreversible; confirm with them explicitly (read back that this is permanent) before calling.",
+    description: "Permanently delete the family or care provider's own Evia account — cancels any active subscription, removes their data, and deletes their login. MANDATORY: this is irreversible; confirm with them explicitly (read back that this is permanent) before calling.",
     input_schema: {
       type: "object",
       properties: {
-        userId: { type: "string", description: "The user's ID (client or caregiver)" },
+        userId: { type: "string", description: "The user's ID (client or care provider)" },
       },
       required: ["userId"],
     },
@@ -1112,7 +1112,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "respond_to_job_application",
     description:
-      "Accept or reject a caregiver's application to your job post. The website has no direct 'accept' action — " +
+      "Accept or reject a care provider's application to your job post. The website has no direct 'accept' action — " +
       "accepting an applicant means requesting an interview with them (preferredDate/preferredTime required); " +
       "the job isn't marked filled until a booking is actually sent and accepted later. " +
       "Call this tool the moment the family states their decision — for BOTH accept and reject. " +
@@ -1120,7 +1120,7 @@ export const MCP_TOOLS: McpTool[] = [
       "takes effect (you'll get back a confirmation request, not a result) — do not ask them to confirm " +
       "yourself in conversation first, and do not tell them it's done until this tool actually returns success. " +
       "Never say an application was accepted/rejected/declined without this tool having returned that result. " +
-      "Rejecting matches the website's Decline button exactly: the application is marked rejected and the caregiver is " +
+      "Rejecting matches the website's Decline button exactly: the application is marked rejected and the care provider is " +
       "NOT messaged (they see it on their Job Board) — do not offer to send them a note. " +
       "MANDATORY: applicationId must come from a list_job_applicants result from THIS turn — never guess it or " +
       "reuse one from earlier in the conversation, and never substitute the applicant's caregiverId (a different " +
@@ -1143,17 +1143,17 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "submit_interview_feedback",
     description:
-      "Submit your decision after interviewing a caregiver. Also marks the interview completed (the website's own separate " +
+      "Submit your decision after interviewing a care provider. Also marks the interview completed (the website's own separate " +
       "'Mark as Completed' step, done automatically here since it's one turn in a conversation, not two button clicks). " +
       "Options: 'strong' (the family wants to hire), 'maybe' (keep considering), 'no' (not a fit — matches the website's 'Not Selected'). " +
       "IMPORTANT: 'strong' only RECORDS the decision — it does NOT create an actual booking and does NOT notify the " +
-      "caregiver of anything (no schedule, no rate, nothing for them to accept yet, and nothing sent to them at this " +
-      "stage — matching the website's own 'Mark as Completed' + fit-decision step exactly: the caregiver hears " +
+      "care provider of anything (no schedule, no rate, nothing for them to accept yet, and nothing sent to them at this " +
+      "stage — matching the website's own 'Mark as Completed' + fit-decision step exactly: the care provider hears " +
       "nothing until the family's own 'Send Booking' button / its Evia equivalent, start_booking_flow, actually creates " +
       "the real booking). On a 'strong' result, immediately call start_booking_flow with this same interviewId — it " +
       "asks every remaining question (rate, schedule, care location if ambiguous), shows the full recap matching the " +
       "website's 'Send Booking Request' modal, and on YES performs the exact write the website's 'Send Booking' " +
-      "button performs — the ONLY point at which the caregiver is ever notified. Never leave a 'strong' decision " +
+      "button performs — the ONLY point at which the care provider is ever notified. Never leave a 'strong' decision " +
       "without starting the booking flow in the same or next turn; if the conversation stalls first, a follow-up " +
       "nudge (bookingFollowupNudge.ts) will check back in after an hour and every ~48h until a real booking exists.",
     input_schema: {
@@ -1191,7 +1191,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:  { type: "string",  description: "Your caregiver document ID" },
+        caregiverId:  { type: "string",  description: "Your care provider document ID" },
       },
       required: ["caregiverId"],
     },
@@ -1199,12 +1199,12 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_payouts",
     description:
-      "The caregiver Payments page's Payouts tab, TEXTED by the tool itself (agents/caregiverPayouts.ts): Available to Cash Out (the live Stripe instantly-available balance — what Cash Out pays), what's still settling, what's approved but not yet charged to the family, the Bank account (Stripe) card state, and how you get paid. " +
-      "Payout history, bank details and tax forms live in the caregiver's own Stripe dashboard: pass dashboardLink:true to text them a one-time SIGNED-IN link to it instead ('my payout history', 'did my payout arrive', 'change my bank', 'my 1099'). Call it for 'my balance', 'my payouts', 'when do I get paid'. Send nothing else this turn.",
+      "The care provider Payments page's Payouts tab, TEXTED by the tool itself (agents/caregiverPayouts.ts): Available to Cash Out (the live Stripe instantly-available balance — what Cash Out pays), what's still settling, what's approved but not yet charged to the family, the Bank account (Stripe) card state, and how you get paid. " +
+      "Payout history, bank details and tax forms live in the care provider's own Stripe dashboard: pass dashboardLink:true to text them a one-time SIGNED-IN link to it instead ('my payout history', 'did my payout arrive', 'change my bank', 'my 1099'). Call it for 'my balance', 'my payouts', 'when do I get paid'. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId:   { type: "string", description: "The care provider's Firestore document ID" },
         dashboardLink: { type: "boolean", description: "Text a signed-in link to their Stripe dashboard (payout history, bank account, tax forms) instead of the tab" },
       },
       required: ["caregiverId"],
@@ -1219,7 +1219,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         manageLink:  { type: "boolean", description: "Text the signed-in Stripe Billing Portal link instead of the tab (the Manage button)" },
         activate:    { type: "boolean", description: "Text the membership checkout link instead of the section (the Activate Membership button)" },
         authorizeLink: { type: "boolean", description: "Text the background-check consent page instead of the section (the Authorize button)" },
@@ -1230,15 +1230,15 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_my_profile",
     description:
-      "The caregiver's own My Profile page (/caregiver/profile), TEXTED by the tool itself (agents/caregiverMyProfile.ts): hero (photo, Verified/Pending, name, " +
+      "The care provider's own My Profile page (/care-provider/profile), TEXTED by the tool itself (agents/caregiverMyProfile.ts): hero (photo, Verified/Pending, name, " +
       "stars, city, rate, Transportation chip), About (bio + languages), Care Services, Rates (1 / 2 / 3+ people, experience, max clients), Weekly Availability " +
-      "(Looking for + the grid), Location & Travel, Reviews. Call when the caregiver asks to see her profile or what families see. " +
+      "(Looking for + the grid), Location & Travel, Reviews. Call when the care provider asks to see her profile or what families see. " +
       "edit starts the page's Edit button as a flow (texted by the tool): photo (upload link), bio, languages, services, rates, jobtype (Looking for), availability (the grid), travel. " +
       "Send nothing else that turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         edit:        { type: "string", enum: ["photo", "bio", "languages", "services", "rates", "jobtype", "availability", "travel"], description: "Start this section's Edit instead of texting the page" },
       },
       required: ["caregiverId"],
@@ -1247,13 +1247,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_account_settings",
     description:
-      "The caregiver Account Settings page, TEXTED by the tool itself (agents/caregiverSettings.ts): Account Basics (member since, name, date of birth, gender, recovery email + confirmed or not, phone, address), Blocked Users, the Pause card, the delete line. " +
+      "The care provider Account Settings page, TEXTED by the tool itself (agents/caregiverSettings.ts): Account Basics (member since, name, date of birth, gender, recovery email + confirmed or not, phone, address), Blocked Users, the Pause card, the delete line. " +
       "resendEmailLink:true texts the page's 'Resend confirmation link' result (same server function)." +
       "Edits go through the other tools: gender / address / phone → update_caregiver_profile; email → request_email_change; pause → pause_account / reactivate_account; unblock → set_block_status; delete → delete_account. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:     { type: "string",  description: "The caregiver's Firestore document ID" },
+        caregiverId:     { type: "string",  description: "The care provider's Firestore document ID" },
         resendEmailLink: { type: "boolean", description: "Re-send the recovery-email confirmation link instead of texting the page" },
       },
       required: ["caregiverId"],
@@ -1262,9 +1262,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "review_shift_hours",
     description:
-      "Approve, correct, or resolve a dispute on a caregiver's submitted shift hours — mirrors the website's Timesheets review modal exactly, action for action. " +
+      "Approve, correct, or resolve a dispute on a care provider's submitted shift hours — mirrors the website's Timesheets review modal exactly, action for action. " +
       "'approve' accepts the hours as submitted. 'propose_correction' proposes a different start/end time (give BOTH — a correction can fix either one independently, not just total hours). " +
-      "'accept_counter'/'escalate' resolve a caregiver's counter-proposal after you've already proposed a correction and they pushed back — 'accept_counter' takes their counter-offer, 'escalate' sends it to Evia's team to mediate. " +
+      "'accept_counter'/'escalate' resolve a care provider's counter-proposal after you've already proposed a correction and they pushed back — 'accept_counter' takes their counter-offer, 'escalate' sends it to Evia's team to mediate. " +
       "Only one of these four actions is valid at a time depending on the shift's current status; the tool tells you which if you pick the wrong one.",
     input_schema: {
       type: "object",
@@ -1288,7 +1288,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "Your caregiver document ID" },
+        caregiverId:   { type: "string", description: "Your care provider document ID" },
         applicationId: { type: "string", description: "The job_applications document ID to withdraw" },
       },
       required: ["caregiverId", "applicationId"],
@@ -1297,15 +1297,15 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "respond_to_booking_request",
     description:
-      "The caregiver Bookings page's Requests tab, Accept / Decline buttons — the ONLY way a caregiver answers a family's booking request. " +
+      "The care provider Bookings page's Requests tab, Accept / Decline buttons — the ONLY way a care provider answers a family's booking request. " +
       "Pass the request's number from show_booking_requests (\"accept 1\", \"decline 2\"); with no number it uses the request whose details were just shown. " +
-      "Accept is gated exactly like the page (membership, then background check); Decline never is. Declining asks the caregiver to confirm first " +
+      "Accept is gated exactly like the page (membership, then background check); Decline never is. Declining asks the care provider to confirm first " +
       "(the page's confirm dialog) — you get a confirmation request back, not a result. The tool texts the page's toast itself; the family is told by the " +
       "same triggers the site's buttons fire. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:      { type: "string", description: "Your caregiver document ID" },
+        caregiverId:      { type: "string", description: "Your care provider document ID" },
         number:           { type: "number", description: "The request's number in the list Evia texted. Preferred." },
         bookingRequestId: { type: "string", description: "The booking_requests document ID — only when you already have it." },
         decision:         { type: "string", enum: ["accept", "decline"], description: "accept or decline" },
@@ -1317,12 +1317,12 @@ export const MCP_TOOLS: McpTool[] = [
     name: "start_shift",
     description:
       "The Bookings page's Start Shift button — it TEXTS the confirmation and the visit's numbered task list itself. Only a SCHEDULED visit, " +
-      "not overdue, from 15 minutes before its start (otherwise the caregiver is told when it opens). With no shiftId it takes today's visit. " +
+      "not overdue, from 15 minutes before its start (otherwise the care provider is told when it opens). With no shiftId it takes today's visit. " +
       "Call it for 'I'm here', 'starting', 'arrived'. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "Your caregiver document ID" },
+        caregiverId: { type: "string", description: "Your care provider document ID" },
         shiftId:     { type: "string", description: "The shifts document ID — optional; today's visit when omitted" },
       },
       required: ["caregiverId"],
@@ -1337,7 +1337,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "Your caregiver document ID" },
+        caregiverId: { type: "string", description: "Your care provider document ID" },
         shiftId:     { type: "string", description: "The shifts document ID — optional; the visit in progress when omitted" },
         notes:       { type: "string", description: "The closing note for the family, if they gave one" },
       },
@@ -1352,7 +1352,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string",  description: "Your caregiver document ID" },
+        caregiverId: { type: "string",  description: "Your care provider document ID" },
         shiftId:     { type: "string",  description: "The shifts document ID — optional; the visit in progress when omitted" },
         numbers:     { type: "array",   items: { type: "number" }, description: "Task numbers as texted by start_shift" },
         taskKey:     { type: "string",  description: "A task key (recipient_careNeed[_subtask]) instead of a number" },
@@ -1366,14 +1366,14 @@ export const MCP_TOOLS: McpTool[] = [
     name: "add_visit_note",
     description:
       "The Bookings page's visit-notes box — adds one line to the visit's notes log while it is IN PROGRESS; the family sees it right away. " +
-      "Call it when the caregiver tells you something about the visit for the family ('she ate well', 'we walked twice'). With no shiftId it takes " +
+      "Call it when the care provider tells you something about the visit for the family ('she ate well', 'we walked twice'). With no shiftId it takes " +
       "the visit in progress. It TEXTS the confirmation itself. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "Your caregiver document ID" },
+        caregiverId: { type: "string", description: "Your care provider document ID" },
         shiftId:     { type: "string", description: "The shifts document ID — optional" },
-        text:        { type: "string", description: "The note, in the caregiver's words" },
+        text:        { type: "string", description: "The note, in the care provider's words" },
       },
       required: ["caregiverId", "text"],
     },
@@ -1383,8 +1383,8 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_interview_flow",
     description:
-      "Start Evia's own scripted, step-by-step interview-scheduling flow for a caregiver — the PREFERRED way to " +
-      "request an interview once the family is ready (e.g. after naming a caregiver, or right after finding a " +
+      "Start Evia's own scripted, step-by-step interview-scheduling flow for a care provider — the PREFERRED way to " +
+      "request an interview once the family is ready (e.g. after naming a care provider, or right after finding a " +
       "match). This tool itself asks the family every remaining question (related job post, if any are open — date " +
       "— time — an optional note) one at a time and shows a full recap matching the website's 'Request Interview' " +
       "modal before sending — you do NOT need to collect any of that yourself, and should NOT call " +
@@ -1395,7 +1395,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "The caregiver being interviewed." },
+        caregiverId:   { type: "string", description: "The care provider being interviewed." },
         applicationId: { type: "string", description: "Pass this when the family is interviewing someone who applied to a specific job post — the job is already known and won't be asked about again. Omit for a direct/matching-flow interview with no application involved." },
       },
       required: ["caregiverId"],
@@ -1407,22 +1407,22 @@ export const MCP_TOOLS: McpTool[] = [
       "Low-level interview commit — prefer start_interview_flow instead, which handles the whole conversation for " +
       "you and matches the website's Request Interview modal exactly. Only call this tool directly for an interview " +
       "OUTSIDE the scripted flow (e.g. respond_to_job_application's accept branch, which already knows the job and " +
-      "caregiver deterministically). " +
+      "care provider deterministically). " +
       "Creates the interview record; the Google Meet link is generated and texted to both parties automatically " +
-      "once the caregiver confirms via respond_to_interview_request — do NOT tell the family a link exists yet. " +
-      "Same rules as the website's own Request Interview modal: the caregiver must be a real, currently-bookable " +
+      "once the care provider confirms via respond_to_interview_request — do NOT tell the family a link exists yet. " +
+      "Same rules as the website's own Request Interview modal: the care provider must be a real, currently-bookable " +
       "match, and families are capped at 5 interview requests per day — if you get a RATE_LIMITED error, tell them " +
       "honestly they've hit today's limit and to try again tomorrow. No interview-type question — the website " +
       "removed Phone/In-Person entirely (2026-09-08); every interview is video, always pass/default interviewType " +
       "to video. " +
       "The platform requires and enforces its own confirmation before this actually executes (it will show the " +
-      "family the exact caregiver name it resolved and ask them to confirm) — do NOT ask the family to confirm the " +
-      "caregiver a second time yourself first, just call it once you have the caregiverId and date/time.",
+      "family the exact care provider name it resolved and ask them to confirm) — do NOT ask the family to confirm the " +
+      "care provider a second time yourself first, just call it once you have the caregiverId and date/time.",
     input_schema: {
       type: "object",
       properties: {
         clientId:      { type: "string", description: "The client's user ID" },
-        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId:   { type: "string", description: "The care provider's Firestore document ID" },
         applicationId: { type: "string", description: "The job_applications document ID (optional)" },
         preferredDate: { type: "string", description: "Date in YYYY-MM-DD format" },
         preferredTime: { type: "string", description: "Time in HH:MM (24h) format" },
@@ -1444,16 +1444,16 @@ export const MCP_TOOLS: McpTool[] = [
     // previews with the caregiver's name + photo).
     name: "resend_caregiver_profile",
     description:
-      "Re-send a caregiver's profile card (rate, specialties, tappable link with their name + photo preview) to " +
+      "Re-send a care provider's profile card (rate, specialties, tappable link with their name + photo preview) to " +
       "the family — the same message format the initial match gallery sends. Use when the family asks to see a " +
-      "caregiver's profile again (e.g. after 'I'd already sent their info before — want me to send it again?'), " +
+      "care provider's profile again (e.g. after 'I'd already sent their info before — want me to send it again?'), " +
       "or wants to resend/re-share someone's info for any reason. Pass the caregiverId from pendingMatches or " +
       "reofferableCaregivers — never guess an id from a name.",
     input_schema: {
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's user ID" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (from pendingMatches/reofferableCaregivers, never a name)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (from pendingMatches/reofferableCaregivers, never a name)" },
       },
       required: ["clientId", "caregiverId"],
     },
@@ -1467,7 +1467,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId:   { type: "string", description: "The care provider's Firestore document ID" },
         interviewId:   { type: "string", description: "The video_interviews document ID — omit for a bare \"accept\" right after an interview notice (it uses that interview). Never guess an id." },
         decision:      { type: "string", enum: ["accept","decline"], description: "accept or decline" },
       },
@@ -1477,13 +1477,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_care_team",
     description:
-      "The website's My Care Team page, exactly: the Active tab (caregivers with an accepted booking that still has a scheduled " +
+      "The website's My Care Team page, exactly: the Active tab (care providers with an accepted booking that still has a scheduled " +
       "or in-progress visit) and the Past tab (cancelled/completed bookings, or accepted ones whose visits have all run out — the " +
-      "most recent booking per caregiver; a caregiver is never in both). Each card: name, photo, 'Active booking' pill (active tab), " +
+      "most recent booking per care provider; a care provider is never in both). Each card: name, photo, 'Active booking' pill (active tab), " +
       "stars + review count or 'No reviews yet', verification, years of experience, $rate/hr (the booking's rate, else the profile " +
       "rate), the booking's schedule days, up to 3 specialties, 'Caring for: <recipients>', and its buttons — Message, Profile, and " +
       "Re-book (Past tab only, when the family already completed an interview with them). Optional query = the page's 'Search by " +
-      "name…' box. Call when they ask 'who's on my team', 'my caregivers', 'who do I have', 'who used to help us'. Caregiver phone " +
+      "name…' box. Call when they ask 'who's on my team', 'my care providers', 'who do I have', 'who used to help us'. Care Provider phone " +
       "numbers are never part of this page — messaging goes through send_caregiver_message.",
     input_schema: {
       type: "object",
@@ -1530,14 +1530,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "send_client_message",
     description:
-      "Send a message to a client on behalf of a caregiver. Delivers by text AND posts into the same chat thread the " +
+      "Send a message to a client on behalf of a care provider. Delivers by text AND posts into the same chat thread the " +
       "family sees in their website Inbox, so this shows up as a real reply there, not just in this SMS conversation. " +
-      "Tell the caregiver what you're sending before calling.",
+      "Tell the care provider what you're sending before calling.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        clientId:    { type: "string", description: "The family's clientId from the booking / calendar / inbox data (the shift's own clientId — never typed by the caregiver). Optional only when the caregiver works with ONE family; with several the tool returns them and you must ask which." },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
+        clientId:    { type: "string", description: "The family's clientId from the booking / calendar / inbox data (the shift's own clientId — never typed by the care provider). Optional only when the care provider works with ONE family; with several the tool returns them and you must ask which." },
         message:     { type: "string", description: "The message to send to the client" },
       },
       required: ["caregiverId", "message"],
@@ -1547,7 +1547,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "get_recent_messages",
     description:
       "The website's Inbox page, exactly. Without counterpartId: the thread list — every conversation (newest first) minus " +
-      "blocked or deleted ones, grouped like the page into My Care Team (caregivers on an accepted booking), Other Caregivers " +
+      "blocked or deleted ones, grouped like the page into My Care Team (care providers on an accepted booking), Other Care Providers " +
       "and Support, each with the last message (or 'Start a conversation'), its time and unread count; 'query' is the page's " +
       "search box (name or last message). With counterpartId: that conversation's messages oldest → newest (hiding anything " +
       "before the family deleted it), and it marks the thread read exactly like opening it on the page. Use for 'what did " +
@@ -1555,8 +1555,8 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        userId:       { type: "string", description: "The current user's ID (client or caregiver)" },
-        counterpartId:{ type: "string", description: "Specific caregiver or client ID to filter (optional)" },
+        userId:       { type: "string", description: "The current user's ID (client or care provider)" },
+        counterpartId:{ type: "string", description: "Specific care provider or client ID to filter (optional)" },
         limit:        { type: "number", description: "Messages to return for one conversation (default 20, max 50)" },
         query:        { type: "string", description: "The Inbox search box — filters the thread list by contact name or last message" },
         role:         { type: "string", enum: ["client", "caregiver"], description: "Whose inbox this is (default client)" },
@@ -1618,11 +1618,11 @@ export const MCP_TOOLS: McpTool[] = [
       "The Calendar page's Update Availability modal — a 7-day × 4-block grid (Morning 6am–12pm, Afternoon 12pm–6pm, Evening 6pm–12am, Overnight 12am–6am). " +
       "Pass taps as day → blocks: set (replace a whole day; [] clears it), add (turn cells on), remove (turn cells off; [] or \"all\" clears the day). Days: monday…sunday (or mon…sun); blocks: morning/afternoon/evening/overnight/all. " +
       "Saves exactly what the modal saves: caregivers.weeklyAvailability as the whole week of canonical slots. Nothing else changes. Returns the grid as text to read back. " +
-      "For a multi-step conversation about their week, prefer letting the caregiver's own words start the availability flow; call this for a clear one-shot change like 'add Tuesday afternoons'.",
+      "For a multi-step conversation about their week, prefer letting the care provider's own words start the availability flow; call this for a clear one-shot change like 'add Tuesday afternoons'.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         set:    { type: "object", description: "day → blocks to REPLACE that day with, e.g. {\"monday\":[\"morning\",\"afternoon\"],\"friday\":[]}" },
         add:    { type: "object", description: "day → blocks to add, e.g. {\"tuesday\":[\"afternoon\"]}" },
         remove: { type: "object", description: "day → blocks to remove, or \"all\" / [] to clear the day, e.g. {\"sunday\":\"all\"}" },
@@ -1633,7 +1633,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "browse_job_board",
     description:
-      "The caregiver's Jobs page (Available Jobs tab), exactly as the website lists it — this tool TEXTS THE NUMBERED LIST ITSELF, say nothing else this turn. Every open job, newest first, minus the ones they already " +
+      "The care provider's Jobs page (Available Jobs tab), exactly as the website lists it — this tool TEXTS THE NUMBERED LIST ITSELF, say nothing else this turn. Every open job, newest first, minus the ones they already " +
       "applied to or hid, within their travel distance when set. No fit or skills ranking — the site has none. Each entry is one card (title, location, " +
       "distance, rate or Flexible, frequency, Day/Night, date, hours) plus the button the site would show (Apply Now, or the gate that replaces it). " +
       "Pass sort 'nearest' with limit 4 for the dashboard's Nearby Jobs. Pass filters = the page's sidebar, set from what they said ('morning shifts over $25 on weekends' → timeOfDay ['morning'], payMin 25, days ['Sat','Sun']); " +
@@ -1643,14 +1643,14 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         sort:        { type: "string", enum: ["newest", "nearest"], description: "newest = the Jobs page order (default); nearest = the dashboard's Nearby Jobs order" },
         limit:       { type: "number", description: "Optional cap (the dashboard shows 4); omit for the Jobs page, which is texted 2 at a time" },
         more:        { type: "boolean", description: "true when they ask for more / the next ones — continues the last list where it left off (numbers keep counting, same filters)" },
         refine:      { type: "boolean", description: "true when they are narrowing the list just shown ('only weekends') — the filters you pass are merged over that list's filters" },
         filters: {
           type: "object",
-          description: "The page's sidebar filters — only the controls the caregiver asked for; unknown values are dropped (never guessed)",
+          description: "The page's sidebar filters — only the controls the care provider asked for; unknown values are dropped (never guessed)",
           properties: {
             search:    { type: "string", description: "Area or skill text (matches title, location, requirements)" },
             payMin:    { type: "number", description: "Pay Rate ($/hr) minimum — a Flexible-rate job counts as $0" },
@@ -1675,7 +1675,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         number:      { type: "number", description: "The job's number in the list browse_job_board texted ('2', 'details on 3'). Preferred." },
         jobId:       { type: "string", description: "The job_posts document ID — only when you already have it." },
       },
@@ -1689,7 +1689,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         jobId:       { type: "string", description: "The job_posts document ID" },
       },
       required: ["caregiverId", "jobId"],
@@ -1702,7 +1702,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         jobId:       { type: "string", description: "The job_posts document ID to unhide; omit to list hidden jobs" },
       },
       required: ["caregiverId"],
@@ -1711,7 +1711,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_apply_flow",
     description:
-      "The Jobs page's Apply Now button, as Evia's scripted step-by-step flow — the ONLY way a caregiver applies to a job. " +
+      "The Jobs page's Apply Now button, as Evia's scripted step-by-step flow — the ONLY way a care provider applies to a job. " +
       "It shows them the Apply modal's contents (Your Profile, Client's budget), asks for the optional cover letter, then asks them to " +
       "reply SUBMIT or CANCEL, and submits the site's exact application. This tool TEXTS THE FIRST STEP ITSELF — say nothing else this turn. " +
       "They can back out at any step. Call it as soon as they want to apply: pass the number they said ('apply to 2'); with no number or id " +
@@ -1719,7 +1719,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         number:      { type: "number", description: "The job's number in the list browse_job_board texted. Preferred." },
         jobId:       { type: "string", description: "The job_posts document ID — only when you already have it." },
       },
@@ -1730,13 +1730,13 @@ export const MCP_TOOLS: McpTool[] = [
     name: "start_interview_reschedule_flow",
     description:
       "The Interviews tab's Propose new time / Reschedule / Propose different time button, as Evia's scripted step-by-step flow — the ONLY way " +
-      "a caregiver proposes a new interview time. Asks the date, then a time from the site's picker (9:00 AM–6:00 PM, on the hour or half hour), " +
+      "a care provider proposes a new interview time. Asks the date, then a time from the site's picker (9:00 AM–6:00 PM, on the hour or half hour), " +
       "then SEND or CANCEL, and writes the site's exact proposal (the family confirms; the interview's time doesn't change until they do). " +
       "This tool TEXTS THE FIRST STEP ITSELF — say nothing else this turn. They can back out at any step.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         interviewId: { type: "string", description: "The video_interviews document ID (from list_interviews)" },
       },
       required: ["caregiverId", "interviewId"],
@@ -1751,7 +1751,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
       },
       required: ["caregiverId"],
     },
@@ -1759,11 +1759,11 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_pending_timesheets",
     description:
-      "The website's Timesheets page, exactly. tab 'needs_review' (default) = the Needs Review pill: the caregiver's submitted hours " +
+      "The website's Timesheets page, exactly. tab 'needs_review' (default) = the Needs Review pill: the care provider's submitted hours " +
       "waiting on the family (Review & Approve), counters waiting on the family (Review & Respond), failed payments (Retry payment), " +
-      "plus the ones waiting on someone else (correction sent, under review) — grouped by caregiver like the page. tab 'history' = " +
+      "plus the ones waiting on someone else (correction sent, under review) — grouped by care provider like the page. tab 'history' = " +
       "the History pill: approved / auto-approved / paid, with an optional from/to date range and the report totals (shifts, hours, pay). " +
-      "Each row is the card: caregiver, date, clock in/out, hours (h:mm:ss), rate, base pay, additional charges, total, status label " +
+      "Each row is the card: care provider, date, clock in/out, hours (h:mm:ss), rate, base pay, additional charges, total, status label " +
       "and hint, correction timeline, and its button. Use for 'anything to approve', 'what did I pay Basra', 'my payment history'.",
     input_schema: {
       type: "object",
@@ -1778,7 +1778,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_care_journal_client",
-    description: "The caregiver's notes from the family's completed visits — the running notes written during the visit and the closing note, from the shift record (what the Past Bookings card shows). Use for 'what did Basra write', 'any notes from this week'. Never describe how the person is doing beyond these words.",
+    description: "The care provider's notes from the family's completed visits — the running notes written during the visit and the closing note, from the shift record (what the Past Bookings card shows). Use for 'what did Basra write', 'any notes from this week'. Never describe how the person is doing beyond these words.",
     input_schema: {
       type: "object",
       properties: {
@@ -1822,7 +1822,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "send_onboarding_link",
     description:
       "Generate AND send a tappable onboarding/signup link directly to this chat. Use this whenever a family " +
-      "or caregiver asks you to (re)send a subscription/payment, identity verification, profile photo, " +
+      "or care provider asks you to (re)send a subscription/payment, identity verification, profile photo, " +
       "background check, or payout-setup link. The tool sends the link itself — after it succeeds, just " +
       "briefly confirm (e.g. \"Sent! Tap the link to verify your identity\"). NEVER create a support ticket for a " +
       "link you can send with this tool. Pick the linkType that matches what they asked for. NEVER tell the user " +
@@ -1843,7 +1843,7 @@ export const MCP_TOOLS: McpTool[] = [
           ],
           description:
             "Which link to send. Families: client_payment (subscription / payment method setup), client_identity " +
-            "(identity verification). Caregivers: caregiver_membership (annual membership), caregiver_photo, " +
+            "(identity verification). Care Providers: caregiver_membership (annual membership), caregiver_photo, " +
             "caregiver_background_check, caregiver_payouts (Stripe payout setup). There is no document-upload link " +
             "(transport documents were retired 2026-10-06 — Transportation is the driving record only).",
         },
@@ -1854,13 +1854,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_background_check_status",
     description:
-      "Look up the caregiver's OWN background-check status (Checkr). Use when a caregiver asks \"what's the status " +
+      "Look up the care provider's OWN background-check status (Checkr). Use when a care provider asks \"what's the status " +
       "of my background check\", \"did my check come back\", or \"am I cleared yet\". Returns the current status so " +
       "you can answer directly instead of deflecting to support. Do not promise a specific completion time.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (auto-injected)" },
       },
       required: ["caregiverId"],
     },
@@ -1868,7 +1868,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_payout_status",
     description:
-      "Look up the caregiver's OWN Stripe payout (Connect) setup status. Use when a caregiver asks \"is my payout " +
+      "Look up the care provider's OWN Stripe payout (Connect) setup status. Use when a care provider asks \"is my payout " +
       "set up\", \"can I get paid yet\", \"did my bank connect\", or asks you to set up / (re)send the payout link. " +
       "Returns the LIVE status so you answer truthfully — NEVER say payouts are live, ready, or set up unless " +
       "summary is \"active\". When summary is anything else, send the setup link with send_onboarding_link " +
@@ -1876,7 +1876,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (auto-injected)" },
       },
       required: ["caregiverId"],
     },
@@ -1885,7 +1885,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "get_signup_completeness",
     description:
       "FINAL SIGNUP CHECK — audit the user's account for anything their signup missed. Works for BOTH roles: " +
-      "caregivers (profile fields, photo, membership, background check, payout setup, visibility to families) and " +
+      "care providers (profile fields, photo, membership, background check, payout setup, visibility to families) and " +
       "families (membership payment, care-recipient profile, care plan). Use right after signup wraps up, or when " +
       "anyone asks \"did I miss anything\", \"is my profile complete\", \"am I all set\". Returns `missing` (real " +
       "gaps, each with a `fix`) and `optionalGaps` (nice-to-haves — never call these missing). Ground your answer " +
@@ -1894,7 +1894,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected on caregiver turns)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (auto-injected on care provider turns)" },
         clientId:    { type: "string", description: "The family/client's user ID (auto-injected on family turns)" },
       },
       required: [],
@@ -1936,24 +1936,24 @@ export const MCP_TOOLS: McpTool[] = [
   // ── Favorites ─────────────────────────────────────────────────────────────
   {
     name: "save_caregiver_favorite",
-    description: "Save a caregiver to the family's favorites list for quick access later.",
+    description: "Save a care provider to the family's favorites list for quick access later.",
     input_schema: {
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's user ID" },
-        caregiverId: { type: "string", description: "The caregiver to save" },
+        caregiverId: { type: "string", description: "The care provider to save" },
       },
       required: ["clientId", "caregiverId"],
     },
   },
   {
     name: "unsave_caregiver_favorite",
-    description: "Remove a caregiver from the family's favorites list.",
+    description: "Remove a care provider from the family's favorites list.",
     input_schema: {
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's user ID" },
-        caregiverId: { type: "string", description: "The caregiver to remove" },
+        caregiverId: { type: "string", description: "The care provider to remove" },
       },
       required: ["clientId", "caregiverId"],
     },
@@ -1965,7 +1965,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        userId:        { type: "string", description: "The acting user's ID (the family's userId, or the caregiver's caregiverId — the same uid)" },
+        userId:        { type: "string", description: "The acting user's ID (the family's userId, or the care provider's caregiverId — the same uid)" },
         targetUserId:  { type: "string", description: "The user being blocked, unblocked, or reported" },
         action:        { type: "string", enum: ["block", "unblock", "report"], description: "block, unblock, or report" },
         reason:        { type: "string", description: "Optional reason for a block (helps ops triage)" },
@@ -1982,19 +1982,19 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         userId:        { type: "string", description: "The user clearing the conversation (whose Inbox this affects)" },
-        counterpartId: { type: "string", description: "The other person in the conversation (caregiver or client ID)" },
+        counterpartId: { type: "string", description: "The other person in the conversation (care provider or client ID)" },
       },
       required: ["userId", "counterpartId"],
     },
   },
   {
     name: "mark_messages_read",
-    description: "Mark all unread messages in a conversation as read and clear its unread badge (mirrors the website's Inbox automatically marking messages read when a conversation is opened). Use when the family/caregiver says something like 'mark my messages as read' or 'I've seen those'.",
+    description: "Mark all unread messages in a conversation as read and clear its unread badge (mirrors the website's Inbox automatically marking messages read when a conversation is opened). Use when the family/care provider says something like 'mark my messages as read' or 'I've seen those'.",
     input_schema: {
       type: "object",
       properties: {
         userId:        { type: "string", description: "The user marking messages as read" },
-        counterpartId: { type: "string", description: "The other person in the conversation (caregiver or client ID)" },
+        counterpartId: { type: "string", description: "The other person in the conversation (care provider or client ID)" },
       },
       required: ["userId", "counterpartId"],
     },
@@ -2014,17 +2014,17 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_pending_schedule_amendments",
     description:
-      "List schedule-change requests still awaiting the caregiver's answer — the OTHER kind of card on the site's " +
+      "List schedule-change requests still awaiting the care provider's answer — the OTHER kind of card on the site's " +
       "My Bookings > Requests tab (booking_amendments with status 'pending': a new recurring day or one-off visit " +
       "the family asked to add to an accepted booking via request_schedule_amendment). Pass clientId for a family's " +
-      "own pending changes, or caregiverId for changes a caregiver still needs to accept/decline. Each result " +
+      "own pending changes, or caregiverId for changes a care provider still needs to accept/decline. Each result " +
       "carries its amendmentId for manage_booking action:'cancel_pending_amendment'. get_pending_booking_requests " +
       "does NOT include these.",
     input_schema: {
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's Firestore document ID (provide this OR caregiverId)" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (provide this OR clientId)" },
       },
       required: [],
     },
@@ -2032,8 +2032,8 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_past_visits",
     description:
-      "List past visits — the site's My Bookings > Past Bookings tab exactly: this client's (or caregiver's) shifts " +
-      "with status 'completed' or 'cancelled', newest first, with caregiver, date (and weekday), times, who cancelled, " +
+      "List past visits — the site's My Bookings > Past Bookings tab exactly: this client's (or care provider's) shifts " +
+      "with status 'completed' or 'cancelled', newest first, with care provider, date (and weekday), times, who cancelled, " +
       "and for completed visits the actual start/end stamps and paid flag. Use for 'when was the last visit', 'did " +
       "Tuesday's visit happen', 'which visits got cancelled', 'how many visits has Basra done'. " +
       "get_upcoming_appointments only covers scheduled/in-progress/needs_replacement visits, never these.",
@@ -2041,7 +2041,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's Firestore document ID (provide this OR caregiverId)" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (provide this OR clientId)" },
         limit:       { type: "number", description: "Max visits to return (default 20, max 50)" },
       },
       required: [],
@@ -2050,8 +2050,8 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_resendable_booking_requests",
     description:
-      "The website's Resend rows on Care Requests > Interviews: booking requests the caregiver declined or the " +
-      "family cancelled that can be resent (the latest request per caregiver+job/interview, when it is declined or " +
+      "The website's Resend rows on Care Requests > Interviews: booking requests the care provider declined or the " +
+      "family cancelled that can be resent (the latest request per care provider+job/interview, when it is declined or " +
       "cancelled — a newer pending/accepted request for the same pairing hides the row, exactly as the site does). " +
       "Call this for 'do I have a booking I can resend?', 'which requests were declined/cancelled?', or before " +
       "offering a resend. NEVER infer resendability from get_pending_booking_requests or get_past_visits — those " +
@@ -2060,7 +2060,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's Firestore document ID" },
-        caregiverId: { type: "string", description: "Optional — only requests with this caregiver" },
+        caregiverId: { type: "string", description: "Optional — only requests with this care provider" },
       },
       required: ["clientId"],
     },
@@ -2068,7 +2068,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_active_bookings",
     description:
-      "The caregiver Bookings page's Active Bookings tab — this tool TEXTS the bookings itself, each card WHOLE (2 at a time, MORE for the rest): " +
+      "The care provider Bookings page's Active Bookings tab — this tool TEXTS the bookings itself, each card WHOLE (2 at a time, MORE for the rest): " +
       "family · Ongoing (· Schedule paused), Starts, day-by-day shift times with hours, address + lifestyle chips, $rate/hr · Card, the booking note, " +
       "the Care plan & preferences details (care recipients with relationship · age and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact), " +
       "then UPCOMING SHIFTS — two per booking like the page, every one with allVisits:true (they text VISITS) — each visit: date, time, Scheduled / In Progress, tasks done, its own schedule-change note when it has one, a pending reschedule proposal. " +
@@ -2077,7 +2077,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         more:        { type: "boolean", description: "true when they ask for more — continues the last list" },
         allVisits:   { type: "boolean", description: "true to list every upcoming visit of each booking (the page's Show more); default shows two per booking" },
       },
@@ -2087,14 +2087,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_past_bookings",
     description:
-      "The caregiver Bookings page's Past Bookings tab — this tool TEXTS it itself: one card per past booking (family · N completed · N missed · N cancelled), " +
+      "The care provider Bookings page's Past Bookings tab — this tool TEXTS it itself: one card per past booking (family · N completed · N missed · N cancelled), " +
       "two visits per card (a completed visit with its actual Started – Ended stamps and duration; a missed visit with 'reply LOG n'; a cancelled visit), numbered across the tab; " +
       "2 cards per text, MORE for the rest; PAST VISITS shows every visit. Pass visitNumber to text ONE completed visit's detail (scheduled + actual times, tasks per recipient done / not done, " +
       "visit notes, closing note) — the page's click-through. Call it for 'my past visits', 'what did I do last week', 'which visits got cancelled', 'did I miss a shift'. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         more:        { type: "boolean", description: "true when they ask for more — continues the last list" },
         allVisits:   { type: "boolean", description: "true to list every visit of each booking (PAST VISITS)" },
         visitNumber: { type: "number", description: "the number of a visit from the last texted list — texts that visit's detail instead of the tab" },
@@ -2111,7 +2111,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         number:      { type: "number", description: "The visit number from the last texted Past Bookings list" },
         shiftId:     { type: "string", description: "The shifts document ID (instead of number)" },
       },
@@ -2121,13 +2121,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_timesheets",
     description:
-      "The caregiver Payments page's Timesheets tab, TEXTED by the tool itself (agents/caregiverTimesheets.ts): chip 'unsubmitted' (completed visits with no hours submitted — each numbered, with clock in/out, duration, est. pay, Not submitted), " +
+      "The care provider Payments page's Timesheets tab, TEXTED by the tool itself (agents/caregiverTimesheets.ts): chip 'unsubmitted' (completed visits with no hours submitted — each numbered, with clock in/out, duration, est. pay, Not submitted), " +
       "'pending' (Pending client review / Correction Received / Counter sent / Awaiting Payment) or 'history' (Approved / Auto-approved / Paid …, grouped by month, 5 at a time, MORE → more:true). " +
       "With number it texts that row's full card (rate, clock in/out, charges, total, auto-approve time, the correction history). Call it for 'my timesheets', 'did my hours go through', 'what's pending', 'what did I get paid'. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         chip:        { type: "string", enum: ["unsubmitted", "pending", "history"], description: "Which chip to text (default unsubmitted)" },
         number:      { type: "number", description: "A row number from the last texted Timesheets list → its full card instead of a list" },
         more:        { type: "boolean", description: "History only: the next 5 older rows" },
@@ -2143,7 +2143,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         number:      { type: "number", description: "The visit number from the last texted Timesheets list" },
         shiftId:     { type: "string", description: "The shifts document ID (instead of number)" },
       },
@@ -2158,7 +2158,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId:   { type: "string", description: "The care provider's Firestore document ID" },
         number:        { type: "number", description: "The row number from the last texted Timesheets list" },
         appointmentId: { type: "string", description: "The shiftHours document ID (instead of number)" },
       },
@@ -2168,13 +2168,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_families",
     description:
-      "The caregiver's My Families page — this tool TEXTS it itself. tab 'active' (default): every family with an accepted booking that still has a visit; 'past': the most recent finished / cancelled booking per family not currently active. " +
+      "The care provider's My Families page — this tool TEXTS it itself. tab 'active' (default): every family with an accepted booking that still has a visit; 'past': the most recent finished / cancelled booking per family not currently active. " +
       "Each card = name, Active/Past pill, $rate/hr, the schedule's days, 'Caring for: <recipients>'; 2 per text, more:true continues; query = the search box (name). Numbered so FAMILY n texts the View Details modal (per recipient: relationship · age, the family's note, Care Plan needs, Lifestyle; then Emergency Contact). " +
       "Pass familyNumber to text ONE family's details. The Message button = send_client_message with that family's clientId from this list. Call it for 'who do I work with', 'my families', 'which families have I worked with', 'details on the Nguyen family'. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:  { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId:  { type: "string", description: "The care provider's Firestore document ID" },
         tab:          { type: "string", enum: ["active", "past"], description: "Active (default) or Past" },
         query:        { type: "string", description: "Search by family name, like the page's search box" },
         more:         { type: "boolean", description: "true to continue the last list" },
@@ -2186,7 +2186,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_calendar",
     description:
-      "The caregiver's My Calendar page — this tool TEXTS the view itself. view: 'day' (a date; default today), 'week' (offset 0 = this week, 1 = next), 'month' (YYYY-MM; default this month; includes the page's Upcoming panel), " +
+      "The care provider's My Calendar page — this tool TEXTS the view itself. view: 'day' (a date; default today), 'week' (offset 0 = this week, 1 = next), 'month' (YYYY-MM; default this month; includes the page's Upcoming panel), " +
       "'list' (filter all / upcoming / this-week / this-month / last-30; 5 days per text, more:true continues). Same reads as the page: their shifts (all statuses), their interviews (pending / accepted / completed), and the Available blocks from Update Availability. " +
       "Day and Week hide cancelled visits like the page; Month and List show them. Events are numbered so VISIT n / INTERVIEW n open the detail panel. " +
       "Pass visitNumber or interviewNumber to text ONE event's detail panel (a shift: status, times, address, notes, tasks per recipient, the actions available; an interview: time, type, job details, Accept/Decline/propose/Join). " +
@@ -2194,7 +2194,7 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:     { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId:     { type: "string", description: "The care provider's Firestore document ID" },
         view:            { type: "string", enum: ["day", "week", "month", "list"], description: "Which view (default week)" },
         date:            { type: "string", description: "day view: YYYY-MM-DD (default today)" },
         offset:          { type: "number", description: "week view: 0 this week, 1 next week, -1 last week" },
@@ -2210,14 +2210,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "show_booking_requests",
     description:
-      "The caregiver Bookings page's Requests tab — this tool TEXTS the requests itself, each one WHOLE (2 at a time, MORE for the rest): the card (family, client rating, Pending, " +
+      "The care provider Bookings page's Requests tab — this tool TEXTS the requests itself, each one WHOLE (2 at a time, MORE for the rest): the card (family, client rating, Pending, " +
       "Starts / One visit, Ongoing / Ends, day-by-day shift times with hours and the weekly total, address + lifestyle chips, rate · Card (agreed rate)) AND its full details " +
       "(care recipients with relationship · age and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact, Notes), then the buttons. " +
-      "Call it whenever the caregiver asks about booking requests / who booked them / what they need to answer; when they say MORE call it again with more:true. Send nothing else this turn.",
+      "Call it whenever the care provider asks about booking requests / who booked them / what they need to answer; when they say MORE call it again with more:true. Send nothing else this turn.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         more:        { type: "boolean", description: "true when they ask for more — continues the last list" },
       },
       required: ["caregiverId"],
@@ -2226,14 +2226,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_pending_booking_requests",
     description:
-      "FAMILY side: booking requests this family sent that the caregiver hasn't accepted or declined yet " +
+      "FAMILY side: booking requests this family sent that the care provider hasn't accepted or declined yet " +
       "(booking_requests with status 'pending'), matching the family's My Bookings > Requests view. Includes shift-replacement requests (isShiftReplacement:true). " +
-      "Use when a family asks 'did they respond yet?' / 'what am I still waiting on?'. (A caregiver's own Requests tab is show_booking_requests.)",
+      "Use when a family asks 'did they respond yet?' / 'what am I still waiting on?'. (A care provider's own Requests tab is show_booking_requests.)",
     input_schema: {
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's Firestore document ID (provide this OR caregiverId) — requests THIS FAMILY sent" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId) — requests sent TO this caregiver" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (provide this OR clientId) — requests sent TO this care provider" },
       },
       required: [],
     },
@@ -2241,12 +2241,12 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_caregiver_availability",
     description:
-      "Read the caregiver's weekly availability as the Calendar page's Update Availability grid reads it (Sun → Sat, each day's blocks: Morning / Afternoon / Evening / Overnight). " +
+      "Read the care provider's weekly availability as the Calendar page's Update Availability grid reads it (Sun → Sat, each day's blocks: Morning / Afternoon / Evening / Overnight). " +
       "Returns grid (day → blocks) and text (one line per day). Call before update_caregiver_availability so you change only what they asked.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
       },
       required: ["caregiverId"],
     },
@@ -2256,7 +2256,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "list_interviews",
     description:
       "List scheduled/pending video or phone interviews for the caller. Pass clientId for a family's interviews or " +
-      "caregiverId for a caregiver's. Use before cancel_interview/reschedule_interview or when someone asks 'when " +
+      "caregiverId for a care provider's. Use before cancel_interview/reschedule_interview or when someone asks 'when " +
       "is my interview?'. Each result's scheduledTimeLocal is already in the family's local time (e.g. 'Monday, " +
       "September 7 at 5:00 PM') — always read dates/times from scheduledTimeLocal, never compute them yourself " +
       "from the raw scheduledTime (a UTC timestamp); converting several of these by hand is exactly how a real " +
@@ -2268,7 +2268,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId:    { type: "string", description: "The client's user ID (provide this OR caregiverId)" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (provide this OR clientId)" },
         // 2026-09-09 (live-caught): the old description listed "scheduled,
         // confirmed, cancelled" as valid values — none of those are real.
         // An interview is "requested" until the other side responds, then
@@ -2302,7 +2302,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         interviewId: { type: "string", description: "The video_interviews document ID" },
         clientId:    { type: "string", description: "The client's user ID (when the family cancels)" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver cancels)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (when the care provider cancels)" },
       },
       required: ["interviewId"],
     },
@@ -2322,7 +2322,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         interviewId: { type: "string", description: "The video_interviews document ID" },
         clientId:    { type: "string", description: "The client's user ID (when the family proposes)" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver proposes)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (when the care provider proposes)" },
         newDate:     { type: "string", description: "Proposed new date, YYYY-MM-DD" },
         newTime:     { type: "string", description: "Proposed new time, HH:MM (24h)" },
       },
@@ -2344,7 +2344,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         interviewId: { type: "string", description: "The video_interviews document ID — omit for a bare \"yes confirm\" / \"accept\" / \"keep it\" right after the proposal notice (it uses that interview). Never guess an id." },
         clientId:    { type: "string", description: "The client's user ID (when the family answers)" },
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver answers)" },
+        caregiverId: { type: "string", description: "The care provider's Firestore document ID (when the care provider answers)" },
         action:      { type: "string", enum: ["accept", "keep"], description: "accept = Accept new time (default); keep = Keep current time (decline the proposed time, the confirmed time stands)" },
       },
       required: [],
@@ -2521,7 +2521,7 @@ export async function handleToolCallForCaregiver(
 ): Promise<unknown> {
   // Claude-scheduled follow-ups are a family-only feature (2026-10-11).
   if (name === "schedule_followup" || name === "cancel_followup") {
-    return toolError("PERMISSION_DENIED", "Follow-ups are scheduled for families only — not for caregivers.");
+    return toolError("PERMISSION_DENIED", "Follow-ups are scheduled for families only — not for care providers.");
   }
   return handleToolCall(name, input, shadowMode);
 }
@@ -2635,7 +2635,7 @@ async function checkClientAccessGate(
   const { checkClientAccess, textClientGateBlock, findClientSession } = await import("../agents/clientAccessGate");
   const res = await checkClientAccess(clientId, action, opts.caregiverName);
   if (res.ok) return null;
-  const doing = action === "message" ? "messaging a caregiver" : action === "booking" ? "booking a caregiver" : "scheduling an interview";
+  const doing = action === "message" ? "messaging a care provider" : action === "booking" ? "booking a care provider" : "scheduling an interview";
   const code: ToolErrorCode = res.block === "identity" ? "IDENTITY_REQUIRED" : "MEMBERSHIP_REQUIRED";
   const need = res.block === "identity" ? "needs to complete identity verification" : "needs an active membership";
   const conv = await findClientSession(clientId, opts.phone).catch(() => null);
@@ -2672,9 +2672,9 @@ async function checkCaregiverAccessGate(
   const conv = await findCaregiverSession(caregiverId, opts.phone).catch(() => null);
   if (conv) {
     await textCaregiverGateBlock(conv.phone, conv.chatId, res.block, res.caregiver);
-    return toolError(code, `This caregiver ${need} before ${doing} — the website blocks it the same way. Evia has ALREADY texted them the step and its link — send NOTHING else this turn.`);
+    return toolError(code, `This care provider ${need} before ${doing} — the website blocks it the same way. Evia has ALREADY texted them the step and its link — send NOTHING else this turn.`);
   }
-  return toolError(code, `This caregiver ${need} before ${doing} — the website blocks it the same way. Tell them that in one line and offer the next step (${res.block === "membership" ? "send_onboarding_link caregiver_membership" : res.block === "background" ? "send_onboarding_link caregiver_background_check" : "show_membership — Settings › Membership & verification shows where the driving record stands"}).`);
+  return toolError(code, `This care provider ${need} before ${doing} — the website blocks it the same way. Tell them that in one line and offer the next step (${res.block === "membership" ? "send_onboarding_link caregiver_membership" : res.block === "background" ? "send_onboarding_link caregiver_background_check" : "show_membership — Settings › Membership & verification shows where the driving record stands"}).`);
 }
 
 // Ownership gate for senior PHI reads. The owning client is recorded on
@@ -2989,7 +2989,7 @@ function mapVideoInterviewRequestError(
         ambiguous: true,
         candidates: err.candidates ?? [],
         message: err.message,
-        note: "Do not guess which one they mean. Ask the family to distinguish between these caregivers (e.g. by their rate, or how you discussed each of them), then call this tool again with the correct caregiverId — always their real id from the candidates list, never their name.",
+        note: "Do not guess which one they mean. Ask the family to distinguish between these care providers (e.g. by their rate, or how you discussed each of them), then call this tool again with the correct caregiverId — always their real id from the candidates list, never their name.",
       };
     }
     const codeMap: Record<string, ToolErrorCode> = {
@@ -3080,7 +3080,7 @@ async function createVideoInterviewRequestForTool(params: {
       caregiverName: interview.caregiverName,
       scheduledTime: interview.scheduledTime,
       interviewType: interview.interviewType,
-      note: "The interview request has been sent to the caregiver — I'll share the video link with both of you the moment they confirm. Do not tell the family a link exists yet.",
+      note: "The interview request has been sent to the care provider — I'll share the video link with both of you the moment they confirm. Do not tell the family a link exists yet.",
     };
   } catch (err) {
     return mapVideoInterviewRequestError(err, { clientId, caregiverId, scheduledTime, jobId, applicationId });
@@ -3315,7 +3315,7 @@ async function executeToolCall(
             return {
               success: true, total: 0, sent: true,
               instruction: "This tool already texted the family the page's empty-state message (" +
-                (shown.hasFilters ? "no caregivers match their filters — it suggested widening distance/rate or dropping a specialty" : "no caregivers available yet — it offered to post a care request") +
+                (shown.hasFilters ? "no care providers match their filters — it suggested widening distance/rate or dropping a specialty" : "no care providers available yet — it offered to post a care request") +
                 "). Do NOT repeat it; your entire reply is at most one short line, or nothing.",
             };
           }
@@ -3323,8 +3323,8 @@ async function executeToolCall(
             success: true, total: shown.total, shownCount: shown.shown.length, offset: shown.offset, hasMore: shown.hasMore,
             shown: shown.shown.map((c) => ({ id: c.id, name: c.name, hourlyRate: c.hourlyRate, state: c.state })),
             instruction:
-              "This tool already texted the family the '<N> caregivers found' line and each caregiver's card (name, rate, rating, experience, location, specialties, button state, tappable profile link) — do NOT repeat any of it. " +
-              "Your entire reply is ONE short closing line asking which caregiver they'd like to meet (reply with a name or number); a pick goes to start_interview_flow with that caregiverId (or, for someone showing Re-book, start_booking_flow). " +
+              "This tool already texted the family the '<N> care providers found' line and each care provider's card (name, rate, rating, experience, location, specialties, button state, tappable profile link) — do NOT repeat any of it. " +
+              "Your entire reply is ONE short closing line asking which care provider they'd like to meet (reply with a name or number); a pick goes to start_interview_flow with that caregiverId (or, for someone showing Re-book, start_booking_flow). " +
               (shown.hasMore ? "If they ask for more, call this again with the SAME filters and offset = " + (shown.offset + shown.shown.length) + "." : "That was everyone matching — if they ask for more, offer to widen the filters."),
           };
         }
@@ -3347,7 +3347,7 @@ async function executeToolCall(
         const { readCaregiverProfilePage } = await import("../agents/caregiverProfilePage");
         const reviewLimit = Math.min((input.reviewLimit as number) ?? 5, 20);
         const page = await readCaregiverProfilePage(String(input.caregiverId), typeof input.clientId === "string" && input.clientId ? input.clientId : null, reviewLimit);
-        if (!page) return toolError("NOT_FOUND", "Caregiver not found");
+        if (!page) return toolError("NOT_FOUND", "Care Provider not found");
         return {
           success: true,
           results: {
@@ -3359,7 +3359,7 @@ async function executeToolCall(
           },
           instruction: page.published
             ? "This is the profile page as the family sees it. Answer only what they asked, from these fields; money = the page's figures (rate and billed). Offer the page's buttons for this family (actions), nothing else."
-            : "This caregiver is not listed on the site yet (no published profile) — only their account record exists. Do not quote a rate, skills, or availability as facts; say the profile isn't published yet.",
+            : "This care provider is not listed on the site yet (no published profile) — only their account record exists. Do not quote a rate, skills, or availability as facts; say the profile isn't published yet.",
         };
       }
 
@@ -3421,7 +3421,7 @@ async function executeToolCall(
         const page = await readMembershipPage(input.userId as string);
         return {
           success: true, ...page, page: "Membership", url: `${getAppUrl()}/client/membership`,
-          serviceFeeNote: "Plus a 9% service fee on each visit (minimum $1), covering payment processing and coordinating the visit. Caregivers keep 100% of their rate.",
+          serviceFeeNote: "Plus a 9% service fee on each visit (minimum $1), covering payment processing and coordinating the visit. Care Providers keep 100% of their rate.",
         };
       }
       case "get_caregiver_booking_rate": {
@@ -3434,7 +3434,7 @@ async function executeToolCall(
           success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate,
           serviceFeeRate: feeRate, serviceFeeMinDollars: feeMin,
           billedHourlyRate: Math.round(Number(rate.hourlyRate) * (1 + feeRate) * 100) / 100,
-          note: `The caregiver keeps $${rate.hourlyRate}/hr; the family is billed $${(Number(rate.hourlyRate) * (1 + feeRate)).toFixed(2)}/hr (rate + ${Math.round(feeRate * 100)}% service fee).`,
+          note: `The care provider keeps $${rate.hourlyRate}/hr; the family is billed $${(Number(rate.hourlyRate) * (1 + feeRate)).toFixed(2)}/hr (rate + ${Math.round(feeRate * 100)}% service fee).`,
         };
       }
 
@@ -3646,7 +3646,7 @@ async function executeToolCall(
             return {
               success: false, reason: "no_visits", nothingSent: true,
               instruction: "The family has NO scheduled visits, so there is nothing to reschedule and NOTHING was texted. " +
-                "If they were actually asking to set up / schedule an INTERVIEW with a caregiver (not to move a visit), call start_interview_flow now. " +
+                "If they were actually asking to set up / schedule an INTERVIEW with a care provider (not to move a visit), call start_interview_flow now. " +
                 `Otherwise tell them once, in your own words: ${result.message ?? "there are no upcoming scheduled visits to move."}`,
             };
           }
@@ -4030,7 +4030,7 @@ async function executeToolCall(
           if (!proposed.ok) {
             if (proposed.code === "CONFLICT") {
               return toolError("INVALID_INPUT",
-                `That overlaps another visit with the same caregiver at ${formatHHMMForDisplay(proposed.conflict.startTime)}` +
+                `That overlaps another visit with the same care provider at ${formatHHMMForDisplay(proposed.conflict.startTime)}` +
                 `${proposed.conflict.endTime ? `–${formatHHMMForDisplay(proposed.conflict.endTime)}` : ""} that day — ask the family for a different time`);
             }
             return toolError("INVALID_INPUT", proposed.message);
@@ -4049,7 +4049,7 @@ async function executeToolCall(
           if (!r.ok) {
             if (r.code === "CONFLICT") {
               return toolError("INVALID_INPUT",
-                `You already have another visit with the same caregiver at ${formatHHMMForDisplay(r.conflict.startTime)}` +
+                `You already have another visit with the same care provider at ${formatHHMMForDisplay(r.conflict.startTime)}` +
                 `${r.conflict.endTime ? `–${formatHHMMForDisplay(r.conflict.endTime)}` : ""} that day — decline this proposal and suggest another time`);
             }
             return toolError(r.code, r.message);
@@ -4069,7 +4069,7 @@ async function executeToolCall(
         if (!brSnap.exists) return toolError("NOT_FOUND", "Booking not found");
         const br = brSnap.data()!;
         if (br.clientId !== clientId) return toolError("PERMISSION_DENIED", "Booking does not belong to this client");
-        if (!br.caregiverId) return toolError("INVALID_INPUT", "Booking has no caregiver");
+        if (!br.caregiverId) return toolError("INVALID_INPUT", "Booking has no care provider");
 
         // Schedule.tsx: "+ Request Visit" and the modal's submit both run gate('booking', caregiverName).
         const amendGateError = await checkClientAccessGate(clientId as string, "booking", { phone: (input as Record<string, unknown>).phone, caregiverName: (br.caregiverName as string | undefined) ?? undefined });
@@ -4112,9 +4112,9 @@ async function executeToolCall(
         for (const [abbr, blocks] of Object.entries(newDays)) {
           for (const block of blocks) {
             const c = checkVisitBlock(abbr as any, block, bookingForCheck, avail);
-            if (c.overlap) return toolError("INVALID_INPUT", `${VISIT_DAY_FULL[abbr]} ${describeBlock(block)} overlaps a visit the family already has with ${br.caregiverName ?? "this caregiver"} (${describeBlock(c.overlap)}) — ask for a different time`);
-            if (c.busy) return toolError("INVALID_INPUT", `${br.caregiverName ?? "The caregiver"} is already booked ${VISIT_DAY_FULL[abbr]} ${describeRange(c.busy)} — ask for a different time`);
-            if (c.outsidePreferred) warnings.push(`${VISIT_DAY_FULL[abbr]} ${describeBlock(block)} is outside the caregiver's usual availability`);
+            if (c.overlap) return toolError("INVALID_INPUT", `${VISIT_DAY_FULL[abbr]} ${describeBlock(block)} overlaps a visit the family already has with ${br.caregiverName ?? "this care provider"} (${describeBlock(c.overlap)}) — ask for a different time`);
+            if (c.busy) return toolError("INVALID_INPUT", `${br.caregiverName ?? "The care provider"} is already booked ${VISIT_DAY_FULL[abbr]} ${describeRange(c.busy)} — ask for a different time`);
+            if (c.outsidePreferred) warnings.push(`${VISIT_DAY_FULL[abbr]} ${describeBlock(block)} is outside the care provider's usual availability`);
           }
         }
 
@@ -4172,7 +4172,7 @@ async function executeToolCall(
         const shiftSnap = await db.collection("shifts").doc(shiftId).get();
         if (!shiftSnap.exists) return toolError("NOT_FOUND", "Visit not found");
         const shift = shiftSnap.data()!;
-        if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Visit does not belong to this caregiver");
+        if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Visit does not belong to this care provider");
 
         if (action === "propose") {
           if (!date || !startTime || !endTime) return toolError("INVALID_INPUT", "date, startTime, and endTime are required for action:'propose'");
@@ -4219,11 +4219,11 @@ async function executeToolCall(
         const gateError = await checkClientAccessGate(clientId as string | undefined, "message", { phone: (input as Record<string, unknown>).phone });
         if (gateError) return gateError;
         const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-        if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+        if (!cgSnap.exists) return toolError("NOT_FOUND", "Care Provider not found");
         // Mirrors BrowseCaregivers.tsx: a hidden profile is never surfaced to
         // browse/message on the website, so Evia shouldn't relay to one either.
         if (cgSnap.data()?.profileVisibility === "hidden") {
-          return toolError("NOT_FOUND", "Caregiver not found");
+          return toolError("NOT_FOUND", "Care Provider not found");
         }
         // Founder, 2026-10-06: a family can do nothing with a caregiver whose background check
         // isn't clear / approved — the site hides Message and the chat rules refuse the room.
@@ -4253,7 +4253,7 @@ async function executeToolCall(
         return {
           success: true, sent: true, caregiverName,
           notification: { sent: true, via: "inbox" },
-          instruction: "The message is in the shared Inbox thread and the caregiver is being notified exactly like a website message. Tell the family it's sent — nothing else.",
+          instruction: "The message is in the shared Inbox thread and the care provider is being notified exactly like a website message. Tell the family it's sent — nothing else.",
         };
       }
 
@@ -4355,7 +4355,7 @@ async function executeToolCall(
         // CAREGIVER_TOOLS; this is the backstop for any other way in.
         const sfSessSnap = await db.collection("agent_sessions").doc(phone as string).get().catch(() => null);
         if (sfSessSnap?.data()?.userType === "caregiver") {
-          return toolError("PERMISSION_DENIED", "Follow-ups are scheduled for families only — not for caregivers.");
+          return toolError("PERMISSION_DENIED", "Follow-ups are scheduled for families only — not for care providers.");
         }
         // Validate scheduledAt is in the future
         if (new Date(scheduledAt as string) <= new Date()) {
@@ -4402,11 +4402,11 @@ async function executeToolCall(
         const ptItems: Array<Record<string, unknown>> = [];
         ptBrSnap.docs.forEach((d) => {
           const r = d.data();
-          ptItems.push({ kind: "booking_request_pending", waitingOn: "caregiver", page: "My Bookings > Requests", bookingRequestId: d.id, caregiverName: r.caregiverName ?? null, isResend: r.isResend === true, createdAt: r.createdAt ?? null });
+          ptItems.push({ kind: "booking_request_pending", waitingOn: "care provider", page: "My Bookings > Requests", bookingRequestId: d.id, caregiverName: r.caregiverName ?? null, isResend: r.isResend === true, createdAt: r.createdAt ?? null });
         });
         ptAmSnap.docs.forEach((d) => {
           const a = d.data();
-          ptItems.push({ kind: "visit_request_pending", waitingOn: "caregiver", page: "My Bookings > Requests", amendmentId: d.id, bookingRequestId: a.bookingRequestId ?? null, caregiverName: a.caregiverName ?? null, startDate: a.startDate ?? null, createdAt: a.createdAt ?? null });
+          ptItems.push({ kind: "visit_request_pending", waitingOn: "care provider", page: "My Bookings > Requests", amendmentId: d.id, bookingRequestId: a.bookingRequestId ?? null, caregiverName: a.caregiverName ?? null, startDate: a.startDate ?? null, createdAt: a.createdAt ?? null });
         });
         ptShiftSnap.docs.forEach((d) => {
           const sh = d.data();
@@ -4416,12 +4416,12 @@ async function executeToolCall(
             ptItems.push({ kind: "visit_needs_replacement", waitingOn: "you", page: "My Bookings > Active Bookings", actions: sh.replacementRequestId ? ["find_replacement"] : ["find_replacement", "skip"], replacementRequestId: sh.replacementRequestId ?? null, ...base });
           } else if (sh.reschedulePendingDate && sh.rescheduledBy) {
             // ClientVisitsPage: a caregiver proposal shows Review (accept/decline); the family's own proposal waits on the caregiver.
-            ptItems.push({ kind: "visit_reschedule_proposal", waitingOn: sh.rescheduledBy === "caregiver" ? "you" : "caregiver", page: "My Bookings > Active Bookings", proposedDate: sh.reschedulePendingDate, proposedDayOfWeek: weekdayForDate(String(sh.reschedulePendingDate)), proposedStartTime: sh.reschedulePendingStartTime ?? null, proposedEndTime: sh.reschedulePendingEndTime ?? null, ...base });
+            ptItems.push({ kind: "visit_reschedule_proposal", waitingOn: sh.rescheduledBy === "caregiver" ? "you" : "care provider", page: "My Bookings > Active Bookings", proposedDate: sh.reschedulePendingDate, proposedDayOfWeek: weekdayForDate(String(sh.reschedulePendingDate)), proposedStartTime: sh.reschedulePendingStartTime ?? null, proposedEndTime: sh.reschedulePendingEndTime ?? null, ...base });
           }
         });
         ptIvRows.forEach((iv) => {
           if (iv.rescheduleWaitingOn) ptItems.push({ kind: "interview_reschedule_proposal", waitingOn: iv.rescheduleWaitingOn, page: "Care Requests > Interviews", interviewId: iv.interviewId, caregiverName: iv.caregiverName, proposedTimeLocal: iv.reschedulePendingTimeLocal, actions: iv.actions });
-          else if (iv.displayStatus === "pending") ptItems.push({ kind: "interview_request_pending", waitingOn: "caregiver", page: "Care Requests > Interviews", interviewId: iv.interviewId, caregiverName: iv.caregiverName, scheduledTimeLocal: iv.scheduledTimeLocal });
+          else if (iv.displayStatus === "pending") ptItems.push({ kind: "interview_request_pending", waitingOn: "care provider", page: "Care Requests > Interviews", interviewId: iv.interviewId, caregiverName: iv.caregiverName, scheduledTimeLocal: iv.scheduledTimeLocal });
         });
         if (ptCpSnap.exists && !ptCpSnap.data()?.carePlanReviewedAt) ptItems.push({ kind: "care_plan_review", waitingOn: "you", page: "Care Plan", actions: ["looks_good"] });
         {
@@ -4440,7 +4440,7 @@ async function executeToolCall(
           total: ptItems.length,
           waitingOnYou,
           items: ptItems,
-          summary: ptItems.length === 0 ? "Nothing pending" : `${waitingOnYou} item(s) waiting on the family, ${ptItems.length - waitingOnYou} waiting on a caregiver`,
+          summary: ptItems.length === 0 ? "Nothing pending" : `${waitingOnYou} item(s) waiting on the family, ${ptItems.length - waitingOnYou} waiting on a care provider`,
         };
       }
 
@@ -4573,14 +4573,14 @@ async function executeToolCall(
       if (!caregiverId || !actingPhone) return toolError("INVALID_INPUT", "caregiverId and phone are required");
       const caregiverRef = db.collection("caregivers").doc(caregiverId as string);
       const caregiverSnap = await caregiverRef.get();
-      if (!caregiverSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      if (!caregiverSnap.exists) return toolError("NOT_FOUND", "Care Provider not found");
       // 2026-09-13 live incident: this used to read caregivers/{uid}.phone
       // directly, a field that never exists under the unified identity model
       // (real phone lives on users/{uid}.phone) — ownerPhone was always
       // undefined, so this check rejected EVERY caregiver unconditionally.
       const ownerPhone = await resolveCaregiverPhone(caregiverId as string);
       if (!ownerPhone || ownerPhone !== actingPhone) {
-        return toolError("PERMISSION_DENIED", "You can only update your own caregiver profile");
+        return toolError("PERMISSION_DENIED", "You can only update your own care provider profile");
       }
       if (requestPhoneChange === true) {
         const d = caregiverSnap.data() ?? {};
@@ -4691,7 +4691,7 @@ async function executeToolCall(
       return {
         success: true, updated: updatedKeys, saved,
         // Live 2026-10-07: the model's own wording after a rate change drifted into family-side talk.
-        instruction: "Confirm in ONE short line exactly what was saved, in the caregiver's own terms (rates: 'Done — 1 person $15/hr, 2 people $35/hr, 3+ people $44/hr.'). It is their own profile: say nothing about other caregivers, confirmations or references.",
+        instruction: "Confirm in ONE short line exactly what was saved, in the care provider's own terms (rates: 'Done — 1 person $15/hr, 2 people $35/hr, 3+ people $44/hr.'). It is their own profile: say nothing about other care providers, confirmations or references.",
       };
     }
 
@@ -4700,7 +4700,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       if (!until || typeof until !== "string") return toolError("INVALID_INPUT", "until is required ('YYYY-MM-DD' or 'indefinite')");
       const snap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      if (!snap.exists) return toolError("NOT_FOUND", "Care Provider not found");
       // Ownership: the acting phone must own this caregiver doc. Fail CLOSED unless
       // BOTH phones exist and match — a missing/empty ownerPhone must not bypass the
       // check, and we do NOT trust a model-supplied caregiverId alone.
@@ -4721,7 +4721,7 @@ async function executeToolCall(
       const { caregiverId, phone: actingPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const snap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      if (!snap.exists) return toolError("NOT_FOUND", "Care Provider not found");
       // Fail CLOSED unless BOTH phones exist and match (see pause_account above).
       // 2026-09-13: reads via resolveCaregiverPhone, not caregivers/{uid}.phone
       // directly — see pause_account's comment for why the old read always failed.
@@ -4752,7 +4752,7 @@ async function executeToolCall(
       });
       logAudit({ eventType: "review_submitted", userId: clientId as string, data: { source: "mcp:start_review_flow", caregiverId, started: rvResult.started, reason: rvResult.reason ?? null } }).catch(() => {});
       if (!rvResult.started) {
-        return { success: false, reason: rvResult.reason ?? "failed_to_start", instruction: "The family has already been told why the review can't start (or that they already reviewed this caregiver) — do not repeat or add anything else this turn." };
+        return { success: false, reason: rvResult.reason ?? "failed_to_start", instruction: "The family has already been told why the review can't start (or that they already reviewed this care provider) — do not repeat or add anything else this turn." };
       }
       return { success: true, instruction: "This tool already texted the family the first review question. Send NOTHING else this turn." };
     }
@@ -4952,7 +4952,7 @@ async function executeToolCall(
         }).catch(() => {});
       }
       logAudit({ eventType: "job_post_created", userId: clientId as string, data: { source: "mcp:create_job_post", jobId: ref.id } }).catch(() => {});
-      return { success: true, jobId: ref.id, message: "Your job is posted — caregivers nearby will see it." };
+      return { success: true, jobId: ref.id, message: "Your job is posted — care providers nearby will see it." };
     }
 
 
@@ -5144,7 +5144,7 @@ async function executeToolCall(
       const appSnap = await db.collection("job_applications").doc(applicationId as string).get();
       if (!appSnap.exists) return toolError("NOT_FOUND", "Application not found");
       const app = appSnap.data()!;
-      if (app.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Application does not belong to this caregiver");
+      if (app.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Application does not belong to this care provider");
       // Idempotent: already withdrawn → success-shaped no-op.
       if (app.status === "withdrawn") return { success: true, applicationId, status: "withdrawn", alreadyWithdrawn: true };
       if (app.status !== "pending") return toolError("INVALID_INPUT", `Application can no longer be withdrawn (status: ${app.status})`);
@@ -5228,7 +5228,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, sabPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const { sendCaregiverActiveBookings } = await import("../agents/caregiverActiveBookings");
       const r = await sendCaregiverActiveBookings(sess.phone, sess.chatId, caregiverId as string, { more: more === true, allVisits: allVisits === true });
       return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, bookings: r.items, note: "The bookings were texted in full — send nothing else this turn. They can reply MORE for the rest." };
@@ -5240,7 +5240,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, sfPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const fam = await import("../agents/caregiverFamilies");
       if (familyNumber != null) {
         const sessionData = ((await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {}) as Record<string, unknown>;
@@ -5259,7 +5259,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, scPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const cal = await import("../agents/caregiverCalendar");
       if (visitNumber != null || interviewNumber != null) {
         const sessionData = ((await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {}) as Record<string, unknown>;
@@ -5284,7 +5284,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, spbPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const pb = await import("../agents/caregiverPastBookings");
       if (visitNumber !== undefined && visitNumber !== null) {
         const sessSnap = await db.collection("agent_sessions").doc(sess.phone).get();
@@ -5303,7 +5303,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, slPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const pb = await import("../agents/caregiverPastBookings");
       const sessSnap = await db.collection("agent_sessions").doc(sess.phone).get();
       const sessionData = (sessSnap.data() ?? {}) as Record<string, unknown>;
@@ -5323,7 +5323,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, mpPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const mp = await import("../agents/caregiverMyProfile");
       if (typeof edit === "string" && edit) {
         const sessSnap = await db.collection("agent_sessions").doc(sess.phone).get();
@@ -5339,7 +5339,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, asPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const st = await import("../agents/caregiverSettings");
       if (resendEmailLink === true) {
         const ok = await st.sendResendEmailLink(sess.chatId, caregiverId as string);
@@ -5355,7 +5355,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, mbPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const mb = await import("../agents/caregiverMembership");
       if (manageLink === true) {
         const ok = await mb.sendMembershipPortalLink(sess.chatId, caregiverId as string);
@@ -5379,7 +5379,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, poPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       if (name === "show_payouts") {
         const po = await import("../agents/caregiverPayouts");
         if (dashboardLink === true) {
@@ -5401,7 +5401,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, tsPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const ts = await import("../agents/caregiverTimesheets");
       const sessSnap = await db.collection("agent_sessions").doc(sess.phone).get();
       const sessionData = (sessSnap.data() ?? {}) as Record<string, unknown>;
@@ -5447,7 +5447,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession, checkCaregiverAccess } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, sbPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const br = await import("../agents/caregiverBookingRequests");
       // The card's Accept is replaced by the gate button while blocked (membership → background); Decline never is.
       const access = await checkCaregiverAccess(caregiverId as string);
@@ -5590,7 +5590,7 @@ async function executeToolCall(
       // Same eligibility gate requestVideoInterview uses — only a caregiver
       // visible in the public, verification-gated projection can be shared.
       const cgSnap = await db.collection("publicCaregiverProfiles").doc(caregiverId as string).get();
-      if (!cgSnap.exists) return toolError("NOT_FOUND", "That caregiver is no longer available");
+      if (!cgSnap.exists) return toolError("NOT_FOUND", "That care provider is no longer available");
       const cg = cgSnap.data() ?? {};
       const cgName = ((cg.name as string) || `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Caregiver";
       const rate = (cg.hourlyRate as number | undefined) ?? null;
@@ -5782,7 +5782,7 @@ async function executeToolCall(
       // the ONE membership rule (caregiverAccessGate, sweep C1 2026-10-11).
       const { isCaregiverMembershipActive: cgMembershipRule } = await import("../agents/caregiverAccessGate");
       if (!cgMembershipRule(cgGateData)) {
-        return toolError("MEMBERSHIP_REQUIRED", "This caregiver's membership isn't active — they need an active membership before messaging a family.");
+        return toolError("MEMBERSHIP_REQUIRED", "This care provider's membership isn't active — they need an active membership before messaging a family.");
       }
       let resolvedClientId = clientIdInput as string | undefined;
 
@@ -5814,7 +5814,7 @@ async function executeToolCall(
         for (const s of related) if (s.clientId && !seenFam.has(String(s.clientId))) seenFam.set(String(s.clientId), String(s.clientName || "the family"));
         if (seenFam.size > 1) {
           return { success: false, reason: "ambiguous_family", families: [...seenFam.entries()].map(([clientId, clientName]) => ({ clientId, clientName })),
-            note: "This caregiver works with several families. Ask which one (by name), then call again with that family's clientId. Never read the ids out." };
+            note: "This care provider works with several families. Ask which one (by name), then call again with that family's clientId. Never read the ids out." };
         }
         const first = related.find((s) => s.clientId);
         if (first) resolvedClientId = String(first.clientId);
@@ -5833,7 +5833,7 @@ async function executeToolCall(
       }
 
       const clientSnap = await db.collection("users").doc(resolvedClientId).get();
-      const cgName = cgGateData.name ?? "Your caregiver";
+      const cgName = cgGateData.name ?? "Your care provider";
       // The Inbox composer, caregiver side — the thread write only; onMessageSent
       // notifies the family (in-app + the message texted to them), same as a
       // message typed on the website.
@@ -6003,7 +6003,7 @@ async function executeToolCall(
       const { caregiverId } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const cgBgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgBgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      if (!cgBgSnap.exists) return toolError("NOT_FOUND", "Care Provider not found");
       const bg = (cgBgSnap.data()?.backgroundCheckData ?? {}) as Record<string, unknown>;
       const status           = (bg.status as string | undefined) ?? null;
       const invitationStatus = (bg.invitationStatus as string | undefined) ?? null;
@@ -6040,7 +6040,7 @@ async function executeToolCall(
       const { caregiverId } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const cgPaySnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgPaySnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      if (!cgPaySnap.exists) return toolError("NOT_FOUND", "Care Provider not found");
       const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
       const pay = await getCaregiverPayoutFields(caregiverId as string, (cgPaySnap.data() ?? {}) as Record<string, unknown>);
       const payoutsEnabled     = pay.payoutsEnabled === true;
@@ -6091,7 +6091,7 @@ async function executeToolCall(
       // ── Caregiver audit ────────────────────────────────────────────────────
       if (caregiverId) {
         const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-        if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+        if (!cgSnap.exists) return toolError("NOT_FOUND", "Care Provider not found");
         const cg = (cgSnap.data() ?? {}) as Record<string, unknown>;
         const userSnap = await db.collection("users").doc(caregiverId as string).get().catch(() => null);
         const user = (userSnap?.data() ?? {}) as Record<string, unknown>;
@@ -6208,7 +6208,7 @@ async function executeToolCall(
         if (!membershipActive) {
           missing.push({
             item: "membership payment",
-            detail: `Their ${clientMonthlyAmount()}/mo membership isn't active — Evia can't start the caregiver search without it.`,
+            detail: `Their ${clientMonthlyAmount()}/mo membership isn't active — Evia can't start the care provider search without it.`,
             fix: "send_onboarding_link (linkType client_payment)",
           });
         }
@@ -6222,7 +6222,7 @@ async function executeToolCall(
           if (!filled(senior.needs)) {
             missing.push({
               item: "care needs",
-              detail: `${senior.name}'s profile has no care needs listed — matching can't rank caregivers well.`,
+              detail: `${senior.name}'s profile has no care needs listed — matching can't rank care providers well.`,
               // No tool currently patches senior_profiles.needs for an EXISTING
               // senior (only create_senior_profile sets it, at creation time) —
               // flagged as a pre-existing gap, not fixed here.
@@ -6232,7 +6232,7 @@ async function executeToolCall(
           if (!filled(senior.location) && !filled(senior.zipCode)) {
             missing.push({
               item: "care location",
-              detail: "No city/ZIP on the care recipient's profile — needed to match nearby caregivers.",
+              detail: "No city/ZIP on the care recipient's profile — needed to match nearby care providers.",
               // Same gap as above — senior_profiles.location/zipCode has no
               // post-creation edit path either.
               fix: "ask for the city or ZIP — location is set at profile creation (create_senior_profile); there is no tool to patch it afterward yet",
@@ -6267,7 +6267,7 @@ async function executeToolCall(
       const { caregiverId, set, add, remove } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const cgSnap6 = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap6.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      if (!cgSnap6.exists) return toolError("NOT_FOUND", "Care Provider not found");
       const gridMod = await import("../agents/caregiverAvailabilityGrid");
       const current = gridMod.gridFromWeekly(cgSnap6.data()?.weeklyAvailability);
       const asMap = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, string[] | "all">) : undefined);
@@ -6288,7 +6288,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, flowPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const sessionDoc = (await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {};
       const session = { ...sessionDoc, caregiverId, chatId: sess.chatId } as unknown as import("../linq/client").AgentSession;
       const flows = await import("../agents/caregiverJobFlows");
@@ -6304,11 +6304,11 @@ async function executeToolCall(
           return { success: true, started: false, reason: "no_job_ref", note: "The list was texted so they can answer with a number — send nothing else." };
         }
         const r = await flows.startApplyFlow(sess.phone, sess.chatId, session, { caregiverId: caregiverId as string, jobId: resolved });
-        return { success: true, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the caregiver — send nothing else this turn." : "The caregiver was already told why it didn't start — send nothing else." };
+        return { success: true, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the care provider — send nothing else this turn." : "The care provider was already told why it didn't start — send nothing else." };
       }
       if (!interviewId) return toolError("INVALID_INPUT", "interviewId is required");
       const r = await flows.startInterviewRescheduleFlow(sess.phone, sess.chatId, session, { caregiverId: caregiverId as string, interviewId: interviewId as string });
-      return { success: true, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the caregiver — send nothing else this turn." : "The caregiver was already told why it didn't start — send nothing else." };
+      return { success: true, started: r.started, reason: r.reason ?? null, note: r.started ? "The first step was texted to the care provider — send nothing else this turn." : "The care provider was already told why it didn't start — send nothing else." };
     }
 
     // The Jobs page, as data (agents/jobBoardPage.ts mirrors JobBoard.tsx).
@@ -6320,7 +6320,7 @@ async function executeToolCall(
       // found a few options, which one?" and the caregiver never saw a job.
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, bPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const { sendJobList } = await import("../agents/jobBoardText");
       const { normalizeJobBoardFilters } = await import("../agents/jobBoardPage");
       // The sidebar's own option sets only (B3): unknown values are dropped, never guessed.
@@ -6334,7 +6334,7 @@ async function executeToolCall(
       return {
         success: r.sent, sent: r.sent, count: r.count, total: r.total, remaining: r.remaining, jobs: r.items,
         filters: r.filters, filtersLabel: r.filtersLabel || null,
-        note: "The numbered list was texted to the caregiver — send nothing else this turn. They answer with a number, or MORE for the next page.",
+        note: "The numbered list was texted to the care provider — send nothing else this turn. They answer with a number, or MORE for the next page.",
       };
     }
 
@@ -6343,7 +6343,7 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, dPhone);
-      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this caregiver");
+      if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const sessionDoc = (await db.collection("agent_sessions").doc(sess.phone).get()).data() ?? {};
       const { resolveJobRef, sendJobDetails, sendJobList } = await import("../agents/jobBoardText");
       const resolved = resolveJobRef(sessionDoc as Record<string, unknown>, { jobId, number });
@@ -6372,7 +6372,7 @@ async function executeToolCall(
       const { setJobHidden, loadHiddenJobs } = await import("../agents/jobBoardPage");
       if (!jobId) {
         const hidden = await loadHiddenJobs(caregiverId as string);
-        if (!hidden) return toolError("NOT_FOUND", "Caregiver not found");
+        if (!hidden) return toolError("NOT_FOUND", "Care Provider not found");
         return { success: true, hiddenJobs: hidden, total: hidden.length };
       }
       await setJobHidden(caregiverId as string, jobId as string, false);
@@ -6422,7 +6422,7 @@ async function executeToolCall(
         };
       });
       return {
-        success: true, applications, total: applications.length, page: "/caregiver/jobs?tab=applications",
+        success: true, applications, total: applications.length, page: "/care-provider/jobs?tab=applications",
         // The tab's own empty state, so Evia says what the page says.
         ...(applications.length === 0 ? { emptyText: "No applications yet.", emptyAction: "Browse available jobs" } : {}),
       };
@@ -6472,7 +6472,7 @@ async function executeToolCall(
             tasksDone:     Array.isArray(sh.tasksCompleted) ? sh.tasksCompleted.length : 0,
           };
         });
-      return { success: true, entries, total: entries.length, instruction: "These are the caregiver's own words from completed visits (the Past Bookings card). Quote or paraphrase them only; never add observations about how anyone is doing. A visit with notes: null had no notes — say so." };
+      return { success: true, entries, total: entries.length, instruction: "These are the care provider's own words from completed visits (the Past Bookings card). Quote or paraphrase them only; never add observations about how anyone is doing. A visit with notes: null had no notes — say so." };
     }
 
     // ── get_payment_update_link ─────────────────────────────────────────────
@@ -6598,7 +6598,7 @@ async function executeToolCall(
         return toolError(
           "INVALID_INPUT",
           `'${fieldNameInput}' is not a collectable onboarding field for a ${role}. Retry with exactly one of: ` +
-          `${allowedFieldNamesForRole(role).join(", ")}. (Smoking → smokingHousehold, pets → petsInHome, the note/description for caregivers → ${role === "client" ? "jobDescription" : "bio"}.)`,
+          `${allowedFieldNamesForRole(role).join(", ")}. (Smoking → smokingHousehold, pets → petsInHome, the note/description for care providers → ${role === "client" ? "jobDescription" : "bio"}.)`,
         );
       }
       if (fieldValue === undefined || fieldValue === null || fieldValue === "") {
@@ -6752,7 +6752,7 @@ async function executeToolCall(
         const merged = orderedCanonicalServices([...prevNeeds, ...canon.careNeeds]);
         const q = (xs: string[]) => xs.map((x) => `"${x}"`).join(", ");
         const medicalNote = canon.medical.length
-          ? ` ${q(canon.medical)} is medical care — caregivers here don't administer medication or give medical treatment, so it is NOT a care need and was not saved. Say so plainly; the closest on the list is Medication Reminders Only (reminding when it's time to take them, not giving them) — ask whether THAT fits before saving it.`
+          ? ` ${q(canon.medical)} is medical care — care providers here don't administer medication or give medical treatment, so it is NOT a care need and was not saved. Say so plainly; the closest on the list is Medication Reminders Only (reminding when it's time to take them, not giving them) — ask whether THAT fits before saving it.`
           : "";
         const unmappedNote = canon.unmapped.length
           ? ` ${q(canon.unmapped)} isn't one of the types of care on the list, so it was left off — say so in one line. If they were answering how OFTEN care is needed, that belongs in careFrequency, not careNeeds.`
@@ -6794,7 +6794,7 @@ async function executeToolCall(
         const merged = orderedCanonicalServices([...prevList, ...mapping.matched]);
         const q = (xs: string[]) => xs.map((x) => `"${x}"`).join(", ");
         const medicalNote = mapping.medical.length
-          ? ` ${q(mapping.medical)} is medical care — caregivers here don't administer medication or give medical treatment, so it is NOT a service and was not saved. Say so plainly; the closest service on the list is Medication Reminders Only (reminding when it's time to take them, not giving them) — ask whether THAT fits before saving it.`
+          ? ` ${q(mapping.medical)} is medical care — care providers here don't administer medication or give medical treatment, so it is NOT a service and was not saved. Say so plainly; the closest service on the list is Medication Reminders Only (reminding when it's time to take them, not giving them) — ask whether THAT fits before saving it.`
           : "";
         const unmappedNote = mapping.unmapped.length
           ? ` ${q(mapping.unmapped)} isn't one of the services on the list, so it was left off — tell them that in one line (no apology, no judgment).`
@@ -6898,7 +6898,7 @@ async function executeToolCall(
         const { toExperienceBucket, EXPERIENCE_BUCKETS } = await import("../agents/onboardingContract");
         const bucket = toExperienceBucket(fieldValue);
         if (!bucket) {
-          return { ok: true, saved: false, invalidValue: true, guidance: `Couldn't turn "${String(fieldValue)}" into years of experience. Ask roughly how many years they've been caregiving (${EXPERIENCE_BUCKETS.join(" / ")}) and save that.` };
+          return { ok: true, saved: false, invalidValue: true, guidance: `Couldn't turn "${String(fieldValue)}" into years of experience. Ask roughly how many years they've been doing care work (${EXPERIENCE_BUCKETS.join(" / ")}) and save that.` };
         }
         onboardingDataPatch = { yearsExperience: bucket };
       }
@@ -6915,7 +6915,7 @@ async function executeToolCall(
           ok: true,
           saved: false,
           invalidValue: true,
-          guidance: `${fieldName} is never typed — it is filled automatically when the caregiver uploads through the link. Call send_onboarding_link (caregiver_photo) instead and tell them the link is right below.`,
+          guidance: `${fieldName} is never typed — it is filled automatically when the care provider uploads through the link. Call send_onboarding_link (caregiver_photo) instead and tell them the link is right below.`,
         };
       }
       // Zip → city/state auto-derivation (2026-08-22) — mirrors the website
@@ -7278,7 +7278,7 @@ async function executeToolCall(
       const { clientId, caregiverId } = input as Record<string, unknown>;
       if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
       const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      if (!cgSnap.exists) return toolError("NOT_FOUND", "Care Provider not found");
       await db.collection("users").doc(clientId as string).set({
         savedCaregiverIds: admin.firestore.FieldValue.arrayUnion(caregiverId),
         updatedAt: nowIso,
@@ -7294,7 +7294,7 @@ async function executeToolCall(
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true }).catch(() => {});
       logAudit({ eventType: "favorite_saved", userId: clientId as string, data: { source: "mcp:save_caregiver_favorite", caregiverId } }).catch(() => {});
-      return { success: true, saved: true, caregiverName: cgSnap.data()?.name ?? "the caregiver" };
+      return { success: true, saved: true, caregiverName: cgSnap.data()?.name ?? "the care provider" };
     }
 
     // ── unsave_caregiver_favorite ───────────────────────────────────────────
@@ -7643,7 +7643,7 @@ async function executeToolCall(
       const { caregiverId: gaCgId } = input as Record<string, unknown>;
       if (!gaCgId) return toolError("INVALID_INPUT", "caregiverId is required");
       const gaSnap = await db.collection("caregivers").doc(gaCgId as string).get();
-      if (!gaSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      if (!gaSnap.exists) return toolError("NOT_FOUND", "Care Provider not found");
       // The Update Availability grid, as the modal reads it (weeklySlotsToBl).
       const gridMod = await import("../agents/caregiverAvailabilityGrid");
       const grid = gridMod.gridFromWeekly(gaSnap.data()?.weeklyAvailability);
@@ -7695,7 +7695,7 @@ async function executeToolCall(
       const { listCaregiverInterviews } = await import("../agents/caregiverInterviewsTab");
       const tab = await listCaregiverInterviews(id, liStatus === "requested" ? "pending" : liStatus);
       console.log("list_interviews: query result", { field, id, chip: tab.chip, count: tab.count });
-      return { success: true, ...tab, page: "/caregiver/jobs?tab=interviews" };
+      return { success: true, ...tab, page: "/care-provider/jobs?tab=interviews" };
     }
 
     // ── cancel_interview ────────────────────────────────────────────────────

@@ -58,7 +58,7 @@ export const admin_review_caregiver_exception = functions.https.onCall(
     const ref = db.collection("caregivers").doc(caregiverId);
     const snap = await ref.get();
     if (!snap.exists) {
-      throw new functions.https.HttpsError("not-found", "Caregiver not found");
+      throw new functions.https.HttpsError("not-found", "Care Provider not found");
     }
     const caregiver = snap.data() ?? {};
     const now = nowIso();

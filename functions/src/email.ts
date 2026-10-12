@@ -141,16 +141,16 @@ function clientWelcomeHtml(name: string): string {
 
     ${stepsList([
       { icon: "👤", text: "<strong>Complete your profile</strong> — Tell us about the person who needs care so we can find the best match." },
-      { icon: "🔍", text: "<strong>Browse caregivers</strong> — Search by availability, distance, certifications, and ratings." },
+      { icon: "🔍", text: "<strong>Browse care providers</strong> — Search by availability, distance, certifications, and ratings." },
       { icon: "📅", text: "<strong>Book your first visit</strong> — Schedule a meet-and-greet or a full care session." },
     ])}
 
     <p style="font-size:15px;color:#475569;line-height:1.6;margin:0 0 8px;">
-      Every caregiver on Evia is background-checked and reviewed by our Trust &amp; Safety team —
+      Every care provider on Evia is background-checked and reviewed by our Trust &amp; Safety team —
       so you can focus on what matters most.
     </p>
 
-    ${ctaButton("Browse Caregivers", `${APP_URL}/client`)}
+    ${ctaButton("Browse Care Providers", `${APP_URL}/client`)}
 
     <p style="margin:24px 0 0;font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;">
       Questions? Reply to this email or reach us at
@@ -184,7 +184,7 @@ function caregiverWelcomeHtml(name: string): string {
       booking requests.
     </p>
 
-    ${ctaButton("Complete Your Profile", `${APP_URL}/caregiver`, "#7c3aed")}
+    ${ctaButton("Complete Your Profile", `${APP_URL}/care-provider/dashboard`, "#7c3aed")}
 
     <p style="margin:24px 0 0;font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;">
       Questions? Reply to this email or reach us at
@@ -192,7 +192,7 @@ function caregiverWelcomeHtml(name: string): string {
     </p>
   `;
 
-  return emailWrapper(body, `<p style="margin:0;">You're receiving this because you created an Evia caregiver account.</p>`);
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because you created an Evia care provider account.</p>`);
 }
 
 function passwordResetHtml(name: string, resetUrl: string): string {
@@ -559,8 +559,8 @@ export const sendWelcomeEmail = functions.firestore
       ? caregiverWelcomeHtml(firstName)
       : clientWelcomeHtml(firstName);
 
-    const textClient = `Welcome to Evia, ${firstName}!\n\nYou're one step closer to finding trusted care for your loved ones.\n\nNext steps:\n1. Complete your profile\n2. Browse caregivers\n3. Book your first visit\n\nGet started: ${APP_URL}/client\n\n— The Evia Team`;
-    const textCaregiver = `Welcome aboard, ${firstName}!\n\nFamilies in your area are looking for someone like you.\n\nNext steps:\n1. Complete your profile\n2. Pass your background check\n3. Connect your payout account\n\nGet started: ${APP_URL}/caregiver\n\n— The Evia Team`;
+    const textClient = `Welcome to Evia, ${firstName}!\n\nYou're one step closer to finding trusted care for your loved ones.\n\nNext steps:\n1. Complete your profile\n2. Browse care providers\n3. Book your first visit\n\nGet started: ${APP_URL}/client\n\n— The Evia Team`;
+    const textCaregiver = `Welcome aboard, ${firstName}!\n\nFamilies in your area are looking for someone like you.\n\nNext steps:\n1. Complete your profile\n2. Pass your background check\n3. Connect your payout account\n\nGet started: ${APP_URL}/care-provider/dashboard\n\n— The Evia Team`;
 
     try {
       const { error } = await resend.emails.send({

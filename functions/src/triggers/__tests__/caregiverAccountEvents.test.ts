@@ -146,7 +146,7 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
     expect(first).toEqual({ bell: true, text: true });
     expect(hoisted.bells[0]).toMatchObject({ recipientId: "cg1", transitionType: "payouts_enabled", title: "Payouts set up" });
     // The bell links to the Payments page; the text finishes by text (2026-10-03) — same event, channel-appropriate words.
-    expect(hoisted.bells[0].body).toContain("/caregiver/payments");
+    expect(hoisted.bells[0].body).toContain("/care-provider/payments");
     expect(hoisted.sent[0].content).toBe("Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.");
     const again = await notifyCaregiverAccountEvent("cg1", "payouts_enabled", { eventId: "evt1" });
     expect(again).toEqual({ bell: false, text: false });
@@ -168,7 +168,7 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
     const pauseChange = { before: { data: () => ({ name: "A" }) }, after: { data: () => ({ name: "A", pausedUntil: "2026-11-01", pausedAt: "x" }) } };
     await (onCaregiverAccountChange as any)(pauseChange, { params: { uid: "cg1" }, eventId: "fs-pause-1" });
     expect(hoisted.bells.map((b) => [b.type, b.transitionType])).toEqual([["account_paused", "account_paused"]]);
-    expect(hoisted.bells[0].body).toContain("https://eviacares.com/caregiver/settings");
+    expect(hoisted.bells[0].body).toContain("https://eviacares.com/care-provider/settings");
     expect(hoisted.sent.map((s) => s.content)).toEqual(["Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime — reply REACTIVATE."]);
     // A retried invocation of the same event sends nothing more.
     await (onCaregiverAccountChange as any)(pauseChange, { params: { uid: "cg1" }, eventId: "fs-pause-1" });
@@ -187,7 +187,7 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
     expect(hoisted.sent.at(-1)?.content).toBe("You're active again — you'll show up for new matches.");
   });
 
-  it("the trigger tells the caregiver each event of a change, keyed on the Firestore event id", async () => {
+  it("the trigger tells the care provider each event of a change, keyed on the Firestore event id", async () => {
     hoisted.docState.set("users/cg1", { phone: "+15551112222" });
     const change = { before: { data: () => ({ backgroundCheckStatus: "pending", onboardingStatus: "profile_complete", verificationStatus: "submitted" }) }, after: { data: () => ({ backgroundCheckStatus: "clear", onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active" }) } };
     await (onCaregiverAccountChange as any)(change, { params: { uid: "cg1" }, eventId: "fs-evt-1" });

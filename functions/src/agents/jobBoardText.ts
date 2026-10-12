@@ -160,7 +160,7 @@ export async function sendJobList(
     : (opts.refine ? { ...normalizeJobBoardFilters(prev?.filters), ...given } : given);
   const page = await loadAvailableJobs(caregiverId, { filters, sort: opts.sort, limit: opts.limit });
   const filtersLabel = jobBoardFiltersLabel(filters);
-  if (!page) { await sendMessage(chatId, "I couldn't find your caregiver account to load the Jobs page."); return { sent: false, count: 0, total: 0, remaining: 0, items: [], filters, filtersLabel }; }
+  if (!page) { await sendMessage(chatId, "I couldn't find your care provider account to load the Jobs page."); return { sent: false, count: 0, total: 0, remaining: 0, items: [], filters, filtersLabel }; }
   const filtered = hasJobBoardFilters(filters);
   const from = opts.more && prev ? (prev.offset ?? prev.items.length) : 0;
   const { text, shown, remaining } = jobListText(page, { filtered, filtersLabel, limited: !!opts.limit, from });
@@ -198,7 +198,7 @@ export function jobListIsLatest(session: Record<string, unknown>, nowMs: number 
 }
 
 const EXTRACT_PROMPT =
-  "A caregiver is texting what she wants the Jobs page's filter sidebar set to. The sidebar has exactly these controls: " +
+  "A care provider is texting what she wants the Jobs page's filter sidebar set to. The sidebar has exactly these controls: " +
   "search (free text matched against the job title, the location and the required skills), payMin and payMax (dollars per hour), " +
   "timeOfDay (any of: morning = 6am–12pm, afternoon = 12pm–6pm, evening = 6pm–12am, overnight = 12am–6am — use those four words), " +
   "days (any of Mon, Tue, Wed, Thu, Fri, Sat, Sun — 'weekends' = Sat and Sun, 'weekdays' = Mon to Fri), " +
@@ -210,7 +210,7 @@ const EXTRACT_PROMPT =
   "If she asked for nothing the sidebar can do, reply NONE.";
 
 const REFINE_PROMPT =
-  "A caregiver was just texted the Jobs page list. Decide whether her new message is CHANGING THE FILTER SIDEBAR of that list " +
+  "A care provider was just texted the Jobs page list. Decide whether her new message is CHANGING THE FILTER SIDEBAR of that list " +
   "(narrowing or changing it — e.g. 'only weekends', 'over $25', 'mornings instead', 'just companionship ones', 'show everything again'). " +
   "If it is anything else — a number, 'apply', 'hide', 'details', a question, an answer to something, a greeting, a different page — reply NONE. " +
   "Otherwise reply with ONLY a JSON object of the sidebar controls she is setting: " +
@@ -302,7 +302,7 @@ export async function sendJobDetails(
   const r = await loadJobDetails(caregiverId, jobId);
   if (!r.ok) {
     await sendMessage(chatId, r.reason === "no_caregiver"
-      ? "I couldn't find your caregiver account to load that job."
+      ? "I couldn't find your care provider account to load that job."
       : "That job is no longer available.");
     return { sent: true, ok: false, reason: r.reason };
   }

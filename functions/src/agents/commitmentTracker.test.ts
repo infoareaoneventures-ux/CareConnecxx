@@ -495,8 +495,8 @@ describe("sweepDroppedTurns", () => {
 });
 
 // ── Families only (founder, 2026-10-11 — caregiver sweep A4) ─────────────────
-describe("caregiver sessions are skipped (follow-ups are a family-only feature)", () => {
-  it("closes a caregiver's overdue qa_answer commitment without re-running the agent", async () => {
+describe("care provider sessions are skipped (follow-ups are a family-only feature)", () => {
+  it("closes a care provider's overdue qa_answer commitment without re-running the agent", async () => {
     hoisted.seedCommitment(`${PHONE}_qa_answer`, baseQaCommitment({ userType: "caregiver", caregiverId: "cg1" }));
     hoisted.seedSession(PHONE, { userType: "caregiver", caregiverId: "cg1" });
 
@@ -532,7 +532,7 @@ describe("caregiver sessions are skipped (follow-ups are a family-only feature)"
     expect(hoisted.commitments().get(`${PHONE}_qa_answer`)!.status).toBe("fulfilled");
   });
 
-  it("consumes a caregiver's dropped-turn marker without tracking a commitment", async () => {
+  it("consumes a care provider's dropped-turn marker without tracking a commitment", async () => {
     hoisted.seedTurnWatch("chat_12", {
       phone: PHONE, chatId: "chat_12", text: "did my hours go through?",
       userId: "cg1", userType: "caregiver",

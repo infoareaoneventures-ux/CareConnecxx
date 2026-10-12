@@ -42,7 +42,7 @@ export const VisitNotesBlock: React.FC<VisitNotesBlockProps> = ({ notesLog, comp
       )}
       {closing && (
         <div className={notes.length > 0 ? 'pt-2 border-t border-slate-100' : ''}>
-          <p className={label}>{notes.length > 0 ? 'Closing note' : 'Caregiver Notes'}</p>
+          <p className={label}>{notes.length > 0 ? 'Closing note' : 'Care Provider Notes'}</p>
           <p className="text-xs text-slate-600">{closing}</p>
         </div>
       )}

@@ -19,22 +19,22 @@ export const TermsOfServicePage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">2. Platform Nature</h2>
-          <p>Evia operates a technology platform that matches clients with caregivers. <strong>Caregivers are independent contractors, not employees of Evia.</strong> We facilitate connections but do not employ caregivers, provide medical care, or guarantee the quality of care provided.</p>
+          <p>Evia operates a technology platform that matches clients with care providers. <strong>Care providers are independent contractors, not employees of Evia.</strong> We facilitate connections but do not employ care providers, provide medical care, or guarantee the quality of care provided.</p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">3. Trust &amp; Safety</h2>
-          <p>All caregivers undergo criminal background checks, sex offender registry checks, reference checks, and credential verification via Checkr. Background checks have limitations — they may not reveal all criminal history and are point-in-time checks. We recommend you interview caregivers before hiring and start with shorter visits to build trust.</p>
+          <p>All care providers undergo criminal background checks, sex offender registry checks, reference checks, and credential verification via Checkr. Background checks have limitations — they may not reveal all criminal history and are point-in-time checks. We recommend you interview care providers before hiring and start with shorter visits to build trust.</p>
           <p className="mt-2">Client identity may be verified via Stripe Identity for fraud prevention purposes.</p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">4. Payments &amp; Fees</h2>
           <ul className="list-disc pl-5 space-y-1">
-            <li>All payments are processed through Stripe. The client's card is charged after the client approves the caregiver's submitted hours, or when the review window closes.</li>
-            <li>Caregivers receive payment after the hours are approved. Evia adds a 9% service fee (minimum $1) to each visit's charge; the fee is shown before booking and on each timesheet.</li>
+            <li>All payments are processed through Stripe. The client's card is charged after the client approves the care provider's submitted hours, or when the review window closes.</li>
+            <li>Care providers receive payment after the hours are approved. Evia adds a 9% service fee (minimum $1) to each visit's charge; the fee is shown before booking and on each timesheet.</li>
             <li><strong>Cancellation:</strong> a visit may be cancelled before it starts. A visit that did not take place is not charged.</li>
-            <li>Hours are reviewed before any charge: the client may approve, propose a correction, or let the review window close; the caregiver may accept or counter; unresolved cases are settled by Evia.</li>
+            <li>Hours are reviewed before any charge: the client may approve, propose a correction, or let the review window close; the care provider may accept or counter; unresolved cases are settled by Evia.</li>
           </ul>
         </section>
 
@@ -45,7 +45,7 @@ export const TermsOfServicePage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">6. Privacy &amp; Health-Related Information</h2>
-          <p>Evia safeguards the information families and caregivers share as described in our Privacy Policy. Evia is a non-medical care marketplace; it does not provide medical care and does not claim certification under HIPAA. By using our Services, you authorize Evia to share necessary information with matched caregivers and to process information for payment and operations.</p>
+          <p>Evia safeguards the information families and care providers share as described in our Privacy Policy. Evia is a non-medical care marketplace; it does not provide medical care and does not claim certification under HIPAA. By using our Services, you authorize Evia to share necessary information with matched care providers and to process information for payment and operations.</p>
         </section>
 
         <section>
@@ -55,7 +55,7 @@ export const TermsOfServicePage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">8. Limitation of Liability</h2>
-          <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW: Evia is not liable for caregiver actions, injuries during care, or property damage. Evia's total liability is limited to fees paid in the last 12 months. The Platform is provided "AS IS" without warranties of any kind.</p>
+          <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW: Evia is not liable for care provider actions, injuries during care, or property damage. Evia's total liability is limited to fees paid in the last 12 months. The Platform is provided "AS IS" without warranties of any kind.</p>
         </section>
 
         <section>

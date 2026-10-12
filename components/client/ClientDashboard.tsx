@@ -197,7 +197,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     for (const s of completedShiftDocs) {
       const id = s.caregiverId as string | undefined;
       if (!id) continue;
-      const cur = counts.get(id) ?? { n: 0, name: String(s.caregiverName || 'your caregiver') };
+      const cur = counts.get(id) ?? { n: 0, name: String(s.caregiverName || 'your care provider') };
       counts.set(id, { n: cur.n + 1, name: cur.name });
     }
     return [...counts.entries()]
@@ -549,7 +549,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       const sorted = [clientUid, caregiverId].sort();
       const roomId = sorted.join('_');
       const clientName = (currentUser as any)?.displayName || 'Client';
-      const names = sorted.map(id => id === clientUid ? clientName : (caregiver.name || 'Caregiver'));
+      const names = sorted.map(id => id === clientUid ? clientName : (caregiver.name || 'Care Provider'));
       const avatars = sorted.map(id => id === clientUid ? '' : (caregiver.imageUrl || (caregiver as any).photo || ''));
       navigate(`/client/inbox?room=${roomId}`, {
         state: {
@@ -678,7 +678,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             </div>
             <div className="flex gap-2">
               <button onClick={() => dismissReviewPrompt(p.caregiverId)} className="px-4 py-2 text-sm font-semibold text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50">Not now</button>
-              <button onClick={() => navigate(`/client/caregiver/${p.caregiverId}?review=1`)} className="px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-full hover:bg-primary-700">Leave a review</button>
+              <button onClick={() => navigate(`/client/care-provider/${p.caregiverId}?review=1`)} className="px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-full hover:bg-primary-700">Leave a review</button>
             </div>
           </div>
         ))}
@@ -1006,8 +1006,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 </div>
                 {activeCareTeam.length === 0 ? (
                   <div className="text-center py-6">
-                    <p className="text-sm text-slate-400">No active caregivers</p>
-                    <button onClick={() => navigate('/client/find-caregivers')} className="text-xs text-primary-600 font-medium hover:underline mt-1">Find a caregiver →</button>
+                    <p className="text-sm text-slate-400">No active care providers</p>
+                    <button onClick={() => navigate('/client/find-care-providers')} className="text-xs text-primary-600 font-medium hover:underline mt-1">Find a care provider →</button>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1035,7 +1035,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-bold text-slate-900 truncate">{booking.caregiverName}</p>
-                              <p className="text-xs text-slate-500">{booking.caregiverRole || 'Caregiver'}</p>
+                              <p className="text-xs text-slate-500">{booking.caregiverRole || 'Care Provider'}</p>
                               {cgProfile.rating != null && (cgProfile.reviewCount ?? 0) > 0 && (
                                 <div className="flex items-center gap-1 mt-0.5">
                                   <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
@@ -1080,7 +1080,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                               <MessageSquare className="w-3.5 h-3.5" /> Message
                             </button>
                             <button
-                              onClick={() => navigate(`/client/caregiver/${booking.caregiverId}`)}
+                              onClick={() => navigate(`/client/care-provider/${booking.caregiverId}`)}
                               className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
                             >
                               <User className="w-3.5 h-3.5" /> Profile
@@ -1352,7 +1352,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                     : <span className="text-xs font-bold text-primary-600">{(shift.caregiverName || 'C')[0].toUpperCase()}</span>
                                   }
                                 </div>
-                                <span className="text-xs font-semibold text-slate-800 truncate">{shift.caregiverName || 'Caregiver'}</span>
+                                <span className="text-xs font-semibold text-slate-800 truncate">{shift.caregiverName || 'Care Provider'}</span>
                               </div>
                               <span className="text-xs text-slate-400 flex-shrink-0 ml-2">{shiftDate}</span>
                             </div>
@@ -1469,7 +1469,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           <>
 
             <div className="mb-6">
-              <h1 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Nearby Caregivers</h1>
+              <h1 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Nearby Care Providers</h1>
             </div>
 
             <div className="grid lg:grid-cols-3 gap-6 items-start">
@@ -1487,7 +1487,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           matchReasons={[]}
                           onBook={handleGatedInterview}
                           onRebook={(cg) => navigate(`/client/posts?rebook=${cg.id}`)}
-                          onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
+                          onViewProfile={(cg) => navigate(`/client/care-provider/${cg.id}`)}
                           onMessage={handleGatedMessage}
                           isSaved={savedIds.includes(caregiver.id)}
                           onToggleSave={handleToggleSave}
@@ -1509,8 +1509,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         </div>
                       ))}
                       <div className="sm:col-span-2 text-center py-4">
-                        <p className="text-sm text-slate-500">Caregivers are being matched to your area — check back shortly.</p>
-                        <button onClick={() => navigate('/client/find-caregivers')} className="mt-2 text-primary-600 text-sm font-medium hover:underline">Browse all caregivers →</button>
+                        <p className="text-sm text-slate-500">Care providers are being matched to your area — check back shortly.</p>
+                        <button onClick={() => navigate('/client/find-care-providers')} className="mt-2 text-primary-600 text-sm font-medium hover:underline">Browse all care providers →</button>
                       </div>
                     </div>
                   );
@@ -1518,7 +1518,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
                 {matchedCaregivers.length > 0 && (
                   <div className="text-center pt-1 pb-2">
-                    <button onClick={() => navigate('/client/find-caregivers')} className="inline-flex items-center gap-1.5 text-sm text-primary-600 font-medium hover:text-primary-700 hover:underline transition-colors">
+                    <button onClick={() => navigate('/client/find-care-providers')} className="inline-flex items-center gap-1.5 text-sm text-primary-600 font-medium hover:text-primary-700 hover:underline transition-colors">
                       See more →
                     </button>
                   </div>

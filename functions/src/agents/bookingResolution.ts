@@ -176,7 +176,7 @@ export async function findSendBookingEligibleInterviews(
       if (!ivCaregiverId) continue;
       if (!caregiverNameCache.has(ivCaregiverId)) {
         const nameRes = await resolveCaregiverName(ivCaregiverId);
-        caregiverNameCache.set(ivCaregiverId, nameRes.ok ? nameRes.caregiverName : "your caregiver");
+        caregiverNameCache.set(ivCaregiverId, nameRes.ok ? nameRes.caregiverName : "your care provider");
       }
 
       let jobTitle: string | undefined;
@@ -215,8 +215,8 @@ export async function findSendBookingEligibleInterviews(
 
 export const NO_RATE_MESSAGE =
   "No agreed rate is set for this booking. The website's own booking modal blocks sending until a " +
-  "specific rate is confirmed — it never assumes the caregiver's own listed rate. Ask the family " +
-  "(and caregiver, if not already agreed) what hourly rate this booking is at, and pass it as agreedRate.";
+  "specific rate is confirmed — it never assumes the care provider's own listed rate. Ask the family " +
+  "(and care provider, if not already agreed) what hourly rate this booking is at, and pass it as agreedRate.";
 
 // Matches the website's own modal precedence exactly
 // (bookingDraft.agreedRate ?? post?.rate ?? null): an explicit agreedRate the

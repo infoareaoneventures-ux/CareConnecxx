@@ -224,7 +224,7 @@ export async function sendMembershipPortalLink(chatId: string, caregiverId: stri
       import("../caregiverMembershipBilling"), import("../stripe"), import("../config/appUrl"),
     ]);
     try {
-      const url = await createCaregiverBillingPortalUrl(getStripeClient(), caregiverId, appLink("/caregiver/settings"));
+      const url = await createCaregiverBillingPortalUrl(getStripeClient(), caregiverId, appLink("/care-provider/settings"));
       await sendMessage(chatId, `Manage your membership (update payment method, cancel, or view invoices) — this link signs you in to Stripe: ${url}`);
       return true;
     } catch (err) {

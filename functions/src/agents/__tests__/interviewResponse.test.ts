@@ -81,7 +81,7 @@ describe("respondToInterviewRequest", () => {
     ).rejects.toMatchObject({ code: "not-found" });
   });
 
-  it("throws permission-denied when the interview belongs to a different caregiver", async () => {
+  it("throws permission-denied when the interview belongs to a different care provider", async () => {
     await expect(
       respondToInterviewRequest({ caregiverId: "someone_else", interviewId: IV_ID, decision: "accept", source: "web" }),
     ).rejects.toBeInstanceOf(InterviewResponseError);

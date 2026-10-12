@@ -200,8 +200,8 @@ describe("U7: current-inbound evidence block (R19)", () => {
   // gap shape, one more category.
   it("the RECENT-CONVERSATION-insufficient exception also covers who currently holds a care-team role, not just schedule/availability", () => {
     expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("who is on the family's care team");
-    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("A caregiver merely SHOWN or DISCUSSED earlier in this conversation");
-    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("NOT the same claim as that caregiver currently being an");
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("A care provider merely SHOWN or DISCUSSED earlier in this conversation");
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("NOT the same claim as that care provider currently being an");
   });
 });
 

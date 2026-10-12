@@ -133,7 +133,7 @@ describe("cadence — stamped per silence", () => {
 });
 
 describe("never to someone who finished on the website", () => {
-  it("caregiver: the site check runs first; a cursor it moves to complete gets no text and no stamp", async () => {
+  it("care provider: the site check runs first; a cursor it moves to complete gets no text and no stamp", async () => {
     seedSession("+1siteDone", { onboardingStep: "caregiver_ask_bio", userType: "caregiver", caregiverId: "cg-done" });
     reconcile.mockImplementation(async (_p, s) => ({ ...s, onboardingStep: "complete" }));
     await run();
@@ -142,7 +142,7 @@ describe("never to someone who finished on the website", () => {
     expect(nudgeStamp("+1siteDone")).toBeUndefined();
   });
 
-  it("caregiver: a cursor the site moved to the membership gate is nudged AT that gate (link), not the old step", async () => {
+  it("care provider: a cursor the site moved to the membership gate is nudged AT that gate (link), not the old step", async () => {
     seedSession("+1moved", { onboardingStep: "caregiver_ask_bio", userType: "caregiver", caregiverId: "cg-m", onboardingData: { name: "Ana" } });
     reconcile.mockImplementation(async (_p, s) => ({ ...s, onboardingStep: "caregiver_send_membership" }));
     await run();
@@ -169,7 +169,7 @@ describe("never to someone who finished on the website", () => {
 });
 
 describe("copy — names the step; re-asks the question on a reply step; carries the link on a gate step", () => {
-  it("caregiver collection: the first wizard field still missing (session + record together) is asked in the wizard's words, no link", async () => {
+  it("care provider collection: the first wizard field still missing (session + record together) is asked in the wizard's words, no link", async () => {
     seedSession("+1collect", {
       onboardingStep: "caregiver_ask_location", userType: "caregiver", caregiverId: "cg-c",
       onboardingData: { name: "Sam Lee", street: "1 Main St", zipCode: "95134", city: "San Jose", state: "CA" },
@@ -177,12 +177,12 @@ describe("copy — names the step; re-asks the question on a reply step; carries
     store.caregivers.set("cg-c", { photo: "https://x/photo.jpg" }); // photo done on the site
     await run();
     const t = sentText();
-    expect(t).toMatch(/^Hey Sam! Your caregiver profile stopped at sharing your address\. What kind of work are you looking for — occasional shifts, part-time, or full-time\?$/);
+    expect(t).toMatch(/^Hey Sam! Your care provider profile stopped at sharing your address\. What kind of work are you looking for — occasional shifts, part-time, or full-time\?$/);
     expect(resendStuckStep).not.toHaveBeenCalled();
     expect(sendOnboardingLink).not.toHaveBeenCalled();
   });
 
-  it("caregiver collection at the photo: the upload link is re-sent (one of the four gates)", async () => {
+  it("care provider collection at the photo: the upload link is re-sent (one of the four gates)", async () => {
     seedSession("+1photo", {
       onboardingStep: "caregiver_ask_location", userType: "caregiver", caregiverId: "cg-p",
       onboardingData: { name: "Bo", street: "1 Main St", zipCode: "95134", city: "San Jose", state: "CA" },
@@ -233,7 +233,7 @@ describe("copy — names the step; re-asks the question on a reply step; carries
   it("no role yet: re-asks the role question", async () => {
     seedSession("+1role", { onboardingStep: "ask_role", onboardingData: { firstName: "Pat" } });
     await run();
-    expect(sentText()).toBe("Hi Pat, still thinking about care? Whenever you're ready, just tell me — are you looking for care for someone, or are you a caregiver yourself?");
+    expect(sentText()).toBe("Hi Pat, still thinking about care? Whenever you're ready, just tell me — are you looking for care for someone, or are you a care provider yourself?");
   });
 });
 

@@ -42,7 +42,7 @@ const base = {
   transitionType: "extra_visit_declined",
   type: "shift_declined",
   title: "Extra Visit Declined",
-  body: "Your caregiver can't make it.",
+  body: "Your care provider can't make it.",
 };
 
 beforeEach(() => h.docs.clear());
@@ -103,7 +103,7 @@ describe("writeUserNotification", () => {
       transitionType: "booking_confirmed",
       type: "booking",
       title: "Booking Confirmed!",
-      body: "Your caregiver accepted your booking request.",
+      body: "Your care provider accepted your booking request.",
     };
     const results = [];
     for (let i = 0; i < 4; i++) results.push(await writeUserNotification(group));

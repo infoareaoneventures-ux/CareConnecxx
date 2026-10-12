@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 describe("loadSettingsPage — the page's reads", () => {
-  it("merges users + caregivers with the caregiver doc winning; member since in the page's numeric format; confirmed-email rule; blocked names", async () => {
+  it("merges users + care providers with the care provider doc winning; member since in the page's numeric format; confirmed-email rule; blocked names", async () => {
     const p = await loadSettingsPage("cg1");
     expect(p.memberSince).toBe("9/26/2026");
     expect(p.firstName).toBe("Mahad"); expect(p.lastName).toBe("");

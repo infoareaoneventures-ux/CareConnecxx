@@ -69,7 +69,7 @@ beforeEach(() => {
 });
 
 describe("mirrorCaregiverOptOut", () => {
-  it("mirrors optedOut:true onto the caregiver doc, resolved via session.caregiverId", async () => {
+  it("mirrors optedOut:true onto the care provider doc, resolved via session.caregiverId", async () => {
     hoisted.docState.set("caregivers/cg1", { name: "Alice" });
     const before = { userType: "caregiver", caregiverId: "cg1", optedOut: false };
     const after  = { ...before, optedOut: true };
@@ -77,7 +77,7 @@ describe("mirrorCaregiverOptOut", () => {
     expect(hoisted.docState.get("caregivers/cg1")?.optedOut).toBe(true);
   });
 
-  it("mirrors optedOut:false when a caregiver re-opts-in (START)", async () => {
+  it("mirrors optedOut:false when a care provider re-opts-in (START)", async () => {
     hoisted.docState.set("caregivers/cg1", { name: "Alice", optedOut: true });
     const before = { userType: "caregiver", caregiverId: "cg1", optedOut: true };
     const after  = { ...before, optedOut: false };
@@ -85,7 +85,7 @@ describe("mirrorCaregiverOptOut", () => {
     expect(hoisted.docState.get("caregivers/cg1")?.optedOut).toBe(false);
   });
 
-  it("resolves the caregiver by phone when caregiverId isn't on the session", async () => {
+  it("resolves the care provider by phone when caregiverId isn't on the session", async () => {
     hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: PHONE });
     const before = { userType: "caregiver", optedOut: false };
     const after  = { ...before, optedOut: true };
@@ -110,7 +110,7 @@ describe("mirrorCaregiverOptOut", () => {
     expect(hoisted.docState.get("caregivers/cg1")).toEqual({ name: "Alice", optedOut: false });
   });
 
-  it("no-ops when the session has no matching caregiver at all", async () => {
+  it("no-ops when the session has no matching care provider at all", async () => {
     const before = { userType: "caregiver", optedOut: false };
     const after  = { ...before, optedOut: true };
     await expect(

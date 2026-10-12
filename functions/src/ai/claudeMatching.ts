@@ -6,23 +6,23 @@ import { getSharedClient } from "../utils/claudeClient";
  * and runMatchingForClient (Evia SMS matching flow).
  */
 
-const BASE_DOMAIN_KNOWLEDGE = `You are an expert home care coordinator matching caregivers to seniors. Score each candidate on how well they fit the senior's specific needs.
+const BASE_DOMAIN_KNOWLEDGE = `You are an expert home care coordinator matching care providers to seniors. Score each candidate on how well they fit the senior's specific needs.
 
 DOMAIN KNOWLEDGE (distilled from 15,000 validated matching scenarios):
-- CRITICAL: Dementia / Alzheimer's / memory care needs → caregiver MUST have dementia care certification. Without it: major red flag, cap overall score at 45.
-- Evia coordinates non-medical home care. Match medication reminders, mobility help, companionship, meals, and personal care. Do not present wound care, catheter care, feeding-tube care, medication administration, diagnosis, or other clinical procedures as standard caregiver services.
+- CRITICAL: Dementia / Alzheimer's / memory care needs → care provider MUST have dementia care certification. Without it: major red flag, cap overall score at 45.
+- Evia coordinates non-medical home care. Match medication reminders, mobility help, companionship, meals, and personal care. Do not present wound care, catheter care, feeding-tube care, medication administration, diagnosis, or other clinical procedures as standard care provider services.
 - Skills coverage below 50%: overall score must not exceed 55 regardless of other signals.
 - Schedule overlap below 30%: disqualifying — score below 40.
 - Distance ≤ 5 miles: strong reliability signal.
 - Distance > 20 miles: schedule reliability risk, factor down.
 - Rating ≥ 4.5 with ≥ 10 reviews: strong quality signal.
 - Experience ≥ 3 years for complex non-medical care (dementia support, mobility, personal care): important positive signal.
-- Personality match: calm/patient caregiver + anxious or dementia senior; energetic/chatty caregiver + companionship-focused or extrovert senior.
+- Personality match: calm/patient care provider + anxious or dementia senior; energetic/chatty care provider + companionship-focused or extrovert senior.
 - Language match when family specified preference: strong positive signal (+8–12 pts).
-- Gender preference when family specified one: matching the caregiver's gender is a positive signal; a mismatch is a meaningful negative — factor down 15–25 pts unless the caregiver's skills fit is uniquely strong.
-- Budget: when the family gave a max hourly budget, a caregiver whose hourlyRate exceeds it is a practical mismatch — factor down; a rate at or under budget is a positive.
-- Driving: when the family needs a caregiver who can drive, prefer caregivers who can drive; treat inability to drive as a negative for that family.
-- Verified caregiver status: meaningful trust signal.
+- Gender preference when family specified one: matching the care provider's gender is a positive signal; a mismatch is a meaningful negative — factor down 15–25 pts unless the care provider's skills fit is uniquely strong.
+- Budget: when the family gave a max hourly budget, a care provider whose hourlyRate exceeds it is a practical mismatch — factor down; a rate at or under budget is a positive.
+- Driving: when the family needs a care provider who can drive, prefer care providers who can drive; treat inability to drive as a negative for that family.
+- Verified care provider status: meaningful trust signal.
 - Retention rate ≥ 75%: families rebook — reliable long-term fit.
 - Prior positive feedback (hired before): strong positive signal. Prior rejection: strong negative signal.
 

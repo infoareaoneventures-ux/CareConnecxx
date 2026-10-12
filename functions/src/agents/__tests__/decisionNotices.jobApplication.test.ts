@@ -40,11 +40,11 @@ describe("applicant notice → VIEW / INTERVIEW / DECLINE", () => {
     expect(hoisted.sent.at(-1)).toBe("Tap to view Imran's profile: https://eviacares.com/p/cg-imran\n\nReply INTERVIEW to request an interview, or DECLINE.");
     expect(hoisted.updates.filter((u) => u.path.startsWith("job_applications/"))).toEqual([]);
   });
-  it("INTERVIEW starts the site's interview flow for that caregiver, linked to the application", async () => {
+  it("INTERVIEW starts the site's interview flow for that care provider, linked to the application", async () => {
     expect(await handlePendingDecisionReply("+1", "chat", "interview", session(pd()))).toBe("handled");
     expect(hoisted.startInterview).toHaveBeenCalledWith("+1", "chat", expect.anything(), { caregiverId: "cg-imran", applicationId: "app1" });
   });
-  it("DECLINE names the caregiver and asks YES/NO; YES runs the page's Decline write and texts its toast — the caregiver is not messaged", async () => {
+  it("DECLINE names the care provider and asks YES/NO; YES runs the page's Decline write and texts its toast — the care provider is not messaged", async () => {
     expect(await handlePendingDecisionReply("+1", "chat", "Decline", session(pd()))).toBe("handled");
     expect(hoisted.sent.at(-1)).toBe('Decline Imran\'s application to "Senior care in San Jose"? Reply YES or NO.');
     const parked = hoisted.sessionSets.at(-1).pendingDecision;

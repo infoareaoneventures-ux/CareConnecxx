@@ -294,7 +294,7 @@ const createBillingPortalSession = async (returnPath: string): Promise<string> =
 
 /** Caregiver: manage membership subscription via Stripe portal. */
 export const getCaregiverBillingPortalUrl = (): Promise<string> =>
-  createBillingPortalSession('/caregiver/payments');
+  createBillingPortalSession('/care-provider/payments');
 
 /** Client: manage payment method / subscription via Stripe portal. */
 export const getClientBillingPortalUrl = (): Promise<string> =>

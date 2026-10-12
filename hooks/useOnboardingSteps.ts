@@ -29,7 +29,7 @@ const CLIENT_STEP_META: Record<string, { label: string; description: string; pat
   },
   'pay-membership': {
     label: 'Activate membership',
-    description: 'Subscribe to start connecting with caregivers',
+    description: 'Subscribe to start connecting with care providers',
     path: '/client/membership',
   },
   'care-plan': {
@@ -85,14 +85,14 @@ const CAREGIVER_STEP_DEFS: Array<{
     id: 'complete-signup',
     label: 'Complete signup',
     description: "You created your account — great start!",
-    path: '/caregiver/dashboard',
+    path: '/care-provider/dashboard',
     isDone: () => true,
   },
   {
     id: 'purchase-membership',
     label: 'Purchase membership',
     description: 'Activate your annual membership to apply for jobs',
-    path: '/caregiver/membership',
+    path: '/care-provider/membership',
     isDone: (p) =>
       !!p.membershipStatus &&
       p.membershipStatus !== 'none' &&
@@ -101,8 +101,8 @@ const CAREGIVER_STEP_DEFS: Array<{
   {
     id: 'background-check',
     label: 'Submit background check',
-    description: 'Families trust verified caregivers — start your check',
-    path: '/caregiver/dashboard',
+    description: 'Families trust verified care providers — start your check',
+    path: '/care-provider/dashboard',
     isDone: (p) =>
       !!p.backgroundCheckData?.checkrCandidateId ||
       (!!p.backgroundCheckStatus && p.backgroundCheckStatus !== 'none'),
@@ -111,7 +111,7 @@ const CAREGIVER_STEP_DEFS: Array<{
     id: 'photo-bio',
     label: 'Add photo & bio',
     description: 'A photo and bio help families get to know you',
-    path: '/caregiver/profile',
+    path: '/care-provider/profile',
     isDone: (p) =>
       !!(p.photo || p.photoURL || p.imageUrl) && (p.bio?.length ?? 0) >= 50,
   },
@@ -119,7 +119,7 @@ const CAREGIVER_STEP_DEFS: Array<{
     id: 'set-rates',
     label: 'Set your hourly rate',
     description: 'Let families know what you charge per hour',
-    path: '/caregiver/profile',
+    path: '/care-provider/profile',
     isDone: (p) => (p.hourlyRate ?? 0) > 0,
   },
 ];

@@ -130,7 +130,7 @@ beforeEach(() => {
 });
 
 describe("stripeConnectWebhook — account.updated matching (Fix 1)", () => {
-  it("advances onboarding with the caregiver's phone when a matched account is complete", async () => {
+  it("advances onboarding with the care provider's phone when a matched account is complete", async () => {
     const { stripeConnectWebhook } = await import("./stripeConnectWebhook");
     const req: any = { headers: { "stripe-signature": "sig" }, rawBody: Buffer.from("{}") };
     const res = makeRes();
@@ -199,7 +199,7 @@ describe("stripeConnectWebhook — payoutNotice (bell ⇄ text)", () => {
     expect(lockstep.bells).toHaveLength(0);
   }, 20_000);
 
-  it("the one exception: a caregiver who texted STOP keeps the bell — the site is her only channel", async () => {
+  it("the one exception: a care provider who texted STOP keeps the bell — the site is her only channel", async () => {
     lockstep.smsResult = { success: false, error: "Recipient has opted out of SMS notifications" };
     const { payoutNotice } = await import("./stripeConnectWebhook");
     const r = await payoutNotice("cg-1", "evt_po_3", "po_3", "payout_paid", "Payout Arrived", "Your payout of $50.00 has been deposited to your bank account.", "Evia: …");

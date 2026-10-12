@@ -69,7 +69,7 @@ export const CaregiverBookingsCard: React.FC<Props> = ({ caregiverId, pendingOnl
           <>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-slate-700">Pending</p>
-              <button onClick={() => navigate('/caregiver/bookings?tab=requests')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
+              <button onClick={() => navigate('/care-provider/bookings?tab=requests')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
             </div>
             <div className="space-y-3 max-h-72 overflow-y-auto">
               {pendingBookings.slice(0, 2).map((b: any) => {
@@ -123,14 +123,14 @@ export const CaregiverBookingsCard: React.FC<Props> = ({ caregiverId, pendingOnl
         if (upcoming.length === 0) return (
           <div className="text-center py-5">
             <p className="text-sm text-slate-400 mb-2">No upcoming shifts</p>
-            <button onClick={() => navigate('/caregiver/bookings')} className="text-xs text-primary-600 font-medium hover:underline">View bookings →</button>
+            <button onClick={() => navigate('/care-provider/bookings')} className="text-xs text-primary-600 font-medium hover:underline">View bookings →</button>
           </div>
         );
         return (
           <>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-slate-700">Upcoming Shifts</p>
-              <button onClick={() => navigate('/caregiver/bookings?tab=active')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
+              <button onClick={() => navigate('/care-provider/bookings?tab=active')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
             </div>
             <div className="space-y-3 max-h-72 overflow-y-auto">
               {upcoming.slice(0, 2).map((shift: any) => {

@@ -52,9 +52,9 @@ const REASK = (availableCents: number) => `Reply CASH OUT to send ${money(Math.m
 /** The modal's facts for a mid-flow question: the modal as texted (amount, fee, net, timing) plus its footnote, exactly as the page states them. */
 export const CASH_OUT_FACTS = (availableCents: number) =>
   `The Cash Out modal on their screen:\n${cashOutModalText(availableCents)}\n\n` +
-  "Stripe charges 1% (minimum $0.50) for instant payouts; the fee comes out of the amount sent, so the caregiver receives the 'You'll Receive' figure. " +
+  "Stripe charges 1% (minimum $0.50) for instant payouts; the fee comes out of the amount sent, so the care provider receives the 'You'll Receive' figure. " +
   "Regular payouts happen automatically every day and are free — nothing to request — and land in the bank within ~2 business days. " +
-  "CASH OUT sends the whole instantly-available balance (there is no partial amount) to the connected bank account in about 30 minutes; nothing is sent until the caregiver replies CASH OUT, and CANCEL leaves the daily schedule as it is.";
+  "CASH OUT sends the whole instantly-available balance (there is no partial amount) to the connected bank account in about 30 minutes; nothing is sent until the care provider replies CASH OUT, and CANCEL leaves the daily schedule as it is.";
 
 /**
  * Entry: CASH OUT / PAYOUT, the agent's request_instant_payout, or the
@@ -65,7 +65,7 @@ export const CASH_OUT_FACTS = (availableCents: number) =>
 export async function startInstantPayout(caregiverId: string, phone: string, chatId: string): Promise<{ started: boolean; reason?: string }> {
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   const cg = cgSnap.data();
-  if (!cg) { await sendMessage(chatId, "I couldn't find your caregiver profile. Send the email you used to sign up and I'll try again."); return { started: false, reason: "not_found" }; }
+  if (!cg) { await sendMessage(chatId, "I couldn't find your care provider profile. Send the email you used to sign up and I'll try again."); return { started: false, reason: "not_found" }; }
   const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
   const pay = await getCaregiverPayoutFields(caregiverId, cg);
   const stripeAccountId = pay.stripeAccountId as string | undefined;
@@ -109,7 +109,7 @@ export async function handleInstantPayoutConfirm(caregiverId: string, phone: str
   else if (await isBackOutRequest(text, q)) action = "cancel";
   else if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: CASH_OUT_FACTS(previewCents) })); return; } // confirmation stays parked
   else {
-    const v = await quickComplete("Evia asked the caregiver to reply CASH OUT to send an instant payout, or CANCEL. Classify: SEND (go ahead), CANCEL (hold off), or OTHER.\nReply with ONLY the word.", text, { maxTokens: 5 }).catch(() => "OTHER");
+    const v = await quickComplete("Evia asked the care provider to reply CASH OUT to send an instant payout, or CANCEL. Classify: SEND (go ahead), CANCEL (hold off), or OTHER.\nReply with ONLY the word.", text, { maxTokens: 5 }).catch(() => "OTHER");
     action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
   }
   if (action === "other") { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }

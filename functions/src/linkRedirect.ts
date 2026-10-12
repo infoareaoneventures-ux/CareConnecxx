@@ -24,7 +24,7 @@ const db = admin.firestore();
 const CARD_META: Record<string, { title: string; description: string }> = {
   verify: {
     title:       "Quick identity check — Evia",
-    description: "A 30-second identity check keeps every family and caregiver on Evia real and safe. Tap to continue securely.",
+    description: "A 30-second identity check keeps every family and care provider on Evia real and safe. Tap to continue securely.",
   },
   pay: {
     title:       "Start your Evia membership",

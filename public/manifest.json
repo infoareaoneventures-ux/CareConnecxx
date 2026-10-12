@@ -1,7 +1,7 @@
 {
     "name": "Evia - Senior Care Marketplace",
     "short_name": "Evia",
-    "description": "Connect with verified caregivers instantly. AI-powered matching for senior care.",
+    "description": "Connect with local care providers who have completed a background check. Non-medical help at home, coordinated by text.",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#ffffff",
@@ -42,9 +42,9 @@
     ],
     "shortcuts": [
         {
-            "name": "Find Caregiver",
+            "name": "Find Care Provider",
             "short_name": "Search",
-            "description": "Search for caregivers",
+            "description": "Search for care providers",
             "url": "/client/dashboard",
             "icons": [
                 {

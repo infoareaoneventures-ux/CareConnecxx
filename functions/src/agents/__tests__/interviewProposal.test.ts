@@ -51,7 +51,7 @@ describe("the write — the proposal cleared, nothing else", () => {
     expect(keepInterviewTimePatch()).toEqual(CLEARED);
   });
 
-  it("caregiver keeps the current time against the family's proposal — status and scheduledTime untouched, the audit names the dropped time", async () => {
+  it("care provider keeps the current time against the family's proposal — status and scheduledTime untouched, the audit names the dropped time", async () => {
     hoisted.docs.set("video_interviews/iv1", familyProposal);
     const r = await keepInterviewTime({ by: "caregiver", userId: CG, interviewId: "iv1", source: "test" });
     expect(r).toEqual({
@@ -63,7 +63,7 @@ describe("the write — the proposal cleared, nothing else", () => {
     expect(hoisted.audits[0]).toMatchObject({ eventType: "interview_time_kept", userId: CG, data: { source: "test", interviewId: "iv1", keptBy: "caregiver", declinedProposal: "2099-10-06T19:00:00.000Z" } });
   });
 
-  it("family keeps the current time against the caregiver's proposal — the same patch (the Evia marker goes with the proposal)", async () => {
+  it("family keeps the current time against the care provider's proposal — the same patch (the Evia marker goes with the proposal)", async () => {
     hoisted.docs.set("video_interviews/iv1", caregiverProposal);
     const r = await keepInterviewTime({ by: "client", userId: FAM, interviewId: "iv1", source: "test" });
     expect(r).toMatchObject({ ok: true, keptBy: "client" });
@@ -120,12 +120,12 @@ describe("the site's Keep current time handlers write exactly KEEP_INTERVIEW_TIM
     return [...block.matchAll(/([A-Za-z]+): firebase\.firestore\.FieldValue\.delete\(\)/g)].map((m) => m[1]).sort();
   };
 
-  it("components/client/PostsPage.tsx (family: the caregiver's proposal)", () => {
+  it("components/client/PostsPage.tsx (family: the care provider's proposal)", () => {
     expect(keysOfKeepUpdate("components/client/PostsPage.tsx")).toEqual([...KEEP_INTERVIEW_TIME_FIELDS].sort());
     expect(deletesIn("components/client/PostsPage.tsx")).toEqual(["reschedulePendingTime", "rescheduledBy", "rescheduledViaAgent"]);
   });
 
-  it("components/caregiver/JobBoard.tsx (caregiver: the family's proposal) — and it is not gated", () => {
+  it("components/caregiver/JobBoard.tsx (care provider: the family's proposal) — and it is not gated", () => {
     expect(keysOfKeepUpdate("components/caregiver/JobBoard.tsx")).toEqual([...KEEP_INTERVIEW_TIME_FIELDS].sort());
     expect(deletesIn("components/caregiver/JobBoard.tsx")).toEqual(["reschedulePendingTime", "rescheduledBy", "rescheduledViaAgent"]);
     const src = fs.readFileSync(path.join(root, "components/caregiver/JobBoard.tsx"), "utf8");

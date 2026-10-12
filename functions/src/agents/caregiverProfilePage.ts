@@ -1,5 +1,5 @@
 // The website's caregiver profile page (components/ClientCaregiverProfile.tsx,
-// /client/caregiver/{id}) as data — the same two records the page merges
+// /client/care-provider/{id}) as data — the same two records the page merges
 // (users/{id} over publicCaregiverProfiles/{id}), the same field fallbacks
 // (mapRawToProfile), the same sections in the same order, the same billed
 // rates, and the same family-relative buttons (Active Booking / Re-book /
@@ -257,7 +257,7 @@ export function shapeCaregiverProfilePage(
     .filter((d) => d.blocks.length > 0);
   const available = rec.clearedForFamilies;
   const actions = available ? deriveProfileActions(rel) : { primary: "request_interview" as const, message: false, review: null };
-  const ratesNote = `Billed includes Evia's ${pct} service fee. The caregiver keeps 100% of their rate.`;
+  const ratesNote = `Billed includes Evia's ${pct} service fee. The care provider keeps 100% of their rate.`;
 
   const parts: string[] = [];
   parts.push(`${name} — ${ratingLabel}.`);

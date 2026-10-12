@@ -21,8 +21,8 @@ const imran = {
 
 describe("caregiverBriefing membership line = the ONE rule (sweep C1, 2026-10-11)", () => {
   it("a canceled status with a stale membershipPaid flag reads NOT active; Stripe's retry state reads active", () => {
-    expect(renderCaregiverAccountStatus({ membershipPaid: true, membershipStatus: "canceled" })).toContain("Caregiver membership: not active");
-    expect(renderCaregiverAccountStatus({ membershipStatus: "past_due" })).toContain("Caregiver membership: active");
+    expect(renderCaregiverAccountStatus({ membershipPaid: true, membershipStatus: "canceled" })).toContain("Care Provider membership: not active");
+    expect(renderCaregiverAccountStatus({ membershipStatus: "past_due" })).toContain("Care Provider membership: active");
   });
 });
 
@@ -30,16 +30,16 @@ describe("caregiverBriefing (2026-07-22 smoke-test incident)", () => {
   it("renders the exact live facts Evia denied: name, paid, CLEARED check, payouts ready", () => {
     const s = renderCaregiverAccountStatus(imran);
     expect(s).toContain("Their name: Imran");
-    expect(s).toContain("Caregiver membership: active");
+    expect(s).toContain("Care Provider membership: active");
     expect(s).toContain("Background check: CLEARED");
     expect(s).toContain("never say it is pending or processing");
     expect(s).toContain("Payout account: connected and ready");
     expect(s).toContain("approved and visible to families");
   });
 
-  it("declares the caregiver role and forbids the family-member framing", () => {
+  it("declares the care provider role and forbids the family-member framing", () => {
     const s = renderCaregiverAccountStatus(imran);
-    expect(s).toContain("professional CAREGIVER");
+    expect(s).toContain("professional CARE PROVIDER");
     expect(s).toContain('never describe them as caring for "their loved one"');
   });
 
@@ -47,9 +47,9 @@ describe("caregiverBriefing (2026-07-22 smoke-test incident)", () => {
     expect(renderCaregiverAccountStatus(imran)).toMatch(/OVERRIDE anything older memory/);
   });
 
-  it("renders honest negatives for an unstarted caregiver", () => {
+  it("renders honest negatives for an unstarted care provider", () => {
     const s = renderCaregiverAccountStatus({});
-    expect(s).toContain("Caregiver membership: not active");
+    expect(s).toContain("Care Provider membership: not active");
     expect(s).toContain("Background check: not started");
     expect(s).toContain("not set up yet");
     expect(s).not.toContain("Their name:");

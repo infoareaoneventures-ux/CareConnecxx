@@ -179,7 +179,7 @@ describe("stripeWebhook — exactly-once", () => {
     expect(writes()).toBe(writesAfterFirst); // state advanced exactly once
   });
 
-  it("resolves an SMS-created subscription (phone metadata, no firebaseUID) and mirrors onto the caregiver doc", async () => {
+  it("resolves an SMS-created subscription (phone metadata, no firebaseUID) and mirrors onto the care provider doc", async () => {
     hoisted.docs.set("agent_sessions/+15550001111", { userId: "cg9" });
     hoisted.docs.set("caregivers/cg9", { uid: "cg9", membershipPaid: true });
     const event = {
@@ -201,7 +201,7 @@ describe("stripeWebhook — exactly-once", () => {
     expect(hoisted.docs.get("caregivers/cg9")).toMatchObject({ membershipStatus: "active", membershipPaid: true });
   });
 
-  it("cancellation of an SMS-created subscription flips the caregiver doc to canceled", async () => {
+  it("cancellation of an SMS-created subscription flips the care provider doc to canceled", async () => {
     hoisted.docs.set("agent_sessions/+15550001111", { userId: "cg9" });
     hoisted.docs.set("caregivers/cg9", { uid: "cg9", membershipPaid: true });
     const event = {
@@ -323,7 +323,7 @@ describe("checkrWebhook — exactly-once", () => {
     ]);
   });
 
-  it("approves the caregiver once; a replayed report.completed is skipped", async () => {
+  it("approves the care provider once; a replayed report.completed is skipped", async () => {
     const res1 = makeRes();
     await (checkrWebhook as any)(checkrReq(clearReportEvent("evt_chk_1")), res1);
     expect(res1.json).toHaveBeenCalledWith({ received: true });

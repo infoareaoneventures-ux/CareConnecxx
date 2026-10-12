@@ -262,7 +262,7 @@ export async function normalizeAvailabilityInput(
     // times (and vice versa) so the loop asks for the missing piece, exactly like
     // the website's two-part picker (2026-09-26).
     const raw = await parse(
-      "Extract a caregiver's work availability from their message. Reply with raw JSON only: " +
+      "Extract a care provider's work availability from their message. Reply with raw JSON only: " +
         '{"days":["Monday"],"hours":"9am-5pm"}. days = ONLY the day names they actually stated; use ["weekdays"], ' +
         '["weekends"], or ["every day"] when they speak in those terms; [] when they name no days at all. ' +
         'hours = their stated time window or time-of-day words ("mornings and evenings"); "" if none stated.',

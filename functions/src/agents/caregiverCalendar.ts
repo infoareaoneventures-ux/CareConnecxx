@@ -232,7 +232,7 @@ export function shiftDetailText(shift: CalShift, booking: Doc | null, opts: { ga
     const log = (Array.isArray(shift.notesLog) ? shift.notesLog : []) as Array<{ at?: string; text?: string }>;
     const notes = log.filter((n) => typeof n.text === "string" && n.text.trim());
     if (notes.length) { lines.push("Visit notes"); for (const n of notes) { const ms = typeof n.at === "string" ? Date.parse(n.at) : NaN; const t = Number.isFinite(ms) ? new Date(ms).toLocaleTimeString("en-US", { timeZone: DEFAULT_TZ, hour: "numeric", minute: "2-digit" }) : ""; lines.push(`• ${t ? `${t} — ` : ""}${String(n.text).trim()}`); } }
-    if (typeof shift.completionNotes === "string" && shift.completionNotes.trim()) lines.push("Caregiver note", shift.completionNotes.trim());
+    if (typeof shift.completionNotes === "string" && shift.completionNotes.trim()) lines.push("Care Provider note", shift.completionNotes.trim());
   } else if (shift.status === "cancelled") {
     lines.push("Shift Cancelled");
   } else if (shift.status === "needs_replacement") {

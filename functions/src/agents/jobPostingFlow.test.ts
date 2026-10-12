@@ -80,7 +80,7 @@ const SESSION: any = {
 // The exact leaked-incident shape: the model replies to the briefing author.
 const META_OUTPUT =
   "Got it, but I need the briefing context to write this message, " +
-  "who's the caregiver, what shift/client situation are we talking about...";
+  "who's the care provider, what shift/client situation are we talking about...";
 
 const modelReplies = (...texts: string[]) => {
   for (const text of texts) {
@@ -120,13 +120,13 @@ describe("jobPostingFlow — anti-invention clause (U2, R1)", () => {
 
   it("answerQuestionMidFlow's system prompt carries the shared ANTI_INVENTION_CLAUSE (free-form generation, not classification)", async () => {
     // Call 1: isQuestionOrOther → YES. Call 2: mid-flow answer.
-    modelReplies("YES", "Great question — Evia matches you with vetted local caregivers.");
+    modelReplies("YES", "Great question — Evia matches you with vetted local care providers.");
 
     await handleJobPostingStep(PHONE, CHAT, "how does matching work?", SESSION);
 
     expect((messagesCreate.mock.calls[1][0] as { system: string }).system).toContain(ANTI_INVENTION_CLAUSE);
     // Guard passes → answer delivered unchanged (behavior unchanged when clean).
-    expect(sendMessage.mock.calls[0][1]).toBe("Great question — Evia matches you with vetted local caregivers.");
+    expect(sendMessage.mock.calls[0][1]).toBe("Great question — Evia matches you with vetted local care providers.");
   });
 
   // 2026-09-08 (live-caught): this call sees only the current message, never

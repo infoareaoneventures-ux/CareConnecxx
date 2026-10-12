@@ -17,12 +17,12 @@ describe("buildCapabilityMenu", () => {
     expect(menu.toLowerCase()).not.toContain("here's what i can help you with");
   });
 
-  it("shows featured caregiver examples for a caregiver and excludes client-only ones", () => {
+  it("shows featured care provider examples for a care provider and excludes client-only ones", () => {
     const menu = buildCapabilityMenu("caregiver", "en");
     for (const entry of CARA_CAPABILITIES.caregiver.filter((e) => e.featured)) {
       expect(menu).toContain(entry.example);
     }
-    expect(menu).not.toContain("Find me a caregiver");
+    expect(menu).not.toContain("Find me a care provider");
     expect(menu).not.toContain("Explain my latest invoice");
   });
 

@@ -482,7 +482,7 @@ export const AdminClientManager: React.FC = () => {
                     {[
                       ['Joined', selected.createdAt ? (() => { try { const d = new Date(selected.createdAt); return isNaN(d.getTime()) ? 'Unknown' : d.toLocaleDateString(); } catch { return 'Unknown'; } })() : 'Unknown'],
                       ['Subscription', (selected as any).subscriptionActive ? 'Active' : ((selected as any).subscriptionStatus || 'N/A')],
-                      ['Caregivers', (selected as any).assignedCaregiverIds?.length ?? 0],
+                      ['Care Providers', (selected as any).assignedCaregiverIds?.length ?? 0],
                     ].map(([label, val]) => (
                       <div key={label} className="bg-slate-50 rounded-lg p-3">
                         <p className="text-xs text-slate-400 mb-0.5">{label}</p>
@@ -725,7 +725,7 @@ export const AdminClientManager: React.FC = () => {
                   <table className="w-full">
                     <thead className="bg-slate-50 border-b border-slate-200">
                       <tr>
-                        {['Caregiver', 'Date', 'Duration', 'Cost', 'Status'].map(h => (
+                        {['Care Provider', 'Date', 'Duration', 'Cost', 'Status'].map(h => (
                           <th key={h} className="text-left text-xs font-semibold text-slate-500 uppercase px-4 py-3">{h}</th>
                         ))}
                       </tr>

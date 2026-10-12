@@ -18,7 +18,7 @@ describe("availabilityComplete", () => {
     expect(availabilityComplete("weekends only")).toBe(false);
     expect(availabilityComplete("weekends, mornings")).toBe(true);
   });
-  it("a half answer keeps availability in the caregiver's missing list", () => {
+  it("a half answer keeps availability in the care provider's missing list", () => {
     const base = { name: "M", street: "1 A St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "u", jobType: "occasional" };
     expect(missingRequiredFields("caregiver", { ...base, availability: { days: ["Monday"], hours: "" } })[0]).toBe("availability");
     expect(missingRequiredFields("caregiver", { ...base, availability: { days: ["Monday"], hours: "mornings" } })[0]).toBe("specialties");

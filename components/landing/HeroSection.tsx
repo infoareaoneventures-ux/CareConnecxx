@@ -35,7 +35,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
 
                 {/* Subline */}
                 <p className="text-lg text-ink-600 mb-9 leading-relaxed max-w-md">
-                    Local caregivers, coordinated entirely over text.
+                    Local care providers, coordinated entirely over text.
                     No app. No login. Just a conversation.
                 </p>
 
@@ -45,19 +45,19 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
                         onClick={() => onNavigate('client-apply')}
                         className="w-full sm:w-auto px-8 py-4 btn-depth-primary font-semibold rounded-full text-[15px]"
                     >
-                        Find a caregiver
+                        Find a care provider
                     </button>
                     <button
                         onClick={() => onNavigate('caregiver-apply')}
                         className="text-ink-600 hover:text-ink-900 text-[15px] font-medium transition-colors"
                     >
-                        Apply as a caregiver →
+                        Apply as a care provider →
                     </button>
                 </div>
 
                 {/* Single factual line — one fact per role, figures from utils/pricing.ts */}
                 <p className="text-[13px] text-ink-400 mb-16">
-                    Families: {fmtMoney(CLIENT_MONTHLY_PRICE)}/month, cancel anytime · Caregivers: background check required, {fmtMoney(CAREGIVER_ANNUAL_PRICE)}/year
+                    Families: {fmtMoney(CLIENT_MONTHLY_PRICE)}/month, cancel anytime · Care Providers: background check required, {fmtMoney(CAREGIVER_ANNUAL_PRICE)}/year
                 </p>
                 {/* The launch demo film was removed 2026-10-12 (founder): it played an
                     invented conversation and its baked-in caption said "trusted caregivers". */}

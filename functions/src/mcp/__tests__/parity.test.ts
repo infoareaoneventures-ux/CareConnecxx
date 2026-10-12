@@ -70,7 +70,7 @@ const NEW_AGENT_NATIVE_TOOLS = [
 const NEW_CLIENT_MONEY_TOOLS = ["retry_shift_payment"];
 
 describe("action parity (U3)", () => {
-  it("registers the new agent-native tools in MCP_TOOLS and the caregiver subset", () => {
+  it("registers the new agent-native tools in MCP_TOOLS and the care provider subset", () => {
     const all = new Set(MCP_TOOLS.map(t => t.name));
     const caregiver = new Set(CAREGIVER_TOOLS.map(t => t.name));
     for (const name of NEW_AGENT_NATIVE_TOOLS) {
@@ -79,7 +79,7 @@ describe("action parity (U3)", () => {
     }
   });
 
-  it("documents the new agent-native tools in the caregiver system prompt", () => {
+  it("documents the new agent-native tools in the care provider system prompt", () => {
     for (const name of NEW_AGENT_NATIVE_TOOLS) {
       // Match the tool name as a whole word so it must appear as an actual token
       // (e.g. a prompt line), not as a substring of an unrelated identifier.

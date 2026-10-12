@@ -207,7 +207,7 @@ describe("safety tools", () => {
       });
 
       it("resolves reportedUserName from the target's users doc and maps safety_concern into details (no site-side equivalent reason)", async () => {
-        hoisted.docState.set("users/u2", { name: "Alice Caregiver" });
+        hoisted.docState.set("users/u2", { name: "Alice Care Provider" });
         const r = await handleToolCall("set_block_status", {
           userId: "u1", targetUserId: "u2", action: "report",
           category: "safety_concern", description: "Left the client unattended",
@@ -215,7 +215,7 @@ describe("safety tools", () => {
         }) as any;
         expect(r.success).toBe(true);
         const report = hoisted.adds.find(a => a.path === "reports");
-        expect(report?.data.reportedUserName).toBe("Alice Caregiver");
+        expect(report?.data.reportedUserName).toBe("Alice Care Provider");
         expect(report?.data.reason).toBe("Other");
         expect(report?.data.details).toBe("[Safety concern] Left the client unattended");
       });

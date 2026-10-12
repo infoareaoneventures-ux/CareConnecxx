@@ -121,7 +121,7 @@ export const AdminCaregiverManager: React.FC = () => {
       if (all.length === 0) console.warn('[AdminCaregiverManager] getAllCaregivers returned 0 results');
     } catch (err) {
       console.error('[AdminCaregiverManager] Failed to load caregivers:', err);
-      showToast('Failed to load caregivers', 'error');
+      showToast('Failed to load care providers', 'error');
     } finally {
       setLoading(false);
     }
@@ -176,7 +176,7 @@ export const AdminCaregiverManager: React.FC = () => {
       setCaregivers(prev => prev.map(c => c.uid === selected.uid ? { ...c, ...form } as Caregiver : c));
       setSelected(prev => prev ? { ...prev, ...form } as Caregiver : prev);
       setEditing(false);
-      showToast('Caregiver updated', 'success');
+      showToast('Care provider updated', 'success');
     } catch {
       showToast('Failed to save changes', 'error');
     } finally {
@@ -215,7 +215,7 @@ export const AdminCaregiverManager: React.FC = () => {
       await adminService.updateCaregiver(selected.uid, updates);
       setCaregivers(prev => prev.map(c => c.uid === selected.uid ? { ...c, ...updates } as Caregiver : c));
       setSelected(prev => prev ? { ...prev, ...updates } as Caregiver : prev);
-      showToast(`Caregiver ${status}`, 'success');
+      showToast(`Care provider ${status}`, 'success');
       // The caregiver is told by the server (onCaregiverAccountChange — bell +
       // text, once, from the record change above); no browser-side bell here
       // (2026-09-27: this used to say "background check approved" even when only
@@ -236,7 +236,7 @@ export const AdminCaregiverManager: React.FC = () => {
       setModerationAction(null);
       showToast(`${selected.name} banned`, 'success');
     } catch {
-      showToast('Failed to ban caregiver', 'error');
+      showToast('Failed to ban care provider', 'error');
     } finally {
       setModerating(false);
     }
@@ -253,7 +253,7 @@ export const AdminCaregiverManager: React.FC = () => {
       setModerationAction(null);
       showToast(`${selected.name} unbanned`, 'success');
     } catch {
-      showToast('Failed to unban caregiver', 'error');
+      showToast('Failed to unban care provider', 'error');
     } finally {
       setModerating(false);
     }
@@ -291,7 +291,7 @@ export const AdminCaregiverManager: React.FC = () => {
       setSuspendReason('');
       showToast(`${selected.name} suspended for ${suspendDays} days`, 'success');
     } catch {
-      showToast('Failed to suspend caregiver', 'error');
+      showToast('Failed to suspend care provider', 'error');
     } finally {
       setModerating(false);
     }
@@ -308,7 +308,7 @@ export const AdminCaregiverManager: React.FC = () => {
       setModerationAction(null);
       showToast(`${selected.name} unsuspended`, 'success');
     } catch {
-      showToast('Failed to unsuspend caregiver', 'error');
+      showToast('Failed to unsuspend care provider', 'error');
     } finally {
       setModerating(false);
     }
@@ -366,7 +366,7 @@ export const AdminCaregiverManager: React.FC = () => {
         <div className="p-4 border-b border-slate-100 space-y-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search caregivers…" className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search care providers…" className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500" />
           </div>
           <div className="flex gap-1 flex-wrap">
             {VER_FILTERS.map(f => (
@@ -381,7 +381,7 @@ export const AdminCaregiverManager: React.FC = () => {
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center py-16 text-slate-400">
               <Users className="w-10 h-10 mb-2" />
-              <p className="text-sm">No caregivers found</p>
+              <p className="text-sm">No care providers found</p>
             </div>
           ) : filtered.map(c => (
             <button
@@ -407,7 +407,7 @@ export const AdminCaregiverManager: React.FC = () => {
         </div>
 
         <div className="p-3 border-t border-slate-100 flex items-center justify-between">
-          <span className="text-xs text-slate-400">{filtered.length} of {caregivers.length} caregivers</span>
+          <span className="text-xs text-slate-400">{filtered.length} of {caregivers.length} care providers</span>
           <button onClick={load} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"><RefreshCw className="w-3.5 h-3.5" /></button>
         </div>
       </div>
@@ -581,7 +581,7 @@ export const AdminCaregiverManager: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-2 text-xs text-orange-700 bg-orange-100 rounded-lg px-3 py-2">
                         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                        Caregiver will be notified and lose access for {suspendDays} day{suspendDays !== 1 ? 's' : ''}.
+                        Care provider will be notified and lose access for {suspendDays} day{suspendDays !== 1 ? 's' : ''}.
                       </div>
                       <div className="flex gap-2 justify-end">
                         <button onClick={() => setModerationAction(null)} className="px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-white">Cancel</button>
@@ -933,7 +933,7 @@ export const AdminCaregiverManager: React.FC = () => {
                         <Clock className="w-4 h-4 shrink-0" />
                         <span>
                           {(selected.backgroundCheckData as any).consentRequired === true || (selected.backgroundCheckData as any).invitationStatus === 'awaiting_consent'
-                            ? `Waiting on the caregiver to authorize the ${(selected.backgroundCheckData as any).consentReason === 'renewal' ? 'annual renewal' : 'background'} check — no Checkr invitation exists yet.`
+                            ? `Waiting on the care provider to authorize the ${(selected.backgroundCheckData as any).consentReason === 'renewal' ? 'annual renewal' : 'background'} check — no Checkr invitation exists yet.`
                             : 'Awaiting result from Checkr.'}
                         </span>
                       </div>
@@ -1021,7 +1021,7 @@ export const AdminCaregiverManager: React.FC = () => {
             <div className="w-16 h-16 rounded-full bg-slate-200 flex items-center justify-center mx-auto mb-4">
               <Users className="w-8 h-8 text-slate-400" />
             </div>
-            <p className="text-slate-600 font-medium">Select a caregiver</p>
+            <p className="text-slate-600 font-medium">Select a care provider</p>
             <p className="text-sm text-slate-400 mt-1">Choose one from the list to view their details</p>
           </div>
         </div>

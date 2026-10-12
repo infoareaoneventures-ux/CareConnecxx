@@ -41,7 +41,7 @@ const shift = {
 
 beforeEach(() => hoisted.reset());
 
-describe("taskLabel — the checkbox keys the caregiver pages write", () => {
+describe("taskLabel — the checkbox keys the care provider pages write", () => {
   it("maps `${ri}_${category}` and `${ri}_${category}_${sub}` to the card's labels and recipient", () => {
     expect(taskLabel("0_Personal Care", shift)).toEqual({ recipient: "Samira M", label: "Personal Care" });
     expect(taskLabel("0_Meal Preparation_Breakfast", shift)).toEqual({ recipient: "Samira M", label: "Breakfast (Meal Preparation)" });
@@ -153,10 +153,10 @@ describe("buildVisitCompletionText — the Past Booking card in words", () => {
     expect(t).toContain("3 of 5 tasks checked off.");
     // Sections separated by blank lines; the log bulleted without clock times;
     // the closing note under the Past Bookings card's "Caregiver note" label.
-    expect(t).toContain("is complete (7:05 PM–7:06 PM, 0:00:46).\n\nVisit notes\n· Samira ate half her breakfast\n\nCaregiver note\njust ended the shift for testing purpose\n\nSamira M:");
+    expect(t).toContain("is complete (7:05 PM–7:06 PM, 0:00:46).\n\nVisit notes\n· Samira ate half her breakfast\n\nCare Provider note\njust ended the shift for testing purpose\n\nSamira M:");
     expect(t).toContain("3 of 5 tasks checked off.\n\nBasra will submit");
     expect(t).not.toContain("7:06 PM — ");
-    expect(t).toMatch(/Caregiver note\njust ended the shift for testing purpose\n\nSamira M:/);
+    expect(t).toMatch(/Care Provider note\njust ended the shift for testing purpose\n\nSamira M:/);
     expect(t).toContain("Basra will submit the hours next; you'll get them here to review.");
     expect(t).not.toContain("care journal");
   });

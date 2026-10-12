@@ -268,7 +268,7 @@ beforeEach(() => {
 // which the loop hands off to and which still runs on the KEPT gate machinery.
 
 // ── 2. Gate webhook injection: membership → bgcheck → connect → active doc ──────
-describe("caregiver gate webhooks — end-to-end to an active caregiver doc", () => {
+describe("care provider gate webhooks — end-to-end to an active care provider doc", () => {
   it("drives the money/compliance gates and finalizes caregivers/{uid} as active", async () => {
     seed("caregiver_awaiting_membership", { ...FULL_DATA });
 
@@ -344,7 +344,7 @@ describe("caregiver gate webhooks — end-to-end to an active caregiver doc", ()
     expect(userDoc?.subscriptionActive).toBe(true);
   });
 
-  it("membership webhook mirrors membershipPaid straight onto an existing caregiver doc", async () => {
+  it("membership webhook mirrors membershipPaid straight onto an existing care provider doc", async () => {
     // Normal flow order: the gate handoff created caregivers/{uid} BEFORE the
     // membership gate, so the doc exists when payment lands (Imran's case,
     // 2026-07-09 — the mirror was missing and the webapp showed "Activate your
@@ -452,7 +452,7 @@ describe("bg-check status questions are grounded in live backgroundCheckData", (
     expect(stored()?.onboardingStep).not.toBe("caregiver_awaiting_bgcheck");
   });
 
-  it("fails soft to the static facts when there is no caregiver doc", async () => {
+  it("fails soft to the static facts when there is no care provider doc", async () => {
     const session = seed("caregiver_awaiting_bgcheck", { ...FULL_DATA }); // no caregiverId
     awaitingKind = "question";
 
@@ -504,7 +504,7 @@ describe("gate questions are grounded in what the user already shared", () => {
     await handleOnboardingStep(PHONE, CHAT, "are there jobs close to my area", session);
 
     expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(gateContextOf()).toContain("CAREGIVER MID-SETUP (caregiver_awaiting_membership)");
+    expect(gateContextOf()).toContain("CARE PROVIDER MID-SETUP (caregiver_awaiting_membership)");
     expect(JSON.stringify(sentMessages)).not.toContain("https://pay/membership");
   });
 });
@@ -539,7 +539,7 @@ describe("gate status questions are grounded in live state (all builders)", () =
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
-  it("payouts: the agent turn is told payouts are LIVE when the caregiver doc is onboarding-complete", async () => {
+  it("payouts: the agent turn is told payouts are LIVE when the care provider doc is onboarding-complete", async () => {
     const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA }, { caregiverId: "cg-uid" });
     hoisted.docState.set("caregivers/cg-uid", { stripeAccountId: "acct_1", stripeOnboardingComplete: true, payoutsEnabled: true });
     awaitingKind = "question";
@@ -548,7 +548,7 @@ describe("gate status questions are grounded in live state (all builders)", () =
     expect(gateContextOf()).toContain("payouts are LIVE");
   });
 
-  it("payouts: fails soft to the static facts when there is no caregiver doc", async () => {
+  it("payouts: fails soft to the static facts when there is no care provider doc", async () => {
     const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA }); // no caregiverId
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "how do payouts work?", session);
@@ -619,7 +619,7 @@ describe("gate status questions are grounded in live state (all builders)", () =
     expect(stored()?.onboardingStep).not.toBe("client_awaiting_identity");
   });
 
-  it("client payment: \"do you have more caregivers available\" ALSO auto-advances instead of nagging to finish membership that's already done", async () => {
+  it("client payment: \"do you have more care providers available\" ALSO auto-advances instead of nagging to finish membership that's already done", async () => {
     // 2026-09-06 live bug: the "show me more caregivers" branch was checked
     // BEFORE the live gate-status fact, so it unconditionally reminded the
     // family to finish membership even when it was already done (confirmed
@@ -627,16 +627,16 @@ describe("gate status questions are grounded in live state (all builders)", () =
     // over every other branch, including this one.
     const session = seed("client_awaiting_payment", {}, { userType: "client", stripeSubscriptionId: "sub_client" });
     wantsMore = "YES";
-    await handleOnboardingStep(PHONE, CHAT, "do you have more caregivers available", session);
+    await handleOnboardingStep(PHONE, CHAT, "do you have more care providers available", session);
     expect(stripeSpies.checkoutCreate).not.toHaveBeenCalled();
     expect(stored()?.processedWebhookTasks).toContain("payment");
     expect(stored()?.onboardingStep).not.toBe("client_awaiting_payment");
   });
 
-  it("client identity: a \"show me more caregivers\" ask ALSO auto-advances instead of nagging to finish identity that's already done", async () => {
+  it("client identity: a \"show me more care providers\" ask ALSO auto-advances instead of nagging to finish identity that's already done", async () => {
     const session = seed("client_awaiting_identity", { needsIdentityVerification: false }, { userType: "client" });
     wantsMore = "YES";
-    await handleOnboardingStep(PHONE, CHAT, "any more caregivers nearby", session);
+    await handleOnboardingStep(PHONE, CHAT, "any more care providers nearby", session);
     expect(stripeSpies.identityCreate).not.toHaveBeenCalled();
     expect(stored()?.processedWebhookTasks).toContain("identity");
     expect(stored()?.onboardingStep).not.toBe("client_awaiting_identity");
@@ -810,7 +810,7 @@ describe("client care records + payment mirror", () => {
   // at all. continueAfterClientCollection now routes into the existing
   // (previously-unwired) client_confirm_intake step instead of calling
   // handleClientShowCaregivers directly.
-  it("continueAfterClientCollection sends the intake summary and parks at client_confirm_intake, without showing caregivers yet", async () => {
+  it("continueAfterClientCollection sends the intake summary and parks at client_confirm_intake, without showing care providers yet", async () => {
     seed("client_ask_needs", { ...CLIENT_DATA, rate: 26 }, { userType: "client", userId: CLIENT_UID });
     await continueAfterClientCollection(PHONE, CHAT);
 
@@ -822,7 +822,7 @@ describe("client care records + payment mirror", () => {
     expect(hoisted.docState.has(`carePlans/${CLIENT_UID}`)).toBe(false);
   });
 
-  it("client_confirm_intake: a correction updates the field, re-sends the summary, and does not show caregivers yet", async () => {
+  it("client_confirm_intake: a correction updates the field, re-sends the summary, and does not show care providers yet", async () => {
     const session = seed("client_confirm_intake", { ...CLIENT_DATA, rate: 20 },
       { userType: "client", userId: CLIENT_UID });
     intakeConfirmIntent = "edit";
@@ -897,7 +897,7 @@ describe("client care records + payment mirror", () => {
     intakeConfirmIntent = "confirm";
   });
 
-  it("client_confirm_intake: confirming proceeds to persist care records and show caregivers", async () => {
+  it("client_confirm_intake: confirming proceeds to persist care records and show care providers", async () => {
     const session = seed("client_confirm_intake", { ...CLIENT_DATA, rate: 26 },
       { userType: "client", userId: CLIENT_UID });
     intakeConfirmIntent = "confirm";

@@ -718,7 +718,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
 
   // Escalating dunning communication — tone sharpens with each failed attempt,
   // and the final attempt warns that access is about to end.
-  const billingUrl = appLink(isCaregiverMember ? "/caregiver/settings" : "/client/membership");
+  const billingUrl = appLink(isCaregiverMember ? "/care-provider/settings" : "/client/membership");
   let dunningMsg: string;
   if (isFinalAttempt) {
     dunningMsg =
@@ -1012,7 +1012,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription, even
       .get();
     if (!sessionSnap.empty) {
       const phone = sessionSnap.docs[0].id;
-      const billingUrl = appLink(isCaregiverMember ? "/caregiver/settings" : "/client/membership");
+      const billingUrl = appLink(isCaregiverMember ? "/care-provider/settings" : "/client/membership");
       const { sendViaInteractionAgent } = await import("./agents/caraAgent");
       await sendViaInteractionAgent(phone, {
         content:
@@ -1487,7 +1487,7 @@ export const createCaregiverBillingPortalSession = functions.https.onCall(async 
   }
 
   const userId = context.auth.uid;
-  const returnUrl = (data as any)?.returnUrl || appLink('/caregiver/payments');
+  const returnUrl = (data as any)?.returnUrl || appLink('/care-provider/payments');
 
   try {
     // Shared with Evia's MANAGE MEMBERSHIP (caregiverMembershipBilling.ts).

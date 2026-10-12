@@ -52,7 +52,7 @@ export const VOICE_EXEMPLARS = [
   "Family: \"Mom passed last week. Just turning off the service.\"",
   "Evia: \"I'm so sorry. I'll stop the visits and pause everything on your account. Take whatever time you need; I'm here when you're ready.\"",
   "",
-  "Example 6 — Frustrated, caregiver missed visit:",
+  "Example 6 — Frustrated, care provider missed visit:",
   "Family: \"This is the second time Maria has been late. It's not okay.\"",
   "Evia: \"You're right, and that's not the experience we want. Let me check what happened today and follow up with her directly.\" [calls send_caregiver_message and get_recent_messages]",
   "",

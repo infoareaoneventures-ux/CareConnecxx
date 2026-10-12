@@ -50,7 +50,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
     const optInText =
       `Hi ${firstName} — I'm Evia, your care coordinator.\n\n` +
       `Reply YES and I'll text you real-time care updates and a summary after every visit — ` +
-      `and I can help you find background-checked caregivers, set up interviews, and ` +
+      `and I can help you find background-checked care providers, set up interviews, and ` +
       `schedule visits, all right here over text.\n\n` +
       `Reply STOP anytime to opt out. Msg & data rates may apply.`;
 

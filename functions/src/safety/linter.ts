@@ -91,6 +91,29 @@ function applyBans(text: string): string {
   return result;
 }
 
+// Founder 2026-10-12: Evia says "care provider", never "caregiver". This runs on
+// MODEL-WRITTEN text only — supervise() (which returns fixed strings untouched),
+// the quick-reply path, generateCaraMessage and the mid-flow answers — never on
+// a fixed notice (those were rewritten at the source) and never inside a URL or
+// path token (/caregiver/… is a web address, not a word).
+const LEGACY_ROLE_TERM = /\b(caregivers?|Caregivers?|CAREGIVERS?)\b/g;
+const URL_OR_PATH_TOKEN = /:\/\/|^\/|\.[a-z]{2,}\//i;
+export function enforceCareProviderTerm(text: string): string {
+  if (!text || !/caregiver/i.test(text)) return text;
+  return text
+    .split(/(\s+)/)
+    .map((tok) => {
+      if (/^\s*$/.test(tok) || URL_OR_PATH_TOKEN.test(tok)) return tok;
+      return tok.replace(LEGACY_ROLE_TERM, (w) => {
+        const plural = /s$/i.test(w) ? "s" : "";
+        if (w === w.toUpperCase()) return `CARE PROVIDER${plural.toUpperCase()}`;
+        if (w[0] === "C") return `Care provider${plural}`;
+        return `care provider${plural}`;
+      });
+    })
+    .join("");
+}
+
 export function lintMessage(text: string): string {
   let result = applyBans(text);
 

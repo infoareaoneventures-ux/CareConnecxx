@@ -11,7 +11,7 @@ import { quickComplete } from "../utils/openaiClient";
 
 export const REVIEW_PROMPT_TTL_MS = 24 * 60 * 60 * 1000;
 
-const first = (full: unknown, fallback = "your caregiver") => { const s = String(full ?? "").trim(); return s ? s.split(/\s+/)[0] : fallback; };
+const first = (full: unknown, fallback = "your care provider") => { const s = String(full ?? "").trim(); return s ? s.split(/\s+/)[0] : fallback; };
 
 /** The recap's closing line. */
 export function firstVisitReviewPromptLine(caregiverName: unknown): string {

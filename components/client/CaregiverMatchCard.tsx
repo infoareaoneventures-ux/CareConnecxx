@@ -46,7 +46,7 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
       <button
         onClick={(e) => { e.stopPropagation(); onToggleSave?.(caregiver); }}
         className="absolute top-4 right-4 p-2 bg-white/80 hover:bg-slate-50 backdrop-blur-sm rounded-full shadow-sm z-10 transition-colors"
-        aria-label={isSaved ? 'Remove from saved' : 'Save caregiver'}
+        aria-label={isSaved ? 'Remove from saved' : 'Save care provider'}
       >
         <Heart className={`w-5 h-5 transition-colors ${isSaved ? 'text-red-500 fill-current' : 'text-slate-400 hover:text-red-400'}`} />
       </button>

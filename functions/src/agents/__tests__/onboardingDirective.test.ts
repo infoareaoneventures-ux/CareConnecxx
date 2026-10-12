@@ -95,10 +95,10 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("whether their days are flexible");
   });
 
-  it("caregiver role uses the caregiver checklist, not the client one", () => {
+  it("care provider role uses the care provider checklist, not the client one", () => {
     const d = buildOnboardingDirective("caregiver", { name: "Maria" });
     expect(d).toContain("hourly rate");
-    expect(d).toContain("years of caregiving experience");
+    expect(d).toContain("years of care experience");
     expect(d).not.toContain("the senior's age");
   });
 
@@ -154,9 +154,9 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("reminding when it's time, not giving them");
     expect(d).toContain("never suggest they put medical details anywhere else");
     expect(d).toContain("no follow-up sweep");
-    expect(d).toContain("caregivers browsing jobs can read it");
+    expect(d).toContain("care providers browsing jobs can read it");
     // 2026-10-09: the description is asked with the website's own step wording, is the job POST's only (not the care plan), and the site's example may be offered once if asked.
-    expect(d).toContain("what else should caregivers know about this job or your loved one?");
+    expect(d).toContain("what else should care providers know about this job or your loved one?");
     expect(d).toContain("not the care plan");
     expect(d).toContain("never add to or rewrite them");
     expect(d).not.toContain("weave two or three natural examples");

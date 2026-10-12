@@ -109,7 +109,7 @@ beforeEach(() => {
 });
 
 describe("onBookingRequestWrite — SMS parity", () => {
-  it("a pure website-created booking (no agentTaskId) texts the caregiver", async () => {
+  it("a pure website-created booking (no agentTaskId) texts the care provider", async () => {
     const after = { status: "pending", clientId: CLIENT, caregiverId: CAREGIVER, clientName: "A Family" };
     await (onBookingRequestWrite as any)(change(null, "br1", after), { params: { bookingId: "br1" } });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("booking request") }));
@@ -139,7 +139,7 @@ describe("onBookingRequestWrite — SMS parity", () => {
     expect(sendToPhone).not.toHaveBeenCalled();
   });
 
-  it("cancelled always texts the caregiver, Evia-negotiated or not", async () => {
+  it("cancelled always texts the care provider, Evia-negotiated or not", async () => {
     const before = { status: "accepted", clientId: CLIENT, caregiverId: CAREGIVER, agentTaskId: "task1" };
     const after  = { ...before, status: "cancelled" };
     await (onBookingRequestWrite as any)(change(before, "br1", after), { params: { bookingId: "br1" } });
@@ -155,7 +155,7 @@ describe("onBookingRequestWrite — SMS parity", () => {
 
   // 2026-09-16: the site's Resend updates the existing doc (cancelled/declined
   // → pending, isResend) — the caregiver was never told before this branch.
-  it("a resent request (cancelled → pending, isResend) texts the caregiver", async () => {
+  it("a resent request (cancelled → pending, isResend) texts the care provider", async () => {
     const before = { status: "cancelled", clientId: CLIENT, caregiverId: CAREGIVER, clientName: "A Family" };
     const after  = { ...before, status: "pending", isResend: true };
     await (onBookingRequestWrite as any)(change(before, "br1", after), { params: { bookingId: "br1" } });
@@ -171,7 +171,7 @@ describe("onBookingRequestWrite — SMS parity", () => {
 });
 
 describe("onBookingAmendmentWrite — SMS parity", () => {
-  it("a new amendment texts the caregiver (single source of truth — request_schedule_amendment no longer sends this itself)", async () => {
+  it("a new amendment texts the care provider (single source of truth — request_schedule_amendment no longer sends this itself)", async () => {
     const after = { caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", newDays: { Mon: [{ start: "09:00", end: "12:00" }] }, ongoing: true };
     await (onBookingAmendmentWrite as any)(change(null, "am1", after), { params: { amendmentId: "am1" } });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("Mon") }));
@@ -191,7 +191,7 @@ describe("onBookingAmendmentWrite — SMS parity", () => {
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("isn't able") }));
   });
 
-  it("cancelled texts the caregiver", async () => {
+  it("cancelled texts the care provider", async () => {
     const before = { caregiverId: CAREGIVER, clientId: CLIENT, status: "pending", clientName: "A Family" };
     const after  = { ...before, status: "cancelled" };
     await (onBookingAmendmentWrite as any)(change(before, "am1", after), { params: { amendmentId: "am1" } });
@@ -214,7 +214,7 @@ describe("onShiftStatusChanged — SMS parity", () => {
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("complete") }));
   });
 
-  it("client-cancelled texts the caregiver", async () => {
+  it("client-cancelled texts the care provider", async () => {
     const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER };
     const after  = { ...before, status: "cancelled", clientName: "A Family" };
     await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
@@ -228,21 +228,21 @@ describe("onShiftStatusChanged — SMS parity", () => {
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("cancelled") }));
   });
 
-  it("needs_replacement (caregiver cancelled within 24h) texts the client pointing at the replacement flow", async () => {
+  it("needs_replacement (care provider cancelled within 24h) texts the client pointing at the replacement flow", async () => {
     const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER };
     const after  = { ...before, status: "needs_replacement", caregiverName: "Alice" };
     await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("replacement") }));
   });
 
-  it("a visit closed out because a REPLACEMENT was accepted (supersededByBookingId) sends nothing — the family already heard the new caregiver accepted (live 2026-09-28)", async () => {
+  it("a visit closed out because a REPLACEMENT was accepted (supersededByBookingId) sends nothing — the family already heard the new care provider accepted (live 2026-09-28)", async () => {
     const before = { status: "needs_replacement", clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice" };
     const after  = { ...before, status: "cancelled", cancelledBy: "caregiver", supersededByBookingId: "br-repl" };
     await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
     expect(sendViaInteractionAgent).not.toHaveBeenCalled();
   });
 
-  it("the family SKIPS a Needs Replacement visit (the caregiver had cancelled it) → nobody is texted (live 2026-10-07: the caregiver was told the family cancelled his own cancellation)", async () => {
+  it("the family SKIPS a Needs Replacement visit (the care provider had cancelled it) → nobody is texted (live 2026-10-07: the care provider was told the family cancelled his own cancellation)", async () => {
     const before = { status: "needs_replacement", clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", cancelledBy: "caregiver" };
     const after  = { ...before, status: "cancelled", cancelledBy: "client" };
     await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
@@ -277,7 +277,7 @@ describe("onJobApplicationCreate — SMS parity", () => {
   });
 });
 
-describe("onJobApplicationStatusChange — the caregiver hears the outcome (bell + text, no details)", () => {
+describe("onJobApplicationStatusChange — the care provider hears the outcome (bell + text, no details)", () => {
   const base = { caregiverId: CAREGIVER, clientId: CLIENT, jobId: "job1", jobTitle: "Weekend care" };
   it("declined by the family → bell + text with the tab's words", async () => {
     await (onJobApplicationStatusChange as any)(change({ ...base, status: "pending" }, "app1", { ...base, status: "rejected" }), { params: { applicationId: "app1" } });
@@ -289,7 +289,7 @@ describe("onJobApplicationStatusChange — the caregiver hears the outcome (bell
     expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "job_application_accepted", title: "Application accepted" }));
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: 'Your application for "Weekend care" was accepted.' }));
   });
-  it("the caregiver's own withdraw, and a write with no status change, are silent", async () => {
+  it("the care provider's own withdraw, and a write with no status change, are silent", async () => {
     await (onJobApplicationStatusChange as any)(change({ ...base, status: "pending" }, "app1", { ...base, status: "withdrawn" }), { params: { applicationId: "app1" } });
     await (onJobApplicationStatusChange as any)(change({ ...base, status: "rejected" }, "app1", { ...base, status: "rejected", updatedAt: 1 }), { params: { applicationId: "app1" } });
     expect(writeUserNotification).not.toHaveBeenCalled();
@@ -298,7 +298,7 @@ describe("onJobApplicationStatusChange — the caregiver hears the outcome (bell
 });
 
 describe("onVideoInterviewWrite — SMS parity", () => {
-  it("a new interview request texts the caregiver the card's details — job, time, type and the family's note", async () => {
+  it("a new interview request texts the care provider the card's details — job, time, type and the family's note", async () => {
     const after = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: new Date().toISOString(), jobTitle: "Senior care in San Jose", interviewType: "video", notes: "requesting interview" };
     await (onVideoInterviewWrite as any)(change(null, "iv1", after), { params: { interviewId: "iv1" } });
     const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111")!;
@@ -310,7 +310,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
     expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "interview_request", body: expect.stringContaining('Note: "requesting interview"') }));
   });
 
-  it("a website-cancelled interview (no cancelledViaAgent marker) texts the caregiver", async () => {
+  it("a website-cancelled interview (no cancelledViaAgent marker) texts the care provider", async () => {
     const before = { status: "confirmed", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family" };
     const after  = { ...before, status: "cancelled", cancelledBy: "client" };
     await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
@@ -358,7 +358,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
   // Evia's submit_interview_feedback fitLevel:'no') used to leave the
   // caregiver with only an in-app bell notification — no text, unlike the
   // 'strong' path which already texts the caregiver directly.
-  it("a client 'not selected' decline texts the caregiver, not the client", async () => {
+  it("a client 'not selected' decline texts the care provider, not the client", async () => {
     const before = { status: "completed", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family" };
     const after  = { ...before, status: "declined", declinedBy: "client" };
     await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
@@ -373,7 +373,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
   // party actually accepts, so the confirmed meeting (and Decline/Cancel on
   // it) never changes just from someone proposing a new time.
   describe("reschedule proposed — same interview, notifies the OTHER party, confirmed time untouched", () => {
-    it("the caregiver proposing a new time on an accepted interview texts the client, without changing scheduledTime/status", async () => {
+    it("the care provider proposing a new time on an accepted interview texts the client, without changing scheduledTime/status", async () => {
       const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z" };
       const after  = { ...before, rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
@@ -381,7 +381,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
       expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550001111", expect.anything());
     });
 
-    it("the client proposing a new time on an accepted interview texts the caregiver, without changing scheduledTime/status", async () => {
+    it("the client proposing a new time on an accepted interview texts the care provider, without changing scheduledTime/status", async () => {
       const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-10T17:00:00.000Z" };
       const after  = { ...before, rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
@@ -422,7 +422,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
   });
 
   describe("reschedule ACCEPTED — the real scheduledTime finally moves, notifies whoever originally proposed it", () => {
-    it("the family accepting the caregiver's proposed time texts the caregiver back", async () => {
+    it("the family accepting the care provider's proposed time texts the care provider back", async () => {
       const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
       const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-14T18:00:00.000Z" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
@@ -430,7 +430,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
       expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
     });
 
-    it("the caregiver accepting the family's proposed time texts the client back", async () => {
+    it("the care provider accepting the family's proposed time texts the client back", async () => {
       const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
       const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: "2026-09-14T18:00:00.000Z" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
@@ -445,7 +445,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
     describe("Keep current time — the proposal cleared, same status, same time → the proposer is told once", () => {
       const keep = (doc: any) => { const { reschedulePendingTime: _p, rescheduledBy: _b, rescheduledViaAgent: _v, ...rest } = doc; return rest; };
 
-      it("the family keeps the time against the caregiver's proposal → the caregiver's bell + text, nothing to the family", async () => {
+      it("the family keeps the time against the care provider's proposal → the care provider's bell + text, nothing to the family", async () => {
         const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z", rescheduledViaAgent: true };
         await (onVideoInterviewWrite as any)(change(before, "iv1", keep(before)), { params: { interviewId: "iv1" } });
         const line = "A Family isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM.";
@@ -456,7 +456,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
         expect(sendToPhone).not.toHaveBeenCalled();
       });
 
-      it("the caregiver keeps the time against the family's proposal → the family's bell + text, nothing to the caregiver", async () => {
+      it("the care provider keeps the time against the family's proposal → the family's bell + text, nothing to the care provider", async () => {
         const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
         await (onVideoInterviewWrite as any)(change(before, "iv1", keep(before)), { params: { interviewId: "iv1" } });
         const line = "Alice isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM.";
@@ -515,7 +515,7 @@ describe("sendTransactionalText — reliability fix (2026-09-06, second pass)", 
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ canDrop: false, urgency: "immediate" }));
   });
 
-  it("falls back to a plain text when the caregiver has no agent_sessions doc yet (never texted Evia)", async () => {
+  it("falls back to a plain text when the care provider has no agent_sessions doc yet (never texted Evia)", async () => {
     hoisted.docState.delete("agent_sessions/+15550001111");
     const after = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: new Date().toISOString() };
     await (onVideoInterviewWrite as any)(change(null, "iv1", after), { params: { interviewId: "iv1" } });
@@ -533,7 +533,7 @@ describe("sendTransactionalText — reliability fix (2026-09-06, second pass)", 
 });
 
 // ── Caregiver sweep B1 / B5 / B6 (2026-10-11) ────────────────────────────────
-describe("B1 — the family's proposed visit time parks the strip's reply words on the caregiver", () => {
+describe("B1 — the family's proposed visit time parks the strip's reply words on the care provider", () => {
   it("names the visit and the proposed time, offers ACCEPT / DECLINE / PROPOSE, parks shift_proposal + lastNoticedShiftId; the bell follows the text", async () => {
     const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER, clientName: "The Nguyen Family", date: "2099-10-05", startTime: "11:00", endTime: "14:00" };
     const after  = { ...before, reschedulePendingDate: "2099-10-06", reschedulePendingStartTime: "12:00", reschedulePendingEndTime: "15:00", rescheduledBy: "client" };
@@ -550,7 +550,7 @@ describe("B1 — the family's proposed visit time parks the strip's reply words 
 
 describe("B5 — an interview proposal declined/withdrawn outright (same status, same scheduledTime) tells whoever proposed it", () => {
   const kept = "2099-09-10T17:00:00.000Z";
-  it("the family clears the caregiver's proposal → the caregiver is told the time stands (bell + text, Jobs › Interviews)", async () => {
+  it("the family clears the care provider's proposal → the care provider is told the time stands (bell + text, Jobs › Interviews)", async () => {
     const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "The Nguyen Family", scheduledTime: kept, rescheduledBy: "caregiver", reschedulePendingTime: "2099-09-14T18:00:00.000Z" };
     const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "The Nguyen Family", scheduledTime: kept };
     await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" }, eventId: "e1" });
@@ -559,7 +559,7 @@ describe("B5 — an interview proposal declined/withdrawn outright (same status,
     expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "interview_rescheduled", title: "Time Change Declined", body: call?.[1].content, transitionType: "interview_time_declined:2099-09-14T18:00:00.000Z" }));
     expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
   });
-  it("the mirror: the caregiver clears the family's proposal → the family is told", async () => {
+  it("the mirror: the care provider clears the family's proposal → the family is told", async () => {
     const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: kept, rescheduledBy: "client", reschedulePendingTime: "2099-09-14T18:00:00.000Z" };
     const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: kept };
     await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" }, eventId: "e1" });
@@ -578,7 +578,7 @@ describe("B5 — an interview proposal declined/withdrawn outright (same status,
 
 describe("B6 — a replacement request that expired (30 minutes, nobody answered)", () => {
   const rep = { isShiftReplacement: true, replacementForShiftId: "shift-9", caregiverId: CAREGIVER, caregiverName: "Alice", clientId: CLIENT, clientName: "The Nguyen Family", schedule: { startDate: "2099-10-06", dayShiftTimes: { Tue: [{ start: "12:00", end: "15:00" }] } } };
-  it("the caregiver gets ONE factual sentence (text, then the bell) and her parked ACCEPT is taken down with the expired line", async () => {
+  it("the care provider gets ONE factual sentence (text, then the bell) and her parked ACCEPT is taken down with the expired line", async () => {
     await (onBookingRequestWrite as any)(change({ ...rep, status: "pending" }, "rep1", { ...rep, status: "expired" }), { params: { bookingId: "rep1" }, eventId: "e1" });
     const line = "The Nguyen Family's replacement request for the visit on October 6, 2099 at 12:00 PM has expired — no reply came in time, so nothing was sent.";
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: line, urgency: "immediate", canDrop: false }));
@@ -601,7 +601,7 @@ describe("B6 — a replacement request that expired (30 minutes, nobody answered
     await (onBookingRequestWrite as any)(change({ ...rep, clientId: undefined, status: "pending" }, "rep2", { ...rep, clientId: undefined, status: "expired" }), { params: { bookingId: "rep2" }, eventId: "e2" });
     expect(writeUserNotification).not.toHaveBeenCalled();
   });
-  it("the replacement notice itself tells the caregiver the 30-minute clock", async () => {
+  it("the replacement notice itself tells the care provider the 30-minute clock", async () => {
     await (onBookingRequestWrite as any)(change(null, "rep1", { ...rep, status: "pending" }), { params: { bookingId: "rep1" }, eventId: "e1" });
     const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111");
     expect(call?.[1].content.endsWith("Reply ACCEPT or DECLINE. This request expires in 30 minutes.")).toBe(true);

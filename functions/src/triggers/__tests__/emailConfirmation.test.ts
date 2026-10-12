@@ -56,7 +56,7 @@ describe("onUserEmailWrite / onCaregiverEmailWrite", () => {
     expect(sendEmailConfirmation).toHaveBeenCalledWith("u1", "client", "other@x.com", "initial");
   });
 
-  it("a caregiver's users doc is only a mirror — the caregivers trigger owns it", async () => {
+  it("a care provider's users doc is only a mirror — the care providers trigger owns it", async () => {
     await (onUserEmailWrite as any)(change("cg1", null, { email: "cg@x.com", userType: "caregiver" }));
     expect(sendEmailConfirmation).not.toHaveBeenCalled();
     await (onCaregiverEmailWrite as any)(change("cg1", null, { email: "cg@x.com", phone: "+1" }));

@@ -105,7 +105,7 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
       // Notification handled by onBookingAmendmentWrite Cloud Function
 
       onClose();
-      addToast('Visit request sent — waiting for caregiver to accept.', 'success');
+      addToast('Visit request sent — waiting for care provider to accept.', 'success');
       onSent?.();
     } catch (e) {
       console.error(e);
@@ -316,10 +316,10 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
 
                 {/* Caregiver */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Caregiver</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Care Provider</label>
                   <select value={visitCaregiverId} onChange={e => { setVisitCaregiverId(e.target.value); setVisitBookingId(''); }}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white">
-                    <option value="">Select caregiver</option>
+                    <option value="">Select care provider</option>
                     {caregivers.map(cg => <option key={cg.id} value={cg.id}>{cg.name}</option>)}
                   </select>
                 </div>
@@ -527,7 +527,7 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
                   </button>
                 </div>
                 <p className="text-xs text-slate-400 text-center mt-2">
-                  Your caregiver will need to accept before these visits are added to the schedule.
+                  Your care provider will need to accept before these visits are added to the schedule.
                 </p>
               </div>
 

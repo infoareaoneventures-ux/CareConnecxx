@@ -22,7 +22,7 @@ describe("clientAccountTransitions", () => {
       { membershipStatus: "active", membershipActivatedNotifiedAt: "2026-10-01T00:00:00Z" },
     )).toEqual(["membership_reactivated"]);
   });
-  it("never fires for caregivers (their record has its own trigger)", () => {
+  it("never fires for care providers (their record has its own trigger)", () => {
     expect(clientAccountTransitions({ identityCheckStatus: "not_started" }, { userType: "caregiver", identityCheckStatus: "verified" })).toEqual([]);
   });
   it("membership active = the site's gate rule", () => {

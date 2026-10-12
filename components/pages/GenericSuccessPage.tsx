@@ -5,7 +5,7 @@ import { functions } from '../../lib/firebase';
 
 
 const MESSAGES: Record<string, { title: string; body: string }> = {
-  payment:           { title: 'Payment set up!',        body: "Evia is already searching for caregivers. You'll hear from her shortly." },
+  payment:           { title: 'Payment set up!',        body: "Evia is already searching for care providers. You'll hear from her shortly." },
   identity:          { title: 'Identity verified!',     body: "You're all set. Evia will continue your onboarding." },
   photo_upload:      { title: 'Photo uploaded!',        body: 'Your profile photo is saved. Almost done!' },
   background_check:  { title: 'Background check started!', body: "Results usually arrive in 1–3 days. Evia will text you." },

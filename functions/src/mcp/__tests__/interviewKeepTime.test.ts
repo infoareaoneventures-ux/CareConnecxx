@@ -78,7 +78,7 @@ describe("accept_interview_reschedule action:'keep'", () => {
     expect(tool.description).toContain("Keep current time");
   });
 
-  it("caregiver keep on the family's proposal: the shared write, not gated even on a pending row, no text of its own", async () => {
+  it("care provider keep on the family's proposal: the shared write, not gated even on a pending row, no text of its own", async () => {
     hoisted.docState.set(`video_interviews/${IV}`, { ...base, reschedulePendingTime: "2099-10-06T19:00:00.000Z", rescheduledBy: "client", rescheduledViaAgent: true });
     const r = await handleToolCall("accept_interview_reschedule", { interviewId: IV, caregiverId: CG, action: "keep" }) as any;
     expect(r).toMatchObject({ success: true, kept: true, interviewId: IV, keptBy: "caregiver", scheduledTime: "2099-10-05T18:00:00.000Z", scheduledTimeLocal: "Monday, October 5 at 11:00 AM", notification: { sent: true, reason: "notification_trigger" } });
@@ -90,7 +90,7 @@ describe("accept_interview_reschedule action:'keep'", () => {
     expect(sendToPhone).not.toHaveBeenCalled();
   });
 
-  it("family keep on the caregiver's proposal: the same write, keptBy client, the caregiver named in the note", async () => {
+  it("family keep on the care provider's proposal: the same write, keptBy client, the care provider named in the note", async () => {
     hoisted.docState.set(`video_interviews/${IV}`, { ...base, status: "accepted", reschedulePendingTime: "2099-10-06T19:00:00.000Z", rescheduledBy: "caregiver" });
     const r = await handleToolCall("accept_interview_reschedule", { interviewId: IV, clientId: FAM, action: "keep" }) as any;
     expect(r).toMatchObject({ success: true, kept: true, keptBy: "client" });
@@ -115,7 +115,7 @@ describe("accept_interview_reschedule action:'keep'", () => {
     expect(hoisted.updates).toHaveLength(0);
   });
 
-  it("without action (or action:'accept') it is still Accept new time — the time moves and a pending caregiver row is gated", async () => {
+  it("without action (or action:'accept') it is still Accept new time — the time moves and a pending care provider row is gated", async () => {
     hoisted.docState.set(`video_interviews/${IV}`, { ...base, reschedulePendingTime: "2099-10-06T19:00:00.000Z", rescheduledBy: "client" });
     const r = await handleToolCall("accept_interview_reschedule", { interviewId: IV, caregiverId: CG }) as any;
     expect(r).toMatchObject({ _toolError: true, code: "MEMBERSHIP_REQUIRED" });

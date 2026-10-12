@@ -76,7 +76,7 @@ describe("resolveResetPhone", () => {
 });
 
 describe("processResetAccountQueue", () => {
-  it("resets a caregiver whose phone is only on the users doc (the admin page sent phone '')", async () => {
+  it("resets a care provider whose phone is only on the users doc (the admin page sent phone '')", async () => {
     hoisted.docs.set("users/cg1", { phone: "+15550009999" });
     hoisted.docs.set("caregivers/cg1", { name: "Basra" });
     await run(snapFor({ uid: "cg1", phone: "", role: "caregiver" }));

@@ -74,7 +74,7 @@ describe("caregiverEligibleForNewVisits — the one gate rule", () => {
     expect(await caregiverEligibleForNewVisits("ghost")).toBe(false);
     expect(await caregiverEligibleForNewVisits("")).toBe(false);
   });
-  it("one read per caregiver per run (the cache)", async () => {
+  it("one read per care provider per run (the cache)", async () => {
     hoisted.docState.set("caregivers/ok", ACTIVE);
     const cache = new Map<string, boolean>();
     expect(await caregiverEligibleForNewVisits("ok", cache)).toBe(true);
@@ -84,7 +84,7 @@ describe("caregiverEligibleForNewVisits — the one gate rule", () => {
 });
 
 describe("generateRollingShifts", () => {
-  it("creates visits for an eligible caregiver's booking and NONE for a locked one — skipped with a log line", async () => {
+  it("creates visits for an eligible care provider's booking and NONE for a locked one — skipped with a log line", async () => {
     hoisted.docState.set("caregivers/alice", ACTIVE);
     hoisted.docState.set("caregivers/bob", { membershipStatus: "canceled", backgroundCheckStatus: "clear" });
     hoisted.docState.set("booking_requests/br-alice", booking("alice"));

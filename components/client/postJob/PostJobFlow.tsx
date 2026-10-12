@@ -82,7 +82,7 @@ export const PostJobFlow: React.FC = () => {
 
       const id = await dbService.createJobPost(payload as any, currentUser.uid);
       setSubmittedPostId(typeof id === 'string' ? id : 'posted');
-      addToast('Job posted! Caregivers can now apply.', 'success');
+      addToast('Job posted! Care providers can now apply.', 'success');
 
       // Note: createJobPost stores the point passed above (and only geocodes itself when none was).
 
@@ -180,7 +180,7 @@ export const PostJobFlow: React.FC = () => {
           </div>
           <h1 className="text-3xl font-bold text-slate-900 mb-2">Care Request Submitted!</h1>
           <p className="text-slate-500 mb-8">
-            Qualified caregivers near {data.city || 'your location'} can now see and apply to your care request. We'll notify you when someone applies.
+            Qualified care providers near {data.city || 'your location'} can now see and apply to your care request. We'll notify you when someone applies.
           </p>
           <div className="flex flex-col sm:flex-row justify-center gap-3">
             <button

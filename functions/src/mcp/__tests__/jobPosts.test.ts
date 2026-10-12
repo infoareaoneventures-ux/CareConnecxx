@@ -270,7 +270,7 @@ describe("list_client_jobs", () => {
   });
 
   // 2026-09-16: everything the Posts-tab card shows, incl. "X of Y hired".
-  it("returns the card's fields — type, dates, location, care types, recipients, caregivers needed, hired count", async () => {
+  it("returns the card's fields — type, dates, location, care types, recipients, care providers needed, hired count", async () => {
     hoisted.collState.set("job_posts", [{
       id: JOB_ID, clientId: CLIENT, status: "open", title: "Senior care in San Jose", jobFrequency: "part-time", rate: 23,
       startDate: "2026-09-15", city: "San Jose", zipCode: "95130", daysOfWeek: ["Monday", "Tuesday"], timeOfDay: ["morning"],
@@ -444,7 +444,7 @@ describe("respond_to_job_application", () => {
 
   // 2026-09-16: the site's Decline button writes rejected + declinedAt and
   // sends the caregiver nothing — Evia now does exactly that.
-  it("on reject: writes the site's fields (rejected + declinedAt) and does not message the caregiver", async () => {
+  it("on reject: writes the site's fields (rejected + declinedAt) and does not message the care provider", async () => {
     hoisted.docState.set("pending_actions/test", { toolName: "respond_to_job_application", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
     hoisted.docState.set("job_applications/app_1", { clientId: CLIENT, jobId: JOB_ID, caregiverId: "cg1", status: "pending" });
     hoisted.collState.set("agent_sessions", [{ id: "+15550001111", userId: "cg1", chatId: "chat-cg" }]);

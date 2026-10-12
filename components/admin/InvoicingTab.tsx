@@ -161,7 +161,7 @@ export const InvoicingTab = () => {
                                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-sm">
                                     <th className="p-4 font-semibold">Invoice #</th>
                                     <th className="p-4 font-semibold">Client</th>
-                                    <th className="p-4 font-semibold">Caregiver</th>
+                                    <th className="p-4 font-semibold">Care Provider</th>
                                     <th className="p-4 font-semibold">Amount</th>
                                     <th className="p-4 font-semibold">Status</th>
                                     <th className="p-4 font-semibold">Actions</th>
@@ -225,10 +225,10 @@ export const InvoicingTab = () => {
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium mb-1">Caregiver</label>
+                                <label className="block text-sm font-medium mb-1">Care Provider</label>
                                 <select required value={formData.caregiverId} onChange={e => setFormData({...formData, caregiverId: e.target.value})} className="w-full p-2 border rounded-lg">
-                                    <option value="">Select Caregiver</option>
-                                    {caregivers.map(c => <option key={c.id} value={c.id}>{c.name || c.displayName || (c.firstName ? c.firstName + ' ' + c.lastName : 'Unknown Caregiver')}</option>)}
+                                    <option value="">Select Care Provider</option>
+                                    {caregivers.map(c => <option key={c.id} value={c.id}>{c.name || c.displayName || (c.firstName ? c.firstName + ' ' + c.lastName : 'Unknown Care Provider')}</option>)}
                                 </select>
                             </div>
                             <div>
@@ -292,7 +292,7 @@ export const InvoicingTab = () => {
                     <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
                         <div>
                             <p><strong>Client:</strong> {selectedInvoice.clientName}</p>
-                            <p><strong>Caregiver:</strong> {selectedInvoice.caregiverName}</p>
+                            <p><strong>Care Provider:</strong> {selectedInvoice.caregiverName}</p>
                             <p><strong>Care Period:</strong> {selectedInvoice.carePeriod?.start} to {selectedInvoice.carePeriod?.end}</p>
                         </div>
                         <div>

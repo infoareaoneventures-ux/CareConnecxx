@@ -11,6 +11,9 @@ const CATEGORIES = [
   'Senior Care', 'Caregiver Tips', 'Dementia Care', 'Safety', 'Respite Care',
   'Hiring', 'Finance', 'Health', 'Family',
 ];
+// The stored category value stays 'Caregiver Tips' (existing posts carry it);
+// the admin sees the current "care provider" wording (2026-10-12).
+const categoryLabel = (c: string) => (c === 'Caregiver Tips' ? 'Care Provider Tips' : c);
 
 const emptyPost = (): Omit<BlogPost, 'id' | 'createdAt' | 'updatedAt'> => ({
   title: '',
@@ -498,7 +501,7 @@ const PostForm: React.FC<{
             onChange={e => onField('category', e.target.value)}
             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
           >
-            {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+            {CATEGORIES.map(c => <option key={c} value={c}>{categoryLabel(c)}</option>)}
           </select>
         </div>
         <div>
@@ -604,7 +607,7 @@ const PostForm: React.FC<{
         <input
           value={form.ctaHeading}
           onChange={e => onField('ctaHeading', e.target.value)}
-          placeholder="e.g. Find the Right Caregiver Today"
+          placeholder="e.g. Find the Right Care Provider Today"
           className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
         />
       </div>

@@ -56,9 +56,9 @@ export const STATUS_LABEL: Record<string, string> = {
   payment_failed: "Awaiting Payment",
 };
 const HISTORY_ACTION_LABEL: Record<string, string> = {
-  submitted: "Submitted by caregiver",
+  submitted: "Submitted by care provider",
   proposed_correction: "Client proposed correction",
-  counter_proposed: "Caregiver sent counter",
+  counter_proposed: "Care Provider sent counter",
   accepted: "Accepted",
   escalated: "Escalated to admin",
   admin_resolved: "Resolved by admin",
@@ -270,7 +270,7 @@ export function reportText(history: TimesheetRow[], range: { from?: string; to?:
   if (rows.length === 0) return [title, "", EMPTY_REPORT].join("\n");
   const hours = rows.reduce((s, r) => s + rowHours(r), 0);
   const pay = rows.reduce((s, r) => s + rowGross(r), 0);
-  return [title, `Shifts ${rows.length}`, `Total hours ${dur(hours)}`, `Total earnings ${money(pay)}`, "", `The CSV export is on your Payments page: ${getAppUrl()}/caregiver/payments?tab=timesheets`].join("\n");
+  return [title, `Shifts ${rows.length}`, `Total hours ${dur(hours)}`, `Total earnings ${money(pay)}`, "", `The CSV export is on your Payments page: ${getAppUrl()}/care-provider/payments?tab=timesheets`].join("\n");
 }
 
 /** The expanded card (Pending or History row), the History timeline included. */
@@ -402,7 +402,7 @@ export interface SubmitHoursFlowData {
 }
 // How every figure on the Timesheets page is worked out — briefed with any mid-flow question (live 2026-10-11:
 // "Is the base correct" was answered with guesses about mattresses).
-const MONEY_FACTS = "Base pay = the time between the start and end shown × the hourly rate (the page calls it Base pay). Additional charges (mileage, supplies, overtime, a custom item) are flat amounts the caregiver entered and are added on top. The total = base pay + additional charges. The family's card is billed that total plus Evia's service fee; the caregiver receives the total.";
+const MONEY_FACTS = "Base pay = the time between the start and end shown × the hourly rate (the page calls it Base pay). Additional charges (mileage, supplies, overtime, a custom item) are flat amounts the care provider entered and are added on top. The total = base pay + additional charges. The family's card is billed that total plus Evia's service fee; the care provider receives the total.";
 const modalHeader = (d: SubmitHoursFlowData) => `Submit hours worked — ${d.clientName} · ${shortDate(Date.parse(d.startIso))}`;
 const basePayLine = (d: SubmitHoursFlowData) => `Base pay (${dur(d.totalHours)} @ $${d.rate}/hr) ${money(d.totalHours * d.rate)}`;
 const ITEMS_Q = (d: SubmitHoursFlowData) => [
@@ -445,7 +445,7 @@ const SUBMIT_CONFIRM_Q = (d: SubmitHoursFlowData) => {
 };
 /** The Submit hours modal's facts at any of its steps: the summary so far, the modal's payment note, the money rules. */
 const SUBMIT_FACTS = (d: SubmitHoursFlowData) =>
-  `The Submit hours modal so far:\n${SUBMIT_CONFIRM_Q(d)}\n\nNothing is submitted until the caregiver replies SUBMIT on that summary; CANCEL leaves the visit under Unsubmitted. ${MONEY_FACTS}`;
+  `The Submit hours modal so far:\n${SUBMIT_CONFIRM_Q(d)}\n\nNothing is submitted until the care provider replies SUBMIT on that summary; CANCEL leaves the visit under Unsubmitted. ${MONEY_FACTS}`;
 
 async function parse(prompt: string, text: string): Promise<string> {
   return quickComplete(prompt + "\nReply with ONLY the requested value — no explanation.", text, { maxTokens: 80 }).catch(() => "__parse_error__");
@@ -454,7 +454,7 @@ async function parse(prompt: string, text: string): Promise<string> {
 export async function parseCharge(text: string): Promise<{ kind: "none" } | { kind: "item"; label: string; amount: number; note?: string } | { kind: "no_amount" } | { kind: "no_label" } | null> {
   const norm = text.trim().toUpperCase();
   if (norm === "NONE" || norm === "NO" || norm === "DONE" || norm === "SKIP") return { kind: "none" };
-  const raw = await parse(`The caregiver is naming ONE additional charge for a completed visit (overtime, mileage, supplies, a bonus, or anything custom) with a dollar amount and an optional note. Reply JSON {"label": string, "amount": number, "note": string|null}. Use null for a missing label or a missing/zero amount. If they are saying there are no charges, reply NONE.`, text);
+  const raw = await parse(`The care provider is naming ONE additional charge for a completed visit (overtime, mileage, supplies, a bonus, or anything custom) with a dollar amount and an optional note. Reply JSON {"label": string, "amount": number, "note": string|null}. Use null for a missing label or a missing/zero amount. If they are saying there are no charges, reply NONE.`, text);
   if (raw.trim().toUpperCase().startsWith("NONE")) return { kind: "none" };
   try {
     const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)) as { label?: unknown; amount?: unknown; note?: unknown };
@@ -520,7 +520,7 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
     else {
-      const v = await parse("Evia asked the caregiver to reply SUBMIT to submit the hours, or CANCEL. Classify: SUBMIT, CANCEL, or OTHER (a question / a change).", text);
+      const v = await parse("Evia asked the care provider to reply SUBMIT to submit the hours, or CANCEL. Classify: SUBMIT, CANCEL, or OTHER (a question / a change).", text);
       action = v.toUpperCase().startsWith("SUBMIT") ? "submit" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
@@ -592,7 +592,7 @@ function counterGross(d: ReviewCorrectionFlowData): { hours: number; base: numbe
 const REVIEW_FACTS = (d: ReviewCorrectionFlowData) =>
   `The family's proposed correction on their screen:\n${proposedBlock(d)}\n\n` +
   "ACCEPT accepts the family's corrected hours and total as proposed. COUNTER sends different hours (and amounts) back to the family, who then accepts or proposes again. " +
-  "Only the amounts of the existing additional charges can change on a counter (none added or removed). Nothing is accepted or sent until the caregiver replies ACCEPT, or SEND on the counter recap. " +
+  "Only the amounts of the existing additional charges can change on a counter (none added or removed). Nothing is accepted or sent until the care provider replies ACCEPT, or SEND on the counter recap. " +
   MONEY_FACTS;
 const C_CONFIRM_Q = (d: ReviewCorrectionFlowData) => {
   const g = counterGross(d);
@@ -611,7 +611,7 @@ const C_CONFIRM_Q = (d: ReviewCorrectionFlowData) => {
 async function parseCounterTime(text: string, keepIso: string): Promise<string | null> {
   const norm = text.trim().toUpperCase();
   if (norm === "KEEP" || norm === "SAME") return keepIso;
-  const raw = await parse(`Today is ${businessTodayStr()} (Pacific). The caregiver is naming the ACTUAL clock time of a visit that already happened. Reply "YYYY-MM-DD HH:MM" (24-hour) when they gave a date too, otherwise "HH:MM" alone. Reply NONE if no time is given.`, text);
+  const raw = await parse(`Today is ${businessTodayStr()} (Pacific). The care provider is naming the ACTUAL clock time of a visit that already happened. Reply "YYYY-MM-DD HH:MM" (24-hour) when they gave a date too, otherwise "HH:MM" alone. Reply NONE if no time is given.`, text);
   const dt = /(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})/.exec(raw);
   const day = dt ? dt[1] : localDay(Date.parse(keepIso));
   const t = dt ? { h: dt[2], m: dt[3] } : (() => { const x = /(\d{1,2}):(\d{2})/.exec(raw); return x ? { h: x[1], m: x[2] } : null; })();
@@ -663,7 +663,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     else if (norm === "CANCEL") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
     else {
-      const v = await parse("Evia asked the caregiver to reply ACCEPT (accept the family's corrected hours) or COUNTER (send different hours back). Classify: ACCEPT, COUNTER, CANCEL, or OTHER (a question).", text);
+      const v = await parse("Evia asked the care provider to reply ACCEPT (accept the family's corrected hours) or COUNTER (send different hours back). Classify: ACCEPT, COUNTER, CANCEL, or OTHER (a question).", text);
       action = v.toUpperCase().startsWith("ACCEPT") ? "accept" : v.toUpperCase().startsWith("COUNTER") ? "counter" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
@@ -704,7 +704,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     if (norm === "KEEP" || norm === "SAME" || norm === "SKIP") return next({ counterItems: data.proposedItems }, "rc_note", C_NOTE_Q);
     if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) })); return; }
     // The modal lets only the AMOUNTS change (no add, no remove).
-    const raw = await parse(`The existing charges are: ${data.proposedItems.map((li, i) => `${i + 1}. ${itemLabel(li)} $${Number(li.amount) || 0}`).join("; ")}. The caregiver is giving a new dollar amount for one or more of them. Reply JSON {"<index>": <amount>, ...} using the 1-based index. Reply NONE if no amount is given.`, text);
+    const raw = await parse(`The existing charges are: ${data.proposedItems.map((li, i) => `${i + 1}. ${itemLabel(li)} $${Number(li.amount) || 0}`).join("; ")}. The care provider is giving a new dollar amount for one or more of them. Reply JSON {"<index>": <amount>, ...} using the 1-based index. Reply NONE if no amount is given.`, text);
     let patch: Record<string, number> = {};
     try { patch = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); } catch { patch = {}; }
     const entries = Object.entries(patch).filter(([k, v]) => Number(k) >= 1 && Number(k) <= data.proposedItems.length && Number(v) >= 0);
@@ -716,7 +716,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     if (norm === "CANCEL" || await isBackOutRequest(text, C_NOTE_Q)) return cancelled();
     if (norm === "SKIP" || norm === "NONE" || norm === "NO") return next({}, "rc_confirm", C_CONFIRM_Q(data));
     // A question here is answered and the note re-asked — it never becomes the note the family reads (2026-10-11).
-    if (await isQuestionOrOther(text, C_NOTE_Q)) { await sendMessage(chatId, await answerMidFlow(text, C_NOTE_Q, { facts: `${REVIEW_FACTS(data)} The note goes to the family with the counter, in the caregiver's own words.` })); return; }
+    if (await isQuestionOrOther(text, C_NOTE_Q)) { await sendMessage(chatId, await answerMidFlow(text, C_NOTE_Q, { facts: `${REVIEW_FACTS(data)} The note goes to the family with the counter, in the care provider's own words.` })); return; }
     return next({ note: text.trim().slice(0, 500) }, "rc_confirm", C_CONFIRM_Q({ ...data, note: text.trim() }));
   }
   if (step === "rc_confirm") {
@@ -726,7 +726,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
     else {
-      const v = await parse("Evia asked the caregiver to reply SEND to send the counter-proposal, or CANCEL. Classify: SEND, CANCEL, or OTHER.", text);
+      const v = await parse("Evia asked the care provider to reply SEND to send the counter-proposal, or CANCEL. Classify: SEND, CANCEL, or OTHER.", text);
       action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
@@ -823,7 +823,7 @@ export function listIsLatest(session: Record<string, unknown>): boolean {
 
 /** "Sep 1 to Sep 30" / "last month" / "September" → {from, to} as YYYY-MM-DD (business timezone). */
 export async function parseReportRange(text: string): Promise<{ from?: string; to?: string } | null> {
-  const raw = await parse(`Today is ${businessTodayStr()} (Pacific). The caregiver is naming a DATE RANGE for an earnings report. Reply JSON {"from": "YYYY-MM-DD" | null, "to": "YYYY-MM-DD" | null}. A single month means its first and last day; "last month" / "this week" etc. are relative to today. Reply NONE if no range is given.`, text);
+  const raw = await parse(`Today is ${businessTodayStr()} (Pacific). The care provider is naming a DATE RANGE for an earnings report. Reply JSON {"from": "YYYY-MM-DD" | null, "to": "YYYY-MM-DD" | null}. A single month means its first and last day; "last month" / "this week" etc. are relative to today. Reply NONE if no range is given.`, text);
   if (raw.trim().toUpperCase().startsWith("NONE")) return null;
   try {
     const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)) as { from?: unknown; to?: unknown };

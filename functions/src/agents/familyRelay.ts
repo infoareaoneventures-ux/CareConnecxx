@@ -117,8 +117,8 @@ export async function relayCaregiverMessageToFamily(caregiverId: string, text: u
   if (!fam) return { ok: false, reason: "no_family", message: "I don't see a visit on your schedule, so I'm not sure which family to message." };
   await relayIntoSharedChatThread({
     clientId: fam.clientId, clientName: fam.clientName,
-    caregiverId, caregiverName: String(cg.name ?? "Your caregiver"),
-    senderId: caregiverId, senderName: String(cg.name ?? "Your caregiver"),
+    caregiverId, caregiverName: String(cg.name ?? "Your care provider"),
+    senderId: caregiverId, senderName: String(cg.name ?? "Your care provider"),
     text: body,
   });
   return { ok: true, clientId: fam.clientId, clientName: fam.clientName };
@@ -127,10 +127,10 @@ export async function relayCaregiverMessageToFamily(caregiverId: string, text: u
 export const latePrompt = (family: string) => `What should I tell ${family}? I'll send it as your message.`;
 /** What a mid-flow question is answered from (founder 2026-10-11): who the family is and exactly what happens to the text. */
 export const RELAY_FACTS = (family: string, draft?: string) =>
-  `The family is ${family} — the family of the caregiver's visit (the one in progress, else today's, else the next scheduled). ` +
+  `The family is ${family} — the family of the care provider's visit (the one in progress, else today's, else the next scheduled). ` +
   `${draft ? `The message waiting to be sent reads: "${draft}". ` : ""}` +
-  `The message is posted into ${family}'s Inbox thread as the caregiver's OWN words, exactly as typed — Evia adds, rewrites and sends nothing of its own. ` +
-  "The family sees it in the app and by text, as a message from the caregiver, and can reply in the same thread. " +
+  `The message is posted into ${family}'s Inbox thread as the care provider's OWN words, exactly as typed — Evia adds, rewrites and sends nothing of its own. ` +
+  "The family sees it in the app and by text, as a message from the care provider, and can reply in the same thread. " +
   "Nothing has been sent yet; NO or CANCEL backs out without sending.";
 
 const FLOW_TTL_MS = 30 * 60 * 1000;

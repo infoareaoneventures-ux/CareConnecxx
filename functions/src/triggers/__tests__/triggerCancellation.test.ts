@@ -103,18 +103,18 @@ describe("isReplyExempt", () => {
 
   it("keeps nudges and qa_retry reply-cancellable (twin-trigger + commitment tracker semantics)", () => {
     expect(isReplyExempt({ type: "custom", message: "How was the week?" })).toBe(false);
-    expect(isReplyExempt({ type: "custom", message: "Just checking in about caregivers" })).toBe(false);
+    expect(isReplyExempt({ type: "custom", message: "Just checking in about care providers" })).toBe(false);
     expect(isReplyExempt({ type: "qa_retry", message: "qa_retry:{}" })).toBe(false);
   });
 });
 
 // Families only (founder, 2026-10-11 — caregiver sweep A4).
 describe("isCaregiverFollowUp", () => {
-  it("retires a model-worded custom follow-up whose recipient session is a caregiver", () => {
+  it("retires a model-worded custom follow-up whose recipient session is a care provider", () => {
     expect(isCaregiverFollowUp({ type: "custom", message: "How did the visit go?" }, { userType: "caregiver" })).toBe(true);
   });
 
-  it("retires one the scheduler already marked for a caregiver", () => {
+  it("retires one the scheduler already marked for a care provider", () => {
     expect(isCaregiverFollowUp({ type: "custom", message: "Checking in", userType: "caregiver" }, {})).toBe(true);
   });
 
@@ -123,7 +123,7 @@ describe("isCaregiverFollowUp", () => {
     expect(isCaregiverFollowUp({ type: "custom", message: "How did the visit go?" }, undefined)).toBe(false);
   });
 
-  it("never touches interview reminders, qa_retry or the caregiver check-ins", () => {
+  it("never touches interview reminders, qa_retry or the care provider check-ins", () => {
     expect(isCaregiverFollowUp({ type: "appointment_reminder", message: "Interview in an hour" }, { userType: "caregiver" })).toBe(false);
     expect(isCaregiverFollowUp({ type: "custom", message: "qa_retry:{}" }, { userType: "caregiver" })).toBe(false);
     expect(isCaregiverFollowUp({ type: "caregiver_checkin", message: "Are you on your way?" }, { userType: "caregiver" })).toBe(false);
@@ -177,7 +177,7 @@ const baseTrigger: any = {
 // The exact leaked-incident shape: the model replies to the briefing author.
 const META_OUTPUT =
   "Got it, but I need the briefing context to write this message, " +
-  "who's the caregiver, what shift/client situation are we talking about...";
+  "who's the care provider, what shift/client situation are we talking about...";
 
 const modelReturns = (text: string) => {
   claudeHoisted.messagesCreate.mockResolvedValue({ content: [{ type: "text", text }] });

@@ -99,11 +99,11 @@ export function buildProfileMeta(
   cg: Record<string, unknown>
 ): ProfileMeta {
   const appUrl = getAppUrl();
-  const name = typeof cg.name === "string" && cg.name.trim() ? cg.name.trim() : "Caregiver";
+  const name = typeof cg.name === "string" && cg.name.trim() ? cg.name.trim() : "Care Provider";
 
   const parts: string[] = [];
   const bg = (cg.backgroundCheckStatus ?? "") as string;
-  parts.push(bg === "clear" ? "Background-checked caregiver" : "Caregiver");
+  parts.push(bg === "clear" ? "Background-checked care provider" : "Care provider");
   const city = [cg.city, cg.state].filter((v) => typeof v === "string" && v).join(", ");
   if (city) parts[0] += ` in ${city}`;
   const rate = Number(cg.hourlyRate);
@@ -121,7 +121,7 @@ export function buildProfileMeta(
     .find((p): p is string => typeof p === "string" && /^https?:\/\//i.test(p));
 
   return {
-    title:       `${name} — Caregiver on Evia`,
+    title:       `${name} — Care Provider on Evia`,
     description: `${parts.join(" · ")}. View their profile and book on Evia.`,
     image:       photo ?? `${appUrl}/icon-512.png`,
     url:         `${appUrl}/p/${id}`,
@@ -160,7 +160,7 @@ export const caregiverProfileMeta = functions.runWith({}).https.onRequest(async 
     console.error("caregiverProfileMeta: index.html unavailable:", (err as Error)?.message);
     // Can't build any page — hand the visitor to the SPA-served legacy route
     // (different path, so it hits the catch-all rewrite, not this function).
-    res.redirect(302, `${getAppUrl()}/caregiver/${encodeURIComponent(id)}`);
+    res.redirect(302, `${getAppUrl()}/care-provider/${encodeURIComponent(id)}`);
     return;
   }
 

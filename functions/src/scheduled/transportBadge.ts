@@ -50,7 +50,7 @@ export const refreshTransportBadge = functions.https.onCall(async (data, context
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   const targetUid = data?.uid || context.auth.uid;
   const snap = await db.collection('caregivers').doc(targetUid).get();
-  if (!snap.exists) throw new functions.https.HttpsError('not-found', 'Caregiver not found');
+  if (!snap.exists) throw new functions.https.HttpsError('not-found', 'Care Provider not found');
   const caregiverData = snap.data() || {};
   const badge = caregiverData.verified === true && transportationLive(caregiverData);
   await snap.ref.update({ transportationBadge: badge });

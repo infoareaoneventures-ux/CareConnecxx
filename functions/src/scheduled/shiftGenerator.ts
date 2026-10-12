@@ -239,7 +239,7 @@ export const onBookingAccepted = functions.firestore
           userId:    after.clientId,
           type:      'booking_accepted',
           title:     'Booking Accepted',
-          body:      `${after.caregiverName || 'Your caregiver'} accepted your booking request.`,
+          body:      `${after.caregiverName || 'Your care provider'} accepted your booking request.`,
           data:      { bookingId, caregiverId: after.caregiverId },
           isRead:    false,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),

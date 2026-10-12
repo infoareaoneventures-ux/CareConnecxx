@@ -35,6 +35,6 @@ describe("triggerSendOptions — transactional reminders are never droppable", (
   });
 
   it("discretionary nudges stay droppable (judge + daily cap still apply)", () => {
-    expect(triggerSendOptions({ type: "custom", message: "Following up on the caregiver search" })).toEqual({ urgency: "standard", canDrop: true });
+    expect(triggerSendOptions({ type: "custom", message: "Following up on the care provider search" })).toEqual({ urgency: "standard", canDrop: true });
   });
 });

@@ -49,7 +49,7 @@ const cleared = {
 beforeEach(() => { hoisted.adds.length = 0; hoisted.docs.clear(); hoisted.initiate.mockClear(); hoisted.failWrites.on = false; });
 
 describe("needsMvrOnlyCheck", () => {
-  it("is true only for an active-membership, criminal-cleared caregiver who offers Transportation with no MVR yet", () => {
+  it("is true only for an active-membership, criminal-cleared care provider who offers Transportation with no MVR yet", () => {
     expect(needsMvrOnlyCheck({ ...cleared, services: ["Transportation"] })).toBe(true);
     expect(needsMvrOnlyCheck({ ...cleared, services: [], skills: ["Transportation"] })).toBe(true);
     expect(needsMvrOnlyCheck(cleared)).toBe(false);
@@ -71,7 +71,7 @@ describe("needsMvrOnlyCheck", () => {
 });
 
 describe("startMvrOnTransportationAdded (consent-first, 2026-10-06)", () => {
-  it("parks the record on 'awaiting_consent' when Transportation is added to a cleared caregiver — and calls Checkr NOT at all", async () => {
+  it("parks the record on 'awaiting_consent' when Transportation is added to a cleared care provider — and calls Checkr NOT at all", async () => {
     const after = { ...cleared, services: ["Transportation"], phone: "+15550001111" };
     hoisted.docs.set("caregivers/cg1", after);
     hoisted.docs.set("agent_sessions/+15550001111", { bgcheckInviteUrl: "https://checkr/old", bgcheckInviteSentAt: "2025-01-01" });
@@ -96,7 +96,7 @@ describe("startMvrOnTransportationAdded (consent-first, 2026-10-06)", () => {
     await run(change(t, { ...t, bio: "y" }), ctx);
     expect(hoisted.docs.get("caregivers/cg1").mvrStatus).toBeUndefined();
   });
-  it("does nothing for a caregiver who never offered Transportation", async () => {
+  it("does nothing for a care provider who never offered Transportation", async () => {
     hoisted.docs.set("caregivers/cg1", { ...cleared, bio: "y" });
     await run(change(cleared, { ...cleared, bio: "y" }), ctx);
     expect(hoisted.docs.get("caregivers/cg1").mvrStatus).toBeUndefined();

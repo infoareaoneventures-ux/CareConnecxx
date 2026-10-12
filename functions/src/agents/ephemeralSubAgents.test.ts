@@ -92,7 +92,7 @@ describe("runEphemeralSubAgent", () => {
   it("routes nuance sub-agents (caregiver_compare) to Sonnet", async () => {
     const result = await runEphemeralSubAgent({
       subagentType: "caregiver_compare",
-      description:  "Shift: Thursday morning, dementia care. Caregivers: Maria ($28/hr, dementia trained, 4.9★), Sam ($24/hr, general, 4.6★).",
+      description:  "Shift: Thursday morning, dementia care. Care Providers: Maria ($28/hr, dementia trained, 4.9★), Sam ($24/hr, general, 4.6★).",
     });
     expect(result.modelUsed).toBe("claude-sonnet-4-6");
     expect(result.output).toMatch(/Maria/);

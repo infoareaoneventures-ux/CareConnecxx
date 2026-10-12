@@ -8,7 +8,7 @@ import { quickComplete } from "../utils/openaiClient";
 // live family hit exactly this. A literal mention of "caregiver" always wins
 // over that specific misclassification, regardless of what the model guessed.
 export function isCaregiverSearchMisroutedAsProviderSearch(intent: Intent, text: string): boolean {
-  return intent === "FIND_NEARBY_PROVIDER" && /\bcaregivers?\b/i.test(text);
+  return intent === "FIND_NEARBY_PROVIDER" && /\b(?:caregivers?|care\s+providers?)\b/i.test(text);
 }
 
 export type Intent =

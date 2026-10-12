@@ -84,7 +84,7 @@ describe("checkClientAccess — the site's rule", () => {
 describe("clientGateText — the modals' copy", () => {
   it("identity = IdentityGateModal (says 'contact' for every action, like the modal)", () => {
     expect(clientGateText("identity", "booking", "Basra")).toMatch(/^To contact Basra, you need to complete a quick identity check\. Pick up where you left off!/);
-    expect(clientGateText("identity", "booking")).toMatch(/^To contact caregivers, you need to complete a quick identity check/);
+    expect(clientGateText("identity", "booking")).toMatch(/^To contact care providers, you need to complete a quick identity check/);
     expect(clientGateText("identity", "message")).toMatch(/Stripe Identity/);
   });
 

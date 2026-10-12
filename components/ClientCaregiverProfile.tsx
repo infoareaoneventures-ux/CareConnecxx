@@ -56,7 +56,7 @@ type Review = { id: string; reviewerName: string; reviewerPhoto?: string | null;
 
 
 function mapRawToProfile(id: string, data: any): CaregiverProfile {
-  const firstName = data.firstName || data.name?.split(' ')[0] || 'Caregiver';
+  const firstName = data.firstName || data.name?.split(' ')[0] || 'Care Provider';
   const lastName = data.lastName || data.name?.split(' ').slice(1).join(' ') || '';
   return {
     id,
@@ -296,8 +296,8 @@ export default function ClientCaregiverProfile({
     <div className={modalMode ? 'py-16 text-center' : 'min-h-screen bg-slate-50'}>
       {!modalMode && <ClientNavigation />}
       <div className="max-w-3xl mx-auto px-4 py-16 text-center">
-        <p className="text-slate-500 mb-4">Caregiver not found.</p>
-        <button onClick={onClose ?? (() => navigate('/client/find-caregivers'))} className="px-5 py-2 bg-primary-600 text-white rounded-full font-semibold">
+        <p className="text-slate-500 mb-4">Care provider not found.</p>
+        <button onClick={onClose ?? (() => navigate('/client/find-care-providers'))} className="px-5 py-2 bg-primary-600 text-white rounded-full font-semibold">
           {onClose ? 'Close' : 'Back to search'}
         </button>
       </div>
@@ -462,7 +462,7 @@ export default function ClientCaregiverProfile({
                     <span className="text-sm font-bold text-slate-900">${rate}/hr <span className="text-xs font-normal text-slate-400">· ${billedHourlyRate(Number(rate)).toFixed(2)} billed</span></span>
                   </div>
                 ))}
-                <p className="text-xs text-slate-400 pt-2">Billed includes Evia's {SERVICE_FEE_PERCENT_LABEL} service fee. The caregiver keeps 100% of their rate.</p>
+                <p className="text-xs text-slate-400 pt-2">Billed includes Evia's {SERVICE_FEE_PERCENT_LABEL} service fee. The care provider keeps 100% of their rate.</p>
                 {caregiver.experience && (
                   <div className="pt-2.5 text-xs text-slate-500">{formatExperience(caregiver.experience)}</div>
                 )}

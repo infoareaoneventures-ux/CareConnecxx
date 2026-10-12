@@ -32,6 +32,7 @@
 // offer → writeConfirmedShifts) is gone; the caregiver accepts on the site
 // and shiftGenerator.ts's onBookingAccepted creates the shifts, exactly as
 // for a web-sent request.
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -208,8 +209,8 @@ async function answerQuestionMidFlow(text: string, caregiverName?: string): Prom
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a family send a booking request" +
-      (caregiverName ? ` to a caregiver named ${caregiverName}` : "") +
+      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family send a booking request" +
+      (caregiverName ? ` to a care provider named ${caregiverName}` : "") +
       ". You see ONLY this one message, not the rest of the conversation — including anything " +
       "Evia herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. " +
       "If the message is clearly about something OTHER than finishing this booking — a different topic entirely " +
@@ -451,9 +452,9 @@ export async function findResendableBookingRequests(clientId: string, caregiverI
     out.push({
       id,
       caregiverId: String(data.caregiverId ?? ""),
-      caregiverName: String(data.caregiverName ?? "your caregiver"),
+      caregiverName: String(data.caregiverName ?? "your care provider"),
       ...(data.jobTitle ? { jobTitle: String(data.jobTitle) } : {}),
-      statusLabel: data.status === "cancelled" ? "Visit cancelled" : "Caregiver declined",
+      statusLabel: data.status === "cancelled" ? "Visit cancelled" : "Care Provider declined",
       ...(whenLabel ? { whenLabel } : {}),
     });
     void ms;
@@ -481,7 +482,7 @@ async function seedResendAndRecap(
   }
   if (r.status !== "declined" && r.status !== "cancelled") {
     await sendMessage(chatId, r.status === "pending"
-      ? "That booking request is already pending with the caregiver — nothing to resend."
+      ? "That booking request is already pending with the care provider — nothing to resend."
       : "That booking request isn't cancelled or declined, so there's nothing to resend.");
     return { started: false, reason: "not_resendable" };
   }
@@ -499,7 +500,7 @@ async function seedResendAndRecap(
   const ec = r.emergencyContact as { name?: string; phone?: string; relationship?: string } | null | undefined;
   const data: BookingFlowData = {
     caregiverId:   String(r.caregiverId ?? ""),
-    caregiverName: String(r.caregiverName ?? "your caregiver"),
+    caregiverName: String(r.caregiverName ?? "your care provider"),
     ...(r.interviewId ? { interviewId: String(r.interviewId) } : {}),
     ...(r.jobId ? { jobId: String(r.jobId) } : {}),
     ...(r.jobTitle ? { jobTitle: String(r.jobTitle) } : {}),
@@ -687,12 +688,12 @@ export async function startBookingFlow(
     }
     const caregiverId = args.caregiverId ?? (iv.caregiverId as string | undefined);
     if (!caregiverId) {
-      await sendMessage(chatId, "I couldn't tell which caregiver that interview was with. Who would you like to book?");
+      await sendMessage(chatId, "I couldn't tell which care provider that interview was with. Who would you like to book?");
       return { started: false, reason: "caregiver_not_found" };
     }
     const nameRes = await resolveBookingCaregiverName(caregiverId);
     if (!nameRes.ok) {
-      await sendMessage(chatId, "I couldn't find that caregiver to book. Can you tell me who you'd like to book?");
+      await sendMessage(chatId, "I couldn't find that care provider to book. Can you tell me who you'd like to book?");
       return { started: false, reason: "caregiver_not_found" };
     }
     const linkage = await resolveInterviewLinkage(clientId, caregiverId, args.interviewId);
@@ -719,7 +720,7 @@ export async function startBookingFlow(
   if (args.caregiverId) {
     const nameRes = await resolveBookingCaregiverName(args.caregiverId);
     if (!nameRes.ok) {
-      await sendMessage(chatId, "I couldn't find that caregiver to book. Can you tell me who you'd like to book?");
+      await sendMessage(chatId, "I couldn't find that care provider to book. Can you tell me who you'd like to book?");
       return { started: false, reason: "caregiver_not_found" };
     }
     caregiverName = nameRes.caregiverName;
@@ -1242,7 +1243,7 @@ async function handleBkAskMessage(
   }
   const decision = await parseWithClaude(
     'Is the family declining/skipping a note ("no", "skip", "nothing", "nope", "no thanks", "not needed"), or is ' +
-    "this message itself the note they want sent to the caregiver? Reply with exactly SKIP or NOTE.",
+    "this message itself the note they want sent to the care provider? Reply with exactly SKIP or NOTE.",
     text
   );
   if (decision.toUpperCase().startsWith("SKIP")) {
@@ -1428,7 +1429,7 @@ export function buildBookingRecap(data: BookingFlowData): string {
   return [
     `Here's your booking request:`,
     ``,
-    `Caregiver: ${data.caregiverName}`,
+    `Care Provider: ${data.caregiverName}`,
     // 2026-09-13 (live-caught): unlike the site — where clicking "Send
     // Booking" on a specific interview/job row makes it unambiguous what
     // you're sending — nothing here ever named WHICH interview/job post
@@ -1478,9 +1479,9 @@ async function classifyBkConfirmReply(text: string): Promise<any | null> {
     'to go shopping", "note for her: prefers mornings") — distinct from a care need/task or a lifestyle ' +
     "preference — set notesRecipient to whose note this is if a name is stated (else null), and notesText to the " +
     "exact note content stated, else null. " +
-    '"edit_message" = wants to add/change the optional note sent TO THE CAREGIVER — this is the default for any ' +
+    '"edit_message" = wants to add/change the optional note sent TO THE CARE PROVIDER — this is the default for any ' +
     '"add/change a note" request that does NOT specifically name or imply a care recipient (matches the site\'s ' +
-    'own single "Message to {caregiver}" field, which is what most families mean by a plain "add a note" with no ' +
+    'own single "Message to {care provider}" field, which is what most families mean by a plain "add a note" with no ' +
     'one else specified) — e.g. "add this note: running late today", "can you add a note saying thanks" both set ' +
     'newMessage to the actual note text (strip only a leading instruction like "add this note"/"add a note that " ' +
     'if present, e.g. "add this note. this is for a testing" -> newMessage "this is for a testing"). Set ' +

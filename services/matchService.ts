@@ -359,7 +359,7 @@ export const matchService = {
 
                 // Add predictive reasoning
                 if (predictiveFactors.similarSeniorsScore >= 75) {
-                    reasons.push(`Seniors like yours love this caregiver`);
+                    reasons.push(`Seniors like yours love this care provider`);
                 }
                 if (predictiveFactors.retentionScore >= 80) {
                     reasons.push(`${predictiveFactors.retentionScore}% client retention rate`);
@@ -540,7 +540,7 @@ export const matchService = {
 
         return {
             score: factors.successProbability,
-            reasoning: generatePredictiveReasoning(factors, caregiver.name || 'This caregiver'),
+            reasoning: generatePredictiveReasoning(factors, caregiver.name || 'This care provider'),
             confidence: (factors.confidence !== undefined
                 ? (factors.confidence >= 70 ? 'high' : factors.confidence >= 40 ? 'medium' : 'low')
                 : 'medium') as 'high' | 'medium' | 'low',

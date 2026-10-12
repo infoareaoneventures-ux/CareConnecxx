@@ -86,12 +86,12 @@ export async function listCancellables(clientId: string): Promise<CancelOption[]
     // "Choose someone else" on the page (withdraw that request — listed
     // below as its own option), not Skip.
     if (s.status === "needs_replacement" && s.replacementRequestId) continue;
-    const cg = String(s.caregiverName ?? "your caregiver");
+    const cg = String(s.caregiverName ?? "your care provider");
     out.push({
       kind: "visit", id: d.id, caregiverName: cg,
       label: `${s.status === "needs_replacement" ? "Needs-replacement visit" : "Visit"} — ${visitWindow(s)} with ${cg}`,
       confirmText: s.status === "needs_replacement"
-        ? `Skip the ${visitWindow(s)} visit? No replacement caregiver will be arranged and it will be marked cancelled.`
+        ? `Skip the ${visitWindow(s)} visit? No replacement care provider will be arranged and it will be marked cancelled.`
         : `Cancel only the ${visitWindow(s)} visit with ${cg}? The rest of the booking stays active.`,
       sortKey: `0_${s.date}_${s.startTime}`,
     });
@@ -99,7 +99,7 @@ export async function listCancellables(clientId: string): Promise<CancelOption[]
 
   for (const d of brSnap.docs) {
     const b = d.data();
-    const cg = String(b.caregiverName ?? "the caregiver");
+    const cg = String(b.caregiverName ?? "the care provider");
     if (b.status === "accepted" && (scheduledByBooking.get(d.id) ?? []).some((s) => s.status === "scheduled" || s.status === "needs_replacement")) {
       const remaining = (scheduledByBooking.get(d.id) ?? []).filter((s) => s.status === "scheduled" || s.status === "needs_replacement").length;
       const sched = describeSchedule(b.schedule as Record<string, unknown> | undefined);
@@ -131,7 +131,7 @@ export async function listCancellables(clientId: string): Promise<CancelOption[]
 
   for (const d of amSnap.docs) {
     const a = d.data();
-    const cg = String(a.caregiverName ?? "the caregiver");
+    const cg = String(a.caregiverName ?? "the care provider");
     const days = describeSchedule({ dayShiftTimes: a.newDays });
     out.push({
       kind: "amendment", id: d.id, caregiverName: cg,
@@ -173,7 +173,7 @@ export async function cancelVisit(clientId: string, shiftId: string, source: str
     if (shift.replacementRequestId) {
       return {
         ok: false, code: "INVALID_INPUT",
-        message: `A replacement request to ${String(shift.replacementCaregiverName ?? "another caregiver")} is still out for this visit — withdraw that request ("Choose someone else") instead of skipping`,
+        message: `A replacement request to ${String(shift.replacementCaregiverName ?? "another care provider")} is still out for this visit — withdraw that request ("Choose someone else") instead of skipping`,
       };
     }
     // Skip on a needs-replacement row — handleSkipReplacement.
@@ -206,7 +206,7 @@ export async function cancelWholeBooking(clientId: string, bookingRequestId: str
   await batch.commit();
   await brRef.update({ status: "cancelled" });
   logAudit({ eventType: "booking_cancelled", userId: clientId, data: { source, bookingRequestId, shiftsCancelled: shiftsSnap.size } }).catch(() => {});
-  return { ok: true, kind: "booking", id: bookingRequestId, detail: String(br.caregiverName ?? "the caregiver"), shiftsCancelled: shiftsSnap.size };
+  return { ok: true, kind: "booking", id: bookingRequestId, detail: String(br.caregiverName ?? "the care provider"), shiftsCancelled: shiftsSnap.size };
 }
 
 // handleCancelPendingBooking: withdraw a request the caregiver hasn't answered.
@@ -219,7 +219,7 @@ export async function cancelPendingRequest(clientId: string, bookingRequestId: s
   if (br.status !== "pending") return { ok: false, code: "INVALID_INPUT", message: `Only a pending request can be cancelled this way (status: ${br.status})` };
   await brRef.update({ status: "cancelled" });
   logAudit({ eventType: "booking_request_cancelled", userId: clientId, data: { source, bookingRequestId } }).catch(() => {});
-  return { ok: true, kind: br.isShiftReplacement ? "replacement_request" : "pending_request", id: bookingRequestId, detail: String(br.caregiverName ?? "the caregiver") };
+  return { ok: true, kind: br.isShiftReplacement ? "replacement_request" : "pending_request", id: bookingRequestId, detail: String(br.caregiverName ?? "the care provider") };
 }
 
 // handleWithdrawReplacement: the replacement request only — the visit stays
@@ -233,7 +233,7 @@ export async function withdrawReplacementRequest(clientId: string, bookingReques
   if (!br.isShiftReplacement) return { ok: false, code: "INVALID_INPUT", message: "This booking request isn't a replacement request" };
   await brRef.update({ status: "cancelled", updatedAt: FV.serverTimestamp() });
   logAudit({ eventType: "callout_backup_withdrawn", userId: clientId, data: { source, bookingRequestId } }).catch(() => {});
-  return { ok: true, kind: "replacement_request", id: bookingRequestId, detail: String(br.caregiverName ?? "the caregiver") };
+  return { ok: true, kind: "replacement_request", id: bookingRequestId, detail: String(br.caregiverName ?? "the care provider") };
 }
 
 // The Requests tab's Cancel Request on a schedule-change card.
@@ -246,7 +246,7 @@ export async function cancelPendingAmendment(clientId: string, amendmentId: stri
   if (am.status !== "pending") return { ok: false, code: "INVALID_INPUT", message: `Only a pending amendment can be cancelled (status: ${am.status})` };
   await amRef.update({ status: "cancelled" });
   logAudit({ eventType: "amendment_cancelled", userId: clientId, data: { source, amendmentId } }).catch(() => {});
-  return { ok: true, kind: "amendment", id: amendmentId, detail: String(am.caregiverName ?? "the caregiver") };
+  return { ok: true, kind: "amendment", id: amendmentId, detail: String(am.caregiverName ?? "the care provider") };
 }
 
 export async function applyCancel(clientId: string, opt: { kind: CancelKind; id: string }, source: string): Promise<CancelResult> {

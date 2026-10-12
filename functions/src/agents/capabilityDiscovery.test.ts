@@ -12,7 +12,7 @@ import {
 import { LAUNCH_ACTION_PARITY } from "./launchActionParity";
 
 describe("getCapabilityExamples", () => {
-  it("returns a short (3-5) list for client and caregiver", () => {
+  it("returns a short (3-5) list for client and care provider", () => {
     for (const role of ["client", "caregiver"] as const) {
       const ex = getCapabilityExamples(role);
       expect(ex.length).toBeGreaterThanOrEqual(3);
@@ -26,7 +26,7 @@ describe("getCapabilityExamples", () => {
     expect(text).not.toContain("feature");
   });
 
-  it("caregiver examples surface shift / pay / referral themes", () => {
+  it("care provider examples surface shift / pay / referral themes", () => {
     const text = getCapabilityExamples("caregiver", 5).join(" | ").toLowerCase();
     expect(text).toMatch(/shift|caregiver|clock/);
     expect(text).toMatch(/earnings|payout|paid|hours|pay/);
@@ -57,7 +57,7 @@ describe("buildHelpSmsReply", () => {
     expect(reply.toLowerCase()).not.toContain("what can i help you with");
   });
 
-  it("caregiver HELP reply surfaces caregiver actions", () => {
+  it("care provider HELP reply surfaces care provider actions", () => {
     const reply = buildHelpSmsReply("caregiver").toLowerCase();
     expect(reply).toMatch(/job|shift|earnings|payout|clock|hours/);
   });

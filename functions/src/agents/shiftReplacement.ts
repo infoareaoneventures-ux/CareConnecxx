@@ -138,9 +138,9 @@ export async function createReplacementRequest(args: {
 }): Promise<CreateReplacementResult> {
   const { clientId, shiftId, shift, shiftRef, backupCaregiverId, nowIso } = args;
   const cgSnap = await db.collection("caregivers").doc(backupCaregiverId).get();
-  if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "caregiver not found" };
+  if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "care provider not found" };
   const cg = cgSnap.data() || {};
-  const caregiverName = ((cg.name as string | undefined) ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "your caregiver";
+  const caregiverName = ((cg.name as string | undefined) ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "your care provider";
   const effDate      = args.date ?? (shift.date as string);
   const effStartTime = args.startTime ?? (shift.startTime as string);
   const effEndTime   = args.endTime ?? (shift.endTime as string | undefined) ?? effStartTime;

@@ -469,7 +469,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                             <Lock className="w-3 h-3" /> Activate Membership
                           </button>
                         ) : blockReason === 'background' ? (
-                          <button onClick={() => navigate('/caregiver/settings')} className="mt-2 w-full py-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
+                          <button onClick={() => navigate('/care-provider/settings')} className="mt-2 w-full py-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
                             <Lock className="w-3 h-3" /> Complete Verification
                           </button>
                         ) : (
@@ -511,7 +511,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
               <Users className="w-4 h-4 text-primary-500" />
               <h2 className="font-semibold text-slate-900">My Families</h2>
             </div>
-            <button onClick={() => navigate('/caregiver/families')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
+            <button onClick={() => navigate('/care-provider/families')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
           </div>
           <div className="space-y-3 max-h-80 overflow-y-auto">
             {acceptedBookings.filter((b: any, i: number, arr: any[]) => arr.findIndex((x: any) => x.clientId === b.clientId) === i).slice(0, 2).map((b: any) => {
@@ -559,7 +559,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                     ) : null;
                   })()}
                   <button
-                    onClick={() => navigate(b.clientId ? `/caregiver/inbox?client=${b.clientId}` : '/caregiver/inbox')}
+                    onClick={() => navigate(b.clientId ? `/care-provider/inbox?client=${b.clientId}` : '/care-provider/inbox')}
                     className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
                   >
                     <MessageSquare className="w-3.5 h-3.5" /> Message
@@ -585,7 +585,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
               <FileText className="w-4 h-4 text-primary-500" />
               <h2 className="font-semibold text-slate-900">Timesheets</h2>
             </div>
-            <button onClick={() => navigate('/caregiver/payments')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
+            <button onClick={() => navigate('/care-provider/payments')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
           </div>
           {(() => {
             const hasActions = unsubmittedShifts.length > 0 || correctionHours.length > 0;
@@ -684,7 +684,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                   <DollarSign className="w-4 h-4 text-primary-500" />
                   <h2 className="font-semibold text-slate-900">Earnings</h2>
                 </div>
-                <button onClick={() => navigate('/caregiver/payments')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
+                <button onClick={() => navigate('/care-provider/payments')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
               </div>
 
               {allOutstanding.length === 0 && unsubmittedShifts.length === 0 ? (

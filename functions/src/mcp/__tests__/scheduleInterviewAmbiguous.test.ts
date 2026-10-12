@@ -72,7 +72,7 @@ describe("schedule_interview — ambiguous name-fallback surfaces candidates ins
     vi.mocked(resolveCaregiverForInterview).mockRejectedValueOnce(
       new VideoInterviewRequestError(
         "ambiguous",
-        'This family has been shown 2 caregivers named "Alice Rivera" — ask which one they mean, then retry with the correct caregiverId.',
+        'This family has been shown 2 care providers named "Alice Rivera" — ask which one they mean, then retry with the correct caregiverId.',
         [{ id: "cg_1", hourlyRate: 20 }, { id: "cg_alice2", hourlyRate: 25 }],
       ),
     );
@@ -89,7 +89,7 @@ describe("schedule_interview — ambiguous name-fallback surfaces candidates ins
 
   it("a genuine no-match still returns the plain NOT_FOUND tool error, unchanged", async () => {
     vi.mocked(resolveCaregiverForInterview).mockRejectedValueOnce(
-      new VideoInterviewRequestError("failed-precondition", "Caregiver is not available for interviews"),
+      new VideoInterviewRequestError("failed-precondition", "Care Provider is not available for interviews"),
     );
 
     const r = await handleToolCall("schedule_interview", baseInput) as any;

@@ -64,11 +64,11 @@ async function loginClient(page: Page) {
 }
 
 async function loginCaregiver(page: Page) {
-  await page.goto(`${BASE}/caregiver/login`);
+  await page.goto(`${BASE}/care-provider/login`);
   await fillInput(page, 'input[type="email"]', CAREGIVER.email);
   await fillInput(page, 'input[type="password"]', CAREGIVER.password);
   await clickText(page, 'Sign In');
-  await page.waitForURL(/caregiver/, { timeout: 15000 });
+  await page.waitForURL(/care-provider/, { timeout: 15000 });
 }
 
 // ── SUITE 1: Public Pages ─────────────────────────────────────────────────────
@@ -221,13 +221,13 @@ test.describe('3. Client Dashboard', () => {
 test.describe('4. Caregiver Signup', () => {
 
   test('4.1 Caregiver signup page renders', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/signup`);
+    await page.goto(`${BASE}/care-provider/signup`);
     await expect(page.locator('body')).toBeVisible({ timeout: 10000 });
     console.log('✅ Caregiver signup page renders');
   });
 
   test('4.2 Caregiver signup Step 1 — Get Started', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/signup`);
+    await page.goto(`${BASE}/care-provider/signup`);
     // Wait for both auth init spinner AND Suspense lazy-load spinner to clear
     await page.waitForFunction(
       () => {
@@ -245,7 +245,7 @@ test.describe('4. Caregiver Signup', () => {
   });
 
   test('4.3 Caregiver signup Step 2 — Account Info', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/signup`);
+    await page.goto(`${BASE}/care-provider/signup`);
 
     // Click through to Step 2 if there's a get started button
     const getStarted = page.locator('button:has-text("Get Started"), button:has-text("Continue"), button:has-text("Next")').first();
@@ -278,13 +278,13 @@ test.describe('4. Caregiver Signup', () => {
   });
 
   test('4.4 Caregiver login page renders', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/login`);
+    await page.goto(`${BASE}/care-provider/login`);
     await expect(page.locator('input[type="email"]')).toBeVisible({ timeout: 10000 });
     console.log('✅ Caregiver login page renders');
   });
 
   test('4.5 Caregiver dashboard protected', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/dashboard`);
+    await page.goto(`${BASE}/care-provider/dashboard`);
     // App loads 100 caregivers from Firestore before rendering routes, then CaregiverRoute
     // fires the redirect. Wait for that full init to complete (up to 20s).
     await page.waitForURL(/login|signup/, { timeout: 20000 }).catch(() => {});
@@ -416,28 +416,28 @@ test.describe('9. Payment Pages', () => {
 test.describe('10. Caregiver Features', () => {
 
   test('10.1 Caregiver job board accessible', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/jobs`);
+    await page.goto(`${BASE}/care-provider/jobs`);
     await page.waitForTimeout(2000);
     await expect(page.locator('body')).toBeVisible();
     console.log('✅ Caregiver job board accessible');
   });
 
   test('10.2 Caregiver schedule page accessible', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/schedule`);
+    await page.goto(`${BASE}/care-provider/schedule`);
     await page.waitForTimeout(2000);
     await expect(page.locator('body')).toBeVisible();
     console.log('✅ Caregiver schedule accessible');
   });
 
   test('10.3 Caregiver earnings page accessible', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/earnings`);
+    await page.goto(`${BASE}/care-provider/earnings`);
     await page.waitForTimeout(2000);
     await expect(page.locator('body')).toBeVisible();
     console.log('✅ Caregiver earnings accessible');
   });
 
   test('10.4 Caregiver profile page accessible', async ({ page }) => {
-    await page.goto(`${BASE}/caregiver/profile`);
+    await page.goto(`${BASE}/care-provider/profile`);
     await page.waitForTimeout(2000);
     await expect(page.locator('body')).toBeVisible();
     console.log('✅ Caregiver profile accessible');
@@ -465,7 +465,7 @@ test.describe('11. Navigation & Responsiveness', () => {
 
   test('11.3 Mobile viewport — caregiver signup', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto(`${BASE}/caregiver/signup`);
+    await page.goto(`${BASE}/care-provider/signup`);
     await expect(page.locator('body')).toBeVisible();
     console.log('✅ Mobile viewport — caregiver signup');
   });
@@ -525,7 +525,7 @@ test.describe('12. Site Health', () => {
   test('12.3 Caregiver signup loads without JS errors', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
-    await page.goto(`${BASE}/caregiver/signup`);
+    await page.goto(`${BASE}/care-provider/signup`);
     await page.waitForTimeout(5000);
     const criticalErrors = errors.filter(e =>
       !e.includes('ResizeObserver') &&

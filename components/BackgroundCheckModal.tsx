@@ -216,7 +216,7 @@ export const BackgroundCheckModal: React.FC<BackgroundCheckModalProps> = ({ onCl
                   onChange={(e) => setFormData({ ...formData, consentGiven: e.target.checked })}
                 />
                 <span className="text-xs text-slate-600 leading-relaxed">
-                  I have read the disclosure above and authorize Evia and Checkr, Inc. to obtain a consumer report (background check) about me for caregiving eligibility purposes under the FCRA. I understand that Checkr will email me a secure link to provide my SSN and date of birth directly on their platform. I agree to Checkr's{' '}
+                  I have read the disclosure above and authorize Evia and Checkr, Inc. to obtain a consumer report (background check) about me for care provider eligibility purposes under the FCRA. I understand that Checkr will email me a secure link to provide my SSN and date of birth directly on their platform. I agree to Checkr's{' '}
                   <a
                     href="https://checkr.com/customer-terms-of-service"
                     target="_blank"

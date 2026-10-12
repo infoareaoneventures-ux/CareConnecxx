@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { lintMessage, lintPreservingLayout } from "./linter";
+import { enforceCareProviderTerm, lintMessage, lintPreservingLayout } from "./linter";
 
 describe("lintMessage", () => {
   it("replaces em-dashes with commas", () => {
@@ -70,5 +70,22 @@ describe("lintPreservingLayout", () => {
       "Let me find an alternative, shortly.",
     );
     expect(lintPreservingLayout("I'll get back to you shortly.")).toBe("shortly.");
+  });
+});
+
+// Founder 2026-10-12: model-written replies say "care provider", never "caregiver".
+describe("enforceCareProviderTerm (model-written text only)", () => {
+  it("rewrites the word in running text, keeping case and plural", () => {
+    expect(enforceCareProviderTerm("Your caregiver is on the way.")).toBe("Your care provider is on the way.");
+    expect(enforceCareProviderTerm("Caregivers near you: 3. CAREGIVER SEARCH done.")).toBe("Care providers near you: 3. CARE PROVIDER SEARCH done.");
+    expect(enforceCareProviderTerm("the caregiver's rate")).toBe("the care provider's rate");
+  });
+  it("never touches a URL or path token", () => {
+    expect(enforceCareProviderTerm("Open https://eviacares.com/caregiver/jobs to apply")).toBe("Open https://eviacares.com/caregiver/jobs to apply");
+    expect(enforceCareProviderTerm("It's at /caregiver/settings now")).toBe("It's at /caregiver/settings now");
+  });
+  it("leaves identifiers and text without the word alone", () => {
+    expect(enforceCareProviderTerm("caregiverId stays; publicCaregiverProfiles too")).toBe("caregiverId stays; publicCaregiverProfiles too");
+    expect(enforceCareProviderTerm("Nothing to change here.")).toBe("Nothing to change here.");
   });
 });

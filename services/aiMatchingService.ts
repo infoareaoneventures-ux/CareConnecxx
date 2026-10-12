@@ -44,28 +44,28 @@ export interface MatchOutcome {
 }
 
 // Domain knowledge distilled from 15,000 validated caregiver-senior matching scenarios
-const CARE_DOMAIN_KNOWLEDGE = `You are an expert home care coordinator matching caregivers to seniors. Score each candidate on how well they fit the senior's specific needs.
+const CARE_DOMAIN_KNOWLEDGE = `You are an expert home care coordinator matching care providers to seniors. Score each candidate on how well they fit the senior's specific needs.
 
 DOMAIN KNOWLEDGE (distilled from 15,000 validated matching scenarios):
 - Skills coverage below 50%: overall score must not exceed 55 regardless of other signals.
 - Schedule overlap below 30%: disqualifying — score below 40.
-- Distance ≤ 5 miles: strong reliability signal (caregivers show up consistently).
+- Distance ≤ 5 miles: strong reliability signal (care providers show up consistently).
 - Distance > 20 miles: schedule reliability risk, factor down.
 - Rating ≥ 4.5 with ≥ 10 reviews: strong quality signal.
 - Experience ≥ 3 years for complex care (dementia, medical, mobility): important positive signal.
-- Personality match improves retention: calm/patient caregiver + anxious or dementia senior; energetic/chatty caregiver + companionship-focused or extrovert senior.
+- Personality match improves retention: calm/patient care provider + anxious or dementia senior; energetic/chatty care provider + companionship-focused or extrovert senior.
 - Language match when family specified a preference: strong positive signal (+8–12 pts).
-- Verified caregiver status: meaningful trust signal.
+- Verified care provider status: meaningful trust signal.
 - Retention rate ≥ 75%: families rebook — reliable long-term fit.
 - Prior positive feedback (hired before by this family): strong positive signal. Prior rejection: strong negative signal.
 - Personality tags like "calm" and "patient" pair best with dementia, anxiety, or mobility-limited seniors.
-- Pet-friendly caregiver matters when senior has pets.
+- Pet-friendly care provider matters when senior has pets.
 
 Return ONLY a valid JSON array — no markdown fences, no explanation outside the JSON.
 Each element must have: { "caregiverId": "...", "overallScore": 0-100, "confidence": "high|medium|low", "reasoning": ["...", "...", "..."], "redFlags": ["..."], "factors": { "skillsMatch": 0-100, "availability": 0-100, "distance": 0-100, "experience": 0-100, "personalityFit": 0-100, "languageMatch": 0-100 } }`;
 
 // Compact system prompt for single-caregiver browse scoring (uses Haiku for speed)
-const SINGLE_MATCH_SYSTEM = `You are a home care coordinator. Score this caregiver for the senior's needs (0-100).
+const SINGLE_MATCH_SYSTEM = `You are a home care coordinator. Score this care provider for the senior's needs (0-100).
 Return ONLY JSON (no markdown): {"overallScore":0-100,"confidence":"high|medium|low","reasoning":["...","..."],"redFlags":["..."],"factors":{"skillsMatch":0-100,"availability":0-100,"distance":0-100,"experience":0-100,"personalityFit":0-100,"languageMatch":0-100}}
 Rules: Skills <50% → max 55. Schedule overlap <30% → max 40.`;
 

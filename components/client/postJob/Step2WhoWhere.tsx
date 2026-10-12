@@ -464,7 +464,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   return (
     <div>
       <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center mb-1">Who's receiving care?</h2>
-      <p className="text-center text-slate-500 mb-8">Your address and care recipient details are never shown to caregivers — only distance.</p>
+      <p className="text-center text-slate-500 mb-8">Your address and care recipient details are never shown to care providers — only distance.</p>
 
       <div className="space-y-6">
 
@@ -487,7 +487,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
 
         {/* How many caregivers needed */}
         <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1">How many caregivers do you need?</label>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">How many care providers do you need?</label>
           <div className="inline-flex items-center gap-3 bg-white border-2 border-slate-200 rounded-xl px-3 py-2">
             <button type="button" onClick={() => onChange({ caregiversNeeded: (Math.max(1, data.caregiversNeeded - 1)) as 1|2|3|4 })} disabled={data.caregiversNeeded === 1}
               className="w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-40">
@@ -498,7 +498,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
               className="w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-40">
               <Plus className="w-4 h-4" />
             </button>
-            <span className="text-sm text-slate-500">{data.caregiversNeeded === 1 ? 'Caregiver' : 'Caregivers'}</span>
+            <span className="text-sm text-slate-500">{data.caregiversNeeded === 1 ? 'Care Provider' : 'Care Providers'}</span>
           </div>
         </div>
 

@@ -302,7 +302,7 @@ describe("U3b — default QA/quick tail persists through persistCompletedTurn", 
     }));
   });
 
-  it("caregiver turn: transcript persistence still happens but family-fact extraction is OFF (R8)", async () => {
+  it("care provider turn: transcript persistence still happens but family-fact extraction is OFF (R8)", async () => {
     seed({ userType: "caregiver", caregiverId: "cg-1" });
     runQaAgent.mockResolvedValue("Your next shift is Friday.");
 
@@ -482,7 +482,7 @@ describe("U3b source scan — one owner for completed-turn memory", () => {
 // a number reply now falls through to normal routing/runQaAgent exactly like
 // a name reply already did, so both paths converge on the one flow that
 // matches the site.
-describe("characterization — caregiver selection after a match list no longer uses the no-site-match flow", () => {
+describe("characterization — care provider selection after a match list no longer uses the no-site-match flow", () => {
   const pendingMatches = [
     { id: "cg1", name: "Basra Yousuf", rate: 25 },
     { id: "cg2", name: "Imran", rate: 24 },
@@ -496,7 +496,7 @@ describe("characterization — caregiver selection after a match list no longer 
     expect(runQaAgent).toHaveBeenCalled();
   });
 
-  it("a caregiver named directly also falls through to runQaAgent (unchanged — same flow as a number reply now)", async () => {
+  it("a care provider named directly also falls through to runQaAgent (unchanged — same flow as a number reply now)", async () => {
     seed({ pendingMatches, pendingMatchesSetAt: new Date().toISOString() });
 
     await routeIntentAndRespond(ctx("let's interview Basra"));
@@ -533,7 +533,7 @@ describe("FIND_CAREGIVER defers to the agent when pendingMatches is fresh (2026-
     seed();
     classifyIntentDetailed.mockResolvedValue({ intent: "FIND_CAREGIVER", degraded: false });
 
-    await routeIntentAndRespond(ctx("How many caregivers in my area"));
+    await routeIntentAndRespond(ctx("How many care providers in my area"));
 
     expect(presentCaregiverSearch).toHaveBeenCalledOnce();
     expect(runQaAgent).not.toHaveBeenCalled();
@@ -544,7 +544,7 @@ describe("FIND_CAREGIVER defers to the agent when pendingMatches is fresh (2026-
     seed({ pendingMatches, pendingMatchesSetAt: staleSetAt });
     classifyIntentDetailed.mockResolvedValue({ intent: "FIND_CAREGIVER", degraded: false });
 
-    await routeIntentAndRespond(ctx("Any caregivers near me?"));
+    await routeIntentAndRespond(ctx("Any care providers near me?"));
 
     expect(presentCaregiverSearch).toHaveBeenCalledOnce();
   });
@@ -556,7 +556,7 @@ describe("FIND_CAREGIVER defers to the agent when pendingMatches is fresh (2026-
 // caregiver — and dead-ended right there, never reaching runQaAgent/
 // request_booking in that turn. Mirrors the FIND_CAREGIVER fix above: only
 // ask the generic question when there's genuinely no caregiver context.
-describe("HIRE_CAREGIVER defers to the agent when caregiver context exists (2026-09-13)", () => {
+describe("HIRE_CAREGIVER defers to the agent when care provider context exists (2026-09-13)", () => {
   const pendingMatches = [
     { id: "cg1", name: "Maria", rate: 25 },
   ];

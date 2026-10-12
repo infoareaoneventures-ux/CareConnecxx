@@ -61,7 +61,7 @@ export async function handleAvailabilityUpdate(
   if (step === "start") {
     if (await isQuestionOrOther(text)) { await sendMessage(`I can update your availability — it's the same grid as Update Availability on your Calendar. ${WHICH_DAYS_Q}`); return; }
     const raw = await parseWithClaude(
-      `The caregiver wants to change their weekly availability. Extract the days and the action. Return ONLY JSON: {"action":"add"|"remove"|"replace","days":["monday",...],"blocks":["morning","afternoon","evening","overnight"]}. ` +
+      `The care provider wants to change their weekly availability. Extract the days and the action. Return ONLY JSON: {"action":"add"|"remove"|"replace","days":["monday",...],"blocks":["morning","afternoon","evening","overnight"]}. ` +
       `"weekdays" = monday..friday, "weekends" = saturday+sunday, "every day" = all seven. "remove"/"not available"/"take off" = remove. "add" when they add hours. Otherwise "replace". ` +
       `Include "blocks" only when they named parts of the day (morning 6am-12pm, afternoon 12pm-6pm, evening 6pm-12am, overnight 12am-6am; a clock range maps to every block it touches). If no day is named return {"action":"unclear","days":[]}.`,
       text, 200,
@@ -96,7 +96,7 @@ export async function handleAvailabilityUpdate(
     else {
       if (await isQuestionOrOther(text)) { await sendMessage(blocksQ(days, action)); return; }
       const raw = await parseWithClaude(
-        `Map the caregiver's reply to time blocks: morning (6am-12pm), afternoon (12pm-6pm), evening (6pm-12am), overnight (12am-6am). "1"/"2"/"3"/"4" are those in order. "all" = all four; "none" = []. A clock range maps to every block it touches. Return ONLY a JSON array of block ids, e.g. ["morning","afternoon"].`,
+        `Map the care provider's reply to time blocks: morning (6am-12pm), afternoon (12pm-6pm), evening (6pm-12am), overnight (12am-6am). "1"/"2"/"3"/"4" are those in order. "all" = all four; "none" = []. A clock range maps to every block it touches. Return ONLY a JSON array of block ids, e.g. ["morning","afternoon"].`,
         text, 100,
       ).catch(() => "");
       try { const p = JSON.parse(raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "")); if (Array.isArray(p)) blocks = p.map((b) => String(b).toLowerCase()).filter((b): b is BlockId => (BLOCK_IDS as string[]).includes(b)); } catch { /* unparsed */ }
@@ -116,7 +116,7 @@ export async function handleAvailabilityUpdate(
     if (norm === "SAVE" || norm === "YES" || norm === "CONFIRM" || norm === "SAVE AVAILABILITY") decision = "save";
     else if (norm === "CANCEL" || norm === "NO") decision = "cancel";
     else {
-      const v = await parseWithClaude("Evia asked the caregiver to reply SAVE to save their availability or CANCEL. Classify the reply: SAVE, CANCEL, or OTHER (a question or a change).", text, 5).catch(() => "OTHER");
+      const v = await parseWithClaude("Evia asked the care provider to reply SAVE to save their availability or CANCEL. Classify the reply: SAVE, CANCEL, or OTHER (a question or a change).", text, 5).catch(() => "OTHER");
       decision = v.toUpperCase().startsWith("SAVE") ? "save" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (decision === "other") { await sendMessage(`Your availability would be:\n${gridText(proposed)}\n\n${CONFIRM_LINE}`); return; }

@@ -78,14 +78,14 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
         if (trulyPending.length === 0) return (
           <div className="text-center py-5">
             <p className="text-sm text-slate-400 mb-2">No pending applications</p>
-            <button onClick={() => navigate('/caregiver/jobs')} className="text-xs text-primary-600 font-medium hover:underline">Browse Jobs →</button>
+            <button onClick={() => navigate('/care-provider/jobs')} className="text-xs text-primary-600 font-medium hover:underline">Browse Jobs →</button>
           </div>
         );
         return (
           <>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-slate-700">Pending Applications</p>
-              <button onClick={() => navigate('/caregiver/jobs?tab=applications')} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">View all &rsaquo;</button>
+              <button onClick={() => navigate('/care-provider/jobs?tab=applications')} className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-0.5">View all &rsaquo;</button>
             </div>
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {trulyPending.slice(0, 2).map((a: any) => {
@@ -121,7 +121,7 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
         if (activeInterviews.length === 0) return (
           <div className="text-center py-5">
             <p className="text-sm text-slate-400 mb-2">No interviews scheduled</p>
-            <button onClick={() => navigate('/caregiver/jobs?tab=interviews')} className="text-xs text-primary-600 font-medium hover:underline">View Job Board →</button>
+            <button onClick={() => navigate('/care-provider/jobs?tab=interviews')} className="text-xs text-primary-600 font-medium hover:underline">View Job Board →</button>
           </div>
         );
         const visibleIvs = ivDashTab === 'pending' ? pendingIvs : scheduledIvs;
@@ -136,7 +136,7 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
                 <span className={`text-2xl font-bold leading-none ${ivDashTab === 'scheduled' ? 'text-green-600' : 'text-slate-500'}`}>{scheduledIvs.length}</span>
                 <span className={`text-xs font-medium mt-0.5 ${ivDashTab === 'scheduled' ? 'text-green-600' : 'text-slate-400'}`}>Scheduled</span>
               </button>
-              <button onClick={() => navigate(`/caregiver/jobs?tab=interviews&filter=${ivDashTab === 'pending' ? 'pending' : 'accepted'}`)} className="self-center ml-1 text-xs text-primary-600 font-medium hover:underline whitespace-nowrap">View all &rsaquo;</button>
+              <button onClick={() => navigate(`/care-provider/jobs?tab=interviews&filter=${ivDashTab === 'pending' ? 'pending' : 'accepted'}`)} className="self-center ml-1 text-xs text-primary-600 font-medium hover:underline whitespace-nowrap">View all &rsaquo;</button>
             </div>
             {visibleIvs.length === 0 ? (
               <div className="text-center py-4"><p className="text-sm text-slate-400">No {ivDashTab} interviews</p></div>

@@ -151,7 +151,7 @@ const askedAgo = (content: string, msAgo: number) => {
   hoisted.docState.set(`agent_conversations/${CG_PHONE}/messages/m1`, { role: "user", content: "hi", timestamp: Date.now() - msAgo - 1 });
   hoisted.docState.set(`agent_conversations/${CG_PHONE}/messages/m2`, { role: "assistant", content, timestamp: Date.now() - msAgo });
 };
-const lateClassifierCalls = () => quickComplete.mock.calls.filter((c) => /Classify this caregiver message: LATE/.test(String(c[0])));
+const lateClassifierCalls = () => quickComplete.mock.calls.filter((c) => /Classify this care provider message: LATE/.test(String(c[0])));
 const parkedCheckCalls = () => quickComplete.mock.calls.filter((c) => /also a command that opens a page/.test(String(c[0])));
 
 beforeEach(() => {
@@ -246,7 +246,7 @@ describe("the LATE classifier runs only when a visit is near (C21)", () => {
   it("a visit today → the classifier runs (and a LATE verdict parks the relay confirm)", async () => {
     seed();
     hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER_ID, clientId: "fam1", clientName: "Basra Yousuf", status: "scheduled", date: businessTodayStr(), startTime: "14:00" });
-    quickComplete.mockImplementation(async (sys: string) => (/Classify this caregiver message: LATE/.test(sys) ? "LATE" : "NONE"));
+    quickComplete.mockImplementation(async (sys: string) => (/Classify this care provider message: LATE/.test(sys) ? "LATE" : "NONE"));
     const r = await routeCaregiverMessage(ctx("running about 10 min late, traffic"));
     expect(r).toBe("handled");
     expect(lateClassifierCalls()).toHaveLength(1);

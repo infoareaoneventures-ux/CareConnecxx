@@ -82,7 +82,7 @@ const writesTo = (id: string) => hoisted.updates.filter((u) => u.path === `shift
 beforeEach(() => { hoisted.live.clear(); hoisted.stale.clear(); hoisted.updates.length = 0; hoisted.texts.length = 0; hoisted.bells.length = 0; });
 
 describe("autoApproveShiftHours — decides on the live record, inside the write", () => {
-  it("still pending → auto-approved from the fresh amounts; the caregiver is told (text first, then bell)", async () => {
+  it("still pending → auto-approved from the fresh amounts; the care provider is told (text first, then bell)", async () => {
     seed("a1", pending);
     await (autoApproveShiftHours as any)();
     expect(hoisted.live.get("shiftHours/a1")).toMatchObject({ status: "auto_approved", grossPay: 120, resolvedBy: "system_auto_approve" });
@@ -111,7 +111,7 @@ describe("autoApproveShiftHours — decides on the live record, inside the write
 });
 
 describe("autoAcceptCorrection — decides on the live record, inside the write", () => {
-  it("still correction_proposed → the family's proposal is final; caregiver told text-then-bell", async () => {
+  it("still correction_proposed → the family's proposal is final; care provider told text-then-bell", async () => {
     seed("b1", corrected);
     await (autoAcceptCorrection as any)();
     expect(hoisted.live.get("shiftHours/b1")).toMatchObject({ status: "approved", finalTotalHours: 3, grossPay: 90, resolvedBy: "system_auto_accept" });
@@ -119,7 +119,7 @@ describe("autoAcceptCorrection — decides on the live record, inside the write"
     expect(hoisted.bells.find((b) => b.type === "shift_hours_approved" && b.userId === "cg1")).toBeTruthy();
   });
 
-  it("the caregiver countered (or accepted) in the same window → untouched", async () => {
+  it("the care provider countered (or accepted) in the same window → untouched", async () => {
     seed("b2", corrected, { ...corrected, status: "caregiver_counter_proposed", counterTotalHours: 3.5 });
     seed("b3", corrected, { ...corrected, status: "approved", resolvedBy: "caregiver" });
     await (autoAcceptCorrection as any)();
@@ -129,7 +129,7 @@ describe("autoAcceptCorrection — decides on the live record, inside the write"
     expect(hoisted.texts).toHaveLength(0);
   });
 
-  it("a caregiver text that does not go leaves no bell behind (bell ⇄ text, C11)", async () => {
+  it("a care provider text that does not go leaves no bell behind (bell ⇄ text, C11)", async () => {
     const { sendSMSToUser } = await import("../sms");
     (sendSMSToUser as any).mockResolvedValueOnce({ success: false, error: "no phone" });
     seed("b4", corrected);

@@ -125,7 +125,7 @@ describe("jp_ask_recipients", () => {
     expect(stored.jobPostingData.careRecipients).toHaveLength(1);
     expect(stored.jobPostingData.careRecipients[0].firstName).toBe("Rosie");
     expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed");
-    expect(String(sendMessage.mock.calls[0][1])).toContain("How many caregivers");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("How many care providers");
   });
 
   // The re-ask copy itself advertises this ("a few is fine, e.g. \"1, 2\""),
@@ -272,7 +272,7 @@ describe("answerQuestionMidFlow grounding (live-caught: wrong recipient in mid-f
       jobPostingData: { ...SCHEDULED, careRecipients: [{ firstName: "David", lastName: "", relationship: "Parent", isSelf: false }] },
     });
     // Call 1: isQuestionOrOther → YES. Call 2: mid-flow free-form answer.
-    modelReplies("YES", "Most families just need one caregiver for a job like this.");
+    modelReplies("YES", "Most families just need one care provider for a job like this.");
 
     await handleJobPostingStep(PHONE, CHAT, "how many do most people pick?", baseSession({
       jobPostingStep: "jp_ask_caregivers_needed",
@@ -300,7 +300,7 @@ describe("answerQuestionMidFlow grounding (live-caught: wrong recipient in mid-f
       jobPostingStep: "jp_ask_caregivers_needed",
       jobPostingData: { ...SCHEDULED, careRecipients: [{ firstName: "David", lastName: "", relationship: "Parent", isSelf: false }] },
     });
-    modelReplies("YES", "Most families just need one caregiver for a job like this.");
+    modelReplies("YES", "Most families just need one care provider for a job like this.");
 
     await handleJobPostingStep(PHONE, CHAT, "how many do most people pick?", baseSession({
       jobPostingStep: "jp_ask_caregivers_needed",

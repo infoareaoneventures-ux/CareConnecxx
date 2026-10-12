@@ -95,7 +95,7 @@ describe("a completed visit's detail — the page's click-through", () => {
       "", "Tasks (2/3 done)", "H M (parent)",
       "• occasional help — done", "• Dementia / Memory Care — not done", "• Mobility Assistance — Transfer Assist — done",
       "", "Visit notes", "• 11:08 AM — H M is doing well.",
-      "", "Caregiver note", "Good visit.",
+      "", "Care Provider note", "Good visit.",
     ].join("\n"));
   });
 });
@@ -196,7 +196,7 @@ describe("Log Hours — mid-flow questions are briefed with the visit and the ta
     await handleLogHoursFlowStep("+1", "chat", "will the family see the note?", session({ logHoursFlowStep: "lh_note", logHoursFlowData: { ...withTimes, tasks: ["0_occasional help"] } }));
     expect(hoisted.sent.at(-1)).toBe("Answer. Any notes about the visit? Reply with the note, or SKIP.");
     expect(lastCall()[2]?.facts).toContain("Tasks marked done: 1/3.");
-    expect(lastCall()[2]?.facts).toContain("The note is saved on the visit with the logged hours, in the caregiver's own words, and the family can see it.");
+    expect(lastCall()[2]?.facts).toContain("The note is saved on the visit with the logged hours, in the care provider's own words, and the family can see it.");
     expect(hoisted.updates.filter((u) => u.path === "shifts/miss")).toHaveLength(0);
   });
 });

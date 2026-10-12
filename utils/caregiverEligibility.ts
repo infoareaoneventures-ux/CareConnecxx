@@ -88,7 +88,7 @@ export function isCaregiverMembershipActiveForFamilies(
 }
 
 /** What a family is told, everywhere, when a caregiver isn't cleared yet — never the reason. */
-export const CAREGIVER_NOT_AVAILABLE_TEXT = "This caregiver isn't available yet.";
+export const CAREGIVER_NOT_AVAILABLE_TEXT = "This care provider isn't available yet.";
 
 /**
  * Convenience predicate for Array#filter over Firestore doc data:

@@ -50,7 +50,7 @@ export const createInvoice = functions.https.onCall(async (data, context) => {
         const caregiverDoc = await db.collection('caregivers').doc(caregiverId).get();
 
         if (!clientDoc.exists || !caregiverDoc.exists) {
-            throw new functions.https.HttpsError('not-found', 'Client or Caregiver not found');
+            throw new functions.https.HttpsError('not-found', 'Client or Care Provider not found');
         }
 
         const clientData = clientDoc.data() || {};
@@ -127,7 +127,7 @@ async function generateInvoicePDFLogic(invoiceId: string) {
     
     doc.fontSize(12).text(`Invoice #: ${invoiceData.invoiceNumber}`);
     doc.text(`Client: ${invoiceData.clientName}`);
-    doc.text(`Caregiver: ${invoiceData.caregiverName}`);
+    doc.text(`Care Provider: ${invoiceData.caregiverName}`);
     doc.text(`Care Period: ${invoiceData.carePeriod.start} to ${invoiceData.carePeriod.end}`);
     doc.text(`Date: ${new Date(invoiceData.createdAt).toLocaleDateString()}`);
     doc.text(`Due Date: ${new Date(invoiceData.dueDate).toLocaleDateString()}`);

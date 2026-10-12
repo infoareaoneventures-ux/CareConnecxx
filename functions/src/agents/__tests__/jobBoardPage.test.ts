@@ -149,7 +149,7 @@ describe("sidebar filters + radius (JobBoard.tsx filteredJobs)", () => {
     expect(passesJobBoardFilters(job, { careTypes: ["Companionship"] })).toBe(true);
     expect(passesJobBoardFilters(job, { careTypes: ["Transportation"] })).toBe(false);
   });
-  it("radius applies only when caregiver coords, job coords AND a radius > 0 all exist", () => {
+  it("radius applies only when care provider coords, job coords AND a radius > 0 all exist", () => {
     const far = { lat: 38.5816, lng: -121.4944 };
     expect(withinCaregiverRadius(far, { lat: CG.lat, lng: CG.lng }, 25)).toBe(false);
     expect(withinCaregiverRadius(far, { lat: CG.lat, lng: CG.lng }, 0)).toBe(true);
@@ -210,7 +210,7 @@ describe("loadAvailableJobs — the Available Jobs tab and the dashboard's Nearb
     expect(page.jobs.every((j) => j.action === "Activate Membership")).toBe(true);
   });
 
-  it("returns null for an unknown caregiver", async () => {
+  it("returns null for an unknown care provider", async () => {
     expect(await loadAvailableJobs("nobody")).toBeNull();
   });
 });
@@ -218,7 +218,7 @@ describe("loadAvailableJobs — the Available Jobs tab and the dashboard's Nearb
 describe("loadJobDetails — the Details modal", () => {
   beforeEach(() => {
     seedCg();
-    seedJob("j1", { clientName: "Basra Yousuf", rate: 0, rateFlexible: true, startDate: "2026-08-02", description: "Looking for a caring and reliable caregiver.", careTypes: ["Companionship"], daysOfWeek: ["Monday"], timeOfDay: ["morning"], recipientsCount: 1, minHoursPerWeek: 20 });
+    seedJob("j1", { clientName: "Basra Yousuf", rate: 0, rateFlexible: true, startDate: "2026-08-02", description: "Looking for a caring and reliable care provider.", careTypes: ["Companionship"], daysOfWeek: ["Monday"], timeOfDay: ["morning"], recipientsCount: 1, minHoursPerWeek: 20 });
   });
 
   it("returns the modal's fields; the family's name is hidden until accepted", async () => {
@@ -230,13 +230,13 @@ describe("loadJobDetails — the Details modal", () => {
     expect(r.details.startingDate).toBe("Aug 2, 2026");
     expect(r.details.time).toBe("Morning");
     expect(r.details.hoursPerWeek).toBe("20+ hrs");
-    expect(r.details.description).toBe("Looking for a caring and reliable caregiver.");
+    expect(r.details.description).toBe("Looking for a caring and reliable care provider.");
     expect(r.details.applicationStatus).toBeNull();
     expect(r.details.interviewStatus).toBeNull();
     expect(r.details.action).toBe("Apply Now");
   });
 
-  it("shows Posted by once this caregiver's application is accepted, and the footer status", async () => {
+  it("shows Posted by once this care provider's application is accepted, and the footer status", async () => {
     hoisted.docState.set("job_applications/a1", { caregiverId: "cg1", jobId: "j1", status: "accepted" });
     const r = await loadJobDetails("cg1", "j1");
     if (!r.ok) throw new Error("expected ok");
@@ -333,7 +333,7 @@ describe("applyJobBoardFilters — JobBoard.tsx filteredJobs (:510-550) as one p
     expect(ids(applyJobBoardFilters(jobs, undefined, cg))).toEqual(["near", "sc", "nocoords"]);
     expect(ids(applyJobBoardFilters(jobs, {}, cg))).toEqual(["near", "sc", "nocoords"]);
   });
-  it("no caregiver coords, or no travel distance set → distance never excludes (the page's cgLat && cgLng && cgRadius > 0 guard)", () => {
+  it("no care provider coords, or no travel distance set → distance never excludes (the page's cgLat && cgLng && cgRadius > 0 guard)", () => {
     expect(ids(applyJobBoardFilters(jobs, {}, { serviceRadius: 10 }))).toEqual(["near", "sc", "far", "nocoords"]);
     expect(ids(applyJobBoardFilters(jobs, {}, { ...cg, serviceRadius: 0 }))).toEqual(["near", "sc", "far", "nocoords"]);
     expect(ids(applyJobBoardFilters(jobs, {}, { lat: cg.latitude, lng: cg.longitude, travelRadius: 10 }))).toEqual(["near", "sc", "nocoords"]); // legacy lat/lng + travelRadius fallbacks

@@ -113,7 +113,7 @@ export const AdminShiftHoursMediation: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div className="bg-slate-50 rounded-lg p-3">
-                    <p className="text-xs text-slate-500 mb-1">Caregiver submitted</p>
+                    <p className="text-xs text-slate-500 mb-1">Care provider submitted</p>
                     <p className="font-medium">{r.submittedTotalHours}h</p>
                     <p className="text-xs text-slate-400">
                       {new Date(r.submittedStartTime).toLocaleString()} → {new Date(r.submittedEndTime).toLocaleString()}

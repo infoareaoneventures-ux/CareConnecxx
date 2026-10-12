@@ -31,6 +31,7 @@ import { fmtTime } from "./caregiverBookingRequests";
 import { END_PROMPT, taskItems, checkTasks, addVisitNote, parkShiftEnd, visitLine, clock, type TaskItem } from "./inShift";
 // The one-visit read and the Start window are the shared server rule's (shifts/visitActions.ts, 2026-10-11) — the
 // same functions the site's queue and inShift's START run; nothing here re-derives them.
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import { START_WINDOW_MINUTES, startsInMinutes, loadInProgressVisits } from "../shifts/visitActions";
 
 const db = admin.firestore();
@@ -66,7 +67,7 @@ export async function classifyVisitMessage(text: string, shift: Doc, items: Task
   const many = names.length > 1;
   const taskList = items.map((t) => `${t.number}. ${t.label}${many && t.recipientName ? ` (${t.recipientName})` : ""}${t.done ? " — already done" : ""}`).join("\n");
   const system =
-    `A caregiver is in the middle of a home-care visit with ${names.join(" and ") || "the client"}. Their text message is about this visit. ` +
+    `A care provider is in the middle of a home-care visit with ${names.join(" and ") || "the client"}. Their text message is about this visit. ` +
     `Tasks for this visit, numbered:\n${taskList || "(none)"}\n\n` +
     `Classify the message and reply with ONLY a JSON object {"kind","tasks","note","recipient","scope"}:\n` +
     `- "task_done": they say they completed one or more of the listed tasks (match by meaning, e.g. "fed him" → Meal Preparation). "tasks" = the numbers. If the message also contains an observation for the family, put it in "note".\n` +
@@ -171,7 +172,8 @@ export async function handleVisitModeMessage(
       const bookingNote = bookingSnap?.exists ? ((bookingSnap.data()?.notes as string | undefined) ?? null) : null;
       const record = visitRecordText(shift, items, bookingNote, nowMs);
       const answer = await quickComplete(
-        `You are Evia, texting a caregiver who is in the middle of a visit. Answer their question in one or two short sentences using ONLY this record of the visit. ` +
+        CARE_PROVIDER_TERM_RULE + " " +
+        `You are Evia, texting a care provider who is in the middle of a visit. Answer their question in one or two short sentences using ONLY this record of the visit. ` +
         `If the record does not contain the answer, say so plainly and suggest asking the family. Never invent a name, phone number or instruction.\n\n${record}`,
         raw, { maxTokens: 160 },
       ).catch(() => "");
@@ -199,7 +201,7 @@ async function handleArrival(
   const mins = startsInMinutes(v.shift, nowMs);
   if (mins === null) return "passthrough";
   const verdict = await quickComplete(
-    `A caregiver has a home-care visit today at ${fmtTime(String(v.shift.startTime ?? ""))}. ` +
+    `A care provider has a home-care visit today at ${fmtTime(String(v.shift.startTime ?? ""))}. ` +
     `Does their text message say they have ARRIVED at the client's home or are about to start the visit ("I'm here", "arrived", "at the house", "starting now")? Reply ARRIVED or OTHER.`,
     raw, { maxTokens: 3 },
   ).catch(() => "OTHER");

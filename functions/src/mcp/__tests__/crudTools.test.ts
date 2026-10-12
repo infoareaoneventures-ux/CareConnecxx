@@ -107,7 +107,7 @@ describe("missing CRUD tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("returns the latest declined/cancelled request per caregiver+job, labelled like the site's rows", async () => {
+    it("returns the latest declined/cancelled request per care provider+job, labelled like the site's rows", async () => {
       hoisted.collState.set("booking_requests", [
         { id: "br-c", clientId: "c1", caregiverId: "cg1", caregiverName: "Basra Yousuf", interviewId: "iv-a", status: "cancelled", createdAt: "2026-09-10T00:00:00.000Z" },
         { id: "br-p", clientId: "c1", caregiverId: "cg1", caregiverName: "Basra Yousuf", jobId: "job-1", status: "pending", createdAt: "2026-09-11T00:00:00.000Z" },
@@ -157,7 +157,7 @@ describe("missing CRUD tools", () => {
       expect(r.requests[1].hourlyRate).toBe(25);
     });
 
-    it("returns pending requests for a caregiver", async () => {
+    it("returns pending requests for a care provider", async () => {
       hoisted.collState.set("booking_requests", [
         { id: "br3", clientId: "c9", caregiverId: "cg1", clientName: "Rivera Family", status: "pending", createdAt: "2026-09-05T09:00:00.000Z" },
       ]);
@@ -208,11 +208,11 @@ describe("missing CRUD tools", () => {
       const r = await handleToolCall("get_pending_tasks", { clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       const byKind = Object.fromEntries(r.items.map((i: any) => [i.kind + ":" + (i.shiftId ?? i.amendmentId ?? i.bookingRequestId ?? ""), i]));
-      expect(byKind["booking_request_pending:br1"]).toMatchObject({ waitingOn: "caregiver", isResend: true, page: "My Bookings > Requests" });
-      expect(byKind["visit_request_pending:am1"]).toMatchObject({ waitingOn: "caregiver" });
+      expect(byKind["booking_request_pending:br1"]).toMatchObject({ waitingOn: "care provider", isResend: true, page: "My Bookings > Requests" });
+      expect(byKind["visit_request_pending:am1"]).toMatchObject({ waitingOn: "care provider" });
       expect(byKind["visit_needs_replacement:s1"]).toMatchObject({ waitingOn: "you", actions: ["find_replacement", "skip"] });
       expect(byKind["visit_reschedule_proposal:s2"]).toMatchObject({ waitingOn: "you", proposedDate: "2099-01-07" });
-      expect(byKind["visit_reschedule_proposal:s3"]).toMatchObject({ waitingOn: "caregiver" });
+      expect(byKind["visit_reschedule_proposal:s3"]).toMatchObject({ waitingOn: "care provider" });
       expect(r.items.some((i: any) => i.shiftId === "s4")).toBe(false);
       expect(r.items.find((i: any) => i.kind === "care_plan_review")).toMatchObject({ waitingOn: "you" });
       expect(r.items.find((i: any) => i.kind === "timesheets_to_review")).toMatchObject({ waitingOn: "you", count: 2 });
@@ -239,7 +239,7 @@ describe("missing CRUD tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("Needs Review = the page's six statuses, grouped by caregiver, with the card's fields and button", async () => {
+    it("Needs Review = the page's six statuses, grouped by care provider, with the card's fields and button", async () => {
       seed();
       const r = await handleToolCall("get_pending_timesheets", { clientId: "c1" }) as any;
       expect(r.success).toBe(true);
@@ -250,7 +250,7 @@ describe("missing CRUD tools", () => {
       expect(a1).toMatchObject({ caregiverName: "Basra Yousuf", hours: 1.5, duration: "1:30:00", basePay: 30, grossPay: 30, statusLabel: "Needs Review", actions: ["review_and_approve"], autoApproveAt: "2099-01-06T23:35:00.000Z" });
       const a2 = r.rows.find((x: any) => x.id === "a2");
       expect(a2).toMatchObject({ statusLabel: "Correction Sent", actions: [] });
-      expect(a2.statusHint).toMatch(/Waiting for the caregiver/);
+      expect(a2.statusHint).toMatch(/Waiting for the care provider/);
       expect(a2.correctionHistory).toEqual([expect.objectContaining({ action: "proposed_correction", label: "Client proposed correction", hours: 1.5 })]);
       expect(r.rows.find((x: any) => x.id === "a3")).toMatchObject({ statusLabel: "Payment Failed", actions: ["retry_payment"], grossPay: 24 });
       const basra = r.groups.find((g: any) => g.caregiverId === "cg1");
@@ -361,7 +361,7 @@ describe("missing CRUD tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("returns NOT_FOUND for missing caregiver", async () => {
+    it("returns NOT_FOUND for missing care provider", async () => {
       const r = await handleToolCall("get_caregiver_availability", { caregiverId: "ghost" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");
@@ -556,7 +556,7 @@ vi.mock("../../utils/openaiClient", () => ({
 }));
 import { businessTodayStr } from "../../utils/scheduledTime";
 
-describe("caregiver action tools enforce the website's gate (hooks/useCaregiverGate.tsx) — 2026-09-26", () => {
+describe("care provider action tools enforce the website's gate (hooks/useCaregiverGate.tsx) — 2026-09-26", () => {
   beforeEach(() => { hoisted.reset(); });
 
   // (the apply_to_job gate tests moved to agents/__tests__/caregiverJobFlows.test.ts
@@ -587,7 +587,7 @@ describe("save_onboarding_field client wizard-parity values (rate / startDate / 
     expect(onboardingData().rate).toBeUndefined();
   });
 
-  it("caregiver hourlyRate: any amount above $0 saves (the rate is theirs — no floor, no ceiling, 2026-10-04); zero is NOT saved and re-asked", async () => {
+  it("care provider hourlyRate: any amount above $0 saves (the rate is theirs — no floor, no ceiling, 2026-10-04); zero is NOT saved and re-asked", async () => {
     const zero = await handleToolCall("save_onboarding_field", {
       phone: PHONE, role: "caregiver", fieldName: "hourlyRate", fieldValue: "0",
     }) as any;
@@ -608,7 +608,7 @@ describe("save_onboarding_field client wizard-parity values (rate / startDate / 
     expect(onboardingData().hourlyRate).toBe(23);
   });
 
-  it("caregiver availability merges across two messages and says which half is still needed", async () => {
+  it("care provider availability merges across two messages and says which half is still needed", async () => {
     const daysOnly = await handleToolCall("save_onboarding_field", {
       phone: PHONE, role: "caregiver", fieldName: "availability", fieldValue: { days: ["Monday"], hours: "" },
     }) as any;
@@ -703,7 +703,7 @@ describe("save_onboarding_field client care needs + field-name aliases (2026-09-
     expect(r.guidance).toContain("Care needed on their plan now: Personal Care, Meal Preparation");
   });
 
-  it("jobDescription: medication instructions never reach the caregiver — refused with the one line, nothing stored (2026-10-04)", async () => {
+  it("jobDescription: medication instructions never reach the care provider — refused with the one line, nothing stored (2026-10-04)", async () => {
     const r = await handleToolCall("save_onboarding_field", {
       phone: PHONE, role: "client", fieldName: "jobDescription", fieldValue: "Mom is sweet. Give her two of the blue pills at 8 and skip the water pill on weekends.",
     }) as any;
@@ -731,7 +731,7 @@ describe("save_onboarding_field client care needs + field-name aliases (2026-09-
   it.each([
     ["smoking", true, "smokingHousehold"],
     ["pets", false, "petsInHome"],
-    ["description", "Looking for a kind caregiver for my son", "jobDescription"],
+    ["description", "Looking for a kind care provider for my son", "jobDescription"],
     ["Emergency Contact Relationship", "sibling", "emergencyContactRelationship"],
   ])("near-miss key %o resolves onto the contract key", async (key, value, canonical) => {
     const r = await handleToolCall("save_onboarding_field", {
@@ -756,7 +756,7 @@ describe("save_onboarding_field client care needs + field-name aliases (2026-09-
 // record at save time (the site's wizard saves per step), under the site's
 // names; the bio keeps the wizard's 150-character rule; the email is checked
 // for caregivers too.
-describe("save_onboarding_field mirrors each caregiver field to caregivers/{uid} at save time (C3)", () => {
+describe("save_onboarding_field mirrors each care provider field to caregivers/{uid} at save time (C3)", () => {
   const PHONE = "+15555550090";
   const UID = "cg-mirror-1";
   const BIO = "I have cared for seniors for six years, mostly with memory loss, and families say I am patient, warm and reliable in their home every single day of the week.";
@@ -798,7 +798,7 @@ describe("save_onboarding_field mirrors each caregiver field to caregivers/{uid}
     expect(record().bio).toBe("");
   });
 
-  it("a caregiver's email is format-checked like a family's (C7)", async () => {
+  it("a care provider's email is format-checked like a family's (C7)", async () => {
     const bad = await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "email", fieldValue: "maria at example" }) as any;
     expect(bad.saved).toBe(false);
     expect(bad.invalidValue).toBe(true);

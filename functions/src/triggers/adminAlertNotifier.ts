@@ -56,11 +56,11 @@ function adminSmsText(type: string, alert: Record<string, any>): string {
     case "shift_hours_payment_failed_escalated":
       return `Evia: a timesheet needs the team — ${String(alert.message ?? alert.title ?? type).slice(0, 200)} Open Admin › Finance.`;
     case "renewal_refresh_locked":
-      return `Evia: ${String(alert.caregiverName ?? "a caregiver")} did not authorize this year's background check within 7 days of renewing — paused until they do. Admin › Caregivers › Verification.`;
+      return `Evia: ${String(alert.caregiverName ?? "a care provider")} did not authorize this year's background check within 7 days of renewing — paused until they do. Admin › Care Providers › Verification.`;
     case "caregiver_locked":
-      return `Evia: ${String(alert.caregiverName ?? "a caregiver")} is locked (membership ${String(alert.membershipStatus ?? "unknown")}, background ${String(alert.backgroundCheckStatus ?? "unknown")}); ${Number(alert.releasedVisits ?? 0)} upcoming visit(s) released to the families. Admin › Caregivers.`;
+      return `Evia: ${String(alert.caregiverName ?? "a care provider")} is locked (membership ${String(alert.membershipStatus ?? "unknown")}, background ${String(alert.backgroundCheckStatus ?? "unknown")}); ${Number(alert.releasedVisits ?? 0)} upcoming visit(s) released to the families. Admin › Care Providers.`;
     case "mvr_review":
-      return `Evia: ${String(alert.caregiverName ?? "a caregiver")}'s driving record check came back "${String(alert.mvrStatus ?? "consider")}" — Transportation is off their profile until you decide. Open Admin › Caregivers › Verification.`;
+      return `Evia: ${String(alert.caregiverName ?? "a care provider")}'s driving record check came back "${String(alert.mvrStatus ?? "consider")}" — Transportation is off their profile until you decide. Open Admin › Care Providers › Verification.`;
     default:
       return `Evia Alert: ${type} - check admin dashboard.`;
   }

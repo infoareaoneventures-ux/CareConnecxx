@@ -309,10 +309,10 @@ export function formatCaraOperationalContext(ctx: CaraOperationalContext): strin
       c.backgroundCheckStatus ? `checkr=${safe(c.backgroundCheckStatus, 60)}` : undefined,
       c.accountStatus ? `status=${safe(c.accountStatus, 60)}` : undefined,
     ].filter(Boolean).join(", ");
-    if (bits) lines.push(`- Caregiver state: ${bits}.`);
-    if (c.nextAppointment) lines.push(`- Caregiver upcoming/shift context: ${safe(c.nextAppointment, 180)}.`);
-    if (c.pendingShiftHours) lines.push(`- Caregiver shift payment context: ${safe(c.pendingShiftHours, 180)}.`);
-    if (c.lastPayoutStatus) lines.push(`- Caregiver last payout: ${safe(c.lastPayoutStatus, 140)}.`);
+    if (bits) lines.push(`- Care Provider state: ${bits}.`);
+    if (c.nextAppointment) lines.push(`- Care Provider upcoming/shift context: ${safe(c.nextAppointment, 180)}.`);
+    if (c.pendingShiftHours) lines.push(`- Care Provider shift payment context: ${safe(c.pendingShiftHours, 180)}.`);
+    if (c.lastPayoutStatus) lines.push(`- Care Provider last payout: ${safe(c.lastPayoutStatus, 140)}.`);
   }
   if (ctx.clientState) {
     const c = ctx.clientState;

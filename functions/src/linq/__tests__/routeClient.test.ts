@@ -91,7 +91,7 @@ function ctx(norm: string, sessionPatch: Record<string, unknown> = {}) {
 describe("U11 — routeClientStateMachines shift-hours approval", () => {
   beforeEach(() => { hoisted.reset(); vi.clearAllMocks(); });
 
-  it("APPROVE pays the caregiver, writes the action ledger, and confirms", async () => {
+  it("APPROVE pays the care provider, writes the action ledger, and confirms", async () => {
     const outcome = await routeClientStateMachines(ctx("APPROVE"));
     expect(outcome).toBe("handled");
     expect(hoisted.approveShiftHoursForClient).toHaveBeenCalledWith("appt1");

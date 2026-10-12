@@ -23,7 +23,7 @@ vi.mock("../../utils/visitQuery", () => ({
   queryVisits: vi.fn(async () => hoisted.visits.map((v) => ({ id: v.id, data: () => v, ref: { update: async (d: any) => hoisted.updates.push({ id: v.id, d }) } }))),
   visitSeniorName: (v: any, fb: string) => v.careRecipients?.[0]?.name ?? fb,
 }));
-vi.mock("../../agents/inShift", () => ({ visitPageLink: (id: string) => `https://eviacares.com/caregiver/bookings?tab=active&visit=${id}` }));
+vi.mock("../../agents/inShift", () => ({ visitPageLink: (id: string) => `https://eviacares.com/care-provider/bookings?tab=active&visit=${id}` }));
 vi.mock("../../utils/scheduledTime", async (orig) => {
   const real = await (orig as any)();
   return { ...real, businessTodayStr: () => "2099-02-10", businessTomorrowStr: () => "2099-02-11" };

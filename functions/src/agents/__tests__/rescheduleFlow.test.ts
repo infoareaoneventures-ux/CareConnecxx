@@ -301,7 +301,7 @@ describe("rs_confirm", () => {
     expect(sent).toContain("stays as scheduled until they accept");
   });
 
-  it("refuses a time that overlaps another visit with the same caregiver that day — the site's own conflict check — and re-asks", async () => {
+  it("refuses a time that overlaps another visit with the same care provider that day — the site's own conflict check — and re-asks", async () => {
     seedBookings();
     hoisted.docState.set("shifts/sh-thu", { clientId: UID, caregiverId: "cg-basra", caregiverName: "Basra Yousuf", status: "scheduled", date: "2026-09-17", startTime: "14:00", endTime: "16:00" });
     hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, rescheduleFlowStep: "rs_confirm", rescheduleFlowData: PROPOSED });
@@ -313,7 +313,7 @@ describe("rs_confirm", () => {
     expect(sent).toContain("What day and time");
   });
 
-  it("a DIFFERENT caregiver at the same time is not a conflict (two-person care team), same as the site", async () => {
+  it("a DIFFERENT care provider at the same time is not a conflict (two-person care team), same as the site", async () => {
     seedBookings();
     hoisted.docState.set("shifts/sh-thu", { clientId: UID, caregiverId: "cg-maria", caregiverName: "Maria", status: "scheduled", date: "2026-09-17", startTime: "10:00", endTime: "12:00" });
     hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, rescheduleFlowStep: "rs_confirm", rescheduleFlowData: PROPOSED });

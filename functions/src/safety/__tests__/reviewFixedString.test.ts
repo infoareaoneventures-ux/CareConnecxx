@@ -27,7 +27,7 @@ describe("reviewFixedString", () => {
     expect(await reviewFixedString(NOTICE, { phone: "+1", role: "caregiver", fixedString: true })).toBe(true);
     expect(hoisted.addMock).not.toHaveBeenCalled();
     // The reviewer is told who the reader is.
-    expect(String(hoisted.messagesCreate.mock.calls[0][0].system)).toContain("CAREGIVER");
+    expect(String(hoisted.messagesCreate.mock.calls[0][0].system)).toContain("CARE PROVIDER");
   });
 
   it("a flagged violation BLOCKS (false) and is logged + alerted — the rewrite is never used", async () => {
@@ -51,7 +51,7 @@ describe("supervise() with the fixedString flag", () => {
   });
   it("model-generated text still goes through lint + the rewriting review (unchanged)", async () => {
     reply({ violation: false, revised: "hi" });
-    const out = await supervise("I found two caregivers — want intros?", { phone: "+1" });
-    expect(out).toBe("I found two caregivers, want intros?"); // the linter's em-dash rule, as before
+    const out = await supervise("I found two care providers — want intros?", { phone: "+1" });
+    expect(out).toBe("I found two care providers, want intros?"); // the linter's em-dash rule, as before
   });
 });

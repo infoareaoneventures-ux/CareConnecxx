@@ -46,7 +46,7 @@ export { START_WINDOW_MINUTES, startsInMinutes, visitLine, finishFirstText };
 export const FINISH_FIRST_LINE = "Finish your current visit first (text FINISH), then START this one.";
 
 /** The real Bookings page opened at this visit (login required — the link carries no secret). */
-export const visitPageLink = (shiftId: string) => `${getAppUrl()}/caregiver/bookings?tab=active&visit=${encodeURIComponent(shiftId)}`;
+export const visitPageLink = (shiftId: string) => `${getAppUrl()}/care-provider/bookings?tab=active&visit=${encodeURIComponent(shiftId)}`;
 
 type Doc = Record<string, unknown>;
 export interface TaskItem { number: number; key: string; label: string; done: boolean; recipientIndex: number; recipientName: string }
@@ -278,9 +278,9 @@ export async function endStepFacts(caregiverId: string, shiftId: string): Promis
   const snap = await db.collection("shifts").doc(shiftId).get().catch(() => null);
   const shift = snap?.exists ? (snap.data() as Doc) : null;
   const items = shift ? taskItems(shift) : [];
-  const visit = shift && shift.caregiverId === caregiverId ? `The visit being ended: ${visitLine(shift)}${items.length ? ` — tasks ${items.filter((t) => t.done).length}/${items.length} done` : ""}.` : "The visit being ended is the caregiver's visit in progress.";
+  const visit = shift && shift.caregiverId === caregiverId ? `The visit being ended: ${visitLine(shift)}${items.length ? ` — tasks ${items.filter((t) => t.done).length}/${items.length} done` : ""}.` : "The visit being ended is the care provider's visit in progress.";
   return `${visit} The visit is still in progress — nothing has ended yet. Replying with a note ends the visit and saves that note on it as the closing note, which the family can see; ` +
-    "SKIP ends the visit without a note; CANCEL keeps the visit in progress. Ending the visit is the Bookings page's End button: the visit is marked completed and the caregiver then replies SUBMIT to submit hours.";
+    "SKIP ends the visit without a note; CANCEL keeps the visit in progress. Ending the visit is the Bookings page's End button: the visit is marked completed and the care provider then replies SUBMIT to submit hours.";
 }
 
 /**
@@ -321,7 +321,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
       // re-asked — never saved as the closing note. (Before 2026-10-11 it went to the agent with the step silently still
       // open, so the caregiver's next unrelated text ended the visit as its closing note.)
       const kind = await quickComplete(
-        "A caregiver was asked: \"Any closing note for the family? Reply with the note, or SKIP.\" Classify their reply: " +
+        "A care provider was asked: \"Any closing note for the family? Reply with the note, or SKIP.\" Classify their reply: " +
         "NOTE if it is the note itself (an observation about the visit or the person they cared for), QUESTION if it is a question or a request for something else. Reply with ONE word.",
         raw, { maxTokens: 3 },
       ).catch(() => "NOTE");

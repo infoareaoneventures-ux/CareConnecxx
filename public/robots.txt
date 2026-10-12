@@ -15,10 +15,14 @@ Crawl-delay: 1
 # Disallow admin and private areas
 Disallow: /admin
 Disallow: /client/dashboard
-Disallow: /caregiver/dashboard
+Disallow: /care-provider/dashboard
 Disallow: /client/inbox
-Disallow: /caregiver/inbox
+Disallow: /care-provider/inbox
 Disallow: /client/profile
+Disallow: /care-provider/profile
+# Old addresses (they redirect to /care-provider/…)
+Disallow: /caregiver/dashboard
+Disallow: /caregiver/inbox
 Disallow: /caregiver/profile
 Disallow: /client/care-plan
 Disallow: /stripe/

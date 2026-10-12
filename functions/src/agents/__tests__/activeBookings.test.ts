@@ -114,7 +114,7 @@ describe("listActiveBookings", () => {
     expect(byId.nr2).toMatchObject({ actions: ["choose_someone_else"], replacement: { status: "waiting_on_caregiver", requestId: "br-repl", caregiverName: "Maya" } });
   });
 
-  it("a pending reschedule proposal: the caregiver's offers Accept/Decline (and a counter-proposal), the family's own offers only Withdraw", async () => {
+  it("a pending reschedule proposal: the care provider's offers Accept/Decline (and a counter-proposal), the family's own offers only Withdraw", async () => {
     shift("theirs", { date: "2099-09-22", reschedulePendingDate: "2099-09-23", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "12:00", reschedulePendingAt: "2026-09-17T01:00:00.000Z", rescheduledBy: "caregiver",
       rescheduleHistory: [{ from: { date: "2099-09-20" }, to: { date: "2099-09-22" } }] });
     shift("mine", { date: "2099-09-29", reschedulePendingDate: "2099-09-30", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "12:00", rescheduledBy: "client" });
@@ -125,7 +125,7 @@ describe("listActiveBookings", () => {
       reschedulePending: { date: "2099-09-23", startTime: "10:00", endTime: "12:00", proposedBy: "caregiver", proposedAt: "2026-09-17T01:00:00.000Z", waitingOn: "you" },
     });
     expect(byId.theirs.rescheduleHistory).toHaveLength(1);
-    expect(byId.mine).toMatchObject({ actions: ["cancel_visit", "withdraw_reschedule"], reschedulePending: { proposedBy: "client", waitingOn: "caregiver" } });
+    expect(byId.mine).toMatchObject({ actions: ["cancel_visit", "withdraw_reschedule"], reschedulePending: { proposedBy: "client", waitingOn: "care provider" } });
   });
 
   it("header note = the booking's own note; a visit shows its note only when it differs (a schedule-change note); 'Until <date>' for a non-ongoing booking", async () => {

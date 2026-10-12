@@ -187,7 +187,7 @@ describe("handlePendingApproval", () => {
     expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
   });
 
-  it("routes caregiver pendings through the caregiver dispatcher", async () => {
+  it("routes care provider pendings through the care provider dispatcher", async () => {
     await handlePendingApproval({
       phone:    "+15550001111",
       chatId:   "chat_1",

@@ -83,7 +83,7 @@ export const MatchingDashboard: React.FC<MatchingDashboardProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Matching Dashboard</h1>
-            <p className="text-slate-500 text-sm mt-1">Review care needs and match clients with caregivers</p>
+            <p className="text-slate-500 text-sm mt-1">Review care needs and match clients with care providers</p>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 bg-slate-100 rounded-lg p-1">
@@ -351,7 +351,7 @@ export const MatchingDashboard: React.FC<MatchingDashboardProps> = ({
                         <div>
                           <p className="font-medium text-green-900">Ready to Send</p>
                           <p className="text-sm text-green-700">
-                            All 5 caregivers pre-confirmed. Send to client?
+                            All 5 care providers pre-confirmed. Send to client?
                           </p>
                         </div>
                       </div>

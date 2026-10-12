@@ -27,7 +27,7 @@ const INDEX_HTML = `<!doctype html><html><head>
   </head><body><div id="root"></div></body></html>`;
 
 describe("buildProfileMeta", () => {
-  it("builds title, description, image, and canonical /p/ url from a caregiver doc", () => {
+  it("builds title, description, image, and canonical /p/ url from a care provider doc", () => {
     const meta = buildProfileMeta("cg123", {
       name: "Maria Gonzalez",
       city: "San Jose",
@@ -38,8 +38,8 @@ describe("buildProfileMeta", () => {
       backgroundCheckStatus: "clear",
       profilePhoto: "https://storage.googleapis.com/x/maria.jpg",
     });
-    expect(meta.title).toBe("Maria Gonzalez — Caregiver on Evia");
-    expect(meta.description).toContain("Background-checked caregiver in San Jose, CA");
+    expect(meta.title).toBe("Maria Gonzalez — Care Provider on Evia");
+    expect(meta.description).toContain("Background-checked care provider in San Jose, CA");
     expect(meta.description).toContain("$28/hr");
     expect(meta.description).toContain("5 years experience");
     expect(meta.description).toContain("Dementia care, Mobility support, Meal prep");
@@ -51,7 +51,7 @@ describe("buildProfileMeta", () => {
   it("falls back to the site icon when no photo, and skips empty fields", () => {
     const meta = buildProfileMeta("cg9", { name: "Sam Lee" });
     expect(meta.image).toMatch(/icon-512\.png$/);
-    expect(meta.description).toBe("Caregiver. View their profile and book on Evia.");
+    expect(meta.description).toBe("Care provider. View their profile and book on Evia.");
   });
 
   it("prefers photoURL when profilePhoto is absent and rejects non-http photos", () => {
@@ -66,21 +66,21 @@ describe("buildProfileMeta", () => {
 
 describe("injectProfileMeta", () => {
   const meta = {
-    title:       'Maria "G" & Co — Caregiver on Evia',
-    description: "Background-checked caregiver in San Jose · $28/hr",
+    title:       'Maria "G" & Co — Care Provider on Evia',
+    description: "Background-checked care provider in San Jose · $28/hr",
     image:       "https://cdn.example.com/maria.jpg",
     url:         "https://www.eviacares.com/p/cg123",
   };
 
   it("swaps title, og:*, twitter:*, and description tags", () => {
     const out = injectProfileMeta(INDEX_HTML, meta);
-    expect(out).toContain("<title>Maria &quot;G&quot; &amp; Co — Caregiver on Evia</title>");
-    expect(out).toContain('property="og:title" content="Maria &quot;G&quot; &amp; Co — Caregiver on Evia"');
-    expect(out).toContain('property="og:description" content="Background-checked caregiver in San Jose · $28/hr"');
+    expect(out).toContain("<title>Maria &quot;G&quot; &amp; Co — Care Provider on Evia</title>");
+    expect(out).toContain('property="og:title" content="Maria &quot;G&quot; &amp; Co — Care Provider on Evia"');
+    expect(out).toContain('property="og:description" content="Background-checked care provider in San Jose · $28/hr"');
     expect(out).toContain('property="og:image" content="https://cdn.example.com/maria.jpg"');
     expect(out).toContain('property="og:url" content="https://www.eviacares.com/p/cg123"');
     expect(out).toContain('property="og:type" content="profile"');
-    expect(out).toContain('name="twitter:title" content="Maria &quot;G&quot; &amp; Co — Caregiver on Evia"');
+    expect(out).toContain('name="twitter:title" content="Maria &quot;G&quot; &amp; Co — Care Provider on Evia"');
     expect(out).toContain('name="twitter:image" content="https://cdn.example.com/maria.jpg"');
     // No stale marketing values remain in the swapped tags
     expect(out).not.toContain('og:title" content="Senior Care');

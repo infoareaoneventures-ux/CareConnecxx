@@ -65,7 +65,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   const handleManage = async () => {
     setLoading(true);
     try {
-      await openCaregiverBillingPortal(`${window.location.origin}/caregiver/settings`);
+      await openCaregiverBillingPortal(`${window.location.origin}/care-provider/settings`);
     } catch {
       onShowToast?.('Unable to open billing portal. Please try again.', 'error');
     } finally {
@@ -86,8 +86,8 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
 
     setLoading(true);
     try {
-      const successUrl = `${window.location.origin}/caregiver/dashboard?membership=success`;
-      const cancelUrl = `${window.location.origin}/caregiver/membership`;
+      const successUrl = `${window.location.origin}/care-provider/dashboard?membership=success`;
+      const cancelUrl = `${window.location.origin}/care-provider/membership`;
       const url = await createCaregiverCheckoutSession(successUrl, cancelUrl);
       if (url) {
         window.location.href = url;
@@ -128,7 +128,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             Join Evia and find senior care jobs
           </h1>
           <p className="text-white/80 text-lg mb-10 leading-relaxed">
-            Families are searching for caregivers like you right now. Activate your membership and start applying today.
+            Families are searching for care providers like you right now. Activate your membership and start applying today.
           </p>
 
           {/* Benefits */}

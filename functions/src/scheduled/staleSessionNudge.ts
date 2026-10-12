@@ -59,7 +59,7 @@ function gateLine(step: string): string {
       return "It's how you get paid for your visits.";
     case "client_send_payment":
     case "client_awaiting_payment":
-      return `Your ${clientMonthlyDisplay()} membership is what lets you message, interview and book caregivers.`;
+      return `Your ${clientMonthlyDisplay()} membership is what lets you message, interview and book care providers.`;
     case "client_awaiting_identity":
       return "It's a 30-second step that keeps every family on the platform safe.";
     default:
@@ -78,7 +78,7 @@ const CAREGIVER_FIELD_QUESTIONS: Record<string, string> = {
   jobType:        "What kind of work are you looking for — occasional shifts, part-time, or full-time?",
   availability:   "Which days of the week and times of day (morning, afternoon, evening, overnight) are you available?",
   specialties:    `Which care services do you offer? ${SERVICE_LABELS.join(", ")}.`,
-  yearsExperience: `How many years of caregiving experience do you have? (${EXPERIENCE_BUCKETS.join(", ")})`,
+  yearsExperience: `How many years of care experience do you have? (${EXPERIENCE_BUCKETS.join(", ")})`,
   hourlyRate:     `What's your hourly rate? (for example $${RATE_EXAMPLE})`,
   serviceRadius:  `How far are you willing to travel for work? (${TRAVEL_RADIUS_OPTIONS.join(", ")} miles)`,
   email:          "What's your email address?",
@@ -145,7 +145,7 @@ async function planNudge(session: Record<string, unknown>, nudgeNumber: number):
 
   if (!userType || step === "ask_role" || step === "verify_phone") {
     const namePart = firstName ? ` ${firstName}` : "";
-    return { text: `Hi${namePart}, still thinking about care? Whenever you're ready, just tell me — are you looking for care for someone, or are you a caregiver yourself?${last}` };
+    return { text: `Hi${namePart}, still thinking about care? Whenever you're ready, just tell me — are you looking for care for someone, or are you a care provider yourself?${last}` };
   }
 
   const label = humanLabelForStep(step);
@@ -161,12 +161,12 @@ async function planNudge(session: Record<string, unknown>, nudgeNumber: number):
       const missing = missingRequiredFields("caregiver", data).filter((f) => !caregiverRecordHas(cg, f));
       const field = missing[0];
       if (field === "profilePhoto") {
-        return { text: `${greeting} Your caregiver profile stopped at your profile photo — families see it first.${last} Here's your upload link again:`, link: "photo" };
+        return { text: `${greeting} Your care provider profile stopped at your profile photo — families see it first.${last} Here's your upload link again:`, link: "photo" };
       }
       const q = field ? CAREGIVER_FIELD_QUESTIONS[field] : undefined;
-      if (q) return { text: `${greeting} Your caregiver profile stopped at ${label}. ${q}${last}` };
+      if (q) return { text: `${greeting} Your care provider profile stopped at ${label}. ${q}${last}` };
     }
-    return { text: `${greeting} Your caregiver profile stopped at ${label}. Reply here and I'll pick up right there.${last}` };
+    return { text: `${greeting} Your care provider profile stopped at ${label}. Reply here and I'll pick up right there.${last}` };
   }
 
   // family
@@ -194,7 +194,7 @@ async function writeReminderBell(phone: string, session: Record<string, unknown>
     recipientId:    uid,
     transitionType: "stale_nudge",
     type:           "onboarding_reminder",
-    title:          session.userType === "caregiver" ? "Finish your caregiver setup" : "Finish setting up care",
+    title:          session.userType === "caregiver" ? "Finish your care provider setup" : "Finish setting up care",
     body:           `You stopped at ${humanLabelForStep(step)} — pick up on your dashboard whenever you're ready.`,
     data:           { step },
   }).catch((err) => console.error(`[staleSessionNudge] bell write failed (non-fatal) for …${phone.slice(-4)}:`, err));

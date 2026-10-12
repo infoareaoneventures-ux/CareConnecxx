@@ -756,7 +756,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 <Lock className="w-4 h-4" /> Activate Membership
               </button>
             ) : blockReason === 'background' ? (
-              <button onClick={() => navigate('/caregiver/dashboard')} className="w-full py-2.5 bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
+              <button onClick={() => navigate('/care-provider/dashboard')} className="w-full py-2.5 bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
                 <Lock className="w-4 h-4" /> Complete Verification
               </button>
             ) : (
@@ -825,7 +825,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           {/* Bottom row: Message + Cancel */}
           <div className="flex gap-2 pt-1">
             <button
-              onClick={() => navigate(shift.clientId ? `/caregiver/inbox?client=${shift.clientId}` : '/caregiver/inbox')}
+              onClick={() => navigate(shift.clientId ? `/care-provider/inbox?client=${shift.clientId}` : '/care-provider/inbox')}
               className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 flex items-center justify-center gap-1.5 text-sm"
             >
               <MessageSquare className="w-4 h-4" />Message
@@ -1120,7 +1120,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                   <Lock className="w-4 h-4" /> Activate Membership
                 </button>
               ) : blockReason === 'background' ? (
-                <button onClick={() => navigate('/caregiver/dashboard')}
+                <button onClick={() => navigate('/care-provider/dashboard')}
                   className="flex-1 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors hover:bg-amber-100">
                   <Lock className="w-4 h-4" /> Complete Verification
                 </button>
@@ -1176,7 +1176,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           )}
 
           <div className="flex gap-2">
-            <button onClick={() => navigate(interview.clientId ? `/caregiver/inbox?client=${interview.clientId}` : '/caregiver/inbox')}
+            <button onClick={() => navigate(interview.clientId ? `/care-provider/inbox?client=${interview.clientId}` : '/care-provider/inbox')}
               className="flex-1 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-sm flex items-center justify-center gap-1.5">
               <MessageSquare className="w-4 h-4" /> Message
             </button>

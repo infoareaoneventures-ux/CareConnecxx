@@ -1,3 +1,4 @@
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -383,7 +384,7 @@ async function answerQuestionMidFlow(phone: string, text: string, session: Agent
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a client post a care job. " +
+      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a client post a care job. " +
       `They are setting up a job for ${recipientName}. ` +
       (sharedProfile ? `${sharedProfile} ` : "") +
       "You see ONLY this one message, not the rest of the conversation — including anything Evia herself said earlier. " +
@@ -616,7 +617,7 @@ async function finishRecipientSelection(
   await updateJobStep(phone, "jp_ask_caregivers_needed");
   const names = chosen.map((r) => r.isSelf ? "you" : r.firstName).join(" and ");
   await sendMessage(chatId,
-    `Got it — care for ${names}.\n\nHow many caregivers do you need for this job? (Most families need just 1 — reply a number 1-4)`
+    `Got it — care for ${names}.\n\nHow many care providers do you need for this job? (Most families need just 1 — reply a number 1-4)`
   );
 }
 
@@ -653,7 +654,7 @@ async function handleJpAskRecipientRelationship(
 async function handleJpAskCaregiversNeeded(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  const REASK = "How many caregivers do you need for this job? (Most families need just 1 — reply a number 1-4)";
+  const REASK = "How many care providers do you need for this job? (Most families need just 1 — reply a number 1-4)";
   let n = bareNumberPick(text, 4);
   if (n === null) {
     if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
@@ -664,7 +665,7 @@ async function handleJpAskCaregiversNeeded(
       return;
     }
     const raw = await parseWithClaude(
-      'Extract how many caregivers the family needs, as a number from 1 to 4. "just one"/"one"/"1" = 1. Reply with only the number.',
+      'Extract how many care providers the family needs, as a number from 1 to 4. "just one"/"one"/"1" = 1. Reply with only the number.',
       text
     );
     n = parseInt(raw, 10);
@@ -681,7 +682,7 @@ async function handleJpAskCaregiversNeeded(
   const locations = uid ? await fetchLocationOptions(uid, onboardingData) : [];
   const listText = formatLocationOptions(locations);
   await sendMessage(chatId,
-    `Got it — ${n} caregiver${n === 1 ? "" : "s"}.\n\nWhich address is this for?\n\n${listText}\n\n` +
+    `Got it — ${n} care provider${n === 1 ? "" : "s"}.\n\nWhich address is this for?\n\n${listText}\n\n` +
     (locations.length ? "Reply with a number, or a new street address + zip code." : "Reply with the street address + zip code.")
   );
 }
@@ -1035,7 +1036,7 @@ async function handleJpAskCareNeeds(
   // so; nothing is stored underneath a category (2026-10-04).
   const canon = await canonicalizeCareNeeds([text]);
   const notes: string[] = [];
-  if (canon.medical.length) notes.push(`Caregivers here don't administer medication or give medical treatment, so "${canon.medical.join('", "')}" isn't a type of care I can add — the closest on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
+  if (canon.medical.length) notes.push(`Care Providers here don't administer medication or give medical treatment, so "${canon.medical.join('", "')}" isn't a type of care I can add — the closest on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
   if (canon.unmapped.length) notes.push(`"${canon.unmapped.join('", "')}" isn't one of the types of care on the list, so I've left it off.`);
   if (canon.unresolved.length) notes.push(`I couldn't place "${canon.unresolved.join('", "')}" — which of the list did you mean?`);
   const careNeeds = canon.careNeeds;
@@ -1090,7 +1091,7 @@ async function handleJpAskRate(
   const name = await recipientsDisplayName(phone, session);
   await sendMessage(chatId,
     `${rateLabel} — sounds good! Last question: can you briefly describe a typical care day for ${name}?\n\n` +
-    "A sentence or two is great. Caregivers browsing jobs can read this, so leave out medical details, addresses, and anything private."
+    "A sentence or two is great. Care Providers browsing jobs can read this, so leave out medical details, addresses, and anything private."
   );
 }
 
@@ -1098,7 +1099,7 @@ async function handleJpAskDescription(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const name = await recipientsDisplayName(phone, session);
-  const REASK = `Can you describe a typical care day for ${name}? A sentence or two is great. Caregivers browsing jobs can read this, so leave out medical details, addresses, and anything private.`;
+  const REASK = `Can you describe a typical care day for ${name}? A sentence or two is great. Care Providers browsing jobs can read this, so leave out medical details, addresses, and anything private.`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1116,14 +1117,14 @@ async function handleJpAskDescription(
   const jobData = await getJobData(phone);
   const summary = buildJobSummary(jobData, session);
   await sendMessage(chatId,
-    `Here's your job post:\n\n${summary}\n\nReply YES to post it for caregivers to see, or NO to start over.`
+    `Here's your job post:\n\n${summary}\n\nReply YES to post it for care providers to see, or NO to start over.`
   );
 }
 
 async function handleJpConfirmPost(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  const CONFIRM_REASK = "Confirming whether to post this job for caregivers to see — reply YES to post it, or NO to start over.";
+  const CONFIRM_REASK = "Confirming whether to post this job for care providers to see — reply YES to post it, or NO to start over.";
 
   // 2026-09-14 — same fix as bookingFlow.ts's handleBkConfirm: a bare,
   // unambiguous affirmative can never reasonably mean "cancel", so it skips
@@ -1273,7 +1274,7 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
   return [
     title ? `Title: ${title}` : "",
     `For: ${recipientsLabel}`,
-    `Caregivers needed: ${caregiversNeeded}`,
+    `Care Providers needed: ${caregiversNeeded}`,
     `Location: ${locationLabel}`,
     `Start: ${formatDateForDisplay(startDate)}`,
     `Frequency: ${freqLabel[frequency] ?? frequency}`,

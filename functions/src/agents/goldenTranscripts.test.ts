@@ -393,7 +393,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-cohort-excluded-from-tone-warmth",
-    description: "Caregiver pathway is OFF the tone-warmth-v1 experiment by predicate. metrics.experiments should be empty.",
+    description: "Care Provider pathway is OFF the tone-warmth-v1 experiment by predicate. metrics.experiments should be empty.",
     userType: "caregiver",
     claudeScript: [
       { text: "Got it." },
@@ -473,7 +473,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-pathway-uses-caregiver-toolset",
-    description: "Caregiver asks about getting paid — handled via the caregiver tool handler, not the client one.",
+    description: "Care Provider asks about getting paid — handled via the care provider tool handler, not the client one.",
     userType: "caregiver",
     toolMocks: {
       get_payout_status: { success: true, summary: "active", payoutsEnabled: true, chargesEnabled: true, hasStripeAccount: true, pageLabel: "Bank account connected" },
@@ -512,7 +512,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "frustrated-own-it-no-corporate-empathy",
-    description: "Family is angry about a recurring caregiver no-show. Evia owns it without using the banned 'I understand your frustration' phrase.",
+    description: "Family is angry about a recurring care provider no-show. Evia owns it without using the banned 'I understand your frustration' phrase.",
     toolMocks: {
       get_recent_messages: { messages: [] },
     },
@@ -666,7 +666,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "messy-caregiver-pay-question-uses-payout-tool",
-    description: "Caregiver asks casually about pay after clock-out. Evia uses caregiver payout data.",
+    description: "Care Provider asks casually about pay after clock-out. Evia uses care provider payout data.",
     userType: "caregiver",
     // 2026-10-02: the Payouts tab texts itself (show_payouts is self-sending — the
     // model's own words that turn are discarded), so the expectation is the tool call.
@@ -724,7 +724,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
     claudeScript: [
       { text: "Please contact support and the team will follow up." },
     ],
-    input: { text: "my caregiver didn't show up" },
+    input: { text: "my care provider didn't show up" },
     expect: {
       replyContains:              ["I can handle"],
       replyNotContains:           ["contact support", "team will"],
@@ -788,7 +788,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-approval-status-specific",
-    description: "Caregiver asks why they are not approved. Evia uses caregiver status data and does not give a generic support answer.",
+    description: "Care Provider asks why they are not approved. Evia uses care provider status data and does not give a generic support answer.",
     userType: "caregiver",
     toolMocks: {
       get_background_check_status: {
@@ -822,11 +822,11 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
     name:        "client-what-can-you-do-role-relevant",
     description: "Client asks what Evia can do. Reply names care recipes, not raw features or a generic helper prompt.",
     claudeScript: [
-      { text: "I can pull up the next visit, review caregiver hours with you, share the latest care update, or find backup coverage if someone is late." },
+      { text: "I can pull up the next visit, review care provider hours with you, share the latest care update, or find backup coverage if someone is late." },
     ],
     input: { text: "what can you do?" },
     expect: {
-      replyContains:    ["next visit", "caregiver hours", "care update"],
+      replyContains:    ["next visit", "care provider hours", "care update"],
       replyNotContains: ["what can I help you with", "how can I help", "here is a list", "feature"],
       toolsCalled:      [],
       noListShape:      true,
@@ -836,7 +836,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-what-can-you-do-schedule-pay-jobs",
-    description: "Caregiver asks what Evia can do. Reply surfaces shift closeout, hours and pay status recipes.",
+    description: "Care Provider asks what Evia can do. Reply surfaces shift closeout, hours and pay status recipes.",
     userType: "caregiver",
     claudeScript: [
       { text: "I can help you close out a shift, submit hours, or check your payout status." },
@@ -883,7 +883,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
 
   {
     name:        "caregiver-background-check-passed-still-needs-approval",
-    description: "Caregiver assumes a passed background check means they can work now. Evia checks real status and explains both gates (profile_complete AND approved) - a clear check does not auto-make them bookable until onboarding completes.",
+    description: "Care Provider assumes a passed background check means they can work now. Evia checks real status and explains both gates (profile_complete AND approved) - a clear check does not auto-make them bookable until onboarding completes.",
     userType: "caregiver",
     toolMocks: {
       get_background_check_status: {
@@ -1003,7 +1003,7 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       contact_support: { success: true, ticketId: "tick-confused-1" },
     },
     claudeScript: [
-      { tools: [{ name: "contact_support", input: { category: "safety", priority: "urgent", description: "Family reports sudden confusion and asks whether caregiver should still come." } }] },
+      { tools: [{ name: "contact_support", input: { category: "safety", priority: "urgent", description: "Family reports sudden confusion and asks whether care provider should still come." } }] },
       { text: "Sudden confusion can be urgent. If this feels new or severe, call 911 now. I flagged it here too - is someone with Mom right now?" },
     ],
     input: { text: "mom is suddenly confused and maria comes at 3 should i cancel??" },

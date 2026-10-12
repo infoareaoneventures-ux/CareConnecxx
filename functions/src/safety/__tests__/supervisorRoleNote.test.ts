@@ -13,9 +13,9 @@ import { supervisorRoleNote } from "../supervisor";
 describe("supervisorRoleNote", () => {
   it("tells the reviewer a caregiver's own rates are not an unconfirmed price", () => {
     const n = supervisorRoleNote("caregiver");
-    expect(n).toContain("CAREGIVER");
+    expect(n).toContain("CARE PROVIDER");
     expect(n).toContain("THEIR OWN rates");
-    expect(n).toContain("confirmed with your caregivers");
+    expect(n).toContain("confirmed with your care providers");
   });
   it("defaults to the family side", () => {
     expect(supervisorRoleNote(undefined)).toContain("FAMILY");

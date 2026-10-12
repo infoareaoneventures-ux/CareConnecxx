@@ -44,7 +44,7 @@ describe("formatCaraOperationalContext", () => {
     expect(formatted).toContain("Never claim a pending, failed, or admin-flagged action succeeded");
   });
 
-  it("summarizes caregiver and client product state for state-aware replies", () => {
+  it("summarizes care provider and client product state for state-aware replies", () => {
     const formatted = formatCaraOperationalContext({
       pendingActions: [],
       openAlerts: [],
@@ -65,8 +65,8 @@ describe("formatCaraOperationalContext", () => {
       },
     });
 
-    expect(formatted).toContain("Caregiver state: onboarding=profile_complete, verification=approved, checkr=clear, status=active");
-    expect(formatted).toContain("Caregiver shift payment context: appt-1: pending_client_review $120");
+    expect(formatted).toContain("Care Provider state: onboarding=profile_complete, verification=approved, checkr=clear, status=active");
+    expect(formatted).toContain("Care Provider shift payment context: appt-1: pending_client_review $120");
     expect(formatted).toContain("Client next visit: appt-2 confirmed");
     expect(formatted).toContain("Latest care update: Mom ate lunch");
     expect(formatted).toContain("Pending invoice/payment: inv-1 sent");
@@ -115,7 +115,7 @@ describe("buildOperationalRecipeLead", () => {
     expect(lead).toContain("Confirm tomorrow's visit");
   });
 
-  it("leads caregivers toward pay and shift context", () => {
+  it("leads care providers toward pay and shift context", () => {
     const lead = buildOperationalRecipeLead({
       pendingActions: [],
       openAlerts: [],

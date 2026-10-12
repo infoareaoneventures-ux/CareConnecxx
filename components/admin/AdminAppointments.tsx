@@ -116,7 +116,7 @@ export const AdminAppointments: React.FC = () => {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search by client or caregiver…"
+            placeholder="Search by client or care provider…"
             className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>
@@ -148,7 +148,7 @@ export const AdminAppointments: React.FC = () => {
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
               <tr>
-                {['Client', 'Caregiver', 'Date & Time', 'Duration', 'Cost', 'Payment', 'Status', ''].map(h => (
+                {['Client', 'Care Provider', 'Date & Time', 'Duration', 'Cost', 'Payment', 'Status', ''].map(h => (
                   <th key={h} className={`text-xs font-semibold text-slate-500 uppercase px-6 py-3 ${h ? 'text-left' : 'text-right'}`}>{h}</th>
                 ))}
               </tr>

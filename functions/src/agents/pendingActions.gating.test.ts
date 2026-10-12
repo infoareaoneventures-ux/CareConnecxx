@@ -16,7 +16,7 @@ describe("U9 financial-flow gating", () => {
     expect(isHighRisk("review_shift_hours", { action: "escalate" })).toBe(false);
   });
 
-  it("builds an approval-quality timesheet preview (decision + hours + caregiver)", async () => {
+  it("builds an approval-quality timesheet preview (decision + hours + care provider)", async () => {
     const p = await buildActionPreview("review_shift_hours", { action: "approve", hours: 6, amount: 132, caregiverName: "Jane" });
     expect(p).toContain("approve");
     expect(p).toContain("6h");

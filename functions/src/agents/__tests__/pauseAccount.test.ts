@@ -57,7 +57,7 @@ describe("pauseCaregiver / reactivateCaregiver — one write, the door decides w
     expect(hoisted.docs.get("caregivers/cg1").reactivatedAt).toBeTruthy();
   });
 
-  it("the site door never stamps — the lifecycle text is the site caregiver's only text", async () => {
+  it("the site door never stamps — the lifecycle text is the site care provider's only text", async () => {
     await pauseCaregiver("cg1", "indefinite", { door: "site" });
     expect(order()).toEqual(["caregivers/cg1"]);
     expect(hoisted.docs.get(`agent_sessions/${PHONE}`).accountNoticeTexted).toBeUndefined();

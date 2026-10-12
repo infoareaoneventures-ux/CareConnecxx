@@ -14,7 +14,7 @@ import * as admin from "firebase-admin";
 const MARKER = "membershipActivatedNotifiedAt";
 
 export const MEMBERSHIP_ACTIVE_TEXT =
-  "Evia: your membership is active — you're all set to message and book the caregivers you've seen. I'll keep you posted on every visit.";
+  "Evia: your membership is active — you're all set to message and book the care providers you've seen. I'll keep you posted on every visit.";
 
 export async function notifyClientMembershipActivatedOnce(uid: string): Promise<boolean> {
   if (!uid) return false;
@@ -46,7 +46,7 @@ export async function notifyClientMembershipActivatedOnce(uid: string): Promise<
     userId: uid,
     type: "membership_activated",
     title: "Membership active",
-    body: "Your Evia membership is active. You can message and book the caregivers you've seen — Evia will keep you posted on every visit.",
+    body: "Your Evia membership is active. You can message and book the care providers you've seen — Evia will keep you posted on every visit.",
     data: {},
     isRead: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),

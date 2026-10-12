@@ -57,7 +57,7 @@ const REAL_CAREGIVER = {
 const SEEDED_CAREGIVER = {
   ...CLEARED,
   __seedTag: "cara-test",
-  name: "Fake Test Caregiver",
+  name: "Fake Test Care Provider",
   city: "San Jose",
   yearsExperience: 99,
   specialties: ["Companionship"],
@@ -66,7 +66,7 @@ const SEEDED_CAREGIVER = {
 const ctx = { caller: "sms_agent" as const, role: "client" as const };
 
 describe("getCaregiverPreviewAction", () => {
-  it("formats active caregivers as a curated prose preview", () => {
+  it("formats active care providers as a curated prose preview", () => {
     const result = buildCaregiverPreviewResult({
       city: "San Jose",
       seniorName: "Sarda",
@@ -80,7 +80,7 @@ describe("getCaregiverPreviewAction", () => {
     });
 
     expect(result.available).toBe(true);
-    expect(result.message).toContain("I found 3 caregivers near San Jose");
+    expect(result.message).toContain("I found 3 care providers near San Jose");
     expect(result.message).toContain("Maria Santos, 8 yrs experience, strongest fit for Dementia Care");
     expect(result.message).toContain("James Okafor, 5 yrs experience, strongest fit for Companionship");
     expect(result.message).toContain("I would start with the best fit");
@@ -114,13 +114,13 @@ describe("getCaregiverPreviewAction", () => {
       careNeeds: ["Personal Care", "Medication Reminders"],
       widened: false,
       caregivers: [],
-      alreadyShownNames: ["Basra Yousuf", "Imran", "Test Caregiver"],
+      alreadyShownNames: ["Basra Yousuf", "Imran", "Test Care Provider"],
     });
 
     expect(result.available).toBe(false);
-    expect(result.alreadyShownNames).toEqual(["Basra Yousuf", "Imran", "Test Caregiver"]);
+    expect(result.alreadyShownNames).toEqual(["Basra Yousuf", "Imran", "Test Care Provider"]);
     expect(result.message).toContain("Basra Yousuf");
-    expect(result.message).not.toContain("I don't have caregivers available");
+    expect(result.message).not.toContain("I don't have care providers available");
     expect(result.message).not.toContain("No charge until then");
   });
 
@@ -136,7 +136,7 @@ describe("getCaregiverPreviewAction", () => {
       expect(isSeededCaregiver(SEEDED_CAREGIVER)).toBe(true);
     });
 
-    it("does not flag real caregiver docs", () => {
+    it("does not flag real care provider docs", () => {
       expect(isSeededCaregiver(REAL_CAREGIVER)).toBe(false);
     });
   });
@@ -155,7 +155,7 @@ describe("getCaregiverPreviewAction", () => {
       expect(result.widened).toBe(false);
       expect(result.total).toBe(1);
       expect(result.items.map(i => i.name)).toEqual(["Maria Santos"]);
-      expect(result.message).not.toContain("Fake Test Caregiver");
+      expect(result.message).not.toContain("Fake Test Care Provider");
     });
 
     it("excludes a seeded doc that surfaces only via the widened-city fallback", async () => {
@@ -172,7 +172,7 @@ describe("getCaregiverPreviewAction", () => {
       expect(result.widened).toBe(true);
       expect(result.total).toBe(1);
       expect(result.items.map(i => i.name)).toEqual(["Maria Santos"]);
-      expect(result.message).not.toContain("Fake Test Caregiver");
+      expect(result.message).not.toContain("Fake Test Care Provider");
     });
 
     it("holds to the no-caregivers contract when every candidate is seeded", async () => {
@@ -189,10 +189,10 @@ describe("getCaregiverPreviewAction", () => {
       expect(result.total).toBe(0);
       expect(result.items).toEqual([]);
       expect(result.message).toContain("No charge until then");
-      expect(result.message).not.toContain("Fake Test Caregiver");
+      expect(result.message).not.toContain("Fake Test Care Provider");
     });
 
-    it("leaves real caregivers unaffected when no seeded docs are present", async () => {
+    it("leaves real care providers unaffected when no seeded docs are present", async () => {
       localDocs = [toDoc(REAL_CAREGIVER)];
       widerDocs = [];
 

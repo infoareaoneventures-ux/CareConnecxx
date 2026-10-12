@@ -113,7 +113,7 @@ export const AuthLoginPage: React.FC = () => {
         const profile = await dbService.getUser(uid).catch(() => null);
         // AdminUser types userType as client|caregiver; admin lives in the raw doc.
         const userType = profile?.userType as string | undefined;
-        if (userType === 'caregiver') dest = '/caregiver/dashboard';
+        if (userType === 'caregiver') dest = '/care-provider/dashboard';
         else if (userType === 'admin') dest = '/admin';
       }
       navigate(dest, { replace: true });

@@ -12,7 +12,7 @@ interface CaregiverUserMenuProps {
 export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const ACCOUNT_PATHS = ['/caregiver/profile', '/caregiver/settings', '/caregiver/payments', '/caregiver/families'];
+  const ACCOUNT_PATHS = ['/care-provider/profile', '/care-provider/settings', '/care-provider/payments', '/care-provider/families'];
   const isAccountActive = ACCOUNT_PATHS.some(p => location.pathname.startsWith(p));
   const { currentUser, addToast } = useCareConnex();
   const [open, setOpen] = useState(false);
@@ -60,10 +60,10 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
   const avatar = profile?.photo || profile?.imageUrl || (profile as any)?.profilePhoto || (profile as any)?.photoURL || (currentUser as any)?.photoURL;
 
   const items: Array<{ label: string; onClick: () => void; icon: React.ReactNode; divider?: boolean }> = [
-    { label: 'Profile', onClick: () => go('/caregiver/profile'), icon: <User className="w-4 h-4" /> },
-    { label: 'My Families', onClick: () => go('/caregiver/families'), icon: <Users className="w-4 h-4" /> },
-    { label: 'Payments', onClick: () => go('/caregiver/payments'), icon: <Wallet className="w-4 h-4" /> },
-    { label: 'Settings', onClick: () => go('/caregiver/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
+    { label: 'Profile', onClick: () => go('/care-provider/profile'), icon: <User className="w-4 h-4" /> },
+    { label: 'My Families', onClick: () => go('/care-provider/families'), icon: <Users className="w-4 h-4" /> },
+    { label: 'Payments', onClick: () => go('/care-provider/payments'), icon: <Wallet className="w-4 h-4" /> },
+    { label: 'Settings', onClick: () => go('/care-provider/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
   ];
 
   return (

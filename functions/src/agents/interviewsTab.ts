@@ -51,7 +51,7 @@ export interface InterviewsTabRow {
   reschedulePendingTimeLocal: string | null;
   rescheduledBy: "client" | "caregiver" | null;
   /** "you" = the caregiver proposed and the family must accept/decline; "caregiver" = the family's own proposal is out. */
-  rescheduleWaitingOn: "you" | "caregiver" | null;
+  rescheduleWaitingOn: "you" | "care provider" | null;
   /** The booking line under a completed interview, exactly as the page labels it. */
   booking: { id: string; status: "pending" | "accepted" | "declined" | "cancelled"; label: string; hasActiveShifts: boolean } | null;
   /** The family already marked this caregiver Not Selected. */
@@ -118,7 +118,7 @@ export async function listClientInterviews(clientId: string, filter?: string, no
       const bookingLabel = !bk ? "" :
         bk.status === "pending" ? "Booking sent · Awaiting response" :
         bk.status === "accepted" ? (hasActiveShifts ? "Booking accepted" : "Booking finished — Re-book available") :
-        bk.status === "cancelled" ? "Visit cancelled" : "Caregiver declined";
+        bk.status === "cancelled" ? "Visit cancelled" : "Care Provider declined";
       const notSelected = displayStatus === "declined" && iv.declinedBy === "client";
       const startMs = typeof iv.scheduledTime === "string" ? parseScheduledTimeMs(iv.scheduledTime) : NaN;
       const isActive = ACTIVE.has(displayStatus);
@@ -171,7 +171,7 @@ export async function listClientInterviews(clientId: string, filter?: string, no
         reschedulePendingTime:      (iv.reschedulePendingTime as string | undefined) ?? null,
         reschedulePendingTimeLocal: local(iv.reschedulePendingTime),
         rescheduledBy: (iv.rescheduledBy as "client" | "caregiver" | undefined) ?? null,
-        rescheduleWaitingOn: iv.reschedulePendingTime ? (iv.rescheduledBy === "client" ? "caregiver" : "you") : null,
+        rescheduleWaitingOn: iv.reschedulePendingTime ? (iv.rescheduledBy === "client" ? "care provider" : "you") : null,
         booking: bk ? { ...bk, label: bookingLabel, hasActiveShifts } : null,
         notSelected,
         actions,

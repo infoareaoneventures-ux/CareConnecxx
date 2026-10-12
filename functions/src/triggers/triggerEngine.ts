@@ -1,3 +1,4 @@
+import { CARE_PROVIDER_TERM_RULE } from "../agents/terminology";
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
@@ -121,7 +122,7 @@ export async function generateTriggerMessage(
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 120,
       system:
-        "You are Evia, a care coordinator. Write a single brief follow-up text message (1–2 sentences).\n" +
+        CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator. Write a single brief follow-up text message (1–2 sentences).\n" +
         "Tone: warm, specific, natural — like a care coordinator who remembers the context.\n" +
         "Use the family's care context and the reason for the follow-up to make it feel relevant.\n" +
         "No bullet points. No emoji. No preamble. Output only the message text.\n" +
@@ -242,7 +243,7 @@ export function isCaregiverFollowUp(
 // generic re-engagement default. Exported for tests.
 export function discretionaryCategory(text: string): "re_engagement" | "visit_risk" | "billing_heads_up" {
   const t = (text ?? "").toLowerCase();
-  if (/\b(visit|appointment|shift|booking|caregiver)\b/.test(t)) return "visit_risk";
+  if (/\b(visit|appointment|shift|booking|caregiver|care provider)\b/.test(t)) return "visit_risk";
   if (/\b(payment|invoice|bill|billing|charge|subscription|refund|dispute|payout)\b/.test(t)) return "billing_heads_up";
   return "re_engagement";
 }

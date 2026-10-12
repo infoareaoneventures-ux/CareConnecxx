@@ -82,7 +82,7 @@ describe("startVisit — the Start Shift button", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(hoisted.updates[0]).toEqual({ path: "shifts/s1", data: { status: "in-progress", startedAt: "__ts__", updatedAt: "__ts__" } });
-    expect(r.text).toMatch(/^Started \d{1,2}:\d{2} [AP]M — .+ with Basra Yousuf\.\nBooking note: This is an additional shift\nVisit note: testing as additional shift\n\nMai \(Mother\)\nNote: Likes her tea at 3\.\nTasks:\n1\. Companionship\n2\. Mobility Assistance — Transfer Assist\n3\. Mobility Assistance — Walking\n\nReply DONE 1 \(or DONE 1, 3\) as you finish, NOTE followed by anything the family should see, and FINISH when the visit is over\.\nPrefer the page\? Open this visit: https?:\/\/\S+\/caregiver\/bookings\?tab=active&visit=s1$/);
+    expect(r.text).toMatch(/^Started \d{1,2}:\d{2} [AP]M — .+ with Basra Yousuf\.\nBooking note: This is an additional shift\nVisit note: testing as additional shift\n\nMai \(Mother\)\nNote: Likes her tea at 3\.\nTasks:\n1\. Companionship\n2\. Mobility Assistance — Transfer Assist\n3\. Mobility Assistance — Walking\n\nReply DONE 1 \(or DONE 1, 3\) as you finish, NOTE followed by anything the family should see, and FINISH when the visit is over\.\nPrefer the page\? Open this visit: https?:\/\/\S+\/care-provider\/bookings\?tab=active&visit=s1$/);
   });
   it("one visit at a time (2026-10-07): another visit in progress → refused by name, nothing written", async () => {
     shift("open", { status: "in-progress", clientName: "Basra Yousuf", date: "2099-09-28", startTime: "09:00", endTime: "10:00" });
@@ -180,7 +180,7 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
     expect(hoisted.docs.get("shifts/s1").status).toBe("in-progress");
     expect(hoisted.sent.at(-1)).toBe(`Yes — the closing note is saved on the visit and the family can see it.\n\n${END_PROMPT}`);
     const briefing = String((hoisted.quick as any).mock.calls.at(-1)[0]);
-    expect(briefing).toContain("Audience: caregiver");
+    expect(briefing).toContain("Audience: care provider");
     expect(briefing).toContain(END_PROMPT);
     expect(briefing).toContain("The visit being ended: ");
     expect(briefing).toContain("Basra Yousuf");

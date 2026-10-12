@@ -33,7 +33,7 @@ describe("onboardingContract", () => {
     expect(isAllowedField("client", "timeOfDay")).toBe(true);
   });
 
-  it("caregiver required fields are the site wizard's steps, in the wizard's order (2026-09-25)", () => {
+  it("care provider required fields are the site wizard's steps, in the wizard's order (2026-09-25)", () => {
     expect(CAREGIVER_REQUIRED_FIELDS).toEqual([
       "name",
       "street", "zipCode", "city", "state",
@@ -109,7 +109,7 @@ describe("onboardingContract", () => {
       expect(missingRequiredFields("client", data)).toEqual(["selectedDays", "rate", "firstName"]);
     });
 
-    it("caregiver gate checks the caregiver set", () => {
+    it("care provider gate checks the care provider set", () => {
       const data = { name: "Maria", city: "Austin", yearsExperience: "3-5 years" };
       expect(missingRequiredFields("caregiver", data)).toEqual([
         "street", "zipCode", "state", "profilePhoto", "jobType", "availability", "specialties",
@@ -308,7 +308,7 @@ describe("onboardingContract", () => {
     it("client hands off straight to the intake confirmation (legacy start/preferences/budget steps removed)", () => {
       expect(firstGateStep("client")).toBe("client_confirm_intake");
     });
-    it("caregiver hands off to membership — the site dashboard's first card after the wizard", () => {
+    it("care provider hands off to membership — the site dashboard's first card after the wizard", () => {
       expect(firstGateStep("caregiver")).toBe("caregiver_send_membership");
     });
   });
@@ -341,7 +341,7 @@ describe("onboardingContract", () => {
     });
   });
 
-  describe("caregiver collection steps (the loop's caregiver surface)", () => {
+  describe("care provider collection steps (the loop's care provider surface)", () => {
     it("mirror the scripted caregiver_ask_* sequence, in flow order", () => {
       expect([...CAREGIVER_COLLECTION_STEPS]).toEqual([
         "caregiver_ask_name", "caregiver_ask_location", "caregiver_ask_story",
@@ -370,7 +370,7 @@ describe("onboardingContract", () => {
       expect(collectionStepsForRole("caregiver")).toBe(CAREGIVER_COLLECTION_STEPS);
     });
 
-    it("caregiver loop may save the derived fields, and nothing the site's wizard doesn't collect", () => {
+    it("care provider loop may save the derived fields, and nothing the site's wizard doesn't collect", () => {
       for (const f of ["skills", "services", "zipCode", "street", "state", "serviceRadius"]) {
         expect(isAllowedField("caregiver", f)).toBe(true);
       }
@@ -380,17 +380,17 @@ describe("onboardingContract", () => {
     });
   });
 
-  describe("shouldRouteOnboardingToLoop — caregiver role (loop-only)", () => {
+  describe("shouldRouteOnboardingToLoop — care provider role (loop-only)", () => {
     const base = { role: "caregiver", step: "caregiver_ask_experience", hasText: true, hasMedia: false };
 
-    it("routes every caregiver collection step unconditionally", () => {
+    it("routes every care provider collection step unconditionally", () => {
       expect(shouldRouteOnboardingToLoop(base)).toBe(true);
       for (const step of CAREGIVER_COLLECTION_STEPS) {
         expect(shouldRouteOnboardingToLoop({ ...base, step })).toBe(true);
       }
     });
 
-    it("never routes a caregiver gate/awaiting/confirm step", () => {
+    it("never routes a care provider gate/awaiting/confirm step", () => {
       for (const step of [
         "caregiver_send_photo", "caregiver_awaiting_photo",
         "caregiver_awaiting_documents", "caregiver_ask_mvr", "caregiver_awaiting_membership",
@@ -401,7 +401,7 @@ describe("onboardingContract", () => {
       }
     });
 
-    it("never routes caregiver media / empty-text turns", () => {
+    it("never routes care provider media / empty-text turns", () => {
       expect(shouldRouteOnboardingToLoop({ ...base, hasMedia: true })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, hasText: false })).toBe(false);
     });

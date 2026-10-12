@@ -87,7 +87,7 @@ describe("runPendingDecisionNudges", () => {
     expect(hoisted.updates[0]).toEqual({ path: "video_interviews/iv1", data: { decisionNudgeCount: 1, decisionNudgedAt: new Date(NOW).toISOString() } });
   });
 
-  it("skips: too new, answered, the caregiver's own proposal out, an interview whose time has passed", async () => {
+  it("skips: too new, answered, the care provider's own proposal out, an interview whose time has passed", async () => {
     hoisted.docs.set("video_interviews/new", { status: "requested", caregiverId: "cg1", createdAt: ago(60_000), scheduledTime: "2099-03-28T16:00:00.000Z" });
     hoisted.docs.set("video_interviews/done", { status: "accepted", caregiverId: "cg1", createdAt: ago(9 * NUDGE_DELAY_MS) });
     hoisted.docs.set("video_interviews/mine", { status: "requested", caregiverId: "cg1", createdAt: ago(9 * NUDGE_DELAY_MS), scheduledTime: "2099-03-28T16:00:00.000Z", reschedulePendingTime: "x", rescheduledBy: "caregiver" });
@@ -106,7 +106,7 @@ describe("runPendingDecisionNudges", () => {
     expect(r).toEqual({ nudged: 3, bellKeptOptedOut: 0, dropped: 0, skipped: 1 });
     const texts = hoisted.sends.map((s) => s.out.content);
     expect(texts).toContain("Fam A's booking request is still waiting on you. Reply ACCEPT or DECLINE, or DETAILS to see the full request.");
-    expect(texts.some((t) => t.startsWith("Fam B needs a replacement caregiver on ") && t.endsWith("— the request is still waiting on you and expires in 10 minutes. Reply ACCEPT or DECLINE, or DETAILS to see the full request."))).toBe(true);
+    expect(texts.some((t) => t.startsWith("Fam B needs a replacement care provider on ") && t.endsWith("— the request is still waiting on you and expires in 10 minutes. Reply ACCEPT or DECLINE, or DETAILS to see the full request."))).toBe(true);
     expect(texts).toContain("Fam D's schedule change request is still waiting on you. Reply ACCEPT or DECLINE.");
     expect(hoisted.sessionSets.map((s) => s.data.pendingDecision.kind).sort()).toEqual(["amendment", "booking_request", "booking_request"]);
   });
@@ -121,7 +121,7 @@ describe("runPendingDecisionNudges", () => {
     const r = await runPendingDecisionNudges(NOW, { only: "replacement" });
     expect(r).toEqual({ nudged: 1, bellKeptOptedOut: 0, dropped: 0, skipped: 1 });
     expect(hoisted.sends).toHaveLength(1);
-    expect(hoisted.sends[0].out.content).toMatch(/^Fam B needs a replacement caregiver on /);
+    expect(hoisted.sends[0].out.content).toMatch(/^Fam B needs a replacement care provider on /);
     expect(hoisted.sessionSets[0].data.pendingDecision).toMatchObject({ kind: "booking_request", recordId: "rep", label: "a replacement request from Fam B" });
     // A second sweep inside the window does not nudge again.
     const r2 = await runPendingDecisionNudges(NOW + 5 * 60_000, { only: "replacement" });
@@ -167,7 +167,7 @@ describe("runPendingDecisionNudges", () => {
     expect(r2).toEqual({ nudged: 0, bellKeptOptedOut: 0, dropped: 0, skipped: 1 });
   });
 
-  it("the one exception: a caregiver who texted STOP keeps the bell (the site is her only channel) and the window is stamped", async () => {
+  it("the one exception: a care provider who texted STOP keeps the bell (the site is her only channel) and the window is stamped", async () => {
     hoisted.docs.set("agent_sessions/+1408", { caregiverId: "cg1", optedOut: true });
     hoisted.docs.set("booking_requests/br1", { status: "pending", caregiverId: "cg1", clientName: "Fam", createdAt: ago(NUDGE_DELAY_MS + 1) });
     const r = await runPendingDecisionNudges(NOW);

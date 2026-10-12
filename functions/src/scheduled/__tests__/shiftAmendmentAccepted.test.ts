@@ -157,7 +157,7 @@ describe("onBookingAmendmentAccepted — the page's Accept, server-side, once", 
     expect(shifts()[0].data).toMatchObject({ clientId: "fam1", clientName: "From the request", caregiverName: "Maria R." });
   });
 
-  it("C17: a locked caregiver gets no new visits — the merge still lands, nothing is created, the reason is stamped and logged", async () => {
+  it("C17: a locked care provider gets no new visits — the merge still lands, nothing is created, the reason is stamped and logged", async () => {
     hoisted.docState.set("caregivers/cg1", { membershipStatus: "canceled", backgroundCheckStatus: "clear" });
     hoisted.docState.set("booking_requests/br1", booking());
     const a = amendment();

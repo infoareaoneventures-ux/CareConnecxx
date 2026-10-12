@@ -77,7 +77,7 @@ export async function listReschedulableVisits(clientId: string, limit = 10): Pro
         startTime: String(s.startTime ?? ""),
         endTime: String(s.endTime ?? s.startTime ?? ""),
         caregiverId: String(s.caregiverId ?? ""),
-        caregiverName: String(s.caregiverName ?? "your caregiver"),
+        caregiverName: String(s.caregiverName ?? "your care provider"),
         ...(s.reschedulePendingDate ? {
           pendingDate: String(s.reschedulePendingDate),
           pendingStart: String(s.reschedulePendingStartTime ?? ""),
@@ -111,7 +111,7 @@ export async function loadReschedulableShift(clientId: string, shiftId: string):
   if (shift.reschedulePendingDate && shift.rescheduledBy === "client") {
     return {
       ok: false, code: "INVALID_INPUT",
-      message: `You already proposed moving this visit and it's waiting on ${String(shift.caregiverName ?? "your caregiver")} to confirm — withdraw that proposal first if you want a different time`,
+      message: `You already proposed moving this visit and it's waiting on ${String(shift.caregiverName ?? "your care provider")} to confirm — withdraw that proposal first if you want a different time`,
     };
   }
   return { ok: true, shift, ref };
@@ -235,7 +235,7 @@ export async function proposeShiftReschedule(args: {
   logAudit({ eventType: "shift_reschedule_proposed", userId: args.clientId, data: { source: args.source, shiftId: args.shiftId } }).catch(() => {});
   return {
     ok: true, shiftId: args.shiftId, date: args.date, startTime: args.startTime, endTime: args.endTime,
-    caregiverName: String(args.shift.caregiverName ?? "your caregiver"),
+    caregiverName: String(args.shift.caregiverName ?? "your care provider"),
   };
 }
 
@@ -305,7 +305,7 @@ export async function acceptRescheduleProposal(clientId: string, shiftId: string
   });
   logAudit({ eventType: "shift_reschedule_accepted", userId: clientId, data: { source, shiftId } }).catch(() => {});
   return {
-    ok: true, shiftId, caregiverName: String(shift.caregiverName ?? "your caregiver"),
+    ok: true, shiftId, caregiverName: String(shift.caregiverName ?? "your care provider"),
     date: String(shift.reschedulePendingDate), startTime: pendingStart, endTime: String(shift.reschedulePendingEndTime ?? ""),
   };
 }
@@ -324,5 +324,5 @@ export async function clearRescheduleProposal(clientId: string, shiftId: string,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   logAudit({ eventType: "shift_reschedule_cleared", userId: clientId, data: { source, shiftId } }).catch(() => {});
-  return { ok: true, shiftId, caregiverName: String(shift.caregiverName ?? "your caregiver") };
+  return { ok: true, shiftId, caregiverName: String(shift.caregiverName ?? "your care provider") };
 }

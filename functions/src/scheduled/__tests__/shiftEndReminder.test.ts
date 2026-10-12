@@ -34,7 +34,7 @@ vi.mock("firebase-functions/v1", () => ({ pubsub: { schedule: () => ({ onRun: (f
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async (phone: string, out: any) => { hoisted.sends.push({ phone, out }); return true; }) }));
 vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (n: any) => { hoisted.bells.push(n); return true; }) }));
 vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(async (id: string) => (id === "cg1" ? "+1408" : undefined)) }));
-vi.mock("../../agents/inShift", () => ({ visitPageLink: (id: string) => `https://eviacares.com/caregiver/bookings?tab=active&visit=${id}` }));
+vi.mock("../../agents/inShift", () => ({ visitPageLink: (id: string) => `https://eviacares.com/care-provider/bookings?tab=active&visit=${id}` }));
 
 import { runShiftEndReminders, scheduledEndMs, shouldRemind, GRACE_MS, MAX_AGE_MS } from "../shiftEndReminder";
 
@@ -66,7 +66,7 @@ describe("the run", () => {
     const now = END + GRACE_MS + 60_000;
     expect(await runShiftEndReminders(now)).toEqual({ running: 1, missed: 1, skipped: 1 });
     expect(hoisted.sends.map((s) => s.out.content)).toEqual([
-      "H M's visit was scheduled to end at 7:45 PM and is still in progress. Text FINISH when you're done, or open it here: https://eviacares.com/caregiver/bookings?tab=active&visit=running",
+      "H M's visit was scheduled to end at 7:45 PM and is still in progress. Text FINISH when you're done, or open it here: https://eviacares.com/care-provider/bookings?tab=active&visit=running",
       "Your 7:30 PM visit with Basra Yousuf wasn't started. If you did the visit, reply LOG to log the hours. If not, no action needed.",
     ]);
     expect(hoisted.sends.every((s) => s.out.canDrop === false)).toBe(true);
@@ -82,7 +82,7 @@ describe("the run", () => {
     expect(hoisted.bells).toHaveLength(0);
   });
 
-  it("an opted-out caregiver gets no text and therefore no bell (bell ⇄ text, C11), still stamped; a visit whose end passed more than a day ago is left alone", async () => {
+  it("an opted-out care provider gets no text and therefore no bell (bell ⇄ text, C11), still stamped; a visit whose end passed more than a day ago is left alone", async () => {
     hoisted.docs.set("agent_sessions/+1408", { caregiverId: "cg1", optedOut: true });
     shift("running", { status: "in-progress" });
     shift("old", { status: "in-progress", date: "2099-02-01" });

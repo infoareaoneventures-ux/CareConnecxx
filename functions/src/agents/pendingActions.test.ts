@@ -199,8 +199,8 @@ describe("buildActionPreview", () => {
   // own context correctly paired the right id with the right name. Runtime-
   // enforced confirmation only closes that gap if the preview shows the REAL
   // resolved name — echoing back the raw id wouldn't have caught anything.
-  describe("schedule_interview — shows the REAL resolved caregiver name (2026-09-12)", () => {
-    it("resolves caregiverId to the caregiver's real name from publicCaregiverProfiles", async () => {
+  describe("schedule_interview — shows the REAL resolved care provider name (2026-09-12)", () => {
+    it("resolves caregiverId to the care provider's real name from publicCaregiverProfiles", async () => {
       hoisted.caregiverProfiles.set("cg_imran", { name: "Imran" });
       const preview = await buildActionPreview("schedule_interview", {
         caregiverId: "cg_imran", preferredDate: "2026-09-13", preferredTime: "10:00",
@@ -210,7 +210,7 @@ describe("buildActionPreview", () => {
 
     it("falls back gracefully when the caregiverId doesn't resolve to a profile", async () => {
       const preview = await buildActionPreview("schedule_interview", { caregiverId: "cg_missing" });
-      expect(preview).toBe("Schedule an interview with this caregiver"); // never the raw id
+      expect(preview).toBe("Schedule an interview with this care provider"); // never the raw id
     });
   });
 

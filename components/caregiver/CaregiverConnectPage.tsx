@@ -25,12 +25,12 @@ export const CaregiverConnectPage: React.FC = () => {
 
   // Already connected — let them through
   useEffect(() => {
-    if (currentUser?.eviaConnected) navigate('/caregiver/dashboard', { replace: true });
+    if (currentUser?.eviaConnected) navigate('/care-provider/dashboard', { replace: true });
   }, [currentUser?.eviaConnected, navigate]);
 
   // Session became connected via onSnapshot — navigate in
   useEffect(() => {
-    if (sessionState.status === 'connected') navigate('/caregiver/dashboard', { replace: true });
+    if (sessionState.status === 'connected') navigate('/care-provider/dashboard', { replace: true });
   }, [sessionState.status, navigate]);
 
   // Get the LINQ phone number
@@ -80,7 +80,7 @@ export const CaregiverConnectPage: React.FC = () => {
             <BloomMark className="w-6 h-6 text-ink-900" />
           </div>
           <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">One last step</div>
-          <p className="text-ink-600 text-sm">Text Evia to finish setting up your caregiver profile</p>
+          <p className="text-ink-600 text-sm">Text Evia to finish setting up your care provider profile</p>
         </div>
 
         {device === 'mobile' ? (

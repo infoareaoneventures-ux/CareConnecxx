@@ -86,7 +86,7 @@ describe("rekeyPhoneEverywhere", () => {
     expect(hoisted.docs.has(`web_onboarding_sessions/${OLD}`)).toBe(false);
   });
 
-  it("a family: user record only (no caregiver record written), everything else the same", async () => {
+  it("a family: user record only (no care provider record written), everything else the same", async () => {
     hoisted.docs.delete("caregivers/cg1");
     const r = await rekeyPhoneEverywhere({ uid: "cg1", role: "client", oldPhone: OLD, newPhone: NEW });
     expect(r.sessionMoved).toBe(true);

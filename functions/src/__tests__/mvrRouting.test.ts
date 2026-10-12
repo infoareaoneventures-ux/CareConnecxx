@@ -229,7 +229,7 @@ describe("criminal report — unchanged core behavior (characterization)", () =>
 });
 
 describe("initiateMvrOnlyCheck", () => {
-  it("is idempotent — already-initiated caregiver triggers no new check", async () => {
+  it("is idempotent — already-initiated care provider triggers no new check", async () => {
     seedCaregiver("cg1", { mvrCheckInitiated: true });
     await initiateMvrOnlyCheck("cg1");
     // No invitation write and no flag re-write beyond the seed.

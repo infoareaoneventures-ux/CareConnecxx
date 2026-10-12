@@ -233,7 +233,7 @@ export function scoreCaregiver(input: ScoringInput): ScoredMatch {
     if (boostPts >= 2) {
         reasons.unshift("Family has shown interest before");
     }
-    if (!reasons.length) reasons.push("Available caregiver in your area");
+    if (!reasons.length) reasons.push("Available care provider in your area");
 
     // Red flags
     const redFlags: string[] = [];

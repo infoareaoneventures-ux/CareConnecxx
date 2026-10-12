@@ -2,7 +2,7 @@
 // historically stored `location` as an OBJECT ({ city, zipCode, lat, lng } or
 // bare { lat, lng }) on job posts, job applications, and caregiver docs.
 // Rendering that object in JSX throws React #31 and takes down the whole page
-// (seen live 2026-07-15: /caregiver/jobs crashed on an application whose
+// (seen live 2026-07-15: /care-provider/jobs crashed on an application whose
 // jobLocation was { lng, city, lat }). Every UI read of a location-ish field
 // must go through this coercion — never render `.location` / `.jobLocation`
 // raw.

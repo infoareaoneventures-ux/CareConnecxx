@@ -19,6 +19,7 @@
 // dispatched BEFORE intent classification, back-out check first on every step,
 // isQuestionOrOther guard, deterministic KEEP / yes / no before any model call,
 // one recap + explicit YES gate. Nothing is written until that YES.
+import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -118,10 +119,10 @@ async function answerQuestionMidFlow(text: string): Promise<string> {
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a family correct the clock-in/clock-out times on a caregiver's submitted " +
+      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family correct the clock-in/clock-out times on a care provider's submitted " +
       "timesheet before it is paid. You see ONLY this one message, not the rest of the conversation — including anything " +
       "Evia herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. NEVER state " +
-      "what the caregiver will decide — they may accept or counter. If the message is clearly about something OTHER than " +
+      "what the care provider will decide — they may accept or counter. If the message is clearly about something OTHER than " +
       "finishing this correction, say plainly that it'll have to wait, e.g. \"That sounds like something else — let's " +
       "finish this first, and I'll help with that right after.\" Otherwise answer briefly (1–2 sentences). Be warm. NEVER " +
       "write out a URL. " + ANTI_INVENTION_CLAUSE,
@@ -165,7 +166,7 @@ async function handleBackOut(phone: string, chatId: string, session: AgentSessio
 
 // ── Loading the page's Needs Review rows ─────────────────────────────────────
 
-const first = (name: unknown, fallback = "your caregiver") => { const s = String(name ?? "").trim(); return s ? s.split(/\s+/)[0] : fallback; };
+const first = (name: unknown, fallback = "your care provider") => { const s = String(name ?? "").trim(); return s ? s.split(/\s+/)[0] : fallback; };
 const clock = (iso: string) => formatClockTime(Date.parse(iso));
 const hoursBetween = (a: string, b: string) => (Date.parse(b) - Date.parse(a)) / 3_600_000;
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -223,7 +224,7 @@ function START_QUESTION(r: CorrectionRow): string {
 function END_QUESTION(r: CorrectionRow): string {
   return `And the clock-out? (submitted ${clock(r.clockOut)} — reply KEEP to leave it)`;
 }
-const REASON_QUESTION = "Why the correction? This goes to the caregiver with your proposal — optional, reply NO to skip.";
+const REASON_QUESTION = "Why the correction? This goes to the care provider with your proposal — optional, reply NO to skip.";
 
 // ── Additional charges: the modal lets the family adjust each amount or remove a charge ──
 type LineItem = { type?: string; label?: string; note?: string; amount?: number };
@@ -269,7 +270,7 @@ async function parseChargeChanges(text: string, r: CorrectionRow): Promise<{ kin
   if (BARE_KEEP.has(bare)) return { kind: "keep" };
   const names = r.lineItems.map((li) => chargeName(li)).join(", ");
   const raw = await parseWithClaude(
-    `The family is reviewing a caregiver's additional charges on a timesheet: ${r.lineItems.map((li) => `${chargeName(li)} $${Number(li.amount) || 0}`).join(", ")}. ` +
+    `The family is reviewing a care provider's additional charges on a timesheet: ${r.lineItems.map((li) => `${chargeName(li)} $${Number(li.amount) || 0}`).join(", ")}. ` +
     `Return ONLY JSON. If they want everything left as is: {"keep": true}. Otherwise: {"changes": [{"label": "<one of: ${names}>", "amount": <new dollar amount as a number, or null to remove that charge>}]}. ` +
     "Only include charges they actually mention; never invent an amount.",
     text,
@@ -348,7 +349,7 @@ async function parseClockTime(text: string, anchorIso: string, which: "clock-in"
   if (BARE_KEEP.has(bare)) return { kind: "keep" };
   const anchorMs = Date.parse(anchorIso);
   const raw = await parseWithClaude(
-    `The family is giving a corrected ${which} time for a caregiver visit. The caregiver submitted ${formatClockTime(anchorMs)} on ${formatDateWithWeekday(businessTodayStr(DEFAULT_TZ, new Date(anchorMs)))}. ` +
+    `The family is giving a corrected ${which} time for a care provider visit. The care provider submitted ${formatClockTime(anchorMs)} on ${formatDateWithWeekday(businessTodayStr(DEFAULT_TZ, new Date(anchorMs)))}. ` +
     'Return ONLY a JSON object: {"time": "HH:MM"} in 24-hour time. If the family gives a time without AM/PM, choose the reading closest to the submitted time. ' +
     'If they say to keep/leave the submitted time, return {"keep": true}. If the message is not a time at all (a question, a comment, something else), return {"time": null}.',
     text,
@@ -373,7 +374,7 @@ export async function startCorrectionFlow(
   }
   const rows = await listCorrectionRows(clientId);
   if (rows.length === 0) {
-    await sendMessage(chatId, "There's nothing waiting for your review on the Timesheets page right now — once a caregiver submits hours, I'll text you and you can correct them here.");
+    await sendMessage(chatId, "There's nothing waiting for your review on the Timesheets page right now — once a care provider submits hours, I'll text you and you can correct them here.");
     return { started: false, reason: "nothing_to_review" };
   }
   const data: CorrectionFlowData = { rows };
@@ -402,7 +403,7 @@ async function selectRow(phone: string, chatId: string, r: CorrectionRow, initia
   // The family's own words may already carry the corrected time(s).
   if (initialText?.trim()) {
     const raw = await parseWithClaude(
-      `The family wants to correct a caregiver's submitted timesheet (submitted ${clock(r.clockIn)}–${clock(r.clockOut)}${r.lineItems.length ? `; additional charges: ${r.lineItems.map((li) => `${chargeName(li)} $${Number(li.amount) || 0}`).join(", ")}` : ""}). ` +
+      `The family wants to correct a care provider's submitted timesheet (submitted ${clock(r.clockIn)}–${clock(r.clockOut)}${r.lineItems.length ? `; additional charges: ${r.lineItems.map((li) => `${chargeName(li)} $${Number(li.amount) || 0}`).join(", ")}` : ""}). ` +
       'Return ONLY JSON: {"start": "HH:MM" | null, "end": "HH:MM" | null, "charges": [{"label": "<charge name>", "amount": <number, or null to remove>}] | null}. ' +
       'start/end: a corrected clock-in/clock-out ONLY if the message states an actual time, in 24-hour time, choosing the reading closest to the submitted times when AM/PM is missing (e.g. "can you change the clock in time" → both null). ' +
       'charges: ONLY if the message changes or removes one of the listed additional charges (e.g. "mileage from $5 to $10" → [{"label": "mileage", "amount": 10}]); otherwise null. Never invent a time or an amount.',
@@ -478,7 +479,7 @@ async function handlePick(phone: string, chatId: string, text: string, session: 
     return;
   }
   const raw = await parseWithClaude(
-    `Timesheets, numbered:\n${data.rows.map((r, i) => `${i + 1}. ${describeRow(r)}`).join("\n")}\n\nIf the family's message clearly picks one (by number, caregiver name, or date), return ONLY that number. Otherwise return 0.`,
+    `Timesheets, numbered:\n${data.rows.map((r, i) => `${i + 1}. ${describeRow(r)}`).join("\n")}\n\nIf the family's message clearly picks one (by number, care provider name, or date), return ONLY that number. Otherwise return 0.`,
     text,
   );
   const k = parseInt(raw.trim(), 10);
@@ -684,7 +685,7 @@ async function handleRespondCounter(phone: string, chatId: string, text: string,
     }
     const raw = await parseWithClaude(
       `Evia asked: "${question}"\n\nClassify the family's reply. Return ONLY a JSON object: {"action": "accept" | "escalate" | "other"}. ` +
-      '"accept" = clearly accepts the caregiver\'s counter; "escalate" = wants Evia\'s team to look at it / disputes it; "other" = a question or anything else (including a new time of their own — the site offers no second proposal).',
+      '"accept" = clearly accepts the care provider\'s counter; "escalate" = wants Evia\'s team to look at it / disputes it; "other" = a question or anything else (including a new time of their own — the site offers no second proposal).',
       text,
     );
     const parsed = parseJsonLoose(raw, "handleRespondCounter");

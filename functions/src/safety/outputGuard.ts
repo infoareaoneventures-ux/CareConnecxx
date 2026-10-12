@@ -31,7 +31,7 @@
 export const ANTI_INVENTION_CLAUSE =
   "Be concrete with the names, dates, times, and amounts given in the briefing — never vague. " +
   "Use ONLY names, dates, times, and amounts that appear in the briefing; " +
-  "if a name or number is not given, refer generically ('your visit', 'the caregiver') and NEVER invent one.";
+  "if a name or number is not given, refer generically ('your visit', 'the care provider') and NEVER invent one.";
 
 export interface GuardResult {
   ok:      boolean;
@@ -67,14 +67,14 @@ const INABILITY = /\b(?:don'?t|do not|can'?t|cannot)\s+see\s+(?:a|the|any|your)\
 // imperatives in real copy ("please let me know if the time works") never
 // match. Still only signal (a): the CONJUNCTION rule below demands a
 // briefing/transcript reference or role question on top.
-const IMPERATIVE_ASK = /\b(?:please\s+)?(?:provide|share|send|give\s+me|tell\s+me|let\s+me\s+know)\b[^.!?\n]{0,80}\b(?:name|details|context|information|info|who\s+the|which\s+(?:client|caregiver|senior|shift))\b/i;
+const IMPERATIVE_ASK = /\b(?:please\s+)?(?:provide|share|send|give\s+me|tell\s+me|let\s+me\s+know)\b[^.!?\n]{0,80}\b(?:name|details|context|information|info|who\s+the|which\s+(?:client|caregiver|care\s+provider|senior|shift))\b/i;
 
 // (b) an explicit briefing/transcript reference — word-boundary-aware, so
 // "debriefing" never matches.
 const BRIEFING_REF = /\b(?:briefing|transcript)s?\b/i;
 
 // (b) a role question — the model asking who a party is.
-const ROLE_QUESTION = /\bwho(?:'s|\s+is|\s+are)\s+(?:the|this|that|your|my|our)\s+(?:caregiver|client|senior|recipient|care\s+recipient|family\s+member)s?\b/i;
+const ROLE_QUESTION = /\bwho(?:'s|\s+is|\s+are)\s+(?:the|this|that|your|my|our)\s+(?:caregiver|care\s+provider|client|senior|recipient|care\s+recipient|family\s+member)s?\b/i;
 
 // ---------------------------------------------------------------------------
 // url — any http(s)://, www., or bare-domain occurrence. Composed links are

@@ -127,11 +127,11 @@ export const sendStaleApplicantNudges = functions.pubsub
         const message = await generateCaraMessage({
           audience: "family",
           context:
-            `The family has ${count} caregiver${count === 1 ? "" : "s"} still waiting to hear back on their job post (${label}). ` +
+            `The family has ${count} care provider${count === 1 ? "" : "s"} still waiting to hear back on their job post (${label}). ` +
             `Gently nudge them to take a look — offer to pull up the strongest fit or set up an intro call. ` +
             `One or two warm sentences, no pressure, no guilt.`,
           fallback:
-            `You've still got ${count} caregiver${count === 1 ? "" : "s"} waiting on your ${label} post — want me to pull up the best fit?`,
+            `You've still got ${count} care provider${count === 1 ? "" : "s"} waiting on your ${label} post — want me to pull up the best fit?`,
           maxTokens: 100,
         });
 
@@ -149,8 +149,8 @@ export const sendStaleApplicantNudges = functions.pubsub
         if (sent) {
           await writeUserNotification({
             sourcePath: `job_posts/${jobDoc.id}`, eventId: `stale-applicant-nudge-${new Date(nowMs).toISOString().slice(0, 10)}`, recipientId: clientId,
-            transitionType: "stale_applicant_nudge", type: "job_application", title: "Caregivers waiting to hear back",
-            body: `${count} caregiver${count === 1 ? " is" : "s are"} still waiting to hear back on your ${label} post. Review them on your Posts page.`,
+            transitionType: "stale_applicant_nudge", type: "job_application", title: "Care Providers waiting to hear back",
+            body: `${count} care provider${count === 1 ? " is" : "s are"} still waiting to hear back on your ${label} post. Review them on your Posts page.`,
             data: { jobId: jobDoc.id },
           }).catch((err) => console.error("[sendStaleApplicantNudges] bell failed:", jobDoc.id, err));
         }

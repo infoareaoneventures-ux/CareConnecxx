@@ -34,9 +34,9 @@ export function renderCaregiverAccountStatus(cg: {
 }): string {
   const lines: string[] = [];
   if (cg.name) lines.push(`- Their name: ${cg.name}`);
-  lines.push(`- Role: professional CAREGIVER on the Evia platform (they are NOT a family member or care client — never describe them as caring for "their loved one")`);
+  lines.push(`- Role: professional CARE PROVIDER on the Evia platform (they are NOT a family member or care client — never describe them as caring for "their loved one")`);
   // The ONE membership rule (caregiverAccessGate, sweep C1 2026-10-11) — never the paid flag alone.
-  lines.push(`- Caregiver membership: ${isCaregiverMembershipActive(cg as Record<string, unknown>) ? "active" : "not active"}`);
+  lines.push(`- Care Provider membership: ${isCaregiverMembershipActive(cg as Record<string, unknown>) ? "active" : "not active"}`);
 
   const bg = (cg.backgroundCheckStatus ?? "").toLowerCase();
   if (bg === "clear") {

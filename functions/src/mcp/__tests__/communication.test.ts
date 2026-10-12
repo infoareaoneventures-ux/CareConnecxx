@@ -102,7 +102,7 @@ describe("communication tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("blocks caregivers with no active or recent engagement", async () => {
+    it("blocks care providers with no active or recent engagement", async () => {
       // No shifts — caregiver should be blocked
       hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", name: "Alice", membershipStatus: "active" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi" }) as any;
@@ -110,7 +110,7 @@ describe("communication tools", () => {
       expect(r.code).toBe("FORBIDDEN");
     });
 
-    it("allows when caregiver has a CONFIRMED appointment with the explicit clientId", async () => {
+    it("allows when care provider has a CONFIRMED appointment with the explicit clientId", async () => {
       hoisted.collState.set("shifts", [
         { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
       ]);
@@ -168,8 +168,8 @@ describe("communication tools", () => {
       expect(trySend).not.toHaveBeenCalled();
     });
 
-    describe("caregiver membership gate (Messages/Inbox parity)", () => {
-      it("blocks when the caregiver has no membershipStatus/membershipPaid at all", async () => {
+    describe("care provider membership gate (Messages/Inbox parity)", () => {
+      it("blocks when the care provider has no membershipStatus/membershipPaid at all", async () => {
         hoisted.collState.set("shifts", [
           { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
         ]);
@@ -188,7 +188,7 @@ describe("communication tools", () => {
         expect(r.code).toBe("MEMBERSHIP_REQUIRED");
       });
 
-      it("allows a legacy caregiver with no membershipStatus but membershipPaid:true", async () => {
+      it("allows a legacy care provider with no membershipStatus but membershipPaid:true", async () => {
         hoisted.collState.set("shifts", [
           { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
         ]);
@@ -252,7 +252,7 @@ describe("communication tools", () => {
       expect(r.code).toBe("PERMISSION_DENIED");
     });
 
-    it("returns NOT_FOUND if caregiver doc missing", async () => {
+    it("returns NOT_FOUND if care provider doc missing", async () => {
       seedVerifiedClient();
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "ghost", message: "hi", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
@@ -260,7 +260,7 @@ describe("communication tools", () => {
 
     // 2026-08-31: Messages/Inbox parity — BrowseCaregivers.tsx never surfaces a
     // hidden profile to browse/message; Evia shouldn't relay to one either.
-    it("returns NOT_FOUND for a caregiver with profileVisibility:'hidden'", async () => {
+    it("returns NOT_FOUND for a care provider with profileVisibility:'hidden'", async () => {
       seedVerifiedClient();
       hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101", profileVisibility: "hidden" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
@@ -269,13 +269,13 @@ describe("communication tools", () => {
       expect(trySend).not.toHaveBeenCalled();
     });
 
-    it("refuses a caregiver who isn't cleared for families (background check not approved) — never says why (2026-10-06)", async () => {
+    it("refuses a care provider who isn't cleared for families (background check not approved) — never says why (2026-10-06)", async () => {
       hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active", onboardingStatus: "profile_complete", verificationStatus: "submitted" });
       const r = await handleToolCall("send_caregiver_message", { clientId: "c1", caregiverId: "cg1", message: "hi" }) as any;
       expect(r.success).toBe(false);
       expect(r.error?.code ?? r.code).toBe("UNAVAILABLE");
-      expect(JSON.stringify(r)).toContain("This caregiver isn't available yet.");
+      expect(JSON.stringify(r)).toContain("This care provider isn't available yet.");
       expect(JSON.stringify(r)).not.toMatch(/background|approved|cleared/i);
     });
 
@@ -288,7 +288,7 @@ describe("communication tools", () => {
       expect(r.sent).toBe(true);
     });
 
-    it("does not text the caregiver itself — the chatRooms trigger notifies them exactly like a website message", async () => {
+    it("does not text the care provider itself — the chatRooms trigger notifies them exactly like a website message", async () => {
       seedVerifiedClient();
       hoisted.docState.set("caregivers/cg1", { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", name: "Alice", phone: "+15555550101" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
@@ -318,7 +318,7 @@ describe("communication tools", () => {
       });
     });
 
-    it("send_client_message posts into the same chatRooms thread as the caregiver sender", async () => {
+    it("send_client_message posts into the same chatRooms thread as the care provider sender", async () => {
       hoisted.collState.set("shifts", [
         { caregiverId: "cg1", clientId: "c1", status: "scheduled", date: "2099-06-01" },
       ]);
@@ -374,7 +374,7 @@ describe("communication tools", () => {
       expect(r.rooms).toEqual([]);
     });
 
-    it("lists the page: My Care Team / Other Caregivers / Support sections, last message or Start a conversation, unread, blocked hidden", async () => {
+    it("lists the page: My Care Team / Other Care Providers / Support sections, last message or Start a conversation, unread, blocked hidden", async () => {
       hoisted.collState.set("chatRooms", [
         { id: roomId, participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"], lastMessage: "she napped well", lastMessageTime: "2026-09-16T20:00:00.000Z", unreadCount: { c1: 2, cg1: 0 } },
         { id: "c1_cg2", participants: ["c1", "cg2"], participantNames: ["Sarah", "Bob"], lastMessage: "", lastMessageTime: "", unreadCount: { c1: 0, cg2: 0 } },
@@ -458,8 +458,8 @@ describe("communication tools", () => {
   // (Families page getOrCreateChatRoom) are found by participants; the ⋮ menu
   // (Block / Report / Delete) is not offered for a care-team contact or the
   // Evia team thread.
-  describe("caregiver Inbox", () => {
-    it("role caregiver: My Families = partners on an accepted booking", async () => {
+  describe("care provider Inbox", () => {
+    it("role care provider: My Families = partners on an accepted booking", async () => {
       hoisted.collState.set("chatRooms", [
         { id: "rAnDoM1", participants: ["cg1", "c1"], participantNames: ["Alice", "Sarah"], lastMessage: "see you at 7", unreadCount: { cg1: 1 } },
         { id: "c2_cg1", participants: ["c2", "cg1"], participantNames: ["Tom", "Alice"], lastMessage: "", unreadCount: { cg1: 0 } },
@@ -518,18 +518,18 @@ describe("communication tools", () => {
       { id: "n2", type: "interview_request", title: "New Interview Request", body: "…", isRead: true, createdAt: "2026-09-28T16:00:00.000Z" },
       { id: "n3", type: "message", title: "msg", body: "hidden — the Inbox owns chat", isRead: false, createdAt: "2026-09-28T15:00:00.000Z" },
     ]);
-    it("role caregiver → caregiver pages; chat messages excluded; unread counted like the badge", async () => {
+    it("role care provider → care provider pages; chat messages excluded; unread counted like the badge", async () => {
       seed();
       const r = await handleToolCall("get_notifications", { userId: "cg1", role: "caregiver" }) as any;
       expect(r.success).toBe(true);
-      expect(r.results.items.map((i: any) => [i.type, i.page.path])).toEqual([["booking_request", "/caregiver/bookings?tab=requests"], ["interview_request", "/caregiver/jobs?tab=interviews"]]);
+      expect(r.results.items.map((i: any) => [i.type, i.page.path])).toEqual([["booking_request", "/care-provider/bookings?tab=requests"], ["interview_request", "/care-provider/jobs?tab=interviews"]]);
       expect(r.results.unreadCount).toBe(1);
     });
-    it("no role passed → the user's recorded role decides (a caregiver record → caregiver pages; a family → family pages)", async () => {
+    it("no role passed → the user's recorded role decides (a care provider record → care provider pages; a family → family pages)", async () => {
       seed();
       hoisted.docState.set("users/cg1", { userType: "caregiver" });
       const cg = await handleToolCall("get_notifications", { userId: "cg1" }) as any;
-      expect(cg.results.items[0].page.path).toBe("/caregiver/bookings?tab=requests");
+      expect(cg.results.items[0].page.path).toBe("/care-provider/bookings?tab=requests");
       hoisted.docState.set("users/cg1", { userType: "client" });
       const fam = await handleToolCall("get_notifications", { userId: "cg1" }) as any;
       expect(fam.results.items[0].page.path).toBe("/client/bookings?tab=active");

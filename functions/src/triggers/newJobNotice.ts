@@ -93,7 +93,7 @@ export async function sendNewJobNotices(jobId: string, rawJob: Record<string, un
       type: "new_job",
       title: "New job near you",
       body,
-      data: { jobId, link: `/caregiver/jobs?job=${jobId}` },
+      data: { jobId, link: `/care-provider/jobs?job=${jobId}` },
     }).catch((err) => console.error("[newJobNotice] bell write failed:", doc.id, err));
   }
   return result;

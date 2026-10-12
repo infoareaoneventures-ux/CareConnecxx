@@ -86,7 +86,7 @@ const CHARGE_LINE = /^Your Evia membership renewed — \$24\.95 was charged to y
 
 beforeEach(() => { hoisted.reset(); vi.clearAllMocks(); });
 
-describe("invoice.payment_succeeded — an annual caregiver renewal always tells the caregiver what was charged (B8)", () => {
+describe("invoice.payment_succeeded — an annual care provider renewal always tells the care provider what was charged (B8)", () => {
   it("an annual renewal where this year's refresh is not due (a clear younger than ~10 months): one bell (caregiver_membership_renewed → Settings) + one fixed text with the invoice amount, keyed on the invoice", async () => {
     const recent = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString();
     hoisted.docs.set("caregivers/cg1", { name: "Basra", verified: true, backgroundCheckData: { checkrCandidateId: "cand", status: "clear", checkrClearedAt: recent } });
@@ -105,7 +105,7 @@ describe("invoice.payment_succeeded — an annual caregiver renewal always tells
     expect(hoisted.texts).toHaveLength(1);
   });
 
-  it("a non-annual caregiver subscription cannot exist (yearly only) — the webhook sends no caregiver notice and asks no refresh", async () => {
+  it("a non-annual care provider subscription cannot exist (yearly only) — the webhook sends no care provider notice and asks no refresh", async () => {
     hoisted.sub.interval = "month";
     hoisted.docs.set("caregivers/cg1", { name: "Basra", verified: true, backgroundCheckStatus: "clear" });
     hoisted.docs.set("users/cg1", { phone: PHONE });
@@ -118,7 +118,7 @@ describe("invoice.payment_succeeded — an annual caregiver renewal always tells
     expect(hoisted.docs.get("caregivers/cg1").backgroundCheckData?.consentRequired).toBeUndefined();
   });
 
-  it("a FAMILY monthly renewal is untouched: its own bell + no caregiver lifecycle notice", async () => {
+  it("a FAMILY monthly renewal is untouched: its own bell + no care provider lifecycle notice", async () => {
     hoisted.sub.uid = "fam1"; hoisted.sub.priceId = "price_family_monthly";
     hoisted.docs.set("users/fam1", { phone: "+15559990000", role: "client" });
 
@@ -132,7 +132,7 @@ describe("invoice.payment_succeeded — an annual caregiver renewal always tells
 });
 
 describe("isCaregiverMembershipSubscription — the plan family on the subscription (the belt behind the record)", () => {
-  it("metadata kind/task from either checkout origin, the flat annual caregiver price id, or caregiver price metadata", () => {
+  it("metadata kind/task from either checkout origin, the flat annual care provider price id, or care provider price metadata", () => {
     const sub = (metadata: Record<string, string>, price: Record<string, unknown>) => ({ metadata, items: { data: [{ price }] } }) as any;
     expect(isCaregiverMembershipSubscription(sub({ kind: "caregiver_membership" }, { id: "price_x" }))).toBe(true);
     expect(isCaregiverMembershipSubscription(sub({ task: "caregiver_membership" }, { id: "price_x" }))).toBe(true);

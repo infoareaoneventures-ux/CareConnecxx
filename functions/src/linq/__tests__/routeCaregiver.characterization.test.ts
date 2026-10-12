@@ -154,7 +154,7 @@ beforeEach(() => {
   // Default LLM stub: prompt-aware.
   quickComplete.mockImplementation(async (sys: string) => {
     if (/question or off-topic/i.test(sys)) return "NO";             // mid-flow question guard
-    if (/Classify this caregiver message as one of/i.test(sys)) return "NONE"; // NLU fallback
+    if (/Classify this care provider message as one of/i.test(sys)) return "NONE"; // NLU fallback
     return "";
   });
   sendToPhone.mockResolvedValue({ message_id: "m2" });
@@ -162,7 +162,7 @@ beforeEach(() => {
 });
 
 // ── State-machine dispatch / early exits ──────────────────────────────────────
-describe("characterization — caregiver state-machine dispatch", () => {
+describe("characterization — care provider state-machine dispatch", () => {
   it("an unmatched message with no active state falls through (so handleInbound takes the QA path)", async () => {
     seed();
     // All LLM guards return NO/NONE (default stub) → no coded path claims it.

@@ -144,7 +144,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
           <div>
             <h2 className="font-bold text-slate-900 text-lg">Edit Care Request</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Changes are visible to caregivers immediately</p>
+            <p className="text-xs text-slate-400 mt-0.5">Changes are visible to care providers immediately</p>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg">
             <X className="w-5 h-5 text-slate-500" />
@@ -164,7 +164,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
               maxLength={2500}
               className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-primary-400 resize-none"
             />
-            <p className="mt-2 text-xs text-slate-500">Caregivers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.</p>
+            <p className="mt-2 text-xs text-slate-500">Care providers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.</p>
           </section>
 
           <hr className="border-slate-100" />
@@ -204,7 +204,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
 
               {/* Caregivers needed */}
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Caregivers Needed</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Care Providers Needed</label>
                 <div className="inline-flex items-center gap-3 bg-white border-2 border-slate-200 rounded-xl px-3 py-2">
                   <button type="button" onClick={() => set({ caregiversNeeded: Math.max(1, form.caregiversNeeded - 1) })} disabled={form.caregiversNeeded <= 1}
                     className="w-8 h-8 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-40">
@@ -215,7 +215,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
                     className="w-8 h-8 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-40">
                     <span className="text-lg leading-none">+</span>
                   </button>
-                  <span className="text-sm text-slate-500">{form.caregiversNeeded === 1 ? 'Caregiver' : 'Caregivers'}</span>
+                  <span className="text-sm text-slate-500">{form.caregiversNeeded === 1 ? 'Care Provider' : 'Care Providers'}</span>
                 </div>
               </div>
 

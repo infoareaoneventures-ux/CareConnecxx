@@ -38,7 +38,7 @@ describe("resolveFamilyOwnerUid", () => {
     expect(uid).toBe("uidClient");
   });
 
-  it("returns null when the phone resolves to a CAREGIVER (family-only gate)", async () => {
+  it("returns null when the phone resolves to a CARE PROVIDER (family-only gate)", async () => {
     const db = fakeDb({ uidCg: { userType: "caregiver" } });
     const auth = fakeAuth({ byPhone: { "+15553334444": "uidCg" } });
     const uid = await resolveFamilyOwnerUid(db, auth, { phone: "+15553334444" });
@@ -59,7 +59,7 @@ describe("resolveFamilyOwnerUid", () => {
     expect(uid).toBeNull();
   });
 
-  it("treats a user doc with no userType as a family owner (not a caregiver)", async () => {
+  it("treats a user doc with no userType as a family owner (not a care provider)", async () => {
     const db = fakeDb({ uidUnknown: {} });
     const auth = fakeAuth({ validUids: ["uidUnknown"] });
     const uid = await resolveFamilyOwnerUid(db, auth, { uidCandidate: "uidUnknown" });

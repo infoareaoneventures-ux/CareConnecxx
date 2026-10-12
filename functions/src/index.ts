@@ -1,4 +1,5 @@
 // Log hygiene (2026-10-07): phone numbers and emails never reach the function logs in clear text.
+import { isCareProviderRole } from "./utils/roleParam";
 import { installLogRedaction } from './observability/logRedaction';
 installLogRedaction();
 import * as admin from "firebase-admin";
@@ -357,7 +358,7 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   }
 
   const phone   = (data.phone   as string | undefined)?.trim();
-  const role    = (data.role    as string | undefined) === "caregiver" ? "caregiver" : "client";
+  const role    = isCareProviderRole(data.role) ? "caregiver" : "client";
   const consent = (data.consentText as string | undefined) ?? "v1.0";
   const referralId = (data.referralId as string | undefined)?.trim();
   const rawName = (data.name as string | undefined) ?? "";
@@ -758,7 +759,7 @@ export const onReviewWritten = functions.firestore
         const comment = typeof after.comment === 'string' ? after.comment.trim() : '';
         const quoted = comment ? `: "${comment.length > 240 ? `${comment.slice(0, 237)}…` : comment}"` : '.';
         await notifyCaregiverByText(after.caregiverId,
-          `${after.clientName || 'A client'} left you a ${stars}review${quoted} It's on your profile: ${getAppUrl()}/caregiver/profile?section=reviews`);
+          `${after.clientName || 'A client'} left you a ${stars}review${quoted} It's on your profile: ${getAppUrl()}/care-provider/profile?section=reviews`);
       } catch (err) {
         console.error('[onReviewWritten] notification error:', (err as Error)?.name ?? 'Error');
       }

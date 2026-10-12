@@ -243,12 +243,12 @@ export const onVideoInterviewWrite = functions.firestore
           await tell('client', after.clientId, {
             type: 'interview_rescheduled',
             title: 'New Time Proposed',
-            body: `${after.caregiverName || 'Your caregiver'} proposed a new time: ${displayTime}. Please confirm.`,
+            body: `${after.caregiverName || 'Your care provider'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
-          }, `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply CONFIRM, KEEP to keep the current time, or suggest another time.`,
+          }, `${after.caregiverName || 'Your care provider'} proposed a new interview time: ${displayTime}. Reply CONFIRM, KEEP to keep the current time, or suggest another time.`,
           { ...iv, transitionType: `interview_proposed:${after.reschedulePendingTime}` },
           { textOwnedElsewhere: !!after.rescheduledViaAgent, stamp: { ...noticedInterview(context.params.interviewId),
-            ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.caregiverName || 'your caregiver'} proposed (${displayTime})`, "client", Date.now(), after.caregiverName || undefined)) } });
+            ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.caregiverName || 'your care provider'} proposed (${displayTime})`, "client", Date.now(), after.caregiverName || undefined)) } });
         } else if (after.caregiverId) {
           await tell('caregiver', after.caregiverId, {
             type: 'interview_rescheduled',
@@ -295,9 +295,9 @@ export const onVideoInterviewWrite = functions.firestore
           await tell('client', after.clientId, {
             type: 'interview_rescheduled',
             title: 'Time Confirmed',
-            body: `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`,
+            body: `${after.caregiverName || 'Your care provider'} confirmed the new interview time: ${displayTime}.`,
             data: { interviewId: context.params.interviewId },
-          }, `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`,
+          }, `${after.caregiverName || 'Your care provider'} confirmed the new interview time: ${displayTime}.`,
           { ...iv, transitionType: `interview_time_confirmed:${after.scheduledTime}` }, { textOwnedElsewhere: !!after.acceptedRescheduleViaAgent });
         }
         return;
@@ -337,7 +337,7 @@ export const onVideoInterviewWrite = functions.firestore
             data: { interviewId: context.params.interviewId },
           }, line, declinedKey);
         } else if (before.rescheduledBy === 'client' && after.clientId) {
-          const line = `${after.caregiverName || 'Your caregiver'} isn't able to move the interview${kept ? ` — it's staying at ${kept}` : ''}.`;
+          const line = `${after.caregiverName || 'Your care provider'} isn't able to move the interview${kept ? ` — it's staying at ${kept}` : ''}.`;
           await tell('client', after.clientId, {
             type: 'interview_rescheduled',
             title: 'Time Change Declined',
@@ -390,7 +390,7 @@ export const onVideoInterviewWrite = functions.firestore
             title: 'Interview Declined',
             body: `${after.caregiverName} is unable to make the scheduled interview.`,
             data: { interviewId: context.params.interviewId },
-          }, `${after.caregiverName || 'Your caregiver'} isn't able to make the scheduled interview.`, { ...iv, transitionType: 'interview_declined' }, { textOwnedElsewhere: !!after.respondedViaAgent });
+          }, `${after.caregiverName || 'Your care provider'} isn't able to make the scheduled interview.`, { ...iv, transitionType: 'interview_declined' }, { textOwnedElsewhere: !!after.respondedViaAgent });
         }
       }
 
@@ -404,7 +404,7 @@ export const onVideoInterviewWrite = functions.firestore
             title: 'Interview Cancelled',
             body: `${after.caregiverName} cancelled the scheduled interview.`,
             data: { interviewId: context.params.interviewId },
-          }, `${after.caregiverName || 'Your caregiver'} cancelled the scheduled interview.`, { ...iv, transitionType: 'interview_cancelled' }, { textOwnedElsewhere: !!after.cancelledViaAgent });
+          }, `${after.caregiverName || 'Your care provider'} cancelled the scheduled interview.`, { ...iv, transitionType: 'interview_cancelled' }, { textOwnedElsewhere: !!after.cancelledViaAgent });
         } else if (after.caregiverId) {
           // Client cancelled (or unknown)
           await tell('caregiver', after.caregiverId, {
@@ -433,7 +433,7 @@ export const onJobApplicationCreate = functions.firestore
       // LLM-worded trigger that used to fire on the same create was removed.
       // The applicant row's buttons as the reply words, parked so a one-word reply runs the page's own action
       // (decisionNotices.ts) — never the agent's guess, and never another prompt's interceptor (2026-10-07).
-      const applicantName = String(data.caregiverName || 'A caregiver');
+      const applicantName = String(data.caregiverName || 'A care provider');
       await tell('client', data.clientId, {
         type: 'job_application',
         title: 'New Applicant',
@@ -540,7 +540,7 @@ export const onBookingRequestWrite = functions.firestore
       // nothing else reaching the family's phone.
       if (statusAfter === 'accepted' && after.clientId && !after.agentTaskId) {
         await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} accepted your booking request — the visits are on your My Bookings page.`);
+          `${after.caregiverName || 'Your care provider'} accepted your booking request — the visits are on your My Bookings page.`);
       }
 
       // Declined → notify client. Same reasoning as above — an Evia-negotiated
@@ -549,9 +549,9 @@ export const onBookingRequestWrite = functions.firestore
         await tell('client', after.clientId, {
           type: 'booking_declined',
           title: 'Booking Declined',
-          body: `${after.caregiverName || 'Your caregiver'} is unable to accept your booking request.`,
+          body: `${after.caregiverName || 'Your care provider'} is unable to accept your booking request.`,
           data: { bookingId: context.params.bookingId },
-        }, `${after.caregiverName || 'Your caregiver'} isn't able to accept that booking request.`, { ...br, transitionType: 'booking_declined' });
+        }, `${after.caregiverName || 'Your care provider'} isn't able to accept that booking request.`, { ...br, transitionType: 'booking_declined' });
       }
 
       // Cancelled → notify caregiver
@@ -596,7 +596,7 @@ export const onBookingRequestWrite = functions.firestore
           }, line, { ...br, transitionType: 'booking_request_expired' });
         }
         if (after.clientId) {
-          const cg = after.caregiverName || 'The caregiver';
+          const cg = after.caregiverName || 'The care provider';
           const line = `${cg} didn't respond to the replacement request${whenText} in time — find another replacement or skip that visit.`;
           await tell('client', after.clientId, {
             type: 'booking_request_expired',
@@ -663,7 +663,7 @@ export const onBookingAmendmentWrite = functions.firestore
           title: 'Schedule Change Accepted',
           body: `${after.caregiverName} accepted your request to add ${days} to your regular schedule.`,
           data: { amendmentId: context.params.amendmentId },
-        }, `${after.caregiverName || 'Your caregiver'} accepted your request to add ${days} to the schedule.`, { ...am, transitionType: 'amendment_accepted' });
+        }, `${after.caregiverName || 'Your care provider'} accepted your request to add ${days} to the schedule.`, { ...am, transitionType: 'amendment_accepted' });
       }
 
       // Declined → notify client
@@ -671,9 +671,9 @@ export const onBookingAmendmentWrite = functions.firestore
         await tell('client', after.clientId, {
           type: 'amendment_declined',
           title: 'Schedule Change Declined',
-          body: `${after.caregiverName || 'Your caregiver'} is unable to accept your schedule change request.`,
+          body: `${after.caregiverName || 'Your care provider'} is unable to accept your schedule change request.`,
           data: { amendmentId: context.params.amendmentId },
-        }, `${after.caregiverName || 'Your caregiver'} isn't able to accept that schedule change request.`, { ...am, transitionType: 'amendment_declined' });
+        }, `${after.caregiverName || 'Your care provider'} isn't able to accept that schedule change request.`, { ...am, transitionType: 'amendment_declined' });
       }
 
       // Cancelled (the family withdrew it) → notify caregiver — ONE sentence for
@@ -743,9 +743,9 @@ export const onShiftStatusChanged = functions.firestore
         await tell('client', after.clientId, {
           type: 'shift_rescheduled',
           title: 'New Time Proposed',
-          body: `${after.caregiverName || 'Your caregiver'} proposed moving this visit to ${displayTime}. Please confirm.`,
+          body: `${after.caregiverName || 'Your care provider'} proposed moving this visit to ${displayTime}. Please confirm.`,
           data: { shiftId },
-        }, `${after.caregiverName || 'Your caregiver'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`, proposedKey);
+        }, `${after.caregiverName || 'Your care provider'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`, proposedKey);
       } else if (after.rescheduledBy === 'client' && after.caregiverId) {
         // The Active Bookings strip's three buttons as the reply words (B1,
         // 2026-10-11): the decision is parked so ACCEPT / DECLINE run the page's
@@ -791,9 +791,9 @@ export const onShiftStatusChanged = functions.firestore
         await tell('client', after.clientId, {
           type: 'shift_rescheduled',
           title: 'Time Confirmed',
-          body: `${after.caregiverName || 'Your caregiver'} confirmed the new visit time: ${displayTime}.`,
+          body: `${after.caregiverName || 'Your care provider'} confirmed the new visit time: ${displayTime}.`,
           data: { shiftId },
-        }, `${after.caregiverName || 'Your caregiver'} confirmed the new visit time: ${displayTime}.`, confirmedKey);
+        }, `${after.caregiverName || 'Your care provider'} confirmed the new visit time: ${displayTime}.`, confirmedKey);
       }
       return;
     }
@@ -824,9 +824,9 @@ export const onShiftStatusChanged = functions.firestore
         await tell('client', after.clientId, {
           type: 'shift_rescheduled',
           title: 'Time Change Declined',
-          body: `${after.caregiverName || 'Your caregiver'} kept the original visit time: ${displayTime}.`,
+          body: `${after.caregiverName || 'Your care provider'} kept the original visit time: ${displayTime}.`,
           data: { shiftId },
-        }, `${after.caregiverName || 'Your caregiver'} isn't able to move the visit — it's staying at ${displayTime}.`, declinedKey);
+        }, `${after.caregiverName || 'Your care provider'} isn't able to move the visit — it's staying at ${displayTime}.`, declinedKey);
       }
       return;
     }
@@ -851,9 +851,9 @@ export const onShiftStatusChanged = functions.firestore
         await tell('client', after.clientId, {
           type: 'shift_started',
           title: 'Shift Started',
-          body: `${after.caregiverName || 'Your caregiver'} has started your visit.`,
+          body: `${after.caregiverName || 'Your care provider'} has started your visit.`,
           data: { shiftId: context.params.shiftId },
-        }, `${after.caregiverName || 'Your caregiver'} started the visit.`, { ...sh, transitionType: 'shift_started' });
+        }, `${after.caregiverName || 'Your care provider'} started the visit.`, { ...sh, transitionType: 'shift_started' });
       } else if (after.status === 'completed' && after.clientId) {
         // Caregiver ended shift → notify client (text first, then the bell — below).
         // The Past Booking card in words (tasks done / not done per recipient,
@@ -872,7 +872,7 @@ export const onShiftStatusChanged = functions.firestore
         const told = await tell('client', after.clientId, {
           type: 'shift_completed',
           title: 'Shift Completed',
-          body: `${after.caregiverName || 'Your caregiver'} has completed your visit.`,
+          body: `${after.caregiverName || 'Your care provider'} has completed your visit.`,
           data: { shiftId: context.params.shiftId },
         }, completionText, { ...sh, transitionType: 'shift_completed' });
         if (firstVisit && told.text) {
@@ -898,7 +898,7 @@ export const onShiftStatusChanged = functions.firestore
         // C8): the family is told the visit is released and offered the same
         // replacement — the caregiver didn't cancel it and the reason is never stated.
         const released = after.cancelledBy === 'system';
-        const cg = after.caregiverName || 'Your caregiver';
+        const cg = after.caregiverName || 'Your care provider';
         await tell('client', after.clientId, {
           type: 'shift_needs_replacement',
           title: 'Visit Needs a Replacement',
@@ -949,22 +949,22 @@ export const onShiftStatusChanged = functions.firestore
           // texted "a client cancelled… sorry" and the family heard nothing. The
           // family is told the visit is released and offered another caregiver;
           // the reason is never stated; the caregiver is not texted.
-          const cg = after.caregiverName || 'Your caregiver';
+          const cg = after.caregiverName || 'Your care provider';
           await tell('client', after.clientId, {
             type: 'shift_cancelled',
             title: 'Visit Released',
-            body: `${cg} isn't available for the visit${whenText} — it's been released. Book another caregiver or skip it.`,
+            body: `${cg} isn't available for the visit${whenText} — it's been released. Book another care provider or skip it.`,
             data: { shiftId: context.params.shiftId },
-          }, `${cg} isn't available for the visit${whenText}, so it's been released. Text me to find another caregiver for that day, or to skip it.`, key);
+          }, `${cg} isn't available for the visit${whenText}, so it's been released. Text me to find another care provider for that day, or to skip it.`, key);
         } else if (after.cancelledBy === 'caregiver' && after.clientId) {
           // Caregiver cancelled, but with enough notice (site rule: > 24h) that
           // no replacement is needed — a plain heads-up, no call to action.
           await tell('client', after.clientId, {
             type: 'shift_cancelled',
             title: 'Shift Cancelled',
-            body: `${after.caregiverName || 'Your caregiver'} cancelled the shift${whenText}.`,
+            body: `${after.caregiverName || 'Your care provider'} cancelled the shift${whenText}.`,
             data: { shiftId: context.params.shiftId },
-          }, `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}.`, key);
+          }, `${after.caregiverName || 'Your care provider'} cancelled the visit${whenText}.`, key);
         } else if (after.cancelledBy !== 'system' && after.caregiverId) {
           // Client cancelled → notify caregiver
           await tell('caregiver', after.caregiverId, {

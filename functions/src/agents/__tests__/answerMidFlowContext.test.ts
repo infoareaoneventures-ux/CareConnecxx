@@ -17,7 +17,7 @@ describe("answerMidFlow", () => {
   it("briefs the model with the screen text, the audience and the flow's facts, then re-asks", async () => {
     const out = await answerMidFlow("Is the base correct", RECAP, { audience: "caregiver", facts: "Base pay = time × rate." });
     const system = hoisted.quick.mock.calls[0][0] as string;
-    expect(system).toContain("Audience: caregiver");
+    expect(system).toContain("Audience: care provider");
     expect(system).toContain("$15/hr · Base pay $5.18");
     expect(system).toContain("never say you don't have those details");
     expect(system).toContain("Facts: Base pay = time × rate.");

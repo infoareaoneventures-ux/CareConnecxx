@@ -59,7 +59,7 @@ beforeEach(() => {
 });
 
 describe("guardInterviewIdentityConsistency", () => {
-  it("passes the reply through unchanged when it names the actual caregiver (or no one)", async () => {
+  it("passes the reply through unchanged when it names the actual care provider (or no one)", async () => {
     const reply = await guardInterviewIdentityConsistency({
       reply: "Yes, I sent Imran the interview request for tomorrow at 9am.",
       interviewId: IV_ID, caregiverId: CAREGIVER_ID, caregiverName: "Imran", phone: PHONE,
@@ -70,7 +70,7 @@ describe("guardInterviewIdentityConsistency", () => {
     expect(createCaraOpsAlert).not.toHaveBeenCalled();
   });
 
-  it("self-corrects when the reply names a different caregiver: cancels the interview, notifies them, pages ops, replaces the reply", async () => {
+  it("self-corrects when the reply names a different care provider: cancels the interview, notifies them, pages ops, replaces the reply", async () => {
     quickComplete.mockResolvedValue("YES");
     const reply = await guardInterviewIdentityConsistency({
       reply: "Yes, I sent Basra the interview request for tomorrow at 9am.",
@@ -97,7 +97,7 @@ describe("guardInterviewIdentityConsistency", () => {
     }));
   });
 
-  it("does not guess or create a new interview for the caregiver the reply named", async () => {
+  it("does not guess or create a new interview for the care provider the reply named", async () => {
     quickComplete.mockResolvedValue("YES");
     await guardInterviewIdentityConsistency({
       reply: "Yes, I sent Basra the interview request for tomorrow at 9am.",
@@ -125,7 +125,7 @@ describe("guardInterviewIdentityConsistency", () => {
     expect(hoisted.updates).toHaveLength(0);
   });
 
-  it("still cancels and pages ops even when the wrongly-targeted caregiver has no reachable phone", async () => {
+  it("still cancels and pages ops even when the wrongly-targeted care provider has no reachable phone", async () => {
     hoisted.docState.set(`caregivers/${CAREGIVER_ID}`, { name: "Imran" }); // no phone field
     quickComplete.mockResolvedValue("YES");
     await guardInterviewIdentityConsistency({

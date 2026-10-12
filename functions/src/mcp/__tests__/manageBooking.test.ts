@@ -98,7 +98,7 @@ describe("manage_booking", () => {
     expect(hoisted.updates.find(u => u.path === "agent_tasks/task1")).toBeUndefined();
   });
 
-  it("cancel_pending_request refuses a booking that already has a caregiver's YES", async () => {
+  it("cancel_pending_request refuses a booking that already has a care provider's YES", async () => {
     hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "accepted" });
     const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_pending_request", bookingRequestId: "br1" }) as any;
     expect(r._toolError).toBe(true);
@@ -293,10 +293,10 @@ describe("manage_booking — propose/accept/clear_reschedule", () => {
   });
 });
 
-describe("manage_shift_reschedule (caregiver side)", () => {
+describe("manage_shift_reschedule (care provider side)", () => {
   beforeEach(() => hoisted.reset());
 
-  it("propose stores a pending proposal scoped to this caregiver's shift (the page's write, incl. updatedAt)", async () => {
+  it("propose stores a pending proposal scoped to this care provider's shift (the page's write, incl. updatedAt)", async () => {
     hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER, status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00" });
     const r = await handleToolCall("manage_shift_reschedule", {
       caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2099-09-08", startTime: "10:00", endTime: "13:00",
@@ -331,7 +331,7 @@ describe("manage_shift_reschedule (caregiver side)", () => {
     expect(hoisted.updates.find(u => u.path === "shifts/s1")).toBeUndefined();
   });
 
-  it("rejects a shift belonging to a different caregiver", async () => {
+  it("rejects a shift belonging to a different care provider", async () => {
     hoisted.docState.set("shifts/s1", { caregiverId: "other_cg", status: "scheduled" });
     const r = await handleToolCall("manage_shift_reschedule", {
       caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2026-09-08", startTime: "10:00", endTime: "13:00",
@@ -430,7 +430,7 @@ describe("manage_shift_reschedule (caregiver side)", () => {
     expect(none._toolError).toBe(true);
   });
 
-  it("is on the caregiver tool list (it was caregiver-only but never caregiver-visible)", async () => {
+  it("is on the care provider tool list (it was caregiver-only but never caregiver-visible)", async () => {
     const { CAREGIVER_TOOLS, CLIENT_TOOLS } = await import("../server");
     expect(CAREGIVER_TOOLS.some(t => t.name === "manage_shift_reschedule")).toBe(true);
     expect(CLIENT_TOOLS.some(t => t.name === "manage_shift_reschedule")).toBe(false);
@@ -485,7 +485,7 @@ describe("request_schedule_amendment", () => {
     });
   });
 
-  it("refuses a block that overlaps a visit the family already has with that caregiver (the modal's overlappingDays)", async () => {
+  it("refuses a block that overlaps a visit the family already has with that care provider (the modal's overlappingDays)", async () => {
     hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", schedule: { dayShiftTimes: { Tue: [{ start: "11:00", end: "13:00" }] } } });
     const r = await handleToolCall("request_schedule_amendment", {
       bookingRequestId: "br1", clientId: CLIENT, newDays: { Tue: [{ start: "12:00", end: "14:00" }] },
@@ -495,7 +495,7 @@ describe("request_schedule_amendment", () => {
     expect(hoisted.sets.find(s => s.path.startsWith("booking_amendments/"))).toBeUndefined();
   });
 
-  it("refuses a time the caregiver is booked elsewhere (the modal's greyed-out slots)", async () => {
+  it("refuses a time the care provider is booked elsewhere (the modal's greyed-out slots)", async () => {
     hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", schedule: {} });
     hoisted.docState.set(`caregiver_booked_slots/${CAREGIVER}`, { slots: { Fri: [{ s: 9 * 60, e: 12 * 60 }] } });
     const r = await handleToolCall("request_schedule_amendment", {

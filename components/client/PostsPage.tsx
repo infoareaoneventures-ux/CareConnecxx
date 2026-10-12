@@ -387,7 +387,7 @@ export const PostsPage: React.FC = () => {
           return {
             applicationId: doc.id,
             caregiverId: d.caregiverId,
-            caregiverName: d.caregiverName || c.name || c.displayName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Caregiver',
+            caregiverName: d.caregiverName || c.name || c.displayName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Care Provider',
             caregiverPhoto: d.caregiverPhoto || c.photoURL || c.imageUrl || c.photo || '',
             // Same rule as the caregiver's profile pages: a rating only when a
             // review backs it (reviewCount > 0) — never a default 5.0 (2026-09-27).
@@ -398,7 +398,7 @@ export const PostsPage: React.FC = () => {
             coverLetter: d.coverLetter || '',
           } as Applicant;
         } catch {
-          return { applicationId: doc.id, caregiverId: d.caregiverId, caregiverName: d.caregiverName || 'Caregiver', appliedAt } as Applicant;
+          return { applicationId: doc.id, caregiverId: d.caregiverId, caregiverName: d.caregiverName || 'Care Provider', appliedAt } as Applicant;
         }
       }));
       setApplicants(results);
@@ -413,7 +413,7 @@ export const PostsPage: React.FC = () => {
   const handleCancelPost = async (postId: string) => {
     if (!currentUser?.uid) return;
     setOpenMenuId(null);
-    if (!window.confirm('Cancel this job post? Caregivers will no longer be able to apply.')) return;
+    if (!window.confirm('Cancel this job post? Care providers will no longer be able to apply.')) return;
     try {
       await dbService.cancelJobPost(postId, currentUser.uid);
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, status: 'cancelled' } : p));
@@ -521,7 +521,7 @@ export const PostsPage: React.FC = () => {
       setCounterProposeOpenId(null);
       setCounterProposeDate('');
       setCounterProposeTime('');
-      addToast('New time sent to the caregiver.', 'success');
+      addToast('New time sent to the care provider.', 'success');
     } catch {
       addToast('Failed to send the new request. Please try again.', 'error');
     } finally {
@@ -568,7 +568,7 @@ export const PostsPage: React.FC = () => {
       setRescheduleOpenId(null);
       setRescheduleDate('');
       setRescheduleTime('');
-      addToast('New time proposed — waiting on the caregiver to confirm.', 'success');
+      addToast('New time proposed — waiting on the care provider to confirm.', 'success');
     } catch {
       addToast('Failed to propose the new time', 'error');
     } finally {
@@ -897,7 +897,7 @@ export const PostsPage: React.FC = () => {
       // because it doesn't include clientId/caregiverId in the filter.
       if (existing?.status === 'accepted') {
         if (activeBookingIds.has(existing.id)) {
-          addToast('You already have an active booking with this caregiver.', 'info');
+          addToast('You already have an active booking with this care provider.', 'info');
           setSendingBooking(false);
           return;
         }
@@ -1067,7 +1067,7 @@ export const PostsPage: React.FC = () => {
       // Notification handled by onVideoInterviewWrite Cloud Function (decline) /
       // onBookingRequestWrite Cloud Function (hire)
       setDecisionDone(prev => ({ ...prev, [interview.id]: decision === 'hire' ? 'hired' : 'declined' }));
-      addToast(decision === 'hire' ? 'Booking request sent!' : 'Caregiver notified', 'success');
+      addToast(decision === 'hire' ? 'Booking request sent!' : 'Care provider notified', 'success');
     } catch (err: any) { console.error('handleDecision error:', err?.code, err?.message, err); addToast('Something went wrong. Please try again.', 'error'); }
     finally { setSubmittingDecision(prev => ({ ...prev, [interview.id]: false })); }
   };
@@ -1316,8 +1316,8 @@ export const PostsPage: React.FC = () => {
               <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
                 <Calendar className="w-10 h-10 text-slate-200 mx-auto mb-3" />
                 <p className="text-slate-500 mb-4">No interviews yet.</p>
-                <button onClick={() => navigate('/client/find-caregivers')} className="px-6 py-2.5 bg-primary-600 text-white font-semibold rounded-xl hover:bg-primary-700 text-sm">
-                  Find Caregivers
+                <button onClick={() => navigate('/client/find-care-providers')} className="px-6 py-2.5 bg-primary-600 text-white font-semibold rounded-xl hover:bg-primary-700 text-sm">
+                  Find Care Providers
                 </button>
               </div>
             ) : (
@@ -1396,7 +1396,7 @@ export const PostsPage: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0 ml-2">
-                            <button onClick={() => navigate(`/client/caregiver/${interview.caregiverId}`)} className="p-1 hover:bg-slate-100 rounded-lg">
+                            <button onClick={() => navigate(`/client/care-provider/${interview.caregiverId}`)} className="p-1 hover:bg-slate-100 rounded-lg">
                               <ChevronRight className="w-4 h-4 text-slate-400" />
                             </button>
                           </div>
@@ -1432,7 +1432,7 @@ export const PostsPage: React.FC = () => {
                                 ? `${interview.caregiverName} proposed a new time: `
                                 : 'You proposed a new time: '}
                               {new Date(interview.reschedulePendingTime).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                              {interview.rescheduledBy !== 'caregiver' && ' — waiting on the caregiver to confirm'}
+                              {interview.rescheduledBy !== 'caregiver' && ' — waiting on the care provider to confirm'}
                             </p>
                           </div>
                         )}
@@ -1648,7 +1648,7 @@ export const PostsPage: React.FC = () => {
                                 if (booking?.status === 'declined' || booking?.status === 'cancelled') return (
                                   <>
                                     <span className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
-                                      <XCircle className="w-3.5 h-3.5" /> {booking.status === 'cancelled' ? 'Visit cancelled' : 'Caregiver declined'}
+                                      <XCircle className="w-3.5 h-3.5" /> {booking.status === 'cancelled' ? 'Visit cancelled' : 'Care provider declined'}
                                     </span>
                                     <button
                                       onClick={() => gate('booking', interview.caregiverName, () => openSendBookingModal(interview))}
@@ -1768,7 +1768,7 @@ export const PostsPage: React.FC = () => {
                       </div>
                       <div>
                         <p className="font-semibold text-slate-900">{sendBookingFor.caregiverName}</p>
-                        <p className="text-xs text-slate-400">Caregiver</p>
+                        <p className="text-xs text-slate-400">Care Provider</p>
                       </div>
                     </div>
 
@@ -2543,7 +2543,7 @@ export const PostsPage: React.FC = () => {
                       <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
                         <svg className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
                         <p className="text-xs text-amber-700">
-                          <span className="font-semibold">{missingDays.join(', ')} {missingDays.length === 1 ? 'is' : 'are'} not included</span> in the schedule. The caregiver won't see {missingDays.length === 1 ? 'that day' : 'those days'}. Click Edit to add {missingDays.length === 1 ? 'it' : 'them'} back if needed.
+                          <span className="font-semibold">{missingDays.join(', ')} {missingDays.length === 1 ? 'is' : 'are'} not included</span> in the schedule. The care provider won't see {missingDays.length === 1 ? 'that day' : 'those days'}. Click Edit to add {missingDays.length === 1 ? 'it' : 'them'} back if needed.
                         </p>
                       </div>
                     )}
@@ -2624,7 +2624,7 @@ export const PostsPage: React.FC = () => {
                 <div className="text-center py-16 px-6">
                   <User className="w-8 h-8 text-slate-300 mx-auto mb-3" />
                   <p className="font-semibold text-slate-600">No applicants yet</p>
-                  <p className="text-sm text-slate-400 mt-1">Caregivers who apply will show up here.</p>
+                  <p className="text-sm text-slate-400 mt-1">Care providers who apply will show up here.</p>
                 </div>
               ) : (
                 applicants.filter(a => {
@@ -2672,7 +2672,7 @@ export const PostsPage: React.FC = () => {
                     {/* Actions */}
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => navigate(`/client/caregiver/${a.caregiverId}`)}
+                        onClick={() => navigate(`/client/care-provider/${a.caregiverId}`)}
                         className="px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
                       >
                         Profile

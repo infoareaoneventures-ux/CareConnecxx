@@ -204,7 +204,7 @@ describe("MCP tool smoke coverage", () => {
     expect(r.success).toBe(true);
   });
 
-  it("get_care_journal_client reads the caregiver's notes from completed shifts (the Past Bookings card), newest first", async () => {
+  it("get_care_journal_client reads the care provider's notes from completed shifts (the Past Bookings card), newest first", async () => {
     hoisted.collState.set("shifts", [
       { id: "s1", clientId: "c1", status: "completed", date: "2026-09-17", completedAt: "2026-09-18T03:38:00Z", caregiverName: "Basra Yousuf", notesLog: [{ at: "x", text: "Samira finished her sandwich" }], completionNotes: "everything went well today", tasksCompleted: ["0_a", "0_b"] },
       { id: "s2", clientId: "c1", status: "completed", date: "2026-09-10", caregiverName: "Basra Yousuf" },
@@ -272,7 +272,7 @@ describe("MCP tool smoke coverage", () => {
     expect(((await handleToolCall("get_payout_status", {})) as any)._toolError).toBe(true);
   });
 
-  it("get_signup_completeness reports a fully-set-up caregiver as complete", async () => {
+  it("get_signup_completeness reports a fully-set-up care provider as complete", async () => {
     hoisted.docState.set("caregivers/cg1", {
       name: "Alice", city: "San Jose", hourlyRate: 28, yearsExperience: 5,
       skills: ["Companionship"], availability: "weekday mornings", jobType: "part_time",
@@ -307,7 +307,7 @@ describe("MCP tool smoke coverage", () => {
     expect(r.status.membershipActive).toBe(false);
   });
 
-  it("get_signup_completeness surfaces caregiver gaps (photo, payouts, bg check)", async () => {
+  it("get_signup_completeness surfaces care provider gaps (photo, payouts, bg check)", async () => {
     hoisted.docState.set("caregivers/cg1", {
       name: "Alice", city: "San Jose", hourlyRate: 28, yearsExperience: 5,
       skills: ["Companionship"], availability: "weekday mornings", jobType: "part_time",
@@ -361,7 +361,7 @@ describe("MCP tool smoke coverage", () => {
     expect(r.bookings[0].upcomingShifts.map((x: any) => x.id)).toEqual(["s1", "s2"]);
   });
 
-  it("get_active_bookings: a CAREGIVER's own tab when caregiverId is given — also when the injected clientId is their own uid (live 2026-10-07: Mahad was told his tab was empty)", async () => {
+  it("get_active_bookings: a CARE PROVIDER's own tab when caregiverId is given — also when the injected clientId is their own uid (live 2026-10-07: Mahad was told his tab was empty)", async () => {
     hoisted.collState.set("shifts", [
       { id: "s1", clientId: "fam1", clientName: "Basra Yousuf", bookingRequestId: "br1", caregiverId: "cg1", status: "scheduled", date: "2099-09-22", startTime: "14:00", endTime: "15:00" },
     ]);

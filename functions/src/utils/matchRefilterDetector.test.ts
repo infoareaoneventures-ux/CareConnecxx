@@ -25,19 +25,19 @@ describe("detectMatchRefilter", () => {
     quickComplete.mockResolvedValue(JSON.stringify({
       isRefilter: true,
       rate: { direction: "lower" },
-      summary: "cheaper caregivers",
+      summary: "cheaper care providers",
     }));
     const result = await detectMatchRefilter("show me cheaper ones");
     expect(result).not.toBeNull();
     expect(result?.rate?.direction).toBe("lower");
-    expect(result?.summary).toBe("cheaper caregivers");
+    expect(result?.summary).toBe("cheaper care providers");
   });
 
   it("extracts a skills refilter", async () => {
     quickComplete.mockResolvedValue(JSON.stringify({
       isRefilter: true,
       skills: ["dementia", "mobility"],
-      summary: "caregivers with dementia and mobility experience",
+      summary: "care providers with dementia and mobility experience",
     }));
     const result = await detectMatchRefilter("anyone who can handle dementia and mobility?");
     expect(result?.skills).toEqual(["dementia", "mobility"]);
@@ -47,9 +47,9 @@ describe("detectMatchRefilter", () => {
     quickComplete.mockResolvedValue(JSON.stringify({
       isRefilter: true,
       languages: ["spanish"],
-      summary: "Spanish-speaking caregivers",
+      summary: "Spanish-speaking care providers",
     }));
-    const result = await detectMatchRefilter("any Spanish-speaking caregivers?");
+    const result = await detectMatchRefilter("any Spanish-speaking care providers?");
     expect(result?.languages).toEqual(["spanish"]);
   });
 

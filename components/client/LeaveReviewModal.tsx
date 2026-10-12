@@ -48,7 +48,7 @@ export const LeaveReviewModal: React.FC<LeaveReviewModalProps> = ({
         .where('caregiverId', '==', caregiverId)
         .limit(1).get();
       if (!existing.empty) {
-        setError('You have already reviewed this caregiver.');
+        setError('You have already reviewed this care provider.');
         setSubmitting(false);
         return;
       }
@@ -173,7 +173,7 @@ export const LeaveReviewModal: React.FC<LeaveReviewModalProps> = ({
 
               {/* Recommend */}
               <div>
-                <p className="text-sm font-semibold text-slate-700 mb-2">Would you recommend this caregiver?</p>
+                <p className="text-sm font-semibold text-slate-700 mb-2">Would you recommend this care provider?</p>
                 <div className="flex gap-3">
                   {([true, false] as const).map(val => (
                     <button key={String(val)} type="button" onClick={() => setRecommend(val)}

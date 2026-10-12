@@ -21,7 +21,7 @@ const base = {
 };
 
 describe("buildApprovalNoticeText", () => {
-  it("says what the card shows: caregiver, date, clock in/out, duration, scheduled window, base pay, charges, total, auto-approve time", () => {
+  it("says what the card shows: care provider, date, clock in/out, duration, scheduled window, base pay, charges, total, auto-approve time", () => {
     const t = buildApprovalNoticeText(base);
     expect(t).toContain("Basra Yousuf submitted hours for");
     expect(t).toMatch(/September 17/);
@@ -37,7 +37,7 @@ describe("buildApprovalNoticeText", () => {
     expect(t).not.toContain("DISPUTE");
   });
 
-  it("lists each additional charge with its note and explains that charges block auto-approval (the caregiver's modal says the same)", () => {
+  it("lists each additional charge with its note and explains that charges block auto-approval (the care provider's modal says the same)", () => {
     const t = buildApprovalNoticeText({
       ...base,
       lineItems: [{ type: "mileage", label: "Mileage", note: "12 mi", amount: 8.4 }, { type: "supplies", label: "Supplies", amount: 3 }],

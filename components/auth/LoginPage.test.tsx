@@ -74,7 +74,7 @@ describe('AuthLoginPage', () => {
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
-    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/caregiver/dashboard', { replace: true }));
+    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/care-provider/dashboard', { replace: true }));
   });
 
   it('routes an admin to /admin', async () => {

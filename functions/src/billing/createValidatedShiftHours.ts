@@ -80,7 +80,7 @@ export async function createValidatedShiftHours(input: {
     }
     const appointment = appointmentSnap.data()!;
     if (appointment.caregiverId !== input.actorUid) {
-      throw new ValidatedShiftHoursError("forbidden", "Appointment is not assigned to this caregiver");
+      throw new ValidatedShiftHoursError("forbidden", "Appointment is not assigned to this care provider");
     }
     if (typeof appointment.clientId !== "string" || !appointment.clientId) {
       throw new ValidatedShiftHoursError("not_billable", "Appointment has no verified client");
@@ -273,7 +273,7 @@ export async function createValidatedShiftHoursFromShift(input: {
     }
     const shift = shiftSnap.data()!;
     if (shift.caregiverId !== input.actorUid) {
-      throw new ValidatedShiftHoursError("forbidden", "Shift is not assigned to this caregiver");
+      throw new ValidatedShiftHoursError("forbidden", "Shift is not assigned to this care provider");
     }
     if (typeof shift.clientId !== "string" || !shift.clientId) {
       throw new ValidatedShiftHoursError("not_billable", "Shift has no verified client");

@@ -77,7 +77,7 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       // as a signal: if linqPhone is there, they completed OTP and are at the handoff.
       const hasLinqPhone = (() => { try { return !!sessionStorage.getItem('evia_linq_phone'); } catch { return false; } })();
       if (!hasLinqPhone) return;
-      if (userType === 'caregiver') { navigate('/caregiver/connect', { replace: true }); return; }
+      if (userType === 'caregiver') { navigate('/care-provider/connect', { replace: true }); return; }
       if (userType === 'client')    { navigate('/client/connect',    { replace: true }); return; }
     }).catch(() => {});
   }, [navigate]);
@@ -296,7 +296,7 @@ const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children:
           <div className="text-center">
             <h1 className="text-3xl md:text-4xl font-display font-semibold tracking-[-0.02em] text-ink-900">Meet Evia</h1>
             <p className="text-ink-600 mt-2 text-lg leading-relaxed">
-              Your care coordinator. She&rsquo;ll help you find the right caregiver for your family.
+              Your care coordinator. She&rsquo;ll help you find the right care provider for your family.
             </p>
             {/* LAUNCH: wording pending counsel review (R15) */}
             <p className="text-ink-400 mt-1 text-sm">Evia is an automated coordinator backed by our care team.</p>
@@ -323,13 +323,13 @@ const RolePicker: React.FC<{ tone: 'dark' | 'light'; onPick: (r: OnboardingRole)
           className="w-full py-4 px-5 rounded-2xl border hairline bg-white hover:shadow-md active:shadow-sm transition text-left"
         >
           <div className="font-semibold text-sm text-ink-900">I need care for someone</div>
-          <div className="text-ink-600 text-xs mt-0.5">Find caregivers for a loved one</div>
+          <div className="text-ink-600 text-xs mt-0.5">Find care providers for a loved one</div>
         </button>
         <button
           onClick={() => onPick('caregiver')}
           className="w-full py-4 px-5 rounded-2xl border hairline bg-white hover:shadow-md active:shadow-sm transition text-left"
         >
-          <div className="font-semibold text-sm text-ink-900">I'm a caregiver</div>
+          <div className="font-semibold text-sm text-ink-900">I'm a care provider</div>
           <div className="text-ink-600 text-xs mt-0.5">Find families in your area</div>
         </button>
       </div>
@@ -341,14 +341,14 @@ const RolePicker: React.FC<{ tone: 'dark' | 'light'; onPick: (r: OnboardingRole)
         onClick={() => onPick('client')}
         className="w-full px-6 py-5 rounded-2xl border hairline bg-white hover:shadow-md transition text-left"
       >
-        <div className="font-semibold text-lg text-ink-900">Find a caregiver</div>
+        <div className="font-semibold text-lg text-ink-900">Find a care provider</div>
         <div className="text-ink-600 mt-1">For a parent, spouse, or loved one</div>
       </button>
       <button
         onClick={() => onPick('caregiver')}
         className="w-full px-6 py-5 rounded-2xl border hairline bg-white hover:shadow-md transition text-left"
       >
-        <div className="font-semibold text-lg text-ink-900">I&rsquo;m a caregiver</div>
+        <div className="font-semibold text-lg text-ink-900">I&rsquo;m a care provider</div>
         <div className="text-ink-600 mt-1">Apply to work with families</div>
       </button>
     </div>
@@ -435,7 +435,7 @@ const ConsentScreen: React.FC<{
           </li>
           <li className="flex gap-3">
             <span className="flex-shrink-0 w-7 h-7 rounded-full bg-paper-100 border hairline text-ink-900 font-semibold flex items-center justify-center text-sm">3</span>
-            <span>Evia replies, asks a few questions, and finds caregivers near you.</span>
+            <span>Evia replies, asks a few questions, and finds care providers near you.</span>
           </li>
         </ol>
       </div>
@@ -444,7 +444,7 @@ const ConsentScreen: React.FC<{
         <p>
           {role === 'caregiver'
             ? 'Evia will text you about jobs near you and family requests. Standard message and data rates may apply. Reply STOP anytime.'
-            : 'Evia will text you about caregiver matches and visit updates — never sales pitches. Standard rates may apply. Reply STOP anytime.'}
+            : 'Evia will text you about care provider matches and visit updates — never sales pitches. Standard rates may apply. Reply STOP anytime.'}
           {' '}
           <Link to="/terms" className="underline underline-offset-2">Terms</Link>
           {' · '}
@@ -858,7 +858,7 @@ const ConnectedScreen: React.FC<{ role: OnboardingRole; tone: 'dark' | 'light' }
       </div>
       <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia is texting you now</h2>
       <p className="text-ink-600 text-lg leading-relaxed">
-        Open Messages to continue. She&rsquo;ll ask a few quick questions and then show you caregivers in your area.
+        Open Messages to continue. She&rsquo;ll ask a few quick questions and then show you care providers in your area.
       </p>
       <p className="text-ink-400 text-sm">You can close this tab — everything happens by text from here.</p>
     </div>

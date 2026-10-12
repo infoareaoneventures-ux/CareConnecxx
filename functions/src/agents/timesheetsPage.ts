@@ -49,7 +49,7 @@ export const STATUS_LABEL: Record<string, string> = {
 
 // The sentence the card shows under certain statuses.
 export const STATUS_HINT: Record<string, string> = {
-  correction_proposed: "You proposed a correction. Waiting for the caregiver to accept or send a counter.",
+  correction_proposed: "You proposed a correction. Waiting for the care provider to accept or send a counter.",
   disputed_admin_review: "This dispute has been escalated to our team and will be resolved within 48 hours.",
   requires_admin_review: "Our team needs to take a closer look at this one before it can be processed. No action needed from you right now.",
   payment_failed: "Payment failed. Please check your card on file in the Payment Method tab.",
@@ -57,9 +57,9 @@ export const STATUS_HINT: Record<string, string> = {
 
 // HISTORY_ACTION_LABEL on the page (the correction timeline).
 export const HISTORY_ACTION_LABEL: Record<string, string> = {
-  submitted: "Submitted by caregiver",
+  submitted: "Submitted by care provider",
   proposed_correction: "Client proposed correction",
-  counter_proposed: "Caregiver sent counter",
+  counter_proposed: "Care Provider sent counter",
   accepted: "Accepted",
   escalated: "Escalated to admin",
   admin_resolved: "Resolved by admin",

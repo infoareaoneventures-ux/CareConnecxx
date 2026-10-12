@@ -253,7 +253,7 @@ describe("respond_to_interview_request", () => {
     expect(accepted.code).toBe("MEMBERSHIP_REQUIRED");
   });
 
-  it("refuses when the interview doesn't belong to this caregiver", async () => {
+  it("refuses when the interview doesn't belong to this care provider", async () => {
     // Cleared too, so the ownership refusal (not the membership gate) is what fires.
     hoisted.docState.set("caregivers/someone_else", { name: "Bob", membershipStatus: "active", verified: true });
     const r = await handleToolCall("respond_to_interview_request", {

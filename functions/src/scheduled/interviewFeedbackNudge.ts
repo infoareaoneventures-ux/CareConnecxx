@@ -166,7 +166,7 @@ export const sendInterviewFeedbackNudges = functions.pubsub
         if (sessionData.onboardingStep !== "complete") continue;
         const phone = (sessionData.phone ?? sessionDoc.id) as string;
 
-        const caregiverName = ((interview.caregiverName ?? "your caregiver") as string).split(" ")[0] || "your caregiver";
+        const caregiverName = ((interview.caregiverName ?? "your care provider") as string).split(" ")[0] || "your care provider";
         // 2026-09-20: a family with several interviews on file replied "on which
         // interview?" — every nudge names its interview's date and time.
         const whenMs = parseScheduledTimeMs(String(interview.scheduledTime ?? ""));

@@ -136,7 +136,7 @@ export async function dispatchApprovalNotice(outboxId: string, workerId: string)
   const payload = record.payloadSnapshot ?? {};
   const content = buildApprovalNoticeText(payload);
   // Kept on the session for the APPROVE / DISPUTE keyword reply (routeClient.ts).
-  const caregiverName = payload.caregiverName ?? "Your caregiver";
+  const caregiverName = payload.caregiverName ?? "Your care provider";
   const amount = (Number(payload.grossPayCents ?? 0) / 100).toFixed(2);
   const providerMessageIds: string[] = [];
 

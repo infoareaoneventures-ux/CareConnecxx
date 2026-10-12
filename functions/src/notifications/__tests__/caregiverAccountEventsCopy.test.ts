@@ -14,17 +14,17 @@ vi.mock("../../utils/caregiverPhone", () => ({ resolveCaregiverPhone: vi.fn(asyn
 
 import { caregiverAccountEventCopy, caregiverAccountEventBellType, lifecycleTextOwnedByGate } from "../caregiverAccountEvents";
 
-const TAB = "https://eviacares.com/caregiver/settings";
+const TAB = "https://eviacares.com/care-provider/settings";
 
 describe("caregiverAccountEventCopy — membership notices", () => {
   it("paid / renewed: the bell links to the dashboard, the text carries the consent page itself", () => {
     const paid = caregiverAccountEventCopy("membership_paid", { consentUrl: "https://eviacares.com/bgcheck?t=tok" });
-    expect(paid.body).toContain("https://eviacares.com/caregiver/dashboard");
+    expect(paid.body).toContain("https://eviacares.com/care-provider/dashboard");
     expect(paid.text).toBe("Your membership is active. Next: authorize your background check — it takes about 2 minutes: https://eviacares.com/bgcheck?t=tok");
     const renewed = caregiverAccountEventCopy("membership_renewed", { amount: "69.99", consentUrl: "https://eviacares.com/bgcheck?t=tok" });
     expect(renewed.text).toBe("Your annual membership renewed — $69.99 was charged. Authorize this year's background check within 7 days to stay bookable — it takes about 2 minutes: https://eviacares.com/bgcheck?t=tok");
     // No link available → the text falls back to the dashboard rather than nothing.
-    expect(caregiverAccountEventCopy("membership_paid").text).toContain("/caregiver/dashboard");
+    expect(caregiverAccountEventCopy("membership_paid").text).toContain("/care-provider/dashboard");
   });
 
   it("payment failed (3 attempts): the bell links to the Membership tab, the text says MANAGE MEMBERSHIP", () => {
@@ -46,7 +46,7 @@ describe("caregiverAccountEventCopy — membership notices", () => {
     expect(caregiverAccountEventCopy("membership_revoked").text).toBe("Your membership is no longer active. Activate your membership to apply to jobs and get booked — reply ACTIVATE for your membership link.");
     for (const k of ["membership_cancel_scheduled", "membership_cancelled", "membership_revoked"] as const) {
       expect(caregiverAccountEventCopy(k).body).toContain(TAB);
-      expect(caregiverAccountEventCopy(k).body).not.toContain("/caregiver/membership");
+      expect(caregiverAccountEventCopy(k).body).not.toContain("/care-provider/membership");
     }
   });
 
@@ -114,7 +114,7 @@ describe("caregiverAccountEventCopy — account paused / reactivated (B7, 2026-1
     expect(c.body).toBe("You're active again — you'll show up for new matches.");
     expect(c.text).toBeUndefined();
   });
-  it("the bell type is account_<…> (both bell maps route startsWith('account') to /caregiver/settings); every other kind keeps caregiver_<kind>", () => {
+  it("the bell type is account_<…> (both bell maps route startsWith('account') to /care-provider/settings); every other kind keeps caregiver_<kind>", () => {
     expect(caregiverAccountEventBellType("account_paused")).toBe("account_paused");
     expect(caregiverAccountEventBellType("account_reactivated")).toBe("account_reactivated");
     expect(caregiverAccountEventBellType("membership_renewed")).toBe("caregiver_membership_renewed");

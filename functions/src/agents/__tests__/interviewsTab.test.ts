@@ -93,7 +93,7 @@ describe("listClientInterviews", () => {
     expect(byId.req.actions).toEqual(["message", "propose_time", "cancel"]);
   });
 
-  it("a pending reschedule proposal: the caregiver's adds Accept new time (and a counter-proposal); the family's own hides Propose and shows only Cancel", async () => {
+  it("a pending reschedule proposal: the care provider's adds Accept new time (and a counter-proposal); the family's own hides Propose and shows only Cancel", async () => {
     iv("theirs", { status: "accepted", scheduledTime: "2026-09-20T21:00:00.000Z", reschedulePendingTime: "2026-09-21T21:00:00.000Z", rescheduledBy: "caregiver" });
     iv("mine",   { status: "accepted", scheduledTime: "2026-09-22T21:00:00.000Z", reschedulePendingTime: "2026-09-23T21:00:00.000Z", rescheduledBy: "client" });
     const byId = Object.fromEntries((await listClientInterviews(C, undefined, NOW)).map((r) => [r.interviewId, r]));
@@ -101,7 +101,7 @@ describe("listClientInterviews", () => {
     expect(byId.theirs.rescheduleWaitingOn).toBe("you");
     expect(byId.theirs.reschedulePendingTimeLocal).toBe("Monday, September 21 at 2:00 PM");
     expect(byId.mine.actions).toEqual(["message", "cancel"]);
-    expect(byId.mine.rescheduleWaitingOn).toBe("caregiver");
+    expect(byId.mine.rescheduleWaitingOn).toBe("care provider");
   });
 
   it("completed rows carry the page's booking line and buttons: sent → Cancel; accepted with shifts → label only; finished → Re-book; declined/cancelled → Resend; none → Not Selected + Send Booking", async () => {
@@ -130,7 +130,7 @@ describe("listClientInterviews", () => {
     expect(byId.fresh.actions).toEqual(["not_selected", "send_booking"]);
   });
 
-  it("declined rows: Not Selected shows nothing; a caregiver decline with a job offers View Other Applicants; a counter-proposed time offers Accept / Propose another", async () => {
+  it("declined rows: Not Selected shows nothing; a care provider decline with a job offers View Other Applicants; a counter-proposed time offers Accept / Propose another", async () => {
     iv("ns",   { status: "declined", declinedBy: "client", jobId: "job1", scheduledTime: "2026-09-10T21:00:00.000Z" });
     iv("cgd",  { status: "declined", jobId: "job1", scheduledTime: "2026-09-11T21:00:00.000Z" });
     iv("prop", { status: "declined", scheduledTime: "2026-09-12T21:00:00.000Z", proposedTime: "2026-09-25T21:00:00.000Z" });

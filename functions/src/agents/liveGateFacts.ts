@@ -203,7 +203,7 @@ export async function buildLiveClientPaymentFact(phone: string, session: AgentSe
     }
     if (landed) {
       return "LIVE STATUS RIGHT NOW: their membership payment WENT THROUGH — do NOT ask them to pay again or tap " +
-        "the link; confirm it's active and that Evia is already finding caregivers.";
+        "the link; confirm it's active and that Evia is already finding care providers.";
     }
     return "LIVE STATUS RIGHT NOW: their membership payment hasn't come through yet — the checkout link Evia sent " +
       "is the way (it takes about 30 seconds).";

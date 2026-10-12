@@ -56,7 +56,7 @@ beforeEach(() => {
 });
 
 describe("loadMembershipTab — the section's reads", () => {
-  it("status from the caregiver doc first (users doc fallback), the LIVE subscription record first, the background + driver states", async () => {
+  it("status from the care provider doc first (users doc fallback), the LIVE subscription record first, the background + driver states", async () => {
     hoisted.subs.unshift({ status: "canceled", current_period_end: new Date("2026-01-01T08:00:00Z"), cancel_at_period_end: false });
     const tab = await loadMembershipTab("cg1");
     expect(tab.status).toBe("active");
@@ -142,7 +142,7 @@ describe("keywords — the section's buttons", () => {
     expect(hoisted.sent[0]).toContain("Settings · Membership & verification");
     hoisted.docs.set("customers/cg1", { stripeCustomerId: "cus_1" });
     expect(await handleMembershipKeyword("+1555", "chat", "cg1", "MANAGE MEMBERSHIP")).toBe("handled");
-    expect(hoisted.portalCreate).toHaveBeenCalledWith({ customer: "cus_1", return_url: "https://eviacares.com/caregiver/settings" });
+    expect(hoisted.portalCreate).toHaveBeenCalledWith({ customer: "cus_1", return_url: "https://eviacares.com/care-provider/settings" });
     hoisted.docs.delete("customers/cg1");
     await handleMembershipKeyword("+1555", "chat", "cg1", "billing");
     expect(hoisted.sent.at(-1)).toBe("No billing account found. Please purchase a membership first — reply ACTIVATE for your membership link.");

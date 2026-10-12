@@ -116,9 +116,9 @@ function toDateTimeLocal(iso: string): string {
 }
 
 const HISTORY_ACTION_LABEL: Record<string, string> = {
-  submitted:          'Submitted by caregiver',
+  submitted:          'Submitted by care provider',
   proposed_correction:'Client proposed correction',
-  counter_proposed:   'Caregiver sent counter',
+  counter_proposed:   'Care provider sent counter',
   accepted:           'Accepted',
   escalated:          'Escalated to admin',
   admin_resolved:     'Resolved by admin',
@@ -1331,7 +1331,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
     return (t === 'payouts' || t === 'timesheets') ? t : 'timesheets';
   })();
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('tab') === 'membership') navigate('/caregiver/settings', { replace: true });
+    if (new URLSearchParams(window.location.search).get('tab') === 'membership') navigate('/care-provider/settings', { replace: true });
   }, [navigate]);
   const [tab, setTab] = useState<Tab>(initialTab);
   const [tsFilter, setTsFilter] = useState<'unsubmitted' | 'pending' | 'history'>('unsubmitted');

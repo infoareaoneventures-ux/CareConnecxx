@@ -417,7 +417,7 @@ export const TEST_CASES: EvalCase[] = [
     category: "matching",
     input: "The last caregiver didn't work out",
     expectedBehavior: "Offers to search for a new match",
-    mustContain: ["find", "match", "search", "caregiver"],
+    mustContain: ["find", "match", "search", "care provider"],
   },
   {
     id: "match_18",

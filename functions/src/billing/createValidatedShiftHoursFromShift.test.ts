@@ -143,7 +143,7 @@ describe("createValidatedShiftHoursFromShift", () => {
     expect(doc.lineItemsTotal).toBe(12);
   });
 
-  it("rejects a different caregiver's shift", async () => {
+  it("rejects a different care provider's shift", async () => {
     seedCompletedShift();
     await expect(createValidatedShiftHoursFromShift({
       shiftId: SHIFT_ID,

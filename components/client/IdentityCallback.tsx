@@ -8,7 +8,7 @@ type Status = 'waiting' | 'verified' | 'requires_input' | 'canceled' | 'timeout'
 export default function IdentityCallback() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const next = params.get('next') || '/client/find-caregivers';
+  const next = params.get('next') || '/client/find-care-providers';
 
   const sourceCara  = params.get('source') === 'cara';
   const caraPhone   = params.get('caraPhone') ?? '';
@@ -128,7 +128,7 @@ export default function IdentityCallback() {
               </div>
               <h1 className="text-lg font-bold text-slate-900 mb-2">Check canceled</h1>
               <p className="text-sm text-slate-600 mb-5">
-                No problem — you can pick it up again anytime you want to contact a caregiver.
+                No problem — you can pick it up again anytime you want to contact a care provider.
               </p>
               <button
                 onClick={() => navigate(next, { replace: true })}

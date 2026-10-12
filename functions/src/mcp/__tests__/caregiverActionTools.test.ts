@@ -205,12 +205,12 @@ setCaraActionExecutionStoreForTest({
   async settle() { /* no-op */ },
 });
 
-describe("U2 caregiver action tools", () => {
+describe("U2 care provider action tools", () => {
   beforeEach(() => {
     hoisted.reset();
     // The acting caregiver is fully cleared — the website's action gate
     // (membership → background check) now runs inside these tools too.
-    hoisted.docState.set("caregivers/cg1", { name: "Test Caregiver", membershipStatus: "active", verified: true });
+    hoisted.docState.set("caregivers/cg1", { name: "Test Care Provider", membershipStatus: "active", verified: true });
     trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
     sendToPhone.mockClear(); sendToPhone.mockResolvedValue(undefined);
     payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });
@@ -220,7 +220,7 @@ describe("U2 caregiver action tools", () => {
 
   // ── withdraw_job_application ───────────────────────────────────────────────
   describe("withdraw_job_application", () => {
-    it("withdraws a pending application owned by the caregiver", async () => {
+    it("withdraws a pending application owned by the care provider", async () => {
       hoisted.docState.set("job_applications/app1", { caregiverId: "cg1", clientId: "c1", jobId: "j1", status: "pending" });
       const r = await handleToolCall("withdraw_job_application", { caregiverId: "cg1", applicationId: "app1" }) as any;
       expect(r.success).toBe(true);
@@ -228,7 +228,7 @@ describe("U2 caregiver action tools", () => {
       expect(hoisted.docState.get("job_applications/app1").status).toBe("withdrawn");
     });
 
-    it("denies withdrawing another caregiver's application (PERMISSION_DENIED)", async () => {
+    it("denies withdrawing another care provider's application (PERMISSION_DENIED)", async () => {
       hoisted.docState.set("job_applications/app1", { caregiverId: "OTHER", status: "pending" });
       const r = await handleToolCall("withdraw_job_application", { caregiverId: "cg1", applicationId: "app1" }) as any;
       expect(r._toolError).toBe(true);
@@ -275,7 +275,7 @@ describe("U2 caregiver action tools", () => {
       expect(hoisted.docState.get("booking_requests/br1").status).toBe("declined");
     });
 
-    it("refuses another caregiver's request", async () => {
+    it("refuses another care provider's request", async () => {
       hoisted.docState.set("booking_requests/br1", { ...pending(), caregiverId: "OTHER" });
       const r = await handleToolCall("respond_to_booking_request", { caregiverId: "cg1", bookingRequestId: "br1", decision: "accept" }) as any;
       expect(r._toolError).toBe(true);
@@ -320,7 +320,7 @@ describe("U2 caregiver action tools", () => {
       expect(r.reason).toBe("not_scheduled");
     });
 
-    it("is idempotent — starting an in-progress visit returns alreadyStarted; another caregiver's visit is denied", async () => {
+    it("is idempotent — starting an in-progress visit returns alreadyStarted; another care provider's visit is denied", async () => {
       hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "in-progress", date: "2099-01-01", startTime: "09:00", startedAt: "2026-06-20T09:00:00Z" });
       let r = await handleToolCall("start_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
       expect(r.success).toBe(true); expect(r.alreadyStarted).toBe(true);
@@ -350,7 +350,7 @@ describe("U2 caregiver action tools", () => {
       expect(hoisted.docState.get("shifts/s2").status).toBe("scheduled");
     });
 
-    it("denies completing another caregiver's visit", async () => {
+    it("denies completing another care provider's visit", async () => {
       hoisted.docState.set("shifts/s1", { caregiverId: "OTHER", status: "in-progress", date: "2099-01-01" });
       const r = await handleToolCall("complete_shift", { caregiverId: "cg1", shiftId: "s1" }) as any;
       expect(r._toolError).toBe(true);
@@ -378,7 +378,7 @@ describe("U2 caregiver action tools", () => {
       expect(hoisted.docState.get("shifts/s1").tasksCompleted).toEqual(["0_Mobility Assistance_Transfer Assist", "0_Mobility Assistance_Walking"]);
     });
 
-    it("only while the visit is in progress; another caregiver's shift is denied", async () => {
+    it("only while the visit is in progress; another care provider's shift is denied", async () => {
       hoisted.docState.set("shifts/s1", { caregiverId: "cg1", status: "scheduled", date: "2099-01-01", startTime: "09:00", careRecipients: RECIPIENTS, tasksCompleted: [] });
       let r = await handleToolCall("update_shift_task", { caregiverId: "cg1", shiftId: "s1", numbers: [1] }) as any;
       expect(r.success).toBe(false); expect(r.reason).toBe("not_in_progress");
@@ -418,7 +418,7 @@ describe("U2 caregiver action tools", () => {
   describe("payouts", () => {
     beforeEach(() => { instantFlowMock.session = { phone: "+15550001111", chatId: "chat-cg1" }; });
     afterEach(() => { instantFlowMock.session = null; });
-    it("request_instant_payout opens the Cash Out modal flow in the caregiver's conversation and pays NOTHING itself", async () => {
+    it("request_instant_payout opens the Cash Out modal flow in the care provider's conversation and pays NOTHING itself", async () => {
       instantFlowMock.startInstantPayout.mockResolvedValueOnce({ started: true });
       const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
       expect(instantFlowMock.startInstantPayout).toHaveBeenCalledWith("cg1", "+15550001111", "chat-cg1");
@@ -435,7 +435,7 @@ describe("U2 caregiver action tools", () => {
       expect(payoutCommonMock.executeInstantPayout).not.toHaveBeenCalled();
     });
 
-    it("request_instant_payout without an Evia conversation for the caregiver is a NOT_FOUND tool error", async () => {
+    it("request_instant_payout without an Evia conversation for the care provider is a NOT_FOUND tool error", async () => {
       const r = await handleToolCall("request_instant_payout", { caregiverId: "cg-nobody" }) as any;
       expect(r._toolError).toBe(true);
     });
@@ -473,7 +473,7 @@ describe("U11 payment auditing & safety", () => {
     hoisted.reset();
     // The acting caregiver is fully cleared — the website's action gate
     // (membership → background check) now runs inside these tools too.
-    hoisted.docState.set("caregivers/cg1", { name: "Test Caregiver", membershipStatus: "active", verified: true });
+    hoisted.docState.set("caregivers/cg1", { name: "Test Care Provider", membershipStatus: "active", verified: true });
     trySend.mockClear(); trySend.mockResolvedValue({ sent: true });
     sendToPhone.mockClear(); sendToPhone.mockResolvedValue(undefined);
     payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });
@@ -570,7 +570,7 @@ describe("U11 payment auditing & safety", () => {
       expect(hoisted.docState.get("shiftHours/a1").status).toBe("approved");
     });
 
-    it("accepts a caregiver's counter-proposal and finalizes off the counter's own times", async () => {
+    it("accepts a care provider's counter-proposal and finalizes off the counter's own times", async () => {
       hoisted.docState.set("shiftHours/a1", {
         clientId: "c1",
         caregiverId: "cg1",

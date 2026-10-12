@@ -8,7 +8,7 @@ import { PRIMARY_SERVICES } from "../caregiverServiceLabels";
 
 beforeEach(() => { parseWithClaude.mockReset(); parseWithClaude.mockResolvedValue("{}"); });
 
-describe("care needs = the caregiver side's eight, nothing underneath (2026-10-04)", () => {
+describe("care needs = the care provider side's eight, nothing underneath (2026-10-04)", () => {
   it("the categories ARE the eight services", () => {
     expect(CARE_NEED_CATEGORIES).toEqual([...PRIMARY_SERVICES]);
   });

@@ -52,7 +52,7 @@ export const PublicCaregiverProfile: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <p className="text-2xl font-bold text-slate-900 mb-2">Profile unavailable</p>
-        <p className="text-sm text-slate-500 mb-6">This caregiver isn't available yet.</p>
+        <p className="text-sm text-slate-500 mb-6">This care provider isn't available yet.</p>
         <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to Evia</Link>
       </div>
     );
@@ -62,7 +62,7 @@ export const PublicCaregiverProfile: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <p className="text-2xl font-bold text-slate-900 mb-2">Profile not found</p>
-        <p className="text-sm text-slate-500 mb-6">This caregiver profile doesn't exist or is no longer available.</p>
+        <p className="text-sm text-slate-500 mb-6">This care provider profile doesn't exist or is no longer available.</p>
         <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to Evia</Link>
       </div>
     );
@@ -73,7 +73,7 @@ export const PublicCaregiverProfile: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <p className="text-2xl font-bold text-slate-900 mb-2">Profile unavailable</p>
-        <p className="text-sm text-slate-500 mb-6">This caregiver has hidden their profile.</p>
+        <p className="text-sm text-slate-500 mb-6">This care provider has hidden their profile.</p>
         <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to Evia</Link>
       </div>
     );
@@ -91,7 +91,7 @@ export const PublicCaregiverProfile: React.FC = () => {
             <span className="font-bold text-slate-900 tracking-tight">Evia</span>
           </Link>
           <Link to="/client/signup" className="text-sm font-semibold text-primary-600 hover:text-primary-700">
-            Find a caregiver →
+            Find a care provider →
           </Link>
         </div>
       </header>

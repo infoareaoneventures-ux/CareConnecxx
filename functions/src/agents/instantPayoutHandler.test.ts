@@ -59,10 +59,10 @@ beforeEach(() => {
 });
 
 describe("startInstantPayout — the page's preconditions, in the page's order", () => {
-  it("missing caregiver doc → asks for the sign-up email", async () => {
+  it("missing care provider doc → asks for the sign-up email", async () => {
     hoisted.docs.delete(`caregivers/${CG}`);
     expect((await startInstantPayout(CG, PHONE, CHAT)).reason).toBe("not_found");
-    expect(hoisted.sent[0]).toMatch(/couldn't find your caregiver profile/);
+    expect(hoisted.sent[0]).toMatch(/couldn't find your care provider profile/);
   });
   it("no Stripe account → the bank card's text + the Setup Payouts link (never 'open the app')", async () => {
     expect((await startInstantPayout(CG, PHONE, CHAT)).reason).toBe("no_account");
@@ -147,7 +147,7 @@ describe("handleInstantPayoutConfirm — the modal's two buttons", () => {
     expect(opts?.facts).toContain("You'll Receive $49.00");
     expect(opts?.facts).toContain("Arrives in about 30 minutes");
     expect(opts?.facts).toContain("Regular payouts happen automatically every day and are free");
-    expect(opts?.facts).toContain("nothing is sent until the caregiver replies CASH OUT");
+    expect(opts?.facts).toContain("nothing is sent until the care provider replies CASH OUT");
   });
   it("an unclear reply re-asks without clearing", async () => {
     park();

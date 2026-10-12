@@ -187,7 +187,7 @@ export const uploadOnboardingFile = functions
     // (ensureCaregiverDocForOnboarding).
     const { ensureCaregiverDocForOnboarding } = await import("./onboardingConversation");
     const uid = await ensureCaregiverDocForOnboarding(payload.phone);
-    if (!uid) throw new functions.https.HttpsError("failed-precondition", "caregiver account not ready — text Evia and try the link again");
+    if (!uid) throw new functions.https.HttpsError("failed-precondition", "care provider account not ready — text Evia and try the link again");
 
     const ext    = UPLOAD_EXT[contentType] ?? "jpg";
     const safeName = (fileName || `profilePhoto.${ext}`).replace(/[^a-zA-Z0-9.-]/g, "_");

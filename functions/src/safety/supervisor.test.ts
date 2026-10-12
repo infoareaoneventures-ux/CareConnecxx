@@ -39,7 +39,7 @@ describe("supervise", () => {
   });
 
   it("returns the original (linted) message when Haiku reports no violation", async () => {
-    const msg = "I found two caregivers for your mom. Want me to set up intros?";
+    const msg = "I found two care providers for your mom. Want me to set up intros?";
     mockHaikuReply({ violation: false, revised: msg });
     const out = await supervise(msg, { phone: "+15550001111" });
     expect(out).toBe(msg);

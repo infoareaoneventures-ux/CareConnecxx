@@ -47,7 +47,7 @@ describe("applyFitDecisionFollowUp", () => {
     })).toBe("");
   });
 
-  it("falls back to \"them\" for a caregiver name with no readable first name", () => {
+  it("falls back to \"them\" for a care provider name with no readable first name", () => {
     const out = applyFitDecisionFollowUp({
       reply: "Marked complete.",
       completedInterviewDetails: { interviewId: "iv-2", caregiverName: "" },

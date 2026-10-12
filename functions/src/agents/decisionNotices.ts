@@ -114,12 +114,12 @@ export async function classifyDecision(text: string, pd: PendingDecision): Promi
 const OPTION_MEANING: Record<DecisionKind, string> = {
   interview_request:       "ACCEPT accepts the interview (the Jobs page's Accept — the Google Meet link is then texted to both sides); DECLINE declines it; PROPOSE proposes a different time to the family.",
   interview_proposal:      "CONFIRM confirms the proposed time (the interview moves to it); KEEP is the page's Keep current time (the proposal is dropped, the interview stays at its confirmed time and the other side is told); PROPOSE proposes another time instead.",
-  booking_request:         "ACCEPT accepts the booking (its visits go on the caregiver's schedule and the family is told); DECLINE declines it (a YES/NO confirm follows first); DETAILS shows the whole request.",
+  booking_request:         "ACCEPT accepts the booking (its visits go on the care provider's schedule and the family is told); DECLINE declines it (a YES/NO confirm follows first); DETAILS shows the whole request.",
   booking_request_decline: "YES declines the booking request; NO leaves it pending on the Requests tab.",
   amendment:               "ACCEPT accepts the family's schedule change (the booking's visits follow the new schedule); DECLINE declines it and the schedule stays as it was.",
   new_job:                 "APPLY starts the application (a cover letter is asked, then SUBMIT sends it); DETAILS shows the whole job post.",
-  job_application:         "VIEW shows the caregiver's profile link; INTERVIEW requests an interview with them; DECLINE declines the application (a YES/NO confirm follows first).",
-  job_application_decline: "YES declines the application (the caregiver is not told); NO leaves it pending on the post.",
+  job_application:         "VIEW shows the care provider's profile link; INTERVIEW requests an interview with them; DECLINE declines the application (a YES/NO confirm follows first).",
+  job_application_decline: "YES declines the application (the care provider is not told); NO leaves it pending on the post.",
   shift_proposal:          "ACCEPT is the page's Accept new time (the visit moves to the proposed time, after a check against your other visits that day); DECLINE keeps the visit at its current time; PROPOSE suggests a different day and time to the family instead.",
 };
 const listWords = (ws: string[]) => (ws.length > 1 ? `${ws.slice(0, -1).join(", ")} or ${ws[ws.length - 1]}` : ws[0] ?? "");
@@ -155,7 +155,7 @@ export async function noticeScreenText(pd: PendingDecision, session: AgentSessio
         const whenMs = whenIso ? parseScheduledTimeMs(whenIso) : NaN;
         const proposedMs = typeof iv.reschedulePendingTime === "string" ? parseScheduledTimeMs(iv.reschedulePendingTime) : NaN;
         return [
-          `Interview${iv.jobTitle ? ` for "${String(iv.jobTitle)}"` : ""} — ${pd.role === "caregiver" ? `family: ${String(iv.clientName || "the family")}` : `caregiver: ${String(iv.caregiverName || "your caregiver")}`}`,
+          `Interview${iv.jobTitle ? ` for "${String(iv.jobTitle)}"` : ""} — ${pd.role === "caregiver" ? `family: ${String(iv.clientName || "the family")}` : `care provider: ${String(iv.caregiverName || "your care provider")}`}`,
           `Type: ${interviewTypeLabel(iv)}`,
           Number.isFinite(whenMs) ? `Scheduled time: ${formatInterviewTime(whenMs)}` : "Scheduled time: not set yet",
           Number.isFinite(proposedMs) ? `Proposed new time: ${formatInterviewTime(proposedMs)} (proposed by the ${String(iv.rescheduledBy || "other side")})` : "",
@@ -175,7 +175,7 @@ export async function noticeScreenText(pd: PendingDecision, session: AgentSessio
         const app = snap.exists ? (snap.data() ?? {}) : null;
         if (!app) break;
         return [
-          `Application from ${String(app.caregiverName ?? pd.party ?? "a caregiver")} to "${String(app.jobTitle ?? "your post")}"`,
+          `Application from ${String(app.caregiverName ?? pd.party ?? "a care provider")} to "${String(app.jobTitle ?? "your post")}"`,
           app.coverLetter ? `Cover letter: "${String(app.coverLetter)}"` : "No cover letter.",
           `Status: ${String(app.status ?? "pending")}`,
         ].join("\n");
@@ -190,7 +190,7 @@ export async function noticeScreenText(pd: PendingDecision, session: AgentSessio
           `Visit with ${String(s.clientName || pd.party || "the family")}${s.address ? ` at ${String(s.address)}` : ""}`,
           `Current (confirmed) time: ${visitWhen(s)}`,
           s.reschedulePendingDate
-            ? `Proposed new time: ${proposalWhen(s)} (proposed by the ${s.rescheduledBy === "client" ? "family" : "caregiver"})`
+            ? `Proposed new time: ${proposalWhen(s)} (proposed by the ${s.rescheduledBy === "client" ? "family" : "care provider"})`
             : "No proposal is pending on this visit any more.",
           s.notes ? `Notes: ${String(s.notes)}` : "",
           `Status: ${String(s.status ?? "scheduled")}`,
@@ -330,7 +330,7 @@ export async function runDecision(
         // staying at …") come from onVideoInterviewWrite, exactly as after a click.
         const { keepInterviewTime, keptInterviewLine } = await import("./interviewProposal");
         const r = await keepInterviewTime({ by: pd.role, userId: pd.role === "caregiver" ? caregiverId : clientId, interviewId: pd.recordId, source: "decision_notice" });
-        await say(r.ok ? keptInterviewLine(r) : `That proposal isn't pending any more — your interview with ${pd.party ?? (pd.role === "caregiver" ? "the family" : "your caregiver")} stays as it is.`);
+        await say(r.ok ? keptInterviewLine(r) : `That proposal isn't pending any more — your interview with ${pd.party ?? (pd.role === "caregiver" ? "the family" : "your care provider")} stays as it is.`);
         break;
       }
       if (choice === "PROPOSE") {
@@ -423,7 +423,7 @@ export async function runDecision(
       const appSnap = await db.collection("job_applications").doc(pd.recordId).get().catch(() => null);
       const app = appSnap?.exists ? (appSnap.data() ?? {}) : null;
       if (!app) { await say("That application isn't on your post anymore."); break; }
-      const name = String(app.caregiverName ?? pd.party ?? "the caregiver");
+      const name = String(app.caregiverName ?? pd.party ?? "the care provider");
       const firstName = name.split(/\s+/)[0];
       if (String(app.status ?? "pending") !== "pending") { await say(`${firstName}'s application is already ${String(app.status)}.`); break; }
       if (choice === "VIEW") {
@@ -444,7 +444,7 @@ export async function runDecision(
       break;
     }
     case "job_application_decline": {
-      const firstName = String(pd.party ?? "the caregiver").split(/\s+/)[0];
+      const firstName = String(pd.party ?? "the care provider").split(/\s+/)[0];
       if (choice === "NO") { await say(`Okay — ${firstName}'s application stays as it is.`); break; }
       const ref = db.collection("job_applications").doc(pd.recordId);
       const snap = await ref.get().catch(() => null);

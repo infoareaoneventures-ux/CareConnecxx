@@ -141,7 +141,7 @@ export async function loadPendingItems(opts: NudgeLoadOptions = {}): Promise<Pen
         createdMs: toMs(b.updatedAt && b.isResend ? b.updatedAt : b.createdAt), lastNudgedMs: toMs(b.decisionNudgedAt), nudgeCount: Number(b.decisionNudgeCount ?? 0),
         replacement, visitDate: startDate,
         body: replacement
-          ? `${client} needs a replacement caregiver${startDate ? ` on ${formatDateForDisplay(startDate)}` : ""} — the request is still waiting on you and expires in ${Math.round(REPLACEMENT_NUDGE_BEFORE_EXPIRY_MS / 60000)} minutes.`
+          ? `${client} needs a replacement care provider${startDate ? ` on ${formatDateForDisplay(startDate)}` : ""} — the request is still waiting on you and expires in ${Math.round(REPLACEMENT_NUDGE_BEFORE_EXPIRY_MS / 60000)} minutes.`
           : `${client}'s booking request is still waiting on you.`,
         replyLine: REPLY.booking_request, label: replacement ? `a replacement request from ${client}` : `a booking request from ${client}`,
       });

@@ -164,7 +164,7 @@ describe("profile tools", () => {
         caregiverId: "cg1",
         phone: "+15555550100",
         hourlyRate: 35,
-        bio: "Experienced companion caregiver",
+        bio: "Experienced companion care provider",
       }) as any;
 
       expect(r.success).toBe(true);

@@ -5,7 +5,7 @@ import { TaskPageBar } from '../auth/TaskPageBar';
 import { Footer } from '../landing/Footer';
 
 // "Trouble signing in?" destination — mounted at both /client/forgot-password
-// and /caregiver/forgot-password (login here is phone-OTP only for both
+// and /care-provider/forgot-password (login here is phone-OTP only for both
 // roles, and the recovery flow behind this page checks users/ and
 // caregivers/ by email either way, so one page covers both).
 //

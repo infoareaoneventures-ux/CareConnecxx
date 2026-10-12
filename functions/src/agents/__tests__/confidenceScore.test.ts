@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { computeConfidenceScoreFromFields } from "../confidenceScore";
 
 describe("computeConfidenceScoreFromFields (U2)", () => {
-  it("scores a strong non-driver caregiver and lists signals", () => {
+  it("scores a strong non-driver care provider and lists signals", () => {
     const { score, signals } = computeConfidenceScoreFromFields({
       backgroundCheckStatus: "clear",
       approvedAt: new Date(Date.now() - 8 * 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -17,12 +17,12 @@ describe("computeConfidenceScoreFromFields (U2)", () => {
     expect(signals.some((s) => s.includes("★"))).toBe(true);
   });
 
-  it("is cold-start neutral: a brand-new cleared caregiver gets no penalty", () => {
+  it("is cold-start neutral: a brand-new cleared care provider gets no penalty", () => {
     const { score } = computeConfidenceScoreFromFields({ backgroundCheckStatus: "clear" });
     expect(score).toBe(35); // screening only; no negative, no fabricated history
   });
 
-  it("gives zero (not negative) for a caregiver with no signals at all", () => {
+  it("gives zero (not negative) for a care provider with no signals at all", () => {
     const { score, signals } = computeConfidenceScoreFromFields({
       pendingBackgroundCheck: true,
     });

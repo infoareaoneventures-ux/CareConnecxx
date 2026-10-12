@@ -170,7 +170,7 @@ describe("confirm — the page's dialogs, then the page's writes", () => {
     expect(call.situation).toContain("Nothing has been cancelled yet");
     expect(call.situation).toContain("YES cancels only this one visit");
     expect(call.situation).toContain("within 24 hours is marked needs_replacement");
-    expect(call.situation).toContain("No fee, charge or penalty is applied to the caregiver");
+    expect(call.situation).toContain("No fee, charge or penalty is applied to the care provider");
     expect(hoisted.updates.find((u) => u.path.startsWith("shifts/"))).toBeUndefined();
   });
   it("a question at the numbered list briefs the model with the list itself", async () => {

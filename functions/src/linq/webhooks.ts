@@ -1,3 +1,4 @@
+import { isCareProviderRole } from "../utils/roleParam";
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
@@ -543,7 +544,7 @@ async function handleColdConsentReply(
       audience: resolvedUserType === "caregiver" ? "caregiver" : "family",
       language: lang,
       context: resolvedUserType === "caregiver"
-        ? "A caregiver who already has an account just opted in to texts for the first time. Welcome them back warmly in one sentence and let them know they can text you anytime about jobs, bookings, or their schedule."
+        ? "A care provider who already has an account just opted in to texts for the first time. Welcome them back warmly in one sentence and let them know they can text you anytime about jobs, bookings, or their schedule."
         : "A client who already has an account just opted in to texts for the first time. Welcome them back warmly in one sentence and let them know they can text you anytime to book care or ask anything.",
       fallback: resolvedUserType === "caregiver"
         ? "Welcome back! Text me anytime about jobs, bookings, or your schedule."
@@ -556,7 +557,7 @@ async function handleColdConsentReply(
 
   const roleQuestion = lang === "es"
     ? "¿Buscas cuidado para un ser querido, o eres cuidador?"
-    : "Are you looking for care for a loved one, or are you a caregiver yourself?";
+    : "Are you looking for care for a loved one, or are you a care provider yourself?";
   await sendMessage(chatId, roleQuestion);
 }
 
@@ -803,7 +804,7 @@ const handleInboundInner = traceable(
     const webSessionSnap = await webSessionRef.get();
     if (webSessionSnap.exists && webSessionSnap.data()?.status === "awaiting_inbound") {
       const webSessionData = webSessionSnap.data() ?? {};
-      const webRole  = (webSessionData.role as string | undefined) === "caregiver" ? "caregiver" : "client";
+      const webRole  = isCareProviderRole(webSessionData.role) ? "caregiver" : "client";
       const referralId = webRole === "caregiver" ? (webSessionData.referralId as string | undefined) : undefined;
       // Name typed on the /start web form (if any). When present, we pre-seed it into
       // onboardingData and route to the confirm step so Evia greets by name and asks
@@ -949,7 +950,7 @@ const handleInboundInner = traceable(
           audience: welcomeAudience,
           language: welcomeLanguage,
           context: welcomeAudience === "caregiver"
-            ? `You're meeting ${webName} for the very first time over text. They just signed up to find caregiving work. ` +
+            ? `You're meeting ${webName} for the very first time over text. They just signed up to find care work. ` +
               `Introduce yourself warmly as Evia, mention that setting up their profile takes about 3 minutes and happens right here by text, ` +
               `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "how often they need care — occasional, part-time, or full-time (the wizard's first question; the person needing care comes later)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`
             : `You're meeting ${webName} for the very first time over text. They're looking for care for a loved one. ` +
@@ -958,7 +959,7 @@ const handleInboundInner = traceable(
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
                 ? `¡Hola ${webGreetName}! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 3 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu dirección (calle, ciudad y código postal)? Las familias solo ven la ciudad.`
-                : `Hi ${webGreetName}! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 3 minutes and it all happens right here.\n\nWhat's your street address, city, and zip code? (Families only ever see the city.)`)
+                : `Hi ${webGreetName}! I'm Evia — your assistant for finding care work. Setting up your profile takes about 3 minutes and it all happens right here.\n\nWhat's your street address, city, and zip code? (Families only ever see the city.)`)
             : (preferredLanguage === "es"
                 ? `¡Hola ${webGreetName}! Soy Evia, tu coordinadora de cuidados. ¿Para quién buscas cuidado? (Su nombre y tu relación con esa persona.)`
                 : `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. How often do you need care — occasional, part-time, or full-time?`),
@@ -971,14 +972,14 @@ const handleInboundInner = traceable(
           audience: welcomeAudience,
           language: welcomeLanguage,
           context: welcomeAudience === "caregiver"
-            ? "You're meeting someone for the very first time over text who just signed up to find caregiving work. " +
+            ? "You're meeting someone for the very first time over text who just signed up to find care work. " +
               "Introduce yourself warmly as Evia, mention that setting up their profile takes about 3 minutes and happens right here, and ask their first and last name. Sound like a real person, not a form."
             : "You're meeting someone for the very first time over text who's looking for care for a loved one. " +
               "Introduce yourself warmly as Evia, their care coordinator, and ask their first and last name. Sound like a real person, not a form.",
           fallback: webRole === "caregiver"
             ? (preferredLanguage === "es"
                 ? "¡Hola! Soy Evia — tu asistente para encontrar trabajo de cuidado. Configurar tu perfil toma unos 3 minutos y todo pasa aquí por mensaje.\n\n¿Cuál es tu nombre y apellido?"
-                : "Hi! I'm Evia — your assistant for finding caregiving work. Setting up your profile takes about 3 minutes and everything happens right here.\n\nWhat's your first and last name?")
+                : "Hi! I'm Evia — your assistant for finding care work. Setting up your profile takes about 3 minutes and everything happens right here.\n\nWhat's your first and last name?")
             : (preferredLanguage === "es"
                 ? "¡Hola! Soy Evia, tu coordinadora de cuidados. ¿Cuál es tu nombre y apellido?"
                 : "Hi! I'm Evia — I'll be your care coordinator. What's your first and last name?"),
@@ -1205,7 +1206,7 @@ const handleInboundInner = traceable(
       if (isStartOver) {
         await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "ask_role", onboardingData: {} });
         await sendMessage(chatId,
-          "Starting fresh! Are you looking for care for someone, or are you a caregiver yourself?"
+          "Starting fresh! Are you looking for care for someone, or are you a care provider yourself?"
         );
       } else {
         // Resume: restore checkpoint data and re-ask the current step's question
@@ -1471,15 +1472,15 @@ const handleInboundInner = traceable(
         audience: "family",
         context:
           (whoIsWho ? whoIsWho + " " : "") +
-          `This family finished setup for ${seniorName} in ${city}, but no caregivers were available there ` +
+          `This family finished setup for ${seniorName} in ${city}, but no care providers were available there ` +
           `yet, so they're on the waitlist — everything is saved, they have NOT been charged, and Evia will ` +
-          `text them the moment a caregiver in their area becomes available. They just sent: ` +
+          `text them the moment a care provider in their area becomes available. They just sent: ` +
           `"${text.slice(0, 300)}". Answer their message honestly with that status. If they ask about a ` +
           `nearby city, say you'll include it in the search and reach out as soon as someone is available. ` +
           `Never promise a specific timeframe, never re-ask intake questions, never suggest starting over.`,
         fallback:
           `Not yet — you're first in line for ${seniorName} in ${city}. Everything's saved and there's no ` +
-          `charge until I have the right caregiver for you. I'll text you the moment that changes.`,
+          `charge until I have the right care provider for you. I'll text you the moment that changes.`,
         maxTokens: 120,
       });
       await sendMessage(chatId, holdReply);
@@ -1517,7 +1518,7 @@ const handleInboundInner = traceable(
         if (reply === "accept") {
           await markOfferAccepted(phone);
           await sendMessage(chatId,
-            "Great — let's get you set up. Are you looking for care for a loved one, or are you a caregiver yourself?"
+            "Great — let's get you set up. Are you looking for care for a loved one, or are you a care provider yourself?"
           );
           return;
         }

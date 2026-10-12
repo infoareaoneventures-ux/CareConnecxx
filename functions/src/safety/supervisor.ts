@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
-import { lintMessage } from "./linter";
+import { lintMessage, enforceCareProviderTerm } from "./linter";
 import { CONSTITUTION_RULES } from "./constitution";
 
 const db = admin.firestore();
@@ -29,8 +29,8 @@ async function reviewWithModel(text: string, role: SuperviseContext["role"]): Pr
     max_tokens: 300,
     system:
       `You are a safety reviewer for a caregiving AI assistant named Evia. ` +
-      `Evia texts with the family member responsible for a senior's care, and with caregivers about the clients they serve — ` +
-      `discussing that senior's care plan, onboarding, schedule, caregivers, or general care needs with the ` +
+      `Evia texts with the family member responsible for a senior's care, and with care providers about the clients they serve — ` +
+      `discussing that senior's care plan, onboarding, schedule, care providers, or general care needs with the ` +
       `responsible party is the entire point of the product and is NEVER a violation of Rule 3. Rule 3 only applies when ` +
       `Evia would disclose one family's data to a different, unrelated user.\n\n` +
       `Check if the message below clearly and unambiguously violates one of these rules:\n${rulesText}\n\n` +
@@ -103,9 +103,9 @@ export async function reviewFixedString(message: string, context: SuperviseConte
  */
 export function supervisorRoleNote(role: "client" | "caregiver" | undefined): string {
   if (role === "caregiver") {
-    return "The user in this conversation is a CAREGIVER, texting about their own account, profile, rates, shifts and pay. " +
+    return "The user in this conversation is a CARE PROVIDER, texting about their own account, profile, rates, shifts and pay. " +
       "Rates they state are THEIR OWN rates for their own profile — repeating or confirming them is never \"quoting an unconfirmed price\" " +
-      "(rule 4 is about quoting a caregiver's rate to a FAMILY). Never add family-side wording such as \"confirmed with your caregivers\" or \"each caregiver\".\n\n";
+      "(rule 4 is about quoting a care provider's rate to a FAMILY). Never add family-side wording such as \"confirmed with your care providers\" or \"each care provider\".\n\n";
   }
   return "The user in this conversation is a FAMILY member arranging care.\n\n";
 }
@@ -119,8 +119,9 @@ export async function supervise(
   // here with the flag set gets the message back untouched.
   if (context.fixedString) return message;
 
-  // Step 1: lint (synchronous, no LLM)
-  const linted = lintMessage(message);
+  // Step 1: lint (synchronous, no LLM) — model-written text only (fixed strings
+  // returned above), so the care-provider wording rule applies here too.
+  const linted = enforceCareProviderTerm(lintMessage(message));
 
   // Step 2: constitution check via Claude Haiku
   let checked = linted;
@@ -132,7 +133,7 @@ export async function supervise(
       // to use ("I'm not able to", "Is there anything else I can help you with",
       // "contact our care team"). Without this pass those bypass the upfront
       // linter and end up in the SMS the user sees.
-      const relinted = lintMessage(parsed.revised);
+      const relinted = enforceCareProviderTerm(lintMessage(parsed.revised));
 
       // Log to safety log (non-blocking)
       db.collection("agent_safety_log").add({

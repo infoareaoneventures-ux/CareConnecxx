@@ -883,7 +883,7 @@ const ServicesStep: React.FC<{
       </div>
 
       <div>
-        <p className="text-sm font-semibold text-slate-700 mb-1">Years of caregiving experience</p>
+        <p className="text-sm font-semibold text-slate-700 mb-1">Years of care experience</p>
         <select value={yearsExperience} onChange={e => onChange('yearsExperience', e.target.value)}
           className="w-full px-4 py-3 rounded-2xl border-2 border-slate-200 bg-white text-sm text-slate-800 focus:outline-none focus:border-indigo-500">
           <option value="">Select your experience level</option>
@@ -1023,12 +1023,12 @@ const BioStep: React.FC<{
     <div className="flex flex-col gap-4">
       <h2 className="text-xl font-bold text-slate-800 text-center">Tell families about yourself</h2>
       <p className="text-sm text-slate-500 text-center">
-        Highlight your experience, personality, and what makes you a great caregiver. Min {minChars} characters.
+        Highlight your experience, personality, and what makes you a great care provider. Min {minChars} characters.
       </p>
 
       <div>
         <textarea value={bio} onChange={e => { if (e.target.value.length <= maxChars) onChange('bio', e.target.value); }}
-          placeholder={`Describe your caregiving background... at least ${minChars} characters required.`}
+          placeholder={`Describe your care background... at least ${minChars} characters required.`}
           rows={7}
           className="w-full px-4 py-3 rounded-2xl border-2 border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-none transition-all" />
         <div className="flex justify-between mt-1">

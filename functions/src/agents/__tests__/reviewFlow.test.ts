@@ -67,6 +67,11 @@ describe("first-visit prompt", () => {
     expect(await classifyReviewPromptReply("5", complete)).toEqual({ kind: "start", rating: 5 });
     expect(await classifyReviewPromptReply("no thanks", complete)).toEqual({ kind: "decline" });
     expect(await classifyReviewPromptReply("when is the next visit", complete)).toEqual({ kind: "other" });
+    // 2026-10-12 live: "Also decline Imran" was swallowed by the review prompt as a decline of the review.
+    let system = "";
+    await classifyReviewPromptReply("Also decline Imran", async (sys, _u) => { system = sys; return '{"action":"other","rating":null}'; });
+    expect(system).toContain('"decline" = ONLY a reply about the review itself');
+    expect(system).toContain("ANY reply that names a person or asks to decline, cancel, book, interview or change something");
   });
   it("a star reply starts the review flow with the rating prefilled; a decline clears the anchor; other turns are not consumed", async () => {
     const session = { userId: "c1", pendingReviewPromptCaregiverId: "cg1", pendingReviewPromptCaregiverName: "Basra Ali", pendingReviewPromptSetAt: new Date().toISOString() };

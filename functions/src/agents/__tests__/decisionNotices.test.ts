@@ -27,11 +27,18 @@ const hoisted = vi.hoisted(() => ({
 }));
 vi.mock("firebase-admin", () => {
   const firestore = Object.assign(() => ({
-    collection: (name: string) => ({ doc: (id: string) => ({
-      get: vi.fn(async () => ({ exists: hoisted.docs.has(`${name}/${id}`), data: () => hoisted.docs.get(`${name}/${id}`) })),
-      update: vi.fn(async (d: any) => { hoisted.sessionUpdates.push({ id, d }); }),
-      set: vi.fn(async (d: any) => { hoisted.sessionSets.push({ id, d }); }),
-    }) }),
+    collection: (name: string) => {
+      const filters: Array<[string, unknown]> = [];
+      const q: any = {
+        where: (f: string, _op: string, v: unknown) => { filters.push([f, v]); return q; },
+        get: async () => ({ docs: [...hoisted.docs.entries()].filter(([k, d]) => k.startsWith(`${name}/`) && filters.every(([f, v]) => d?.[f] === v)).map(([k, d]) => ({ id: k.slice(name.length + 1), data: () => d })) }),
+      };
+      return { where: q.where, doc: (id: string) => ({
+        get: vi.fn(async () => ({ exists: hoisted.docs.has(`${name}/${id}`), data: () => hoisted.docs.get(`${name}/${id}`) })),
+        update: vi.fn(async (d: any) => { hoisted.sessionUpdates.push({ id, d }); }),
+        set: vi.fn(async (d: any) => { hoisted.sessionSets.push({ id, d }); }),
+      }) };
+    },
   }), { FieldValue: { delete: () => "__delete__", serverTimestamp: () => "__ts__" } });
   return { __esModule: true, default: { firestore }, firestore };
 });
@@ -260,6 +267,42 @@ describe("a question while a notice is parked", () => {
     expect(await handlePendingDecisionReply("+1", "chat", "what jobs did I post?", session(pd))).toBe("passthrough"); // the default mock → OTHER
     expect(hoisted.quick).toHaveBeenCalledTimes(1);
     expect(hoisted.sessionUpdates).toHaveLength(0);
+  });
+});
+
+// ── 2026-10-12 live: "Can you decline Imran" while Mahad's application was parked declined MAHAD, and "Yes and Imran"
+// at the confirm was taken as a bare YES. A reply about someone else never acts on the parked person.
+describe("a reply that names someone else than the parked notice's person", () => {
+  const mahad = () => parkedDecision("job_application", "appM", "Mahad's application to \"Senior care in San Jose\"", "client", Date.now(), "Mahad");
+  beforeEach(() => {
+    hoisted.docs.set("job_applications/appM", { jobId: "j1", caregiverId: "cgM", caregiverName: "Mahad", status: "pending", jobTitle: "Senior care in San Jose" });
+    hoisted.docs.set("job_applications/appI", { jobId: "j1", caregiverId: "cgI", caregiverName: "Imran", status: "pending", jobTitle: "Senior care in San Jose" });
+    hoisted.docs.set("job_applications/appZ", { jobId: "j2", caregiverId: "cgZ", caregiverName: "Imran", status: "pending", jobTitle: "Other post" }); // a different post — never matched
+  });
+  it("the classifier is told who the item is with, and SOMEONE_ELSE on a named applicant resolves to THAT application on the same post", async () => {
+    (hoisted.quick as any).mockResolvedValueOnce("SOMEONE_ELSE").mockResolvedValueOnce("Imran").mockResolvedValueOnce("DECLINE");
+    expect(await handlePendingDecisionReply("+1", "chat", "Can you decline Imran", session(mahad()))).toBe("handled");
+    expect(hoisted.quick.mock.calls[0][0]).toContain("This item is with Mahad.");
+    expect(hoisted.quick.mock.calls[0][0]).toContain("SOMEONE_ELSE");
+    // The confirm names IMRAN, and the parked decline is for Imran's application — Mahad's row untouched.
+    expect(hoisted.sent.at(-1)).toBe('Decline Imran\'s application to "Senior care in San Jose"? Reply YES or NO.');
+    const parked = hoisted.sessionSets.map((x) => x.d.pendingDecision).filter(Boolean);
+    expect(parked.at(-1)).toMatchObject({ kind: "job_application_decline", recordId: "appI", party: "Imran" });
+    expect(hoisted.sessionUpdates.filter((u) => u.id === "appM")).toHaveLength(0);
+  });
+  it("a YES that also names someone else at a confirm step never acts — re-asked, nothing written", async () => {
+    const confirm = parkedDecision("job_application_decline", "appM", "declining Mahad's application to \"Senior care in San Jose\"", "client", Date.now(), "Mahad");
+    (hoisted.quick as any).mockResolvedValueOnce("SOMEONE_ELSE");
+    expect(await handlePendingDecisionReply("+1", "chat", "Yes and Imran", session(confirm))).toBe("handled");
+    expect(hoisted.sessionUpdates).toHaveLength(0); // no status: rejected write
+    expect(hoisted.sent.at(-1)).toContain("I haven't changed anything for Mahad");
+    expect(hoisted.sent.at(-1)).toContain("reply YES or NO");
+  });
+  it("a name that matches no pending applicant on the post goes to the agent; the parked decision is left alone", async () => {
+    (hoisted.quick as any).mockResolvedValueOnce("SOMEONE_ELSE").mockResolvedValueOnce("Zoe");
+    expect(await handlePendingDecisionReply("+1", "chat", "decline Zoe please", session(mahad()))).toBe("passthrough");
+    expect(hoisted.sent).toHaveLength(0);
+    expect(hoisted.sessionSets).toHaveLength(0);
   });
 });
 

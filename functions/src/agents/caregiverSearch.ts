@@ -267,7 +267,7 @@ export function caregiverCardText(c: CaregiverCard): string {
     : c.state === "interview_requested" ? "Interview requested — waiting on their reply"
     : c.state === "rebook" ? "Worked with you before — can re-book"
     : "";
-  const bits = [ratingLabel, exp, where, skills, c.verified ? "Background checked" : "", c.isFavorite ? "♥ Favorite" : "", stateLabel].filter(Boolean);
+  const bits = [ratingLabel, exp, where, skills, c.verified ? "Background check complete" : "", c.isFavorite ? "♥ Favorite" : "", stateLabel].filter(Boolean);
   // Rate line = the site's card (FindCaregivers / CaregiverMatchCard): caregiver rate + what the family is billed.
   return `${c.name} — $${c.hourlyRate}/hr · $${billedHourly(c.hourlyRate).toFixed(2)}/hr billed\n${bits.join(" · ")}\nTap to view ${c.firstName || c.name.split(" ")[0]}'s profile: ${c.profileUrl}`;
 }

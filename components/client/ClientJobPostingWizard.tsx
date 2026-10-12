@@ -451,7 +451,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               <div>
                 <p className="text-white font-semibold text-sm">Safety is our top priority</p>
                 <p className="text-indigo-200 text-xs mt-1">
-                  Every care provider has completed a background check and a profile review.
+                  Every care provider has completed a background check.
                 </p>
               </div>
             </div>

@@ -103,9 +103,12 @@ export function buildProfileMeta(
 
   const parts: string[] = [];
   const bg = (cg.backgroundCheckStatus ?? "") as string;
-  parts.push(bg === "clear" ? "Background-checked care provider" : "Care provider");
-  const city = [cg.city, cg.state].filter((v) => typeof v === "string" && v).join(", ");
-  if (city) parts[0] += ` in ${city}`;
+  // Requirement-framed, never a quality claim (marketplace wording rule): what happened, not what we concluded.
+  const titleCase = (v: string) => v.replace(/w/g, (ch) => ch.toUpperCase());
+  const cityRaw = typeof cg.city === "string" && cg.city.trim() ? titleCase(cg.city.trim()) : "";
+  const state = typeof cg.state === "string" && cg.state.trim() ? cg.state.trim().toUpperCase() : "";
+  const city = [cityRaw, state].filter(Boolean).join(", ");
+  parts.push(`Care provider${city ? ` in ${city}` : ""}${bg === "clear" ? " who has completed a background check" : ""}`);
   const rate = Number(cg.hourlyRate);
   if (Number.isFinite(rate) && rate > 0) parts.push(`$${rate}/hr`);
   const yearsExp = Number(cg.yearsExperience ?? cg.experience);

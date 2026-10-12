@@ -95,19 +95,61 @@ export async function classifyDecision(text: string, pd: PendingDecision): Promi
   // agent's own question, not the parked notice — so unless YES / NO were the
   // offered words it never reaches the classifier (the strict yes/no protocol).
   if (BARE_YES_NO.has(text.trim().toUpperCase().replace(/[^A-Z ]/g, "").replace(/\s+/g, " ").trim()) && !pd.options.includes("YES")) return null;
+  const who = pd.party ? ` This item is with ${pd.party}.` : "";
   const raw = await quickComplete(
-    `Evia texted a person about ${pd.label} and asked them to reply with one of: ${pd.options.join(", ")}. ` +
+    `Evia texted a person about ${pd.label} and asked them to reply with one of: ${pd.options.join(", ")}.${who} ` +
     `Classify their reply as exactly one of those words when it clearly means that choice — including when the word sits inside a sentence about this same item ` +
     `(e.g. "please decline the booking request" → DECLINE, "yes confirm" → CONFIRM, "I can't make it" / "I can't accept this" → DECLINE, ` +
     `"sounds good" → the positive option, "tell me more" → DETAILS when offered, "the original time is fine" / "leave it as it is" → KEEP when offered). ` +
+    `If the reply names a DIFFERENT person than ${pd.party ? pd.party : "the one this item is with"} (e.g. "decline Imran" when this item is with Mahad), ` +
+    `or answers AND adds a request about someone else ("yes and Imran"), reply SOMEONE_ELSE — never the choice word: a choice must be about this item only. ` +
     `A question ABOUT this same item (its time, place, pay, who it is with, what happens next) or about what those replies do → QUESTION. ` +
     `Only a request about something else, or an unclear reply, is OTHER. Reply with ONE word only.`,
     text,
-    { maxTokens: 5 },
+    { maxTokens: 6 },
   ).catch(() => "OTHER");
-  const word = raw.trim().toUpperCase().replace(/[^A-Z]/g, "");
+  const word = raw.trim().toUpperCase().replace(/[^A-Z_]/g, "");
   if (word === QUESTION_ABOUT_NOTICE) return QUESTION_ABOUT_NOTICE;
+  if (word === ABOUT_SOMEONE_ELSE) return ABOUT_SOMEONE_ELSE;
   return pd.options.includes(word) ? word : null;
+}
+
+/**
+ * The reply names a person other than the one the notice is about (2026-10-12 live: "Can you decline Imran" while
+ * Mahad's application was parked declined MAHAD; then "Yes and Imran" at the confirm was taken as a bare YES).
+ */
+export const ABOUT_SOMEONE_ELSE = "SOMEONE_ELSE";
+
+/** First name the reply is about, per the quick model (never a regex on meaning); null when none. */
+async function namedPerson(text: string): Promise<string | null> {
+  const raw = await quickComplete(
+    "Reply with ONLY the first name of the person this message is about (one word), or NONE if it names nobody.",
+    text,
+    { maxTokens: 6 },
+  ).catch(() => "NONE");
+  const name = raw.trim().replace(/[^A-Za-z'-]/g, "");
+  return name && name.toUpperCase() !== "NONE" ? name : null;
+}
+
+/**
+ * The family named another applicant on the SAME post: find that pending application so the decision runs on the
+ * right person (the page's row is the one they clicked; over text the name is the click). Exactly one match → that
+ * application; none or several → null (the agent takes it — it lists applicants by name).
+ */
+async function resolveNamedApplication(text: string, pd: PendingDecision): Promise<PendingDecision | null> {
+  const name = await namedPerson(text);
+  if (!name) return null;
+  const current = await db.collection("job_applications").doc(pd.recordId).get().catch(() => null);
+  const jobId = current?.exists ? String(current.data()?.jobId ?? "") : "";
+  if (!jobId) return null;
+  const snap = await db.collection("job_applications").where("jobId", "==", jobId).where("status", "==", "pending").get().catch(() => null);
+  if (!snap) return null;
+  const wanted = name.toLowerCase();
+  const matches = snap.docs.filter((d) => String(d.data()?.caregiverName ?? "").trim().toLowerCase().split(/\s+/)[0] === wanted);
+  if (matches.length !== 1) return null;
+  const app = matches[0].data() ?? {};
+  const fullName = String(app.caregiverName ?? name);
+  return parkedDecision("job_application", matches[0].id, `${fullName}'s application to "${String(app.jobTitle ?? "your post")}"`, "client", Date.now(), fullName);
 }
 
 // ── A question while a notice is parked: answered from the notice, then the expected reply re-stated ──
@@ -283,6 +325,30 @@ export async function handlePendingDecisionReply(
   // A question about the notice is answered from the notice itself (2026-10-11: it used to reach the agent with nothing
   // about the pending notice); the decision stays parked and the expected reply is re-stated.
   if (choice === QUESTION_ABOUT_NOTICE) { await answerNoticeQuestion(chatId, text, pd, session); return "handled"; }
+  if (choice === ABOUT_SOMEONE_ELSE) {
+    const { sendMessage } = await import("../linq/client");
+    const first = String(pd.party ?? "").split(/\s+/)[0];
+    if (pd.options.includes("YES")) {
+      // A confirm step: anything that is not a bare YES / NO about THIS person never acts (strict protocol). Re-ask once.
+      await sendMessage(chatId, `I haven't changed anything${first ? ` for ${first}` : ""}. ${pd.label.charAt(0).toUpperCase()}${pd.label.slice(1)} — reply YES or NO. Tell me about anyone else separately after.`);
+      return "handled";
+    }
+    if (pd.kind === "job_application") {
+      // The family named another applicant on the same post — the click was on THEIR row.
+      const other = await resolveNamedApplication(text, pd);
+      if (other) {
+        await db.collection("agent_sessions").doc(phone).set(parkDecision(other), { merge: true }).catch(() => {});
+        const again = await classifyDecision(text, other);
+        if (again && again !== QUESTION_ABOUT_NOTICE && again !== ABOUT_SOMEONE_ELSE) {
+          await runDecision(phone, chatId, { ...session, pendingDecision: other }, other, again);
+          return "handled";
+        }
+        await sendMessage(chatId, `For ${String(other.party ?? "that applicant").split(/\s+/)[0]}'s application: reply VIEW, INTERVIEW or DECLINE.`);
+        return "handled";
+      }
+    }
+    return "passthrough"; // the agent knows the family's records by name
+  }
   await runDecision(phone, chatId, session, pd, choice);
   return "handled";
 }

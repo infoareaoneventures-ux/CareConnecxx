@@ -73,7 +73,9 @@ export async function classifyReviewPromptReply(text: string, complete: (system:
   const raw = await complete(
     'Evia just asked a family: "want to leave a review? Reply with 1 to 5 stars to start." Classify their reply. Return ONLY JSON: ' +
     '{"action": "start" | "decline" | "other", "rating": integer 1-5 or null}. "start" = a star count ("5", "4 stars", "⭐⭐⭐⭐⭐", "5/5") or a clear yes/"sure"/"review"/"let\'s do it" (rating null unless stated). ' +
-    '"decline" = no / not now / maybe later / no thanks. "other" = anything else (a question, a different topic, a message about a shift or bill). Never invent a rating.',
+    '"decline" = ONLY a reply about the review itself: no / not now / maybe later / no thanks, naming nobody and asking for nothing else. ' +
+    '"other" = anything else — a question, a different topic, a message about a shift or bill, or ANY reply that names a person or asks to decline, cancel, book, interview or change something ' +
+    '(e.g. "also decline Imran", "cancel Friday" are "other", NOT "decline"). Never invent a rating.',
     text,
   ).catch(() => "");
   const stripped = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");

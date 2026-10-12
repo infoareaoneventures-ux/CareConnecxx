@@ -132,7 +132,7 @@ export const ClientNavigation: React.FC = () => {
                 <Search className="w-4 h-4" /><span>Find Care</span><ChevronDown className="w-3 h-3 ml-0.5" />
               </button>
               {findCareOpen && (
-                <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
+                <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
                   {[
                     { icon: <Search className="w-4 h-4" />, label: 'Browse Care Providers', path: '/client/find-care-providers' },
                     { icon: <Briefcase className="w-4 h-4" />, label: 'Care Requests', path: '/client/posts' },

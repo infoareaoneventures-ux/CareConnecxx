@@ -146,7 +146,7 @@ describe("find_nearby_caregivers — the Find Care Providers page", () => {
     expect(await ids({ maxDistanceMiles: 200 })).toEqual(["dementia", "far", "junior", "lowrated", "near", "unchecked"]); // radius still excluded by its own 1-mile radius
     expect(await ids({ minRating: 4 })).toEqual(["dementia", "junior", "near", "unchecked"]);
     expect(await ids({ minExperienceYears: 3 })).toEqual(["dementia", "lowrated", "near", "unchecked"]);
-    // "Background checked only" retired 2026-10-06: every listed caregiver is approved, so the box filtered the list against itself.
+    // "Background check complete only" retired 2026-10-06: every listed caregiver is approved, so the box filtered the list against itself.
     expect(await ids({ transportationOnly: true })).toEqual([]);
     expect(await ids({ specialties: ["Dementia / Memory Care"] })).toEqual(["dementia"]);
     expect(await ids({ languages: ["spanish"] })).toEqual(["dementia"]);
@@ -205,7 +205,7 @@ describe("find_nearby_caregivers — the Find Care Providers page", () => {
       expect(r.instruction).toContain("do NOT repeat");
       const texts = sentTexts();
       expect(texts[0]).toBe("2 care providers found:");
-      expect(texts[1]).toBe("Basra Yousuf — $25/hr · $27.25/hr billed\n★ 4.9 (12 reviews) · 10 yrs experience · San Jose, CA 95134 · Mobility Assistance, Dementia / Memory Care +2 · Background checked\nTap to view Basra's profile: https://app.test/p/b");
+      expect(texts[1]).toBe("Basra Yousuf — $25/hr · $27.25/hr billed\n★ 4.9 (12 reviews) · 10 yrs experience · San Jose, CA 95134 · Mobility Assistance, Dementia / Memory Care +2 · Background check complete\nTap to view Basra's profile: https://app.test/p/b");
       expect(texts[2]).toContain("No reviews yet");
       const sess = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(sess.pendingMatches).toEqual([{ id: "b", name: "Basra Yousuf", rate: 25 }, { id: "a", name: "Care a", rate: 25 }]);

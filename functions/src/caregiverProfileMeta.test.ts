@@ -39,7 +39,7 @@ describe("buildProfileMeta", () => {
       profilePhoto: "https://storage.googleapis.com/x/maria.jpg",
     });
     expect(meta.title).toBe("Maria Gonzalez — Care Provider on Evia");
-    expect(meta.description).toContain("Background-checked care provider in San Jose, CA");
+    expect(meta.description).toContain("Care provider in San Jose, CA who has completed a background check");
     expect(meta.description).toContain("$28/hr");
     expect(meta.description).toContain("5 years experience");
     expect(meta.description).toContain("Dementia care, Mobility support, Meal prep");
@@ -67,7 +67,7 @@ describe("buildProfileMeta", () => {
 describe("injectProfileMeta", () => {
   const meta = {
     title:       'Maria "G" & Co — Care Provider on Evia',
-    description: "Background-checked care provider in San Jose · $28/hr",
+    description: "Care provider in San Jose, CA who has completed a background check · $28/hr",
     image:       "https://cdn.example.com/maria.jpg",
     url:         "https://www.eviacares.com/p/cg123",
   };
@@ -76,7 +76,7 @@ describe("injectProfileMeta", () => {
     const out = injectProfileMeta(INDEX_HTML, meta);
     expect(out).toContain("<title>Maria &quot;G&quot; &amp; Co — Care Provider on Evia</title>");
     expect(out).toContain('property="og:title" content="Maria &quot;G&quot; &amp; Co — Care Provider on Evia"');
-    expect(out).toContain('property="og:description" content="Background-checked care provider in San Jose · $28/hr"');
+    expect(out).toContain('property="og:description" content="Care provider in San Jose, CA who has completed a background check · $28/hr"');
     expect(out).toContain('property="og:image" content="https://cdn.example.com/maria.jpg"');
     expect(out).toContain('property="og:url" content="https://www.eviacares.com/p/cg123"');
     expect(out).toContain('property="og:type" content="profile"');

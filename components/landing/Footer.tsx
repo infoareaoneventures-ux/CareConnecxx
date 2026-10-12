@@ -34,11 +34,11 @@ export const Footer: React.FC = () => {
                 <div className="border-t hairline mt-12 pt-8 text-ink-400 text-sm flex flex-col md:flex-row justify-between items-center gap-4">
                     <span>&copy; 2026 Evia · San Jose, California</span>
                     <nav aria-label="Footer" className="flex flex-wrap justify-center gap-6">
-                        <Link to="/privacy" className={linkClass}>Privacy</Link>
-                        <Link to="/terms" className={linkClass}>Terms</Link>
-                        <Link to="/login" className={linkClass}>Log in</Link>
                         <Link to="/start?role=client" className={linkClass}>Find care</Link>
                         <Link to="/start?role=care-provider" className={linkClass}>Apply as a care provider</Link>
+                        <Link to="/login" className={linkClass}>Log in</Link>
+                        <Link to="/privacy" className={linkClass}>Privacy</Link>
+                        <Link to="/terms" className={linkClass}>Terms</Link>
                         <Link to="/admin" className={linkClass}>Admin</Link>
                     </nav>
                 </div>

@@ -71,7 +71,9 @@ export type InterviewAction =
 /**
  * The footer buttons for one row, exactly as JobBoard.tsx renders them.
  * `gate` is the page's blockReason (membership → background); it applies to
- * PENDING rows only — an accepted interview is already agreed.
+ * PENDING and ACCEPTED rows (JobBoard.tsx gates both since 2026-10-11 — a
+ * gated caregiver can't accept, propose or reschedule; only end the request
+ * or keep the current time, plus the gate button).
  */
 export function interviewActions(
   status: InterviewTabStatus,
@@ -81,10 +83,10 @@ export function interviewActions(
 ): InterviewAction[] {
   const actions: InterviewAction[] = ["Details"];
   if (join) actions.push("Join video call");
-  if (status === "pending" && gate) {
-    // Keep current time stays under the gate like Decline (B5, 2026-10-11) — it is a decline.
+  if ((status === "pending" || status === "accepted") && gate) {
+    // Keep current time stays under the gate like Decline/Cancel (B5, 2026-10-11) — it is a decline.
     if (proposal?.by === "client") actions.push("Keep current time");
-    actions.push("Decline", gate === "membership" ? "Activate Membership" : "Complete Verification");
+    actions.push(status === "pending" ? "Decline" : "Cancel", gate === "membership" ? "Activate Membership" : "Complete Verification");
     return actions;
   }
   if (status === "pending" || status === "accepted" || status === "confirmed") {

@@ -67,7 +67,10 @@ describe("pure rules", () => {
     expect(interviewActions("pending", { by: "client" }, "membership", null)).toEqual(["Details", "Keep current time", "Decline", "Activate Membership"]);
     expect(interviewActions("accepted", null, null, "https://meet.google.com/x")).toEqual(["Details", "Join video call", "Reschedule", "Cancel"]);
     expect(interviewActions("accepted", { by: "caregiver" }, null, null)).toEqual(["Details", "Cancel"]);
-    expect(interviewActions("accepted", { by: "client" }, "membership", null)).toEqual(["Details", "Propose different time", "Keep current time", "Cancel", "Accept new time"]); // accepted rows aren't gated
+    // Accepted rows are gated too (= JobBoard.tsx since 2026-10-11): Keep current time + Cancel + the gate button, never Accept new time / Propose.
+    expect(interviewActions("accepted", { by: "client" }, "membership", null)).toEqual(["Details", "Keep current time", "Cancel", "Activate Membership"]);
+    expect(interviewActions("accepted", null, "background", "https://meet.google.com/x")).toEqual(["Details", "Join video call", "Cancel", "Complete Verification"]);
+    expect(interviewActions("accepted", { by: "client" }, null, null)).toEqual(["Details", "Propose different time", "Keep current time", "Cancel", "Accept new time"]);
     expect(interviewActions("completed", null, null, null)).toEqual(["Details"]);
     expect(interviewActions("declined", null, null, null)).toEqual(["Details"]);
   });

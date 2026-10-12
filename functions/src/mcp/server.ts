@@ -7854,7 +7854,11 @@ async function executeToolCall(
         if (cgPhone) {
           const { trySend } = await import("../utils/toolNotify");
           const clName = (iv.clientName as string | undefined) ?? "The family";
-          notification = await trySend(cgPhone, `${clName} proposed a new interview time: ${displayTime}. Reply here to confirm, keep the current time, or suggest another time.`, "mcp:reschedule_interview");
+          // The SAME sentence the site's button produces (onVideoInterviewWrite);
+          // the trigger still parks the CONFIRM / KEEP / PROPOSE decision for this
+          // write (it only stands down on the text, rescheduledViaAgent) — so the
+          // caregiver's reply is matched the same way on both paths (2026-10-11).
+          notification = await trySend(cgPhone, `${clName} proposed a new interview time: ${displayTime}. Reply CONFIRM, KEEP to keep the current time, or PROPOSE another time.`, "mcp:reschedule_interview");
         }
       } else {
         // Caregiver proposal: the family's bell + text come from onVideoInterviewWrite.

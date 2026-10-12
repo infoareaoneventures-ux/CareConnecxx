@@ -50,10 +50,10 @@ vi.mock("../../agents/caregiverSearch", () => ({
 }));
 const sendToPhone = vi.fn().mockResolvedValue(undefined);
 vi.mock("../../linq/client", () => ({ sendToPhone: (...a: any[]) => sendToPhone(...a) }));
-const trySend = vi.fn(async () => ({ sent: true }));
+const trySend = vi.fn(async (..._a: any[]) => ({ sent: true }));
 vi.mock("../../utils/toolNotify", () => ({ trySend: (...a: any[]) => trySend(...a) }));
 // The gate would block an ACCEPT on a pending row — a keep must never reach it.
-const checkCaregiverAccess = vi.fn(async () => ({ ok: false, block: "membership", caregiver: {} }));
+const checkCaregiverAccess = vi.fn(async (..._a: any[]) => ({ ok: false, block: "membership", caregiver: {} }));
 vi.mock("../../agents/caregiverAccessGate", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/caregiverAccessGate")>()),
   checkCaregiverAccess: (...a: any[]) => checkCaregiverAccess(...a),

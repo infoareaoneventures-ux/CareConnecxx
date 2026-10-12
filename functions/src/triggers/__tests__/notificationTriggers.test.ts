@@ -478,6 +478,16 @@ describe("onVideoInterviewWrite — SMS parity", () => {
         expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Reply CONFIRM, KEEP to keep the current time, or suggest another time.") }));
         expect(hoisted.docState.get("agent_sessions/+15550002222").pendingDecision).toMatchObject({ kind: "interview_proposal", recordId: "iv1", role: "client", party: "Alice" });
       });
+
+      it("a proposal written by Evia's reschedule_interview tool (rescheduledViaAgent) sends no second text but STILL parks the reply + noticed record on the recipient's session (2026-10-11)", async () => {
+        const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z" };
+        await (onVideoInterviewWrite as any)(change(before, "iv1", { ...before, rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z", rescheduledViaAgent: true }), { params: { interviewId: "iv1" } });
+        expect(sendViaInteractionAgent).not.toHaveBeenCalled(); // the tool already texted the same sentence
+        expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "interview_rescheduled" })); // the bell still belongs beside it
+        const sess = hoisted.docState.get("agent_sessions/+15550001111");
+        expect(sess.pendingDecision).toMatchObject({ kind: "interview_proposal", recordId: "iv1", role: "caregiver", party: "A Family" });
+        expect(sess.lastNoticedInterviewId).toBe("iv1");
+      });
     });
 
     it("does NOT fire when declining clears the proposal instead of accepting it (scheduledTime never changed)", async () => {

@@ -47,6 +47,16 @@ async function tell(
   let sent = false;
   if (opts.textOwnedElsewhere || text === null) {
     sent = true; // the text goes (or went) through another sender — the bell still belongs beside it
+    // …and so does the reply protocol: the parked decision / noticed-record
+    // stamp describes the reply the OTHER sender's text asked for (the same
+    // sentence on both paths), so it is written here even when the text is not
+    // (2026-10-11: reschedule_interview's own proposal text left no park, so a
+    // KEEP/CONFIRM reply went to the agent instead of the matcher).
+    if (opts.stamp) {
+      const snap = await db.collection(who === 'caregiver' ? 'caregivers' : 'users').doc(userId).get().catch(() => null);
+      const phone = snap?.data()?.phone as string | undefined;
+      if (phone) await stampSession(phone, opts.stamp);
+    }
   } else {
     sent = who === 'caregiver' ? await textCaregiverSent(userId, text, opts.stamp) : await textClientSent(userId, text, opts.stamp);
   }

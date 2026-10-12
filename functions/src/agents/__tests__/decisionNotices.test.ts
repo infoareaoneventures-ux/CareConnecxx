@@ -11,7 +11,7 @@ const hoisted = vi.hoisted(() => ({
   docs: new Map<string, any>(),
   acceptShiftProposal: vi.fn(async () => ({ ok: true, shiftId: "s1", clientName: "Basra Yousuf", from: { date: "2099-10-05", startTime: "11:00", endTime: "14:00" }, to: { date: "2099-10-06", startTime: "12:00", endTime: "15:00" } })),
   declineShiftProposal: vi.fn(async () => ({ ok: true, shiftId: "s1", clientName: "Basra Yousuf", from: { date: "2099-10-05", startTime: "11:00", endTime: "14:00" }, to: null })),
-  quick: vi.fn(async (_p: string, t: string) => (/confirm|sounds good|yes/i.test(t) ? "CONFIRM" : /can'?t|pass/i.test(t) ? "DECLINE" : "OTHER")),
+  quick: vi.fn(async (_p: string, t: string): Promise<string> => (/confirm|sounds good|yes/i.test(t) ? "CONFIRM" : /can'?t|pass/i.test(t) ? "DECLINE" : "OTHER")),
   respondInterview: vi.fn(async () => ({ status: "accepted", interviewId: "iv1", callUrl: null })),
   respondBooking: vi.fn(async (_c: string, _id: string, d: string) => ({ ok: true, status: d === "accept" ? "accepted" : "declined", toast: d === "accept" ? "Booking request accepted!" : "Request declined", clientName: "Fam" })),
   acceptAmendment: vi.fn(async () => ({ ok: true, status: "accepted", toast: "Schedule updated — new visits added." })),

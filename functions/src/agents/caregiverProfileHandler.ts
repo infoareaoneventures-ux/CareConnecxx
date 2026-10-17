@@ -5,7 +5,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { generateToken } from "./tokenService";
 import { getAppUrl } from "../config/appUrl";
 import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
-import { isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
+import { isQuestionOrOther, isBackOutRequest, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { mapCaregiverServices, orderedCanonicalServices, serviceLabels, SERVICE_LABELS, serviceMenuText } from "./caregiverServices";
 import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, BIO_MIN_CHARS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
@@ -79,6 +79,27 @@ export const PAUSE_FACTS =
   "active again on that date automatically; with no date, it stays paused until reactivated. Nothing is paused until the care provider replies YES.";
 
 
+// The same sentence the router sends for a bare CANCEL (routeCaregiver PARKED_FLOW_CANCEL_LINE).
+export const PROFILE_BACKED_OUT = "No problem — your profile wasn't changed.";
+
+/** The question the care provider is looking at, for the back-out classifier's context (per editor and step). */
+function profileFlowQuestion(field: ProfileUpdateField, step: string, session: Record<string, unknown>): string {
+  if (step === "confirm") {
+    if (field === "pause") return `Pause your account ${(session.profileUpdateValue as string) === "indefinite" || !session.profileUpdateValue ? "indefinitely" : `until ${session.profileUpdateValue}`}? Reply YES to pause, or NO to cancel.`;
+    return "Reply YES to save this change to your profile, NO to leave it as it is, or tell me another change.";
+  }
+  switch (field) {
+    case "rates":     return RATES_Q;
+    case "skills":    return `Which services would you like to add or remove? The list is: ${SERVICE_LABELS.join(", ")}.`;
+    case "bio":       return BIO_Q;
+    case "languages": return LANGUAGES_Q;
+    case "jobtype":   return JOB_TYPE_Q;
+    case "travel":    return TRAVEL_Q;
+    case "pause":     return "When would you like to pause until? (e.g. \"until July 12\", \"for two weeks\", \"indefinitely\")";
+    default:          return "What would you like to change?";
+  }
+}
+
 async function clearProfileFlow(phone: string): Promise<void> {
   await db.collection("agent_sessions").doc(phone).update({
     profileUpdateStep:  admin.firestore.FieldValue.delete(),
@@ -129,6 +150,20 @@ export async function handleCaregiverProfileUpdate(
       fallback: "I'm not sure what you wanted to update. Try something like \"change my rate to $25\" or \"add dementia care to my skills\".",
       maxTokens: 80,
     }));
+    return;
+  }
+
+  // ── Back-out (2026-10-17) ─────────────────────────────────────────────────
+  // A parked editor (collect or confirm) is the page's modal: "never mind" /
+  // "forget it" closes it, whichever editor and step — one check for all of
+  // them, before any sub-handler re-asks its question. Only once a step is
+  // parked: the entry text ("change my rate to $28") is never a back-out, and
+  // the YES/NO confirms keep their own strict words (a bare NO is not this).
+  const parkedStep = session.profileUpdateStep as string | undefined;
+  if (parkedStep && text.trim() && activeField !== "photo" && activeField !== "reactivate"
+      && await isBackOutRequest(text, profileFlowQuestion(activeField, parkedStep, session))) {
+    await clearProfileFlow(caregiverPhone);
+    await sendMessage(chatId, PROFILE_BACKED_OUT);
     return;
   }
 

@@ -8,10 +8,13 @@
 // field and values as the modal; caregiverAvailabilityGrid.ts owns the grid).
 //
 //   start           → which day(s), and add / remove / replace (LLM-parsed)
+//   (any step)      → "never mind" / "forget it" closes the modal — the shared isBackOutRequest
+//                     check runs first at every step (2026-10-17; the router already takes a bare CANCEL)
 //   awaiting_blocks → which blocks (LLM-parsed against the modal's four labels)
 //   confirm         → shows the whole grid like the modal; SAVE saves, CANCEL backs out
 import * as admin from "firebase-admin";
 import { parseWithClaude } from "../utils/parseWithClaude";
+import { isBackOutRequest } from "./stepHandler";
 import {
   gridFromWeekly, weeklyFromGrid, applyGridPatch, gridText, gridsEqual, normalizeDay,
   BLOCK_IDS, BLOCK_CHOICES, DAY_KEYS, type Grid, type BlockId, type GridPatch,
@@ -22,6 +25,8 @@ const FLOW_TTL_MS = 30 * 60 * 1000;
 
 export const WHICH_DAYS_Q = "Which day(s) would you like to update? For example \"Monday\", \"Monday and Wednesday\", or \"weekdays\".";
 export const CONFIRM_LINE = "Reply SAVE to save this, or CANCEL to leave it as it is.";
+// The same sentence the router sends for a bare CANCEL (routeCaregiver PARKED_FLOW_CANCEL_LINE).
+export const BACKED_OUT = "Okay — your availability wasn't changed.";
 const blocksQ = (days: string[], action: string) =>
   `Which time blocks ${action === "add" ? "should I add for" : "are you available on"} ${days.map(cap).join(", ")} — ${BLOCK_CHOICES}? Reply the names, ALL, or NONE to clear ${days.length === 1 ? "that day" : "those days"}.`;
 const cap = (d: string) => d.charAt(0).toUpperCase() + d.slice(1);
@@ -59,6 +64,7 @@ export async function handleAvailabilityUpdate(
   };
 
   if (step === "start") {
+    if (await isBackOutRequest(text, WHICH_DAYS_Q)) { await clear(); await sendMessage(BACKED_OUT); return; }
     if (await isQuestionOrOther(text)) { await sendMessage(`I can update your availability — it's the same grid as Update Availability on your Calendar. ${WHICH_DAYS_Q}`); return; }
     const raw = await parseWithClaude(
       `The care provider wants to change their weekly availability. Extract the days and the action. Return ONLY JSON: {"action":"add"|"remove"|"replace","days":["monday",...],"blocks":["morning","afternoon","evening","overnight"]}. ` +
@@ -92,8 +98,9 @@ export async function handleAvailabilityUpdate(
     let blocks: BlockId[] | null = null;
     if (norm === "ALL") blocks = [...BLOCK_IDS];
     else if (norm === "NONE") blocks = [];
-    else if (norm === "CANCEL" || norm === "NO") { await clear(); await sendMessage("Okay — your availability wasn't changed."); return; }
+    else if (norm === "CANCEL" || norm === "NO") { await clear(); await sendMessage(BACKED_OUT); return; }
     else {
+      if (await isBackOutRequest(text, blocksQ(days, action))) { await clear(); await sendMessage(BACKED_OUT); return; }
       if (await isQuestionOrOther(text)) { await sendMessage(blocksQ(days, action)); return; }
       const raw = await parseWithClaude(
         `Map the care provider's reply to time blocks: morning (6am-12pm), afternoon (12pm-6pm), evening (6pm-12am), overnight (12am-6am). "1"/"2"/"3"/"4" are those in order. "all" = all four; "none" = []. A clock range maps to every block it touches. Return ONLY a JSON array of block ids, e.g. ["morning","afternoon"].`,
@@ -121,7 +128,7 @@ export async function handleAvailabilityUpdate(
     }
     if (decision === "other") { await sendMessage(`Your availability would be:\n${gridText(proposed)}\n\n${CONFIRM_LINE}`); return; }
     await clear();
-    if (decision === "cancel") { await sendMessage("Okay — your availability wasn't changed."); return; }
+    if (decision === "cancel") { await sendMessage(BACKED_OUT); return; }
     // The modal's Save, field for field.
     await db.collection("caregivers").doc(caregiverId).update({ weeklyAvailability: weeklyFromGrid(proposed) });
     await sendMessage(`Saved. Your availability:\n${gridText(proposed)}`);

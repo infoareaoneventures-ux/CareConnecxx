@@ -12,8 +12,9 @@ const hoisted = vi.hoisted(() => {
   const quickComplete       = vi.fn();
   const generateCaraMessage = vi.fn().mockResolvedValue("ack");
   const generateToken       = vi.fn((..._args: unknown[]) => "token-abc");
+  const backOut             = vi.fn(async (..._a: unknown[]) => false);
 
-  return { updateMock, docGetMock, collectionMock, sendMessage, parseWithClaude, quickComplete, generateCaraMessage, generateToken };
+  return { updateMock, docGetMock, collectionMock, sendMessage, parseWithClaude, quickComplete, generateCaraMessage, generateToken, backOut };
 });
 
 vi.mock("firebase-admin", () => ({
@@ -44,9 +45,15 @@ vi.mock("./tokenService", () => ({
   generateToken: (...args: unknown[]) => hoisted.generateToken(...args),
 }));
 
+// The shared back-out classifier is its own seam so the existing parse sequences stay put.
+vi.mock("./stepHandler", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./stepHandler")>()),
+  isBackOutRequest: (...args: unknown[]) => hoisted.backOut(...args),
+}));
+
 const { updateMock, sendMessage, parseWithClaude, docGetMock } = hoisted;
 
-import { handleCaregiverProfileUpdate, profileFieldFromIntent } from "./caregiverProfileHandler";
+import { handleCaregiverProfileUpdate, profileFieldFromIntent, PROFILE_BACKED_OUT, RATES_Q, BIO_Q } from "./caregiverProfileHandler";
 
 const CG_ID = "cg-1";
 const PHONE = "+15555550100";
@@ -58,6 +65,8 @@ describe("caregiverProfileHandler", () => {
     sendMessage.mockClear();
     parseWithClaude.mockReset();
     hoisted.quickComplete.mockReset();
+    hoisted.backOut.mockReset();
+    hoisted.backOut.mockResolvedValue(false);
     docGetMock.mockResolvedValue({ exists: true, data: () => ({ skills: ["Companionship"], services: ["Companionship"], specialties: ["Companionship"] }) });
   });
 
@@ -74,6 +83,36 @@ describe("caregiverProfileHandler", () => {
   });
 
   // The page's Rates › Edit (CaregiverProfile.tsx): six fields saved together.
+  describe("back-out (2026-10-17): \"never mind\" closes whichever editor is open, at collect or confirm", () => {
+    it("collect step (rates) — flow cleared, nothing written, the router's own CANCEL line", async () => {
+      hoisted.backOut.mockResolvedValueOnce(true);
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "never mind, leave my rate", { profileUpdateStep: "collect", profileUpdateField: "rates" }, CHAT);
+      expect(hoisted.backOut).toHaveBeenCalledWith("never mind, leave my rate", RATES_Q);
+      expect(sendMessage.mock.calls).toEqual([[CHAT, PROFILE_BACKED_OUT]]);
+      expect(updateMock.mock.calls.at(-1)?.[0]).toMatchObject({ profileUpdateStep: "__DELETE__", profileUpdateField: "__DELETE__", profileUpdateValue: "__DELETE__" });
+      expect(parseWithClaude).not.toHaveBeenCalled(); // checked before the editor re-asks
+    });
+    it("confirm step (bio) — same exit; the proposed bio is dropped, not saved", async () => {
+      hoisted.backOut.mockResolvedValueOnce(true);
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "actually forget it", { profileUpdateStep: "confirm", profileUpdateField: "bio", profileUpdateValue: "A new bio." }, CHAT);
+      expect(hoisted.backOut).toHaveBeenCalledWith("actually forget it", expect.stringMatching(/Reply YES to save this change/));
+      expect(sendMessage.mock.calls).toEqual([[CHAT, PROFILE_BACKED_OUT]]);
+      expect(updateMock.mock.calls.every((c) => !("bio" in c[0]))).toBe(true);
+    });
+    it("the entry text is never a back-out — no parked step, no classifier call", async () => {
+      parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce('{"hourlyRate":28}');
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "change my rate to $28", {}, CHAT, "rates");
+      expect(hoisted.backOut).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/Reply YES to save/);
+    });
+    it("a bio answer is not a back-out — collect proceeds to the confirm", async () => {
+      parseWithClaude.mockResolvedValueOnce("NO");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "I have ten years of experience with seniors and love what I do.", { profileUpdateStep: "collect", profileUpdateField: "bio" }, CHAT);
+      expect(hoisted.backOut).toHaveBeenCalledWith(expect.any(String), BIO_Q);
+      expect(updateMock.mock.calls.find((c) => c[0].profileUpdateStep === "confirm")?.[0].profileUpdateField).toBe("bio");
+    });
+  });
+
   describe("RATES flow", () => {
     it("collect step — a one-person rate lands on the draft; the whole section is read back; confirm parked", async () => {
       parseWithClaude

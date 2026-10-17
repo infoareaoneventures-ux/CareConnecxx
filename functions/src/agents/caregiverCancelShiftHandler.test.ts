@@ -9,7 +9,10 @@ const hoisted = vi.hoisted(() => ({
   updates: [] as Array<{ path: string; data: any }>,
   sent: [] as string[],
   parse: vi.fn(async () => "NO"),
+  backOut: vi.fn(async () => false),
 }));
+// The shared back-out classifier is its own seam so the existing parse sequences stay put.
+vi.mock("./stepHandler", async (importOriginal) => ({ ...(await importOriginal<typeof import("./stepHandler")>()), isBackOutRequest: (...a: any[]) => (hoisted.backOut as any)(...a) }));
 vi.mock("firebase-admin", () => {
   const ref = (name: string, id: string) => ({
     path: `${name}/${id}`,
@@ -50,7 +53,7 @@ const laParts = (d: Date) => { const p: Record<string, string> = {}; for (const 
 const VISIT_CONFIRM = "Cancel this shift only? The rest of your booking stays active. Reply YES to cancel, or NO to keep it.";
 const BOOKING_CONFIRM = "Cancel this shift and all future scheduled shifts for this booking? Reply YES to cancel, or NO to keep it.";
 
-beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sent.length = 0; hoisted.parse.mockReset(); hoisted.parse.mockResolvedValue("NO"); });
+beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.sent.length = 0; hoisted.parse.mockReset(); hoisted.parse.mockResolvedValue("NO"); hoisted.backOut.mockReset(); hoisted.backOut.mockResolvedValue(false); });
 
 describe("the options — each visit with a ✕, then the whole booking", () => {
   it("lists scheduled, not-overdue visits (this visit only) and one whole-booking option per booking, numbered", async () => {
@@ -96,6 +99,39 @@ describe("the options — each visit with a ✕, then the whole booking", () => 
   it("nothing cancellable → says so and clears the step", async () => {
     await handleCaregiverCancelShift(CG, "Maria", PHONE, "cancel", {}, CHAT);
     expect(hoisted.sent[0]).toBe("You don't have any upcoming shifts to cancel.");
+  });
+});
+
+describe("back-out (2026-10-17): \"never mind\" leaves the whole flow at the pick and at the dialog", () => {
+  const options = JSON.stringify([
+    { index: 1, kind: "visit", id: "a", bookingRequestId: "br1", date: "2099-09-28", startTime: "11:00", endTime: "14:00", clientName: "Basra Yousuf", clientId: "fam1" },
+    { index: 2, kind: "visit", id: "b", bookingRequestId: "br1", date: "2099-10-03", startTime: "19:30", endTime: "21:30", clientName: "Basra Yousuf", clientId: "fam1" },
+  ]);
+  const cleared = () => hoisted.updates.find((u) => u.path === `agent_sessions/${PHONE}` && u.data.cancelStep === "__delete__" && u.data.cancelCandidates === "__delete__");
+  it("at the pick — flow cleared, no write, before the question check", async () => {
+    hoisted.backOut.mockResolvedValueOnce(true);
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "never mind, keep everything", { cancelStep: "confirm_shift", cancelCandidates: options }, CHAT);
+    expect(hoisted.backOut).toHaveBeenCalledWith("never mind, keep everything", "Reply with the number of what to cancel (1–2), or CANCEL to back out.");
+    expect(hoisted.sent).toEqual(["No problem — your shifts are unchanged."]);
+    expect(cleared()).toBeTruthy();
+    expect(hoisted.updates.some((u) => u.path.startsWith("shifts/"))).toBe(false);
+  });
+  it("at the dialog with more than one option — a worded NO that is a back-out exits instead of re-listing; a bare NO still re-lists", async () => {
+    hoisted.backOut.mockResolvedValueOnce(true);
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "forget it, I'll keep them all", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "b", cancelKind: "visit" }, CHAT);
+    expect(hoisted.backOut).toHaveBeenCalledWith("forget it, I'll keep them all", VISIT_CONFIRM);
+    expect(hoisted.sent.at(-1)).toBe("No problem — your shifts are unchanged.");
+    expect(cleared()).toBeTruthy();
+    hoisted.backOut.mockClear(); hoisted.sent.length = 0;
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "NO", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "b", cancelKind: "visit" }, CHAT);
+    expect(hoisted.backOut).not.toHaveBeenCalled();
+    expect(hoisted.sent.at(-1)).toMatch(/^Okay — keeping that one\.\n1\. /);
+  });
+  it("YES at the dialog never consults the back-out classifier", async () => {
+    shift("b", { date: "2099-10-03", startTime: "19:30", endTime: "21:30" });
+    await handleCaregiverCancelShift(CG, "Maria", PHONE, "YES", { cancelStep: "confirm_shift", cancelCandidates: options, cancelShiftId: "b", cancelKind: "visit" }, CHAT);
+    expect(hoisted.backOut).not.toHaveBeenCalled();
+    expect(hoisted.docs.get("shifts/b").status).toBe("cancelled");
   });
 });
 

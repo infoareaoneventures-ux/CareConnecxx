@@ -61,3 +61,11 @@ functions/live-env.json
 functions/.env.backup-*
 functions/.env.linqWebhook
 .gstack/
+
+# Local prod-debugging dumps (Firestore exports / function logs) — hold live phone numbers; never commit (2026-10-17)
+functions/*_dump*.json
+functions/sess_*.json
+functions/ledger*.json
+functions/iv_*.json
+functions/audit*.json
+functions/fnlog*.txt

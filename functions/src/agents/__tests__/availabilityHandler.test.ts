@@ -9,7 +9,10 @@ const hoisted = vi.hoisted(() => ({
   sessionUpdates: [] as any[],
   sent: [] as string[],
   parse: vi.fn(async () => "ANSWER"),
+  backOut: vi.fn(async () => false),
 }));
+// The shared back-out classifier is its own seam so the existing parse sequences stay put.
+vi.mock("../stepHandler", async (importOriginal) => ({ ...(await importOriginal<typeof import("../stepHandler")>()), isBackOutRequest: (...a: any[]) => (hoisted.backOut as any)(...a) }));
 vi.mock("firebase-admin", () => {
   const firestore = Object.assign(() => ({
     collection: (name: string) => ({
@@ -23,10 +26,10 @@ vi.mock("firebase-admin", () => {
 });
 vi.mock("../../utils/parseWithClaude", () => ({ parseWithClaude: (...a: any[]) => (hoisted.parse as any)(...a) }));
 
-import { handleAvailabilityUpdate, CONFIRM_LINE, WHICH_DAYS_Q } from "../availabilityHandler";
+import { handleAvailabilityUpdate, CONFIRM_LINE, WHICH_DAYS_Q, BACKED_OUT } from "../availabilityHandler";
 
 const send = async (m: string) => { hoisted.sent.push(m); };
-beforeEach(() => { hoisted.caregiver = { weeklyAvailability: { monday: [{ start: "06:00", end: "12:00" }] } }; hoisted.cgUpdates.length = 0; hoisted.sessionUpdates.length = 0; hoisted.sent.length = 0; hoisted.parse.mockReset(); hoisted.parse.mockResolvedValue("ANSWER"); });
+beforeEach(() => { hoisted.caregiver = { weeklyAvailability: { monday: [{ start: "06:00", end: "12:00" }] } }; hoisted.cgUpdates.length = 0; hoisted.sessionUpdates.length = 0; hoisted.sent.length = 0; hoisted.parse.mockReset(); hoisted.parse.mockResolvedValue("ANSWER"); hoisted.backOut.mockReset(); hoisted.backOut.mockResolvedValue(false); });
 
 describe("start", () => {
   it("days + blocks in one message → straight to the grid confirmation", async () => {
@@ -53,6 +56,36 @@ describe("start", () => {
     await handleAvailabilityUpdate("cg1", "+1", "Monday mornings", {}, send);
     expect(hoisted.sent.at(-1)).toMatch(/^That's already how your availability is set:/);
     expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "__delete__" });
+  });
+});
+
+describe("back-out (2026-10-17): \"never mind\" closes the modal at the days step and the blocks step", () => {
+  it("at the days step — flow cleared, nothing written, the router's own CANCEL line", async () => {
+    hoisted.backOut.mockResolvedValueOnce(true);
+    await handleAvailabilityUpdate("cg1", "+1", "never mind, leave it", { availabilityStep: "start" }, send);
+    expect(hoisted.backOut).toHaveBeenCalledWith("never mind, leave it", WHICH_DAYS_Q);
+    expect(hoisted.sent).toEqual([BACKED_OUT]);
+    expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "__delete__", pendingDays: "__delete__" });
+    expect(hoisted.cgUpdates).toHaveLength(0);
+    expect(hoisted.parse).not.toHaveBeenCalled(); // checked before the day parse
+  });
+  it("at the blocks step — same exit; ALL / NONE / CANCEL stay fixed words and never reach the classifier", async () => {
+    const session = { availabilityStep: "awaiting_blocks", pendingDays: '["monday"]', pendingAction: "replace" };
+    hoisted.backOut.mockResolvedValueOnce(true);
+    await handleAvailabilityUpdate("cg1", "+1", "forget it", session, send);
+    expect(hoisted.backOut).toHaveBeenCalledWith("forget it", expect.stringMatching(/^Which time blocks are you available on Monday/));
+    expect(hoisted.sent).toEqual([BACKED_OUT]);
+    expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "__delete__" });
+    hoisted.backOut.mockClear();
+    await handleAvailabilityUpdate("cg1", "+1", "all", session, send);
+    expect(hoisted.backOut).not.toHaveBeenCalled();
+    expect(hoisted.sent.at(-1)).toMatch(/^Your availability would be:/);
+  });
+  it("a genuine answer is not a back-out — the flow proceeds as before", async () => {
+    hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"replace","days":["monday"]}');
+    await handleAvailabilityUpdate("cg1", "+1", "change my Monday", { availabilityStep: "start" }, send);
+    expect(hoisted.backOut).toHaveBeenCalledTimes(1);
+    expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "awaiting_blocks" });
   });
 });
 

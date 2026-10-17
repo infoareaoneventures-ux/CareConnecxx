@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
+import { isQuestionOrOther, isBackOutRequest, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { fmtDate, fmtTime } from "./caregiverBookingRequests";
 import { isShiftOverdue } from "./shiftReschedule";
@@ -30,6 +30,9 @@ const db = admin.firestore();
  *              already names one ("cancel tomorrow's shift", "cancel the
  *              booking with Basra") skips the list
  *   confirm  → the matching dialog; YES → the matching write; NO / CANCEL back out
+ *   (2026-10-17) "never mind" / "forget it" at the pick or the dialog leaves the
+ *   whole flow (the shared isBackOutRequest check) — before, NO at the dialog
+ *   only went back to the list, and a non-number at the pick was re-asked.
  *
  * The family's notice comes from onShiftStatusChanged, exactly as on the site.
  * Entry: the CANCEL keyword, or the CANCEL_SHIFT intent (routeIntent).
@@ -237,6 +240,8 @@ export async function handleCaregiverCancelShift(
         return;
       }
       if (decision === "NO") {
+        // A worded "never mind" leaves the flow entirely; a bare NO still goes back to the list.
+        if (options.length > 1 && norm !== "NO" && await isBackOutRequest(text, confirm)) { await sessionRef.update(CLEAR); await sendMessage(chatId, "No problem — your shifts are unchanged."); return; }
         if (options.length === 1) { await sessionRef.update(CLEAR); await sendMessage(chatId, "Okay — keeping it. Your shifts are unchanged."); return; }
         await sessionRef.update({ cancelShiftId: admin.firestore.FieldValue.delete(), cancelKind: admin.firestore.FieldValue.delete(), cancelShiftDate: admin.firestore.FieldValue.delete(), cancelShiftClientId: admin.firestore.FieldValue.delete() });
         await sendMessage(chatId, `Okay — keeping that one.\n${options.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n\nReply with another number, or CANCEL to back out.`);
@@ -247,6 +252,7 @@ export async function handleCaregiverCancelShift(
     }
 
     const reAskPick = `Reply with the number of what to cancel (1–${options.length}), or CANCEL to back out.`;
+    if (await isBackOutRequest(text, reAskPick)) { await sessionRef.update(CLEAR); await sendMessage(chatId, "No problem — your shifts are unchanged."); return; }
     // The screen is the numbered list they were just sent; the facts are what cancelling does (nothing yet).
     if (await isQuestionOrOther(text, reAskPick)) {
       const facts = `The numbered list on their screen:\n${listText(options)}\n\nNothing is cancelled by picking a number — a YES/NO dialog follows. ${CANCEL_RULES}`;

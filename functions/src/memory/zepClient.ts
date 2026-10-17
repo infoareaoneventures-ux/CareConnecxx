@@ -769,7 +769,6 @@ export async function pushOnboardingDataToZep(params: {
   phone: string;
   firstName: string;
   seniorName: string;
-  seniorAge?: number;
   conditions?: string[];
   careNeeds?: string[];
   city?: string;
@@ -792,7 +791,6 @@ export async function pushOnboardingDataToZep(params: {
       user_name: params.firstName,
       relationship_to_senior: params.relationship ?? "family member",
       senior_name: params.seniorName,
-      senior_age: params.seniorAge,
       senior_conditions: params.conditions ?? [],
       senior_care_needs: params.careNeeds ?? [],
       senior_location_city: params.city,

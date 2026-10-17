@@ -114,7 +114,7 @@ export interface McpTool {
 export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_senior_profile",
-    description: "Get the profile of the senior being cared for: name, age and care needs (non-medical — no diagnoses or medications exist).",
+    description: "Get the profile of the senior being cared for: name and care needs (non-medical — no diagnoses or medications exist).",
     input_schema: {
       type: "object",
       properties: {
@@ -125,7 +125,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "list_household_seniors",
-    description: "The recipient tabs on the website's Care Plan page — everyone this family arranges care for (name, relationship, age, which one is primary). Use when a family manages care for more than one person and you need to know who's on file; get_care_plan returns the same list with each recipient's plan.",
+    description: "The recipient tabs on the website's Care Plan page — everyone this family arranges care for (name, relationship, which one is primary). Use when a family manages care for more than one person and you need to know who's on file; get_care_plan returns the same list with each recipient's plan.",
     input_schema: {
       type: "object",
       properties: {
@@ -768,7 +768,6 @@ export const MCP_TOOLS: McpTool[] = [
         lastName:        { type: "string", description: "Last name (optional)." },
         name:            { type: "string", description: "Full name — alternative to firstName/lastName." },
         relationship:    { type: "string", description: "Myself, Parent, Grandparent, Spouse, Sibling or Other (required)." },
-        age:             { type: ["number", "string"], description: "Age, if known." },
         careNeeds:       { type: "array", items: { type: "string" }, description: "Care needs from the page's list." },
         notes:           { type: "string", description: "The Notes section, if the family gave one." },
         location:        { type: "object", description: "Care location: { street, city, state, zipCode } — street is required.", properties: { street: { type: "string" }, city: { type: "string" }, state: { type: "string" }, zipCode: { type: "string" } } },
@@ -1039,8 +1038,8 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         role:       { type: "string", enum: ["client", "caregiver"], description: "Which onboarding flow this is (auto-injected; pass the current role)" },
-        fieldName:  { type: "string", description: "The onboardingData field to set, e.g. firstName, seniorName, age, careNeeds, city, daysPerWeek, timeOfDay, hourlyRate" },
-        fieldValue: { description: "The value to store. Pass numbers (like age) as a number, lists (like careNeeds) as an array — not as strings.", oneOf: [{ type: "string" }, { type: "number" }, { type: "array" }, { type: "object" }] },
+        fieldName:  { type: "string", description: "The onboardingData field to set, e.g. firstName, seniorName, careNeeds, city, daysPerWeek, timeOfDay, hourlyRate" },
+        fieldValue: { description: "The value to store. Pass numbers (like daysPerWeek) as a number, lists (like careNeeds) as an array — not as strings.", oneOf: [{ type: "string" }, { type: "number" }, { type: "array" }, { type: "object" }] },
       },
       required: ["role", "fieldName", "fieldValue"],
     },
@@ -2070,7 +2069,7 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "The care provider Bookings page's Active Bookings tab — this tool TEXTS the bookings itself, each card WHOLE (2 at a time, MORE for the rest): " +
       "family · Ongoing (· Schedule paused), Starts, day-by-day shift times with hours, address + lifestyle chips, $rate/hr · Card, the booking note, " +
-      "the Care plan & preferences details (care recipients with relationship · age and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact), " +
+      "the Care plan & preferences details (care recipients with relationship and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact), " +
       "then UPCOMING SHIFTS — two per booking like the page, every one with allVisits:true (they text VISITS) — each visit: date, time, Scheduled / In Progress, tasks done, its own schedule-change note when it has one, a pending reschedule proposal. " +
       "Call it ONLY when they ask to SEE their bookings / schedule ('show my bookings', 'my schedule'); when they say MORE call it again with more:true. Send nothing else this turn. " +
       "For a QUESTION ('do I have another shift today?', 'when is my next visit?', 'what's the note for tomorrow?') use get_active_bookings with caregiverId and answer in a sentence — never text the whole tab for a question.",
@@ -2169,7 +2168,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "show_families",
     description:
       "The care provider's My Families page — this tool TEXTS it itself. tab 'active' (default): every family with an accepted booking that still has a visit; 'past': the most recent finished / cancelled booking per family not currently active. " +
-      "Each card = name, Active/Past pill, $rate/hr, the schedule's days, 'Caring for: <recipients>'; 2 per text, more:true continues; query = the search box (name). Numbered so FAMILY n texts the View Details modal (per recipient: relationship · age, the family's note, Care Plan needs, Lifestyle; then Emergency Contact). " +
+      "Each card = name, Active/Past pill, $rate/hr, the schedule's days, 'Caring for: <recipients>'; 2 per text, more:true continues; query = the search box (name). Numbered so FAMILY n texts the View Details modal (per recipient: relationship, the family's note, Care Plan needs, Lifestyle; then Emergency Contact). " +
       "Pass familyNumber to text ONE family's details. The Message button = send_client_message with that family's clientId from this list. Call it for 'who do I work with', 'my families', 'which families have I worked with', 'details on the Nguyen family'. Send nothing else this turn.",
     input_schema: {
       type: "object",
@@ -2212,7 +2211,7 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "The care provider Bookings page's Requests tab — this tool TEXTS the requests itself, each one WHOLE (2 at a time, MORE for the rest): the card (family, client rating, Pending, " +
       "Starts / One visit, Ongoing / Ends, day-by-day shift times with hours and the weekly total, address + lifestyle chips, rate · Card (agreed rate)) AND its full details " +
-      "(care recipients with relationship · age and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact, Notes), then the buttons. " +
+      "(care recipients with relationship and the family's note, Care Plan with subtasks, Lifestyle & Preferences, Emergency Contact, Notes), then the buttons. " +
       "Call it whenever the care provider asks about booking requests / who booked them / what they need to answer; when they say MORE call it again with more:true. Send nothing else this turn.",
     input_schema: {
       type: "object",
@@ -2545,7 +2544,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResource[] = [
   {
     uri: "cara://senior/{seniorId}/profile",
     name: "Senior Profile",
-    description: "Name, age and care needs for the senior (non-medical).",
+    description: "Name and care needs for the senior (non-medical).",
     mimeType: "application/json",
   },
   {
@@ -3237,7 +3236,7 @@ async function executeToolCall(
         const page = await readCarePlanPage(clientId);
         return {
           success: true,
-          results: page.recipients.map((r) => ({ key: r.key, name: r.name, firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age, isPrimary: r.isPrimary })),
+          results: page.recipients.map((r) => ({ key: r.key, name: r.name, firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, isPrimary: r.isPrimary })),
           hasMore: false,
         };
       }
@@ -4802,7 +4801,7 @@ async function executeToolCall(
     }
 
     if (name === "create_senior_profile") {
-      const { clientId, name: fullName, firstName, lastName, relationship, age, careNeeds, notes, location } = input as Record<string, unknown>;
+      const { clientId, name: fullName, firstName, lastName, relationship, careNeeds, notes, location } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
       const [fromFullFirst, ...fromFullRest] = String(fullName ?? "").trim().split(/\s+/).filter(Boolean);
       const first = String(firstName ?? fromFullFirst ?? "").trim();
@@ -4810,7 +4809,7 @@ async function executeToolCall(
       const loc = (location && typeof location === "object" ? location : {}) as Record<string, unknown>;
       if (isMedicationInstruction(notes)) return { success: false, error: MEDICATION_INSTRUCTION_MESSAGE, sayVerbatim: true };
       const r = await addRecipient(clientId as string, {
-        firstName: first, lastName: last, relationship: String(relationship ?? ""), age: (age as string | number | undefined) ?? "",
+        firstName: first, lastName: last, relationship: String(relationship ?? ""),
         careNeeds: Array.isArray(careNeeds) ? (careNeeds as string[]) : [],
         notes: typeof notes === "string" ? notes : "",
         location: { street: String(loc.street ?? ""), city: String(loc.city ?? ""), state: String(loc.state ?? ""), zipCode: String(loc.zipCode ?? "") },
@@ -6238,7 +6237,6 @@ async function executeToolCall(
               fix: "ask for the city or ZIP — location is set at profile creation (create_senior_profile); there is no tool to patch it afterward yet",
             });
           }
-          if (!filled(senior.age)) optionalGaps.push("care recipient's age");
         }
         if (!planSnap?.exists) {
           optionalGaps.push("care plan (built automatically from intake — if absent, offer to capture their needs with update_care_plan)");

@@ -651,7 +651,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                           : <div className="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 text-[10px] font-bold shrink-0">{(r.name || r.firstName || '?')[0].toUpperCase()}</div>
                         }
                         <span className="text-xs font-semibold text-slate-700">{r.name || r.firstName}</span>
-                        {r.relationship && <span className="text-xs text-slate-400">· {r.relationship}{r.age ? ` · Age ${r.age}` : ''}</span>}
+                        {r.relationship && <span className="text-xs text-slate-400">· {r.relationship}</span>}
                       </div>
                       {r.notes && <p className="text-xs text-slate-500 italic mb-1.5">"{r.notes}"</p>}
                       <div className="space-y-1.5">

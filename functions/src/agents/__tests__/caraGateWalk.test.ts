@@ -1164,7 +1164,7 @@ describe("persistClientCareRecords — plan key matches the site's roster key", 
     expect(Object.keys(plan.recipientPlans).sort()).toEqual(["h_m", "mary_ann_smith"]);
     expect(plan.recipientPlans.h_m.notes).toBeUndefined(); // the post's description is not the care plan's Notes (2026-10-09)
     expect(hoisted.docState.get("job_postings/client-uid").jobDescription).toBe("He gets anxious in the evenings; a calm voice helps.");
-    expect(plan.recipientPlans.h_m.age).toBe(80);
+    expect(plan.recipientPlans.h_m.age).toBeUndefined(); // age left the product 2026-10-17 — never written, even when the draft carries one
     // The roster the page keys from — same split, same names.
     const jp = hoisted.docState.get("job_postings/client-uid");
     expect(jp.careRecipientFirstName).toBe("H");

@@ -11,7 +11,6 @@
 export interface CareRecipient {
   name:          string;   // first name (conversational capture is first-name based)
   relationship?: string;   // account holder's relationship to them (mother, father, ...)
-  age?:          number;
 }
 
 // Evia's internal "self" sentinel (checked throughout onboardingSteps.client.ts/
@@ -95,11 +94,9 @@ export function normalizeAdditionalRecipients(raw: unknown): CareRecipient[] {
     if (seen.has(key)) continue;
     seen.add(key);
     const relationship = (r as Record<string, unknown>).relationship;
-    const age = Number((r as Record<string, unknown>).age);
     out.push({
       name,
       ...(relationship ? { relationship: String(relationship) } : {}),
-      ...(Number.isFinite(age) && age > 0 ? { age } : {}),
     });
   }
   return out;
@@ -149,7 +146,6 @@ export function allCareRecipients(d: Record<string, unknown>): CareRecipient[] {
     ? [{
         name: primaryName,
         ...(websiteRelationship ? { relationship: websiteRelationship } : {}),
-        ...(typeof d.age === "number" && d.age > 0 ? { age: d.age } : {}),
       }]
     : [];
   const primaryKey = primaryName ? recipientPlanKey(primaryName) : "";

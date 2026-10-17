@@ -1400,7 +1400,7 @@ export function buildBookingRecap(data: BookingFlowData): string {
   if (data.careRecipients?.length) {
     data.careRecipients.forEach((r, i) => {
       const name = String(r.name ?? "");
-      const rel  = r.relationship ? ` (${r.relationship}${r.age ? `, Age ${r.age}` : ""})` : "";
+      const rel  = r.relationship ? ` (${r.relationship})` : "";
       const needs = Array.isArray(r.careNeeds) && r.careNeeds.length ? (r.careNeeds as string[]).join(", ") : "General care";
       const lifestyle = formatRecipientLifestyle(r.lifestyle);
       const notes = typeof r.notes === "string" ? r.notes.trim() : "";

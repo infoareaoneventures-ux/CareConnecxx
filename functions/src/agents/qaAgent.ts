@@ -1018,7 +1018,7 @@ export function buildCaregiverSystemPrompt(
     `- show_past_bookings: your Bookings page's Past Bookings tab — it TEXTS the cards itself (completed / missed / cancelled counts; each visit numbered; MORE, PAST VISITS). With visitNumber it texts one completed visit's tasks and notes. Call it for "my past visits", "did I miss a shift", "what did I do last week", "visit 3". Send nothing else that turn.`,
     `- start_log_hours_flow: the Past Bookings tab's Log Hours button for a MISSED visit — the ONLY way to log it. Pass the number they said ("log 2"); it asks actual start, end, tasks, a note, then LOG saves. Send nothing else that turn.`,
     `- get_active_bookings (caregiverId): the same tab as DATA — use it to ANSWER a question ("do I have another shift today?", "when's my next visit?", "what's the note for tomorrow?") in one or two sentences. Never text the whole tab for a question.`,
-    `- get_senior_profile (seniorId from the booking's care recipients): the care recipient's details (name, age, care needs) for a family you have an accepted booking or a visit with — review before a visit. Care history = the visit notes on the shift records (show_past_bookings / get_active_bookings); there is no separate care journal for care providers.`,
+    `- get_senior_profile (seniorId from the booking's care recipients): the care recipient's details (name, care needs) for a family you have an accepted booking or a visit with — review before a visit. Care history = the visit notes on the shift records (show_past_bookings / get_active_bookings); there is no separate care journal for care providers.`,
     `- update_memory_file: remember a lasting preference about how to work with them — NEVER anything that happened during a visit (that is add_visit_note)`,
     `- contact_support: reach Evia's human team when you ask for a person or raise something Evia must not handle — the team is alerted and replies come back here by text`,
     `- show_membership: Account Settings › Membership & verification — it TEXTS the section itself (membership: Active/Trial badge or No active membership, Annual plan, Renews or Cancels on date, what's included, the Manage-via-Stripe line; background check: authorize / cleared date + next check with the renewal / in progress / not approved; the driving record card). manageLink:true texts the signed-in Stripe Billing Portal link (update card, cancel, invoices); activate:true texts the membership checkout link when not active; authorizeLink:true texts the background-check consent page when an authorization is waiting. Send nothing else this turn.`,
@@ -2206,7 +2206,6 @@ export async function runQaAgent(params: {
       const seniorDoc = senior as Record<string, unknown> | null;
       const initData = {
         seniorName:   (sd.seniorName ?? (seniorDoc as any)?.name)        as string | undefined,
-        seniorAge:    (sd.age        ?? (seniorDoc as any)?.age)         as string | number | undefined,
         careNeeds:    (sd.careNeeds  ?? (seniorDoc as any)?.needs ?? [])      as string[] | undefined,
         city:         (sd.city ?? "")        as string,
         clientName:   (sd.firstName ?? "")   as string,

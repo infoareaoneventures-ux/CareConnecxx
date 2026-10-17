@@ -651,7 +651,6 @@ export const zepSetup = functions.https.onRequest(async (req, res) => {
           phone,
           firstName:   (d.firstName   ?? "") as string,
           seniorName:  (d.seniorName  ?? "") as string,
-          seniorAge:   d.age          ? Number(d.age)          : undefined,
           conditions:  Array.isArray(d.conditions) ? d.conditions as string[] : undefined,
           careNeeds:   Array.isArray(d.careNeeds)  ? d.careNeeds  as string[] : undefined,
           city:        d.city         as string | undefined,

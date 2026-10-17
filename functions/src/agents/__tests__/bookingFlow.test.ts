@@ -1271,7 +1271,7 @@ describe("buildBookingRecap", () => {
       lastIndex = idx;
     }
     expect(recap).toContain("Tuesday 9:00 AM–5:00 PM, Thursday 10:00 AM–2:00 PM, starting September 15, 2026");
-    expect(recap).toContain("Samira M (parent, Age 22): Meal Preparation, Personal Care");
+    expect(recap).toContain("Samira M (parent): Meal Preparation, Personal Care"); // age left the product 2026-10-17 (the stored "22" is ignored)
     expect(recap).toContain("Notes: likes to go shopping");
     expect(recap).toContain("Lifestyle: prefers quiet");
     expect(recap).toContain("Imran Mohammed: Bathing");

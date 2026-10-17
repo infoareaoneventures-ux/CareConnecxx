@@ -65,7 +65,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "Web signup creates it; Evia onboarding writes the wizard's exact profileUpdate (name/needs/careNeeds/scheduleNeeded/zipCode/location/age/relationship) — no diagnoses.",
+    notes: "Web signup creates it; Evia onboarding writes the wizard's exact profileUpdate (name/needs/careNeeds/scheduleNeeded/zipCode/location/relationship) — no diagnoses.",
   },
   agent_objectives: {
     path: "agent_objectives",

@@ -74,8 +74,8 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         if ((session.onboardingData?.relationship as string) === "self") {
           return generateCaraMessage({
             audience: "family",
-            context: `Evia just learned the name of someone looking for care for THEMSELVES: ${safeName}. You're mid-conversation — do NOT greet again. Speak to them directly ("you", never "your loved one"). Warmly acknowledge and ask how old they are and what kind of help would make day-to-day easier for them.`,
-            fallback: `Nice to meet you, ${safeName}. How old are you, and what would you like a hand with day to day?`,
+            context: `Evia just learned the name of someone looking for care for THEMSELVES: ${safeName}. You're mid-conversation — do NOT greet again. Speak to them directly ("you", never "your loved one"). Warmly acknowledge and ask what kind of help would make day-to-day easier for them.`,
+            fallback: `Nice to meet you, ${safeName}. What would you like a hand with day to day?`,
             maxTokens: 80,
           });
         }
@@ -147,8 +147,8 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         if (relationship === "self") {
           return generateCaraMessage({
             audience: "family",
-            context: `Evia is onboarding someone looking for care for THEMSELVES (${seniorName}). Speak to them directly ("you", never third person). Ask how old they are and what kind of help would make day-to-day easier for them.`,
-            fallback: `Got it — I'd love to help you directly. How old are you, and what would you like a hand with day to day?`,
+            context: `Evia is onboarding someone looking for care for THEMSELVES (${seniorName}). Speak to them directly ("you", never third person). Ask what kind of help would make day-to-day easier for them.`,
+            fallback: `Got it — I'd love to help you directly. What would you like a hand with day to day?`,
             maxTokens: 80,
           });
         }
@@ -160,15 +160,15 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
           const everyone = [seniorName, ...extraRecipients].join(" and ");
           return generateCaraMessage({
             audience: "family",
-            context: `Evia is onboarding a family caring for MULTIPLE loved ones: ${everyone}. Acknowledge warmly that you'll set things up for both/all of them, then ask how old each of them is and what kind of help each needs these days.`,
-            fallback: `Got it — care for ${everyone}. How old is each of them, and what does each need help with these days?`,
+            context: `Evia is onboarding a family caring for MULTIPLE loved ones: ${everyone}. Acknowledge warmly that you'll set things up for both/all of them, then ask what kind of help each of them needs these days.`,
+            fallback: `Got it — care for ${everyone}. What does each of them need help with these days?`,
             maxTokens: 90,
           });
         }
         return generateCaraMessage({
           audience: "family",
-          context: `Evia is onboarding a family. They just said they're looking for care for ${seniorName} (their ${relationship}). Ask how old ${seniorName} is and what kind of help they need these days.`,
-          fallback: `Got it. How old is ${seniorName}, and what do they need help with these days?`,
+          context: `Evia is onboarding a family. They just said they're looking for care for ${seniorName} (their ${relationship}). Ask what kind of help ${seniorName} needs these days.`,
+          fallback: `Got it. What does ${seniorName} need help with these days?`,
           maxTokens: 80,
         });
       },
@@ -177,68 +177,37 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
     // ── client_ask_needs ──────────────────────────────────────────────────────────
     client_ask_needs: {
       id: "client_ask_needs",
+      // Age is no longer collected anywhere (2026-10-17: the website dropped it
+      // from the Care Plan and the job-post wizard) — this step asks ONLY for
+      // the day-to-day help needed.
       parsePrompt:
-        'Extract age (as number) and careNeeds (array of strings — day-to-day help needed, NOT diagnoses) from this message. ' +
-        'If ages for MULTIPLE people are given (e.g. "mom is 82 and dad is 85"), also include ' +
-        '"recipientAges":[{"name":"...","age":0}] with one entry per named person. ' +
-        'Reply in JSON: {"age":0,"careNeeds":[]}',
-      parse(raw, session) {
+        'Extract careNeeds (array of strings — day-to-day help needed, NOT diagnoses) from this message. ' +
+        'Reply in JSON: {"careNeeds":[]}',
+      parse(raw) {
         if (raw === "__parse_error__") return null; // re-ask: "didn't catch that"
-        let parsed: { age?: unknown; careNeeds?: unknown; recipientAges?: unknown };
+        let parsed: { careNeeds?: unknown };
         try {
           parsed = JSON.parse(raw);
         } catch {
           return null; // parse failed → re-ask instead of advancing with empty needs
         }
-        const rawAge      = Number(parsed.age);
-        const age         = Number.isFinite(rawAge) && rawAge > 0 ? rawAge : undefined;
-        const careNeeds   = Array.isArray(parsed.careNeeds)  ? (parsed.careNeeds  as string[]) : [];
-        const recipientAges: Array<{ name?: string; age?: number }> =
-          Array.isArray(parsed.recipientAges) ? (parsed.recipientAges as Array<{ name?: string; age?: number }>) : [];
+        const careNeeds = Array.isArray(parsed.careNeeds) ? (parsed.careNeeds as string[]) : [];
 
         // careNeeds is the REQUIRED field this step exists to collect. If the
-        // message had nothing needs-shaped (auto-skip loop landed here off a
-        // front-loaded age, or the answer was only an age), re-ask instead of
-        // advancing with empty needs — mirrors the client_ask_schedule guard.
+        // message had nothing needs-shaped, re-ask instead of advancing with
+        // empty needs — mirrors the client_ask_schedule guard.
         if (careNeeds.length === 0) return null;
-
-        // Multi-recipient household: route each named age to the right person —
-        // primary keeps top-level `age`, everyone else's lands on their entry in
-        // additionalRecipients (finalization writes one senior profile per person).
-        const existingExtras = Array.isArray(session.onboardingData?.additionalRecipients)
-          ? (session.onboardingData!.additionalRecipients as Array<{ name?: string; relationship?: string; age?: number }>)
-          : [];
-        if (existingExtras.length && recipientAges.length) {
-          const primaryName = String(session.onboardingData?.seniorName ?? "").toLowerCase();
-          const patched = existingExtras.map((r) => {
-            const match = recipientAges.find(
-              (a) => String(a?.name ?? "").toLowerCase() === String(r?.name ?? "").toLowerCase(),
-            );
-            const matchedAge = Number(match?.age);
-            return Number.isFinite(matchedAge) && matchedAge > 0 ? { ...r, age: matchedAge } : r;
-          });
-          const primaryMatch = recipientAges.find(
-            (a) => String(a?.name ?? "").toLowerCase() === primaryName,
-          );
-          const primaryAge = Number(primaryMatch?.age);
-          const resolvedAge = Number.isFinite(primaryAge) && primaryAge > 0 ? primaryAge : age;
-          return {
-            ...(resolvedAge !== undefined ? { age: resolvedAge } : {}),
-            careNeeds,
-            additionalRecipients: patched,
-          };
-        }
-        return { ...(age !== undefined ? { age } : {}), careNeeds };
+        return { careNeeds };
       },
       nextStep: "client_ask_location",
       reask(session) {
         const d = session.onboardingData ?? {};
-        return `How old is ${d.seniorName ?? "your loved one"}, and what kind of help do they need?`;
+        return `What kind of help does ${d.seniorName ?? "your loved one"} need day to day?`;
       },
       // Reached when parse returns null (parse error or no care needs extracted).
       retry(session) {
         const d = session.onboardingData ?? {};
-        return `How old is ${d.seniorName ?? "your loved one"}, and what kind of help do they need?`;
+        return `What kind of help does ${d.seniorName ?? "your loved one"} need day to day?`;
       },
       async nextQuestion(session) {
         const d = session.onboardingData ?? {};

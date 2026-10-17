@@ -567,11 +567,11 @@ export async function resolveTopLevelCareNeedsAndLifestyle(
   return result;
 }
 
-// Per-recipient age/relationship/photo — matches the website's own recipient
-// cards (e.g. "parent · Age 22" plus their photo). NOT on carePlans.
+// Per-recipient relationship/photo — matches the website's own recipient
+// cards (e.g. "parent" plus their photo; age left the product 2026-10-17). NOT on carePlans.
 // recipientPlans at all — lives on job_postings/{clientUid} (the household
 // profile doc, keyed by client, not by job post): the primary recipient's own
-// careRecipientFirstName/LastName/Age/PhotoURL + top-level relationship, plus
+// careRecipientFirstName/LastName/PhotoURL + top-level relationship, plus
 // an additionalRecipients array for everyone else. Matched onto careRecipients
 // by first name; only enriches the multi-recipient array already built.
 //
@@ -588,17 +588,16 @@ export async function enrichRecipientAgeRelationship(
   try {
     const jpSnap = await db.collection("job_postings").doc(clientId).get();
     const jp = jpSnap.data() ?? {};
-    const jpRecipients: Array<{ firstName: string; age?: string; relationship?: string; photoURL?: string }> = [];
+    const jpRecipients: Array<{ firstName: string; relationship?: string; photoURL?: string }> = [];
     if (jp.careRecipientFirstName) {
       jpRecipients.push({
         firstName:    String(jp.careRecipientFirstName),
-        age:          jp.careRecipientAge as string | undefined,
         relationship: jp.relationship as string | undefined,
         photoURL:     jp.careRecipientPhotoURL as string | undefined,
       });
     }
-    for (const r of (jp.additionalRecipients ?? []) as Array<{ firstName?: string; age?: string; relationship?: string; photoURL?: string }>) {
-      if (r?.firstName) jpRecipients.push({ firstName: String(r.firstName), age: r.age, relationship: r.relationship, photoURL: r.photoURL });
+    for (const r of (jp.additionalRecipients ?? []) as Array<{ firstName?: string; relationship?: string; photoURL?: string }>) {
+      if (r?.firstName) jpRecipients.push({ firstName: String(r.firstName), relationship: r.relationship, photoURL: r.photoURL });
     }
     if (!jpRecipients.length) return careRecipients;
     return careRecipients.map((r) => {
@@ -607,14 +606,13 @@ export async function enrichRecipientAgeRelationship(
       return match
         ? {
             ...r,
-            ...(match.age ? { age: match.age } : {}),
             ...(match.relationship ? { relationship: match.relationship } : {}),
             ...(match.photoURL ? { photoURL: match.photoURL } : {}),
           }
         : r;
     });
   } catch (e) {
-    console.warn("[bookingResolution] recipient age/relationship lookup failed (booking proceeds without them):", e);
+    console.warn("[bookingResolution] recipient relationship lookup failed (booking proceeds without them):", e);
     return careRecipients;
   }
 }

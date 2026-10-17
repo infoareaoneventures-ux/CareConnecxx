@@ -70,7 +70,7 @@ interface RecipientPlanData {
   lifestyle: LifestyleData; tasks: TasksData;
 }
 
-interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; age?: string; photoURL?: string; }
+interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; photoURL?: string; }
 
 const getKey = (firstName: string, lastName: string) =>
   `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`
@@ -212,7 +212,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [savingSetup, setSavingSetup] = useState(false);
 
   const [showAddRecipient, setShowAddRecipient] = useState(false);
-  const [newRecipient, setNewRecipient] = useState({ firstName: '', lastName: '', relationship: '', age: '' });
+  const [newRecipient, setNewRecipient] = useState({ firstName: '', lastName: '', relationship: '' });
   const [newDraft, setNewDraft] = useState<RecipientPlanData>({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
   const [newCustomLoc, setNewCustomLoc] = useState(false);
   const [newLocEditIdx, setNewLocEditIdx] = useState<number | null>(null);
@@ -332,7 +332,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       if (!firstName) return;
       let relationship = typeof p?.relationship === 'string' ? p.relationship : '';
       if (relationship.toLowerCase() === 'myself' && hasMyself) relationship = '';
-      out.push({ firstName, lastName, name: [firstName, lastName].filter(Boolean).join(' '), relationship, age: typeof p?.age === 'string' ? p.age : '' });
+      out.push({ firstName, lastName, name: [firstName, lastName].filter(Boolean).join(' '), relationship });
     });
     return out;
   }, [wizardData, recipientPlans]);
@@ -344,7 +344,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     const pFirst = wizardData.careRecipientFirstName || '';
     const pLast = wizardData.careRecipientLastName || '';
     seenKeys.add(getKey(pFirst, pLast));
-    list.push({ firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(' ') || 'Primary Recipient', relationship: wizardData.relationship || '', age: wizardData.careRecipientAge || '', photoURL: wizardData.careRecipientPhotoURL || '' });
+    list.push({ firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(' ') || 'Primary Recipient', relationship: wizardData.relationship || '', photoURL: wizardData.careRecipientPhotoURL || '' });
     (wizardData.additionalRecipients || []).forEach((r: any, i: number) => {
       const rFirst = (r.firstName || '').trim();
       const rLast = (r.lastName || '').trim();
@@ -352,7 +352,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       const rKey = getKey(rFirst, rLast);
       if (seenKeys.has(rKey)) return; // skip duplicates
       seenKeys.add(rKey);
-      list.push({ firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(' '), relationship: r.relationship || '', age: r.age || '', photoURL: r.photoURL || '' });
+      list.push({ firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(' '), relationship: r.relationship || '', photoURL: r.photoURL || '' });
     });
     orphanedPlanRecipients.forEach((r) => {
       const rKey = getKey(r.firstName, r.lastName);
@@ -372,7 +372,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     const signature = orphanedPlanRecipients.map((r) => getKey(r.firstName, r.lastName)).sort().join('|');
     if (healedKeysRef.current === signature) return;
     healedKeysRef.current = signature;
-    const entries = orphanedPlanRecipients.map((r) => ({ firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age || '' }));
+    const entries = orphanedPlanRecipients.map((r) => ({ firstName: r.firstName, lastName: r.lastName, relationship: r.relationship }));
     db.collection('job_postings').doc(currentPlanId)
       .set({ additionalRecipients: firebase.firestore.FieldValue.arrayUnion(...entries) }, { merge: true })
       .then(() => setWizardData((prev: any) => ({ ...(prev || {}), additionalRecipients: [...((prev?.additionalRecipients) || []), ...entries] })))
@@ -673,7 +673,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     if (!currentPlanId || !db) return;
     setSavingRecipient(true);
     try {
-      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship, age: newRecipient.age.trim() };
+      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship };
 
       const isFirstRecipient = !wizardData?.careRecipientFirstName;
       if (isFirstRecipient) {
@@ -681,7 +681,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
           careRecipientFirstName: entry.firstName,
           careRecipientLastName: entry.lastName,
           relationship: entry.relationship,
-          careRecipientAge: entry.age,
         }, { merge: true });
       } else {
         await db.collection('job_postings').doc(currentPlanId).set(
@@ -722,11 +721,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       const newIndex = isFirstRecipient ? 0 : recipients.length;
       setRecipientPlans(prev => ({ ...prev, [key]: blankPlan }));
       if (isFirstRecipient) {
-        setWizardData((prev: any) => ({ ...(prev || {}), careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, careRecipientAge: entry.age }));
+        setWizardData((prev: any) => ({ ...(prev || {}), careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship }));
       } else {
         setWizardData((prev: any) => ({ ...prev, additionalRecipients: [...(prev?.additionalRecipients || []), entry] }));
       }
-      setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
+      setNewRecipient({ firstName: '', lastName: '', relationship: '' });
       setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
       setNewCustomLoc(false);
       setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null);
@@ -741,7 +740,14 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     if (!currentPlanId || !db) return;
     const r = recipients[activeRecipient];
     try {
-      const archived = { firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age || '', deletedAt: new Date().toISOString() };
+      const archived = { firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, deletedAt: new Date().toISOString() };
+      // Every local-state update below must ALSO record the archive locally. The
+      // roster is loaded once on mount, and orphanedPlanRecipients re-surfaces
+      // anyone whose carePlans plan still exists unless deletedRecipients names
+      // them — without this the removed tab came straight back and the self-heal
+      // effect wrote the person back onto the roster (live-caught 2026-10-17).
+      const withArchive = (prev: any) => [...((prev?.deletedRecipients) || []), archived];
+      const rKey = getKey(r.firstName, r.lastName);
 
       // Preserve the deleted recipient's locations in the shared pool
       const key = getKey(r.firstName, r.lastName);
@@ -767,11 +773,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
             careRecipientFirstName: next.firstName,
             careRecipientLastName: next.lastName || '',
             relationship: next.relationship || '',
-            careRecipientAge: next.age || '',
+            careRecipientAge: firebase.firestore.FieldValue.delete(),
             additionalRecipients: remainingAdditionals,
             deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
           });
-          setWizardData((prev: any) => ({ ...prev, careRecipientFirstName: next.firstName, careRecipientLastName: next.lastName || '', relationship: next.relationship || '', careRecipientAge: next.age || '', additionalRecipients: remainingAdditionals }));
+          setWizardData((prev: any) => { const u = { ...prev, careRecipientFirstName: next.firstName, careRecipientLastName: next.lastName || '', relationship: next.relationship || '', additionalRecipients: remainingAdditionals, deletedRecipients: withArchive(prev) }; delete u.careRecipientAge; return u; });
         } else {
           await db.collection('job_postings').doc(currentPlanId).update({
             careRecipientFirstName: firebase.firestore.FieldValue.delete(),
@@ -784,18 +790,22 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
             const u = { ...prev };
             delete u.careRecipientFirstName; delete u.careRecipientLastName;
             delete u.relationship; delete u.careRecipientAge;
+            u.deletedRecipients = withArchive(prev);
             return u;
           });
         }
       } else {
+        // Match by the roster key (trimmed, case-insensitive) — the tab list is
+        // built from trimmed names, so an entry stored with stray whitespace or
+        // different casing never matched and survived the delete.
         const updatedAdditional = (wizardData?.additionalRecipients || []).filter(
-          (ar: any) => !(ar.firstName === r.firstName && ar.lastName === r.lastName)
+          (ar: any) => getKey((ar.firstName || '').trim(), (ar.lastName || '').trim()) !== rKey
         );
         await db.collection('job_postings').doc(currentPlanId).update({
           additionalRecipients: updatedAdditional,
           deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
         });
-        setWizardData((prev: any) => ({ ...prev, additionalRecipients: updatedAdditional }));
+        setWizardData((prev: any) => ({ ...prev, additionalRecipients: updatedAdditional, deletedRecipients: withArchive(prev) }));
       }
 
       setActiveRecipient(Math.max(0, activeRecipient - 1));
@@ -942,8 +952,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
                           {r.relationship && <span className={`text-xs capitalize ${active ? 'text-white/75' : 'text-slate-400'}`}>{r.relationship}</span>}
-                          {r.relationship && r.age && <span className={`text-xs ${active ? 'text-white/50' : 'text-slate-300'}`}>·</span>}
-                          {r.age && <span className={`text-xs ${active ? 'text-white/75' : 'text-slate-400'}`}>Age {r.age}</span>}
                         </div>
                       </div>
                       {!isReadOnly && recipients.length > 1 && (
@@ -994,7 +1002,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                       <option value="Spouse or Partner">Spouse or Partner</option>
                       <option value="Other">Other</option>
                     </select>
-                    <input className={inputCls} placeholder="Age (optional)" value={newRecipient.age} onChange={e => setNewRecipient(p => ({ ...p, age: e.target.value.replace(/\D/g, '').slice(0, 3) }))} />
                   </div>
                 </div>
 
@@ -1161,7 +1168,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   </button>
                   <button onClick={() => {
                     setShowAddRecipient(false);
-                    setNewRecipient({ firstName: '', lastName: '', relationship: '', age: '' });
+                    setNewRecipient({ firstName: '', lastName: '', relationship: '' });
                     setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
                     setNewCustomLoc(false);
                   setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null);

@@ -50,8 +50,7 @@ const FIELD_LABEL: Record<string, string> = {
   relationship:   "the family member's relationship to the person needing care — parent (they said 'my mom/dad/mother/father' etc.), spouse (wife/husband/partner), or other; save whatever word they used, it gets canonicalized automatically",
   // Step 10
   seniorName:     "the first and last name of the person who needs care",
-  age:            "their age",
-  additionalRecipients: "every OTHER person needing care when it's more than one (e.g. both mom and dad) — [{name, relationship, age}]",
+  additionalRecipients: "every OTHER person needing care when it's more than one (e.g. both mom and dad) — [{name, relationship}]",
   caregiversNeeded: "how many care providers they think they'll need (most families need 1) — optional, default 1",
   // Step 10
   emergencyContactName:         "the emergency contact's full name",
@@ -86,7 +85,7 @@ function labelFor(field: string): string {
 // conversation). That split was a real bug, caught live (2026-09-05): once
 // relationship + the senior's name were saved, "next missing item" pointed
 // straight at the next REQUIRED field (emergencyContactName), so the model
-// skipped past Step 9's age/additionalRecipients and Step 10's
+// skipped past Step 9's additionalRecipients and Step 10's
 // caregiversNeeded entirely — asking about them only got queued for the very
 // end, not their correct wizard position. Walking ONE combined ordered list
 // for "what to ask next" fixes this regardless of a field's required/
@@ -100,7 +99,7 @@ const CLIENT_WIZARD_FIELD_ORDER: readonly string[] = [
   "selectedDays", "daysFlexible", "timeOfDay",                  // Step 6
   "careRecipientPhotoURL",                                      // Step 7
   "relationship",                                                // Step 8
-  "seniorName", "age", "additionalRecipients",                  // Step 9
+  "seniorName", "additionalRecipients",                         // Step 9
   "caregiversNeeded",                                            // Step 10
   "emergencyContactName", "emergencyContactPhone", "emergencyContactRelationship", // Step 11
   "careNeeds",                                                   // Step 12
@@ -180,7 +179,7 @@ export function buildOnboardingDirective(
     ? `Ask for the SINGLE most natural next item — the first one listed above, in that exact ` +
       `order, whether it's required or optional. Do NOT skip an earlier optional item to reach a ` +
       `later required one (e.g. don't jump from the senior's name straight to emergency contact — ` +
-      `age/additional loved ones and how many care providers are needed come first, in that order). ` +
+      `additional loved ones and how many care providers are needed come first, in that order). ` +
       `As soon as they give you a value (even partially, even several at once), call ` +
       `save_onboarding_field for each one, then look at what's still needed and continue. If they ` +
       `decline or skip an optional item, don't push — just move to the next item in the list, and ` +
@@ -226,7 +225,7 @@ export function buildOnboardingDirective(
     `  6. Which specific days + whether days are flexible + time of day`,
     `  7. Whether they'd like to add a profile photo of THEMSELVES — the person you're texting with, matching the wizard's own Step 8 (optional, but ASK ONCE) — make clear it's completely optional, accept a texted image directly as careRecipientPhotoURL, move on immediately either way`,
     `  8. Their relationship to the person needing care`,
-    `  9. The senior's name and age, and anyone else needing care ("both mom and dad")`,
+    `  9. The senior's name, and anyone else needing care ("both mom and dad")`,
     ` 10. How many care providers they think they'll need (optional, but ASK — lightly, most people say 1)`,
     ` 11. Emergency contact — name, phone, and their relationship`,
     ` 12. What kind of help is needed day to day`,
@@ -261,9 +260,9 @@ export function buildOnboardingDirective(
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
     `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time differently, then move on — never ask the same question more than twice.`,
     `  - Figure out WHO is who: if they first name who NEEDS care (e.g. "my mom Jane") before their own name, that name is the senior's — save as seniorName, not firstName.
-  - Age is optional — ask it naturally once but if they skip it or ask if it's required, tell them it's not and move on. Never insist on it.`,
+  - Never ask anyone's age — the website doesn't collect it (2026-10-17). If they volunteer one, don't save it and don't comment on it.`,
     `  - SELF-CARE: if care is for themselves, save relationship as "self" and seniorName the same as firstName — never ask who they're caring for.`,
-    `  - MULTIPLE LOVED ONES: first person → seniorName/relationship/age; everyone else → save_onboarding_field("additionalRecipients", [{name, relationship, age}]).`,
+    `  - MULTIPLE LOVED ONES: first person → seniorName/relationship; everyone else → save_onboarding_field("additionalRecipients", [{name, relationship}]).`,
     `  - caregiversNeeded is a light, easy-to-skip question — most families need just one care provider covering their schedule, so frame it that way ("most families just need one care provider — is that right for you, or are you looking to cover more ground with a couple people?"). If they don't have an answer or seem unsure, save 1 and move on — never insist.`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I assist you today", or call yourself an AI assistant.`,
     `  - Voice memos: offer ONCE warmly if their replies look effortful — "if typing is a pain, you can tap-and-hold to send a voice memo." Never repeat the offer.`,

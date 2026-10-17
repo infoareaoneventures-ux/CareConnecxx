@@ -477,7 +477,6 @@ const RequestCard: React.FC<{
                   {req.careRecipients.map((r: any, i: number) => {
                     const name = typeof r === 'string' ? r : r.name;
                     const relationship = typeof r === 'object' ? r.relationship : undefined;
-                    const age = typeof r === 'object' ? r.age : undefined;
                     const photoURL = typeof r === 'object' ? r.photoURL : undefined;
                     const careNeeds: string[] = typeof r === 'object' ? (r.careNeeds || []) : [];
                     const careNeedDetails: Record<string, string[]> = typeof r === 'object' ? (r.careNeedDetails || {}) : {};
@@ -510,9 +509,7 @@ const RequestCard: React.FC<{
                           )}
                           <div>
                             <p className="text-sm font-semibold text-slate-800">{name}</p>
-                            {(relationship || age) && (
-                              <p className="text-xs text-slate-400">{[relationship, age ? `Age ${age}` : ''].filter(Boolean).join(' · ')}</p>
-                            )}
+                            {relationship && <p className="text-xs text-slate-400">{relationship}</p>}
                           </div>
                         </div>
                         {/* The family's note for this recipient (2026-09-27 — written by the booking modal, was never shown) */}
@@ -1052,7 +1049,7 @@ const BookingGroupCard: React.FC<{
                   </div>
                   <div>
                     <p className="font-semibold text-slate-800 text-sm">{r.name}</p>
-                    <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}</p>
+                    {r.relationship && <p className="text-xs text-slate-400">{r.relationship}</p>}
                   </div>
                 </div>
                 {(r as any).notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{(r as any).notes}"</p>}
@@ -1771,7 +1768,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
                                           ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
                                           : <span className="text-[9px] font-bold text-primary-600">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
                                       </div>
-                                      <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.age ? ` · Age ${r.age}` : ''}</p>
+                                      <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}</p>
                                     </div>
                                   )}
                                     {(r as any).notes && <p className="text-xs text-slate-500 italic mb-1.5">"{(r as any).notes}"</p>}

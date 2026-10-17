@@ -28,10 +28,9 @@ interface WizardForm {
   photoURL: string;
   careRecipientFirstName: string;
   careRecipientLastName: string;
-  careRecipientAge: string;
   adultsCount: number;
   caregiversNeeded: number;
-  additionalRecipients: { firstName: string; lastName: string; age: string; relationship: string }[];
+  additionalRecipients: { firstName: string; lastName: string; relationship: string }[];
   relationship: string;
   emergencyFirstName: string;
   emergencyLastName: string;
@@ -110,7 +109,6 @@ const INITIAL_FORM: WizardForm = {
     photoURL: '',
     careRecipientFirstName: '',
     careRecipientLastName: '',
-    careRecipientAge: '',
     adultsCount: 1,
     caregiversNeeded: 1,
     additionalRecipients: [],
@@ -233,7 +231,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
 
   const addPerson = () => setForm(f => {
     if (f.adultsCount >= 4) return f;
-    return { ...f, adultsCount: f.adultsCount + 1, additionalRecipients: [...f.additionalRecipients, { firstName: '', lastName: '', age: '', relationship: '' }] };
+    return { ...f, adultsCount: f.adultsCount + 1, additionalRecipients: [...f.additionalRecipients, { firstName: '', lastName: '', relationship: '' }] };
   });
 
   const removePerson = () => setForm(f => {
@@ -241,7 +239,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     return { ...f, adultsCount: f.adultsCount - 1, additionalRecipients: f.additionalRecipients.slice(0, -1) };
   });
 
-  const updateAdditional = (idx: number, field: 'firstName' | 'lastName' | 'age' | 'relationship', val: string) =>
+  const updateAdditional = (idx: number, field: 'firstName' | 'lastName' | 'relationship', val: string) =>
     setForm(f => {
       const updated = [...f.additionalRecipients];
       updated[idx] = { ...updated[idx], [field]: val };
@@ -943,15 +941,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                   className="flex-1 border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent"
                 />
               </div>
-              <input
-                type="number"
-                placeholder="Age (optional)"
-                min={1}
-                max={120}
-                value={form.careRecipientAge}
-                onChange={e => update('careRecipientAge', e.target.value)}
-                className="w-full border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent"
-              />
             </div>
 
             {/* People count */}
@@ -1020,15 +1009,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                     className="flex-1 border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent"
                   />
                 </div>
-                <input
-                  type="number"
-                  placeholder="Age (optional)"
-                  min={1}
-                  max={120}
-                  value={person.age}
-                  onChange={e => updateAdditional(idx, 'age', e.target.value)}
-                  className="w-full border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent"
-                />
               </div>
             ))}
 

@@ -2651,9 +2651,8 @@ export interface WizardJobPostingData {
     photoURL: string;
     careRecipientFirstName: string;
     careRecipientLastName: string;
-    careRecipientAge: string;
     adultsCount: number;
-    additionalRecipients: { firstName: string; lastName: string; age: string; relationship: string }[];
+    additionalRecipients: { firstName: string; lastName: string; relationship: string }[];
     relationship: string;
     emergencyFirstName: string;
     emergencyLastName: string;
@@ -2705,7 +2704,6 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         additionalRecipients: data.additionalRecipients.map(r => ({
             firstName:    sanitizePlainText(r.firstName),
             lastName:     sanitizePlainText(r.lastName),
-            age:          r.age,
             relationship: r.relationship,
         })),
     };
@@ -2774,7 +2772,6 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
     if (clean.careRecipientFirstName) profileUpdate.firstName = clean.careRecipientFirstName;
     if (clean.careRecipientLastName)  profileUpdate.lastName  = clean.careRecipientLastName;
     if (clean.adultsCount) profileUpdate.adultsCount = clean.adultsCount;
-    if (clean.careRecipientAge) profileUpdate.age = parseInt(clean.careRecipientAge, 10) || undefined;
     if (clean.relationship) profileUpdate.relationship = clean.relationship;
 
     // Sync pets/smoking to locationPool entry for the primary address

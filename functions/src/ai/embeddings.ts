@@ -140,9 +140,8 @@ export function composeIntakeText(intake: any): string {
     const parts: string[] = [];
 
     // Care recipient info
-    const recipientAge = intake.careRecipient?.age || intake.seniorAge;
     const recipientName = intake.careRecipient?.firstName || "the care recipient";
-    if (recipientAge) parts.push(`Family seeking care for ${recipientName}, age ${recipientAge}.`);
+    parts.push(`Family seeking care for ${recipientName}.`);
 
     // Care needs
     const needs = intake.careTypes || intake.needs || [];

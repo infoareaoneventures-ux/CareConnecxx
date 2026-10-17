@@ -67,11 +67,11 @@ describe("the cards", () => {
 });
 
 describe("View Details", () => {
-  it("per recipient: name, relationship · age, the note, Care Plan needs (no subtasks — the modal lists needs), Lifestyle; then Emergency Contact", () => {
+  it("per recipient: name, relationship (never age — 2026-10-17), the note, Care Plan needs (no subtasks — the modal lists needs), Lifestyle; then Emergency Contact", () => {
     booking("br1", {});
     expect(familyDetailsText("Basra Yousuf", hoisted.docs.get("booking_requests/br1"))).toBe([
       "Basra Yousuf — Care details", "",
-      "H M — parent · Age 82", '"Likes tea at 3."', "Care Plan", "• Companionship", "• Mobility Assistance",
+      "H M — parent", '"Likes tea at 3."', "Care Plan", "• Companionship", "• Mobility Assistance",
       "Lifestyle", "Enjoys: Gardening", "Enjoys conversation: Yes", "Family in area: Yes", "Family visit frequency: Weekly", "Has appointments: Yes", "Appointments: Cardiology on Tuesdays",
       "", "Emergency Contact", "Ali · son · 555-1212",
     ].join("\n"));
@@ -88,7 +88,7 @@ describe("keywords", () => {
     const list = hoisted.sessionWrites.at(-1).lastFamilyList;
     expect(list.items[0]).toMatchObject({ number: 1, clientId: "fam1", bookingId: "br1" });
     expect(await handleFamiliesKeyword("+1", "chat", "cg1", "FAMILY 1", { lastFamilyList: list })).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/^Basra Yousuf — Care details\n\nH M — parent · Age 82/);
+    expect(hoisted.sent.at(-1)).toMatch(/^Basra Yousuf — Care details\n\nH M — parent\n/);
     expect(await handleFamiliesKeyword("+1", "chat", "cg1", "family 4", { lastFamilyList: list })).toBe("handled");
     expect(hoisted.sent.at(-1)).toMatch(/don't have a family 4/);
     expect(await handleFamiliesKeyword("+1", "chat", "cg1", "PAST FAMILIES", {})).toBe("handled");

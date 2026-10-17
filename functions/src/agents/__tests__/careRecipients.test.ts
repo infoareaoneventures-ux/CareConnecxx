@@ -35,7 +35,7 @@ describe("normalizeAdditionalRecipients", () => {
       { relationship: "uncle" },
       { name: "Rosa", age: "not-a-number" },
     ])).toEqual([
-      { name: "Frank", relationship: "father", age: 85 },
+      { name: "Frank", relationship: "father" }, // age is never carried (2026-10-17)
       { name: "Rosa" },
     ]);
   });
@@ -59,8 +59,8 @@ describe("allCareRecipients", () => {
         { name: "dorothy" },
       ],
     })).toEqual([
-      { name: "Dorothy", relationship: "mother", age: 82 },
-      { name: "Frank", relationship: "father", age: 85 },
+      { name: "Dorothy", relationship: "mother" },
+      { name: "Frank", relationship: "father" },
     ]);
   });
   it("single-recipient signups yield one entry", () => {

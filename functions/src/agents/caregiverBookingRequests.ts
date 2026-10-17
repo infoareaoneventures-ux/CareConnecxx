@@ -31,7 +31,7 @@ export interface RecipientLifestyle {
   hasAppointments?: boolean | null; appointmentsDetails?: string;
 }
 export interface CareRecipient {
-  name: string; relationship?: string; age?: number | string; photoURL?: string;
+  name: string; relationship?: string; photoURL?: string;
   careNeeds?: string[]; careNeedDetails?: Record<string, string[]>; lifestyle?: RecipientLifestyle | null;
   notes?: string;
 }
@@ -147,7 +147,7 @@ export function requestDetailsLines(req: BookingRequest): string[] {
     out.push(`Care Recipient${recipients.length > 1 ? "s" : ""}`);
     recipients.forEach((r, i) => {
       const obj = typeof r === "string" ? { name: r } as CareRecipient : r;
-      const meta = [obj.relationship, obj.age ? `Age ${obj.age}` : ""].filter(Boolean).join(" · ");
+      const meta = obj.relationship || "";
       out.push(`${i > 0 ? "\n" : ""}${obj.name}${meta ? ` — ${meta}` : ""}`);
       // The family's note for this recipient (2026-09-27: the page shows it under the header now).
       if (typeof obj.notes === "string" && obj.notes.trim()) out.push(`Notes: ${obj.notes.trim()}`);

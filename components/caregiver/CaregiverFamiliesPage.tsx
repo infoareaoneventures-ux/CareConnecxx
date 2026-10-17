@@ -380,7 +380,7 @@ export const CaregiverFamiliesPage: React.FC = () => {
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-slate-800">{r.firstName || r.name}</p>
-                          {(r.relationship || r.age) && <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : null].filter(Boolean).join(' · ')}</p>}
+                          {r.relationship && <p className="text-xs text-slate-400">{r.relationship}</p>}
                         </div>
                       </div>
                       {r.notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{r.notes}"</p>}

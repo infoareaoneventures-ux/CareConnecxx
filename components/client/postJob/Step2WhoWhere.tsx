@@ -265,7 +265,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     onChange({ careRecipients: [...data.careRecipients, entry], recipientsCount: newCount });
     if (db && currentUser?.uid) {
       db.collection('job_postings').doc(currentUser.uid).set(
-        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion({ firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship, age: '' }) },
+        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion({ firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship }) },
         { merge: true }
       ).catch(() => {});
       setSavedPeople(prev => {

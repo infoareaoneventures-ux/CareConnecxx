@@ -722,7 +722,6 @@ export async function getMemoryContext(userId: string): Promise<string> {
 
 export interface InitialMemoryData {
   seniorName?: string;
-  seniorAge?: string | number;
   careNeeds?: string | string[];
   city?: string;
   clientName?: string;
@@ -742,7 +741,7 @@ export async function initializeMemoryFiles(
 
   const profileMd =
     `# Profile\n\n` +
-    `**Senior:** ${seniorName}${data.seniorAge ? `, age ${data.seniorAge}` : ""}\n` +
+    `**Senior:** ${seniorName}\n` +
     `**Primary contact:** ${clientName} (${relationship})\n` +
     `**Location:** ${data.city ?? "unknown"}\n` +
     `**Care needs:** ${careNeeds}\n`;

@@ -1609,7 +1609,6 @@ const handleInboundInner = traceable(
           user_type:          afterData.userType ?? "unknown",
           user_name:          (oData.firstName as string) ?? (oData.name as string) ?? "",
           senior_name:        (oData.seniorName as string) ?? "",
-          senior_age:         oData.age ?? null,
           senior_conditions:  oData.conditions ?? [],
           senior_care_needs:  oData.careNeeds ?? [],
           senior_city:        (oData.city as string) ?? "",

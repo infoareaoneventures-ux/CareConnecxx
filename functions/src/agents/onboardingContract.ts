@@ -107,7 +107,6 @@ export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   "startDate", "selectedDays",
   // Step 8/9 — who
   "relationship", "seniorName",
-  // age is optional — nice to have but not required to find a caregiver
   // Step 10 — emergency contact (at minimum a name + phone)
   "emergencyContactName", "emergencyContactPhone",
   // Step 11 — care needs
@@ -194,12 +193,9 @@ export function toServiceRadius(value: unknown): number | null {
 export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CLIENT_REQUIRED_FIELDS,
   // Additional wizard fields (optional but collected when offered)
-  // age was dropped from CLIENT_REQUIRED_FIELDS on purpose (commit c62fbaf,
-  // "age is optional") but that also removed it from ALLOWED_FIELDS as an
-  // unintended side effect, since ALLOWED = REQUIRED + this extras list —
-  // save_onboarding_field("age", ...) was silently rejected ever since even
-  // though onboardingDirective.ts still instructs the model to ask for it.
-  "age",
+  // age is deliberately NOT here (2026-10-17): the website no longer collects a
+  // care recipient's age anywhere (Care Plan, job-post wizard), so Evia neither
+  // asks for it nor saves it — a save_onboarding_field("age") is rejected.
   // timeOfDay is asked (wizard step 6) but not required — see CLIENT_REQUIRED_FIELDS.
   "timeOfDay",
   // `conditions` (diagnoses) is deliberately NOT here — medical scope is out
@@ -304,7 +300,6 @@ const CLIENT_FIELD_ALIASES: Record<string, string> = {
   hourlyrate: "rate", budget: "rate", payrate: "rate",
   start: "startDate", startingdate: "startDate",
   numberofcaregivers: "caregiversNeeded", caregivercount: "caregiversNeeded",
-  seniorage: "age", recipientage: "age",
   recipientname: "seniorName", carerecipientname: "seniorName", lovedonename: "seniorName",
   emailaddress: "email",
   homeaddress: "homeStreet", homestreetaddress: "homeStreet", homezip: "homeZipCode", homezipcode: "homeZipCode",
@@ -444,7 +439,6 @@ export function normalizeOnboardingFieldValue(fieldName: string, value: unknown)
 const NUMERIC_FIELD_RANGE: Record<string, [number, number]> = {
   daysPerWeek: [1, 7],
   hoursPerDay: [1, 24],
-  age:         [1, 120],
   // Matches the wizard's counter cap (ClientJobPostingWizard.tsx step 10).
   caregiversNeeded: [1, 4],
 };
@@ -468,7 +462,7 @@ export function coerceNumericOnboardingField(fieldName: string, value: unknown):
   return n >= range[0] && n <= range[1] ? n : null;
 }
 
-/** True when this field must be a number (daysPerWeek/hoursPerDay/age). */
+/** True when this field must be a number (daysPerWeek/hoursPerDay). */
 export function isNumericOnboardingField(fieldName: string): boolean {
   return fieldName in NUMERIC_FIELD_RANGE;
 }

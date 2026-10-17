@@ -133,9 +133,9 @@ export interface ClientJobPostingsDoc {
   // otherwise the recipient's own photo is set later via CarePlan's own
   // per-recipient upload (Hamse, 2026-08-23).
   careRecipientPhotoURL?: string;
-  careRecipientFirstName?: string; careRecipientLastName?: string; careRecipientAge?: string;
+  careRecipientFirstName?: string; careRecipientLastName?: string;
   adultsCount: number; caregiversNeeded: number;
-  additionalRecipients: Array<{ firstName: string; lastName: string; age?: string; relationship?: string }>;
+  additionalRecipients: Array<{ firstName: string; lastName: string; relationship?: string }>;
   relationship?: string;
   emergencyFirstName?: string; emergencyLastName?: string; emergencyPhone?: string; emergencyRelationship?: string;
   careNeeds: string[];
@@ -152,7 +152,6 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
   const seniorName   = (d.seniorName ?? "") as string;
   const { first: careRecipientFirstName, last: careRecipientLastName } = splitName(seniorName);
   const careNeeds    = (Array.isArray(d.careNeeds)  ? d.careNeeds  : []) as string[];
-  const seniorAge    = d.age as number | string | undefined;
 
   const extraRecipients = normalizeAdditionalRecipients(d.additionalRecipients);
   const additionalRecipients = extraRecipients.map((r) => {
@@ -160,7 +159,6 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     return {
       firstName: first, lastName: last,
       relationship: r.relationship,
-      ...(r.age !== undefined ? { age: String(r.age) } : {}),
     };
   });
 
@@ -190,7 +188,6 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     careRecipientPhotoURL: relationship === "myself" ? photoURL : undefined,
     careRecipientFirstName: careRecipientFirstName || undefined,
     careRecipientLastName: careRecipientLastName || undefined,
-    careRecipientAge: seniorAge !== undefined ? String(seniorAge) : undefined,
     adultsCount: 1 + extraRecipients.length,
     caregiversNeeded: (d.caregiversNeeded as number) || 1,
     additionalRecipients,
@@ -276,7 +273,7 @@ export function upsertCarePlanLocationPool(
 // ── senior_profiles/{uid} wizard-parity fields ───────────────────────────────
 // Exactly createJobPosting's profileUpdate (services/api.ts): careNeeds/needs/
 // scheduleNeeded/zipCode always; name/firstName/lastName/adultsCount/location
-// ("City, ST")/age/relationship only when present. No diagnoses or preference
+// ("City, ST")/relationship only when present. No diagnoses or preference
 // fields — the wizard has none.
 
 export interface SeniorProfileWizardFields {
@@ -289,7 +286,6 @@ export interface SeniorProfileWizardFields {
   lastName?: string;
   adultsCount?: number;
   location?: string;
-  age?: number;
   relationship?: string;
 }
 
@@ -303,7 +299,6 @@ export function buildSeniorProfileWizardFields(d: Record<string, unknown>): Seni
   const recipientName = [first, last].filter(Boolean).join(" ");
   const city  = (d.city  as string) || "";
   const state = (d.state as string) || "";
-  const age   = Number(d.age);
   const relationship = toWebsiteRelationship(d.relationship as string | undefined);
   const adultsCount = 1 + normalizeAdditionalRecipients(d.additionalRecipients).length;
   return {
@@ -316,7 +311,6 @@ export function buildSeniorProfileWizardFields(d: Record<string, unknown>): Seni
     ...(last ? { lastName: last } : {}),
     adultsCount,
     ...(city && state ? { location: `${city}, ${state}` } : {}),
-    ...(Number.isFinite(age) && age > 0 ? { age } : {}),
     ...(relationship ? { relationship } : {}),
   };
 }
@@ -365,12 +359,10 @@ export function mapJobPostingsDocToOnboardingData(
 
   const seniorName = joinName(d.careRecipientFirstName as string | undefined, d.careRecipientLastName as string | undefined);
   if (seniorName) out.seniorName = seniorName;
-  if (d.careRecipientAge) out.age = d.careRecipientAge;
   if (Array.isArray(d.additionalRecipients) && d.additionalRecipients.length) {
     out.additionalRecipients = (d.additionalRecipients as Array<Record<string, unknown>>).map((r) => ({
       name: joinName(r.firstName as string | undefined, r.lastName as string | undefined),
       relationship: r.relationship,
-      age: r.age,
     }));
   }
   if (d.relationship) out.relationship = d.relationship === "myself" ? "self" : d.relationship;
@@ -440,7 +432,7 @@ export function buildClientDraftMirror(uid: string, phone: string, d: Record<str
   if (d.daysFlexible !== undefined) out.daysFlexible = d.daysFlexible === true;
   take("selectedDays", has(d.selectedDays)); take("timeOfDay", has(d.timeOfDay));
   take("careRecipientPhotoURL", has(d.careRecipientPhotoURL));
-  take("careRecipientFirstName", has(d.seniorName)); take("careRecipientLastName", has(d.seniorName)); take("careRecipientAge", d.age !== undefined && d.age !== null && d.age !== "");
+  take("careRecipientFirstName", has(d.seniorName)); take("careRecipientLastName", has(d.seniorName));
   take("relationship", has(d.relationship)); take("additionalRecipients", has(d.additionalRecipients));
   if (has(d.additionalRecipients)) out.adultsCount = full.adultsCount;
   take("caregiversNeeded", has(d.caregiversNeeded));

@@ -289,7 +289,8 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     expect(r.success).toBe(true);
     expect(r.key).toBe("jane_doe");
     const jobDoc = hoisted.docState.get(`job_postings/${CLIENT}`);
-    expect(jobDoc).toMatchObject({ careRecipientFirstName: "Jane", careRecipientLastName: "Doe", relationship: "Parent", careRecipientAge: "78" });
+    expect(jobDoc).toMatchObject({ careRecipientFirstName: "Jane", careRecipientLastName: "Doe", relationship: "Parent" });
+    expect(jobDoc.careRecipientAge).toBeUndefined(); // age is never written (2026-10-17)
     const plan = hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.jane_doe;
     expect(plan.careNeeds).toEqual(["Meal Preparation", "Personal Care"]);
     expect(plan.careNeedDetails).toEqual({}); // sub-tasks left the page 2026-10-04 — a passed map is ignored
@@ -309,7 +310,7 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     expect(r.success).toBe(true);
     const jobDoc = hoisted.docState.get(`job_postings/${CLIENT}`);
     expect(jobDoc.careRecipientFirstName).toBe("Jane"); // untouched
-    expect(jobDoc.additionalRecipients).toContainEqual({ firstName: "Imran", lastName: "Mohammed", relationship: "Parent", age: "" });
+    expect(jobDoc.additionalRecipients).toContainEqual({ firstName: "Imran", lastName: "Mohammed", relationship: "Parent" });
     const cp = hoisted.docState.get(`carePlans/${CLIENT}`);
     expect(cp.recipientPlans.imran_mohammed.locations).toEqual([{ street: "4746 campbell ave", city: "San Jose", state: "CA", zipCode: "95130", lat: 1, lng: 2 }]);
     expect(cp.locationPool).toHaveLength(1);
@@ -340,7 +341,8 @@ describe("get_care_plan — the page as one read", () => {
     expect(r.success).toBe(true);
     expect(r.recipients.map((x: any) => [x.name, x.isPrimary])).toEqual([["Jane Doe", true], ["Imran Mohammed", false]]);
     const jane = r.recipients[0];
-    expect(jane).toMatchObject({ key: "jane_doe", relationship: "Parent", age: "78", locationLabel: "4746 campbell ave, San Jose, CA 95130", lifestyleSpecified: false });
+    expect(jane.age).toBeUndefined(); // a legacy careRecipientAge on the doc never reaches the page (2026-10-17)
+    expect(jane).toMatchObject({ key: "jane_doe", relationship: "Parent", locationLabel: "4746 campbell ave, San Jose, CA 95130", lifestyleSpecified: false });
     expect(jane.plan.careNeedDetails).toEqual({ "Meal Preparation": ["Breakfast"] });
     // Imran has no stored plan → the page's signup-data defaults.
     const imran = r.recipients[1];

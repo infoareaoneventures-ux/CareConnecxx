@@ -88,8 +88,8 @@ export const TEST_CASES: EvalCase[] = [
     id: "onb_client_11",
     category: "onboarding_client",
     input: "She's 82 years old",
-    expectedBehavior: "Records age",
-    mustNotContain: ["I cannot"],
+    expectedBehavior: "Does not ask for or record an age (not collected since 2026-10-17); moves on to the next question",
+    mustNotContain: ["I cannot", "how old"],
   },
   {
     id: "onb_client_12",
@@ -1073,9 +1073,9 @@ export const TEST_CASES: EvalCase[] = [
   {
     id: "corr_09",
     category: "correction",
-    input: "I made a mistake — she's 78, not 82",
-    expectedBehavior: "Updates age to 78",
-    mustContain: ["78"],
+    input: "I made a mistake — her name is Dorothy, not Doris",
+    expectedBehavior: "Updates the care recipient's name to Dorothy",
+    mustContain: ["Dorothy"],
   },
   {
     id: "corr_10",

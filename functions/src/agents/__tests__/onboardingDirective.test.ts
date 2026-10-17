@@ -77,7 +77,7 @@ describe("buildOnboardingDirective", () => {
 
   // 2026-08-24: age, emergencyContactRelationship, and daysFlexible had labels
   // but were never in the tracked list, so they had zero nudge to ever be asked.
-  it("nudges age, emergencyContactRelationship, and daysFlexible before finishing", () => {
+  it("nudges emergencyContactRelationship and daysFlexible before finishing — and never age (2026-10-17)", () => {
     const d = buildOnboardingDirective("client", {
       firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
       homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
@@ -90,7 +90,8 @@ describe("buildOnboardingDirective", () => {
       // age/emergencyContactRelationship/daysFlexible deliberately left unset
     });
     expect(d).toContain("not yet gotten a value for");
-    expect(d).toContain("their age");
+    expect(d).not.toContain("their age");
+    expect(d).toContain("Never ask anyone's age");
     expect(d).toContain("how the emergency contact is related");
     expect(d).toContain("whether their days are flexible");
   });

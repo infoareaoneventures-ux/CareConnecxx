@@ -11,7 +11,7 @@
 //   card    name · "Active booking" / "Past booking" · $rate/hr · the schedule's
 //           days · "Caring for: <recipient names>"
 //   buttons View Details = the booking's care details modal (per recipient:
-//           name, relationship · age, the family's note, Care Plan needs,
+//           name, relationship, the family's note, Care Plan needs,
 //           Lifestyle; then Emergency Contact); Message = the Inbox room with
 //           that family (send_client_message — the family's clientId from this list).
 //
@@ -123,14 +123,14 @@ export function resolveFamilyRef(session: Record<string, unknown>, ref: { number
   return list?.items.find((i) => i.number === n) ?? null;
 }
 
-/** The View Details modal: per recipient — name, relationship · age, the family's note, Care Plan needs, Lifestyle — then Emergency Contact. */
+/** The View Details modal: per recipient — name, relationship, the family's note, Care Plan needs, Lifestyle — then Emergency Contact. */
 export function familyDetailsText(name: string, booking: Doc | null): string {
   if (!booking) return `${name} — No details available.`;
   const lines = [`${name} — Care details`];
   const recipients = (Array.isArray(booking.careRecipients) ? booking.careRecipients : []) as Array<CareRecipient | string>;
   recipients.forEach((raw) => {
     const r = (typeof raw === "string" ? { name: raw } : raw) as CareRecipient & { firstName?: string };
-    const meta = [r.relationship, r.age ? `Age ${r.age}` : ""].filter(Boolean).join(" · ");
+    const meta = r.relationship || "";
     lines.push("", `${r.firstName || r.name}${meta ? ` — ${meta}` : ""}`);
     if (typeof r.notes === "string" && r.notes.trim()) lines.push(`"${r.notes.trim()}"`);
     if (r.careNeeds?.length) lines.push("Care Plan", ...r.careNeeds.map((n) => `• ${n}`));

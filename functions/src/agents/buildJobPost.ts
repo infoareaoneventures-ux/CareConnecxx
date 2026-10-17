@@ -129,7 +129,6 @@ export async function buildAndSaveJobPost(params: {
   const relationship  = rosterRelationship || ((onboardingData.relationship ?? "") as string);
   const city          = hasJobLocation ? ((jobData.city as string) ?? "") : ((onboardingData.city ?? "") as string);
   const zipCode       = hasJobLocation ? ((jobData.zipCode as string) ?? "") : ((onboardingData.zipCode ?? "") as string);
-  const seniorAge     = onboardingData.age as number | undefined;
 
   const careNeeds      = (jobData.jobCareNeeds     ?? []) as string[];
   const careNeedDetails: Record<string, string[]> = {}; // sub-tasks left the family screens 2026-10-04
@@ -206,18 +205,14 @@ export async function buildAndSaveJobPost(params: {
   // person showed up twice — once under each key — in any later recap or
   // pick list.
   const existingPlanKeys = Object.keys((cpSnap?.data()?.recipientPlans ?? {}) as Record<string, unknown>);
-  const seniorFirstName = (seniorName || "").trim().split(/\s+/)[0] || seniorName;
-  const seniorKeyRes = resolveRecipientKey(existingPlanKeys, seniorFirstName);
-  const seniorKey = seniorKeyRes.ok ? seniorKeyRes.key : recipientPlanKey(seniorFirstName);
 
   const recipientPlans: Record<string, unknown> = {};
-  for (const r of recipients.length ? recipients : [{ name: seniorName, relationship, age: seniorAge }]) {
+  for (const r of recipients.length ? recipients : [{ name: seniorName, relationship }]) {
     const firstName = (r.name || "").trim().split(/\s+/)[0] || r.name || "primary";
     const keyRes = resolveRecipientKey(existingPlanKeys, firstName);
     const key = keyRes.ok ? keyRes.key : recipientPlanKey(firstName);
     recipientPlans[key] = {
       name:         r.name || seniorName,
-      age:          r.age ?? (key === seniorKey ? seniorAge : undefined),
       relationship: r.relationship ?? "",
       careNeeds,
       // careNeedDetails stays in the shape (always {}) — the sub-task chips were

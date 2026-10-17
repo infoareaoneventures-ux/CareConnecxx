@@ -43,7 +43,7 @@ const WIZARD_JOB_POSTINGS_FIELDS = [
   // only lands on this recipient-facing field when relationship is "myself"
   // — see the dedicated describe block below.
   "careRecipientPhotoURL",
-  "careRecipientFirstName", "careRecipientLastName", "careRecipientAge",
+  "careRecipientFirstName", "careRecipientLastName", // careRecipientAge left the wizard 2026-10-17
   "adultsCount", "caregiversNeeded", "additionalRecipients",
   "relationship",
   "emergencyFirstName", "emergencyLastName", "emergencyPhone", "emergencyRelationship",
@@ -140,7 +140,7 @@ describe("clientJobPostingContract — parity with the web wizard's job_postings
   });
 
   describe("senior_profiles fields — createJobPosting's profileUpdate, field for field", () => {
-    it("splits the name, counts adults, builds 'City, ST' and carries zip/age/relationship; no diagnoses", () => {
+    it("splits the name, counts adults, builds 'City, ST' and carries zip/relationship (never age — 2026-10-17); no diagnoses", () => {
       const f = buildSeniorProfileWizardFields({
         seniorName: "Dorothy Anne Smith", city: "San Jose", state: "CA", zipCode: "95111", age: 82, relationship: "self",
         careNeeds: ["Companionship"], selectedDays: ["MON"],
@@ -148,9 +148,10 @@ describe("clientJobPostingContract — parity with the web wizard's job_postings
       }) as unknown as Record<string, unknown>;
       expect(f).toMatchObject({
         name: "Dorothy Anne Smith", firstName: "Dorothy", lastName: "Anne Smith", adultsCount: 2,
-        location: "San Jose, CA", zipCode: "95111", age: 82, relationship: "myself",
+        location: "San Jose, CA", zipCode: "95111", relationship: "myself",
         careNeeds: ["Companionship"], needs: ["Companionship"], scheduleNeeded: ["MON"],
       });
+      expect(f.age).toBeUndefined();
       expect(f).not.toHaveProperty("diagnoses");
     });
     it("omits location when city or state is missing (wizard writes it only with both)", () => {
@@ -256,8 +257,8 @@ describe("clientJobPostingContract — reverse mapping (site → Evia onboarding
     expect(back.timeOfDay).toBe("morning");
     expect(back.relationship).toBe("daughter");
     expect(back.seniorName).toBe("Dorothy Smith");
-    expect(back.age).toBe("82");
-    expect(back.additionalRecipients).toEqual([{ name: "Frank Smith", relationship: "father", age: "85" }]);
+    expect(back.age).toBeUndefined(); // a legacy careRecipientAge on the doc is not read back (2026-10-17)
+    expect(back.additionalRecipients).toEqual([{ name: "Frank Smith", relationship: "father" }]);
     expect(back.emergencyContactName).toBe("Jane Doe");
     expect(back.emergencyContactPhone).toBe("(555) 000-1111"); // the wizard's own stored shape round-trips
     expect(back.emergencyContactRelationship).toBe("granddaughter");

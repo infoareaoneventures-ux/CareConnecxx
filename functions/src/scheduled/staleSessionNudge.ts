@@ -105,7 +105,7 @@ const CLIENT_FIELD_QUESTIONS: Record<string, string> = {
 // The scripted family steps after collection (onboardingConversation.ts), same words.
 const CLIENT_STEP_QUESTIONS: Record<string, string> = {
   client_confirm_intake: "Does that all look right? Say yes and I'll show you who can help, or tell me what to fix.",
-  client_ask_needs:      "How old is your loved one, and what kind of help do they need?",
+  client_ask_needs:      "What kind of help does your loved one need day to day?",
   client_ask_schedule:   "How often do they need someone, and what times of day work best?",
   client_ask_senior:     "Who are you looking for care for? (Their name and your relationship — or just say it's for you)",
   client_ask_name:       "What's your first and last name?",

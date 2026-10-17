@@ -106,7 +106,7 @@ export const PostJobFlow: React.FC = () => {
 
           // Add additional recipients via arrayUnion (no overwrite)
           for (const r of data.careRecipients) {
-            const entry = { firstName: r.firstName, lastName: r.lastName || '', relationship: r.relationship || '', age: '' };
+            const entry = { firstName: r.firstName, lastName: r.lastName || '', relationship: r.relationship || '' };
             if (
               entry.firstName === existingData.careRecipientFirstName &&
               entry.lastName === (existingData.careRecipientLastName || '')

@@ -110,9 +110,10 @@ describe("the collapsed card", () => {
 });
 
 describe("View full details", () => {
-  it("care recipient with relationship · age, Care Plan with subtasks, Lifestyle sections and Yes/No rows, emergency contact, notes", () => {
+  it("care recipient with relationship (never age — 2026-10-17), Care Plan with subtasks, Lifestyle sections and Yes/No rows, emergency contact, notes", () => {
     const t = requestDetailsLines(req()).join("\n");
-    expect(t).toContain("Care Recipient\nMai Nguyen — Mother · Age 82");
+    expect(t).toContain("Care Recipient\nMai Nguyen — Mother\n");
+    expect(t).not.toContain("Age 82");
     // 2026-09-27: the family's per-recipient note, under the header like the page now shows it.
     expect(requestDetailsLines(req({ careRecipients: [{ name: "Mai", notes: "Anxious after 4 PM" }] })).join("\n")).toContain("Mai\nNotes: Anxious after 4 PM");
     expect(t).toContain("Care Plan\n• Mobility Assistance: Transfer Assist, Walking\n• Companionship");
@@ -142,7 +143,7 @@ describe("the list", () => {
     const reqs = [1, 2, 3].map((n) => req({ id: `br${n}`, clientName: `Family ${n}` }));
     const p1 = requestListText(reqs);
     expect(p1.text.startsWith("Booking requests:\n\n1. Family 1 · 4.8 client rating · Pending\n")).toBe(true);
-    expect(p1.text).toContain("$25/hr · Card (agreed rate)\n\nCare Recipient\nMai Nguyen — Mother · Age 82"); // the card, then what View full details shows
+    expect(p1.text).toContain("$25/hr · Card (agreed rate)\n\nCare Recipient\nMai Nguyen — Mother\n"); // the card, then what View full details shows
     expect(p1.text).toContain("Emergency Contact\nLinh Nguyen (Daughter) · (408) 555-0100");
     expect(p1.text).toContain("\n\n2. Family 2");
     expect(p1.text).not.toContain("3. Family 3");

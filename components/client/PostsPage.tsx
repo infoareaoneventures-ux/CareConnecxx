@@ -189,7 +189,7 @@ export const PostsPage: React.FC = () => {
   const [loadingCarePlan, setLoadingCarePlan] = useState(false);
   const [loadedPost, setLoadedPost] = useState<any>(null);
   const [loadedPlan, setLoadedPlan] = useState<{
-    recipients: Array<{ key: string; name: string; firstName: string; lastName: string; relationship: string; age: string; photoURL: string }>;
+    recipients: Array<{ key: string; name: string; firstName: string; lastName: string; relationship: string; photoURL: string }>;
     recipientPlans: Record<string, { careNeeds: string[]; careNeedDetails: Record<string, string[]>; locations: any[]; notes: string; lifestyle: any; tasks: any }>;
     emergencyContacts: Array<{ name: string; relation: string; relationship?: string; phone: string; isPrimary?: boolean }>;
     locationPool: any[];
@@ -719,7 +719,7 @@ export const PostsPage: React.FC = () => {
         const lastName = jp.careRecipientLastName || '';
         const key = getRecipientKey(firstName, lastName);
         seenRecipientKeys.add(key);
-        recipients.push({ key, firstName, lastName, name: `${firstName} ${lastName}`.trim(), relationship: jp.relationship || '', age: jp.careRecipientAge || '', photoURL: jp.careRecipientPhotoURL || '' });
+        recipients.push({ key, firstName, lastName, name: `${firstName} ${lastName}`.trim(), relationship: jp.relationship || '', photoURL: jp.careRecipientPhotoURL || '' });
       }
       (jp.additionalRecipients || []).forEach((r: any) => {
         const firstName = (r.firstName || '').trim();
@@ -728,7 +728,7 @@ export const PostsPage: React.FC = () => {
         const key = getRecipientKey(firstName, lastName);
         if (seenRecipientKeys.has(key)) return;
         seenRecipientKeys.add(key);
-        recipients.push({ key, firstName, lastName, name: `${firstName} ${lastName}`.trim(), relationship: r.relationship || '', age: r.age || '', photoURL: r.photoURL || '' });
+        recipients.push({ key, firstName, lastName, name: `${firstName} ${lastName}`.trim(), relationship: r.relationship || '', photoURL: r.photoURL || '' });
       });
 
       const recipientPlans = cp.recipientPlans || {};
@@ -924,7 +924,7 @@ export const PostsPage: React.FC = () => {
           const draft = bookingDraft.recipientDrafts[r.key];
           const plan = loadedPlan?.recipientPlans[r.key];
           return {
-            name: r.name, relationship: r.relationship, age: r.age,
+            name: r.name, relationship: r.relationship,
             photoURL: r.relationship?.toLowerCase() === 'myself' ? (clientPhotoURL || r.photoURL) : r.photoURL,
             careNeeds: draft?.careNeeds || plan?.careNeeds || [],
             careNeedDetails: draft?.careNeedDetails || plan?.careNeedDetails || {},
@@ -2199,7 +2199,6 @@ export const PostsPage: React.FC = () => {
                                   <p className="font-semibold text-slate-900 text-sm">{r.name}</p>
                                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                     {r.relationship && <span className="text-xs text-slate-500">{r.relationship}</span>}
-                                    {r.age && <span className="text-xs text-slate-400">· Age {r.age}</span>}
                                   </div>
                                   {/* Care needs for this recipient */}
                                   {(loadedPlan.recipientPlans[r.key]?.careNeeds || []).length > 0 && (
@@ -2255,7 +2254,7 @@ export const PostsPage: React.FC = () => {
                                       </div>
                                       <div>
                                         <p className="text-sm font-bold text-slate-800">{r.name}</p>
-                                        {(r.relationship || r.age) && <p className="text-xs text-slate-400">{[r.relationship, r.age ? `Age ${r.age}` : ''].filter(Boolean).join(' · ')}</p>}
+                                        {r.relationship && <p className="text-xs text-slate-400">{r.relationship}</p>}
                                       </div>
                                     </div>
 

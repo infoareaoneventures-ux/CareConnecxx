@@ -664,9 +664,8 @@ export async function absorbClientFields(text: string, existing: Record<string, 
       `{"firstName":"family member first name (the person texting, not the senior)",` +
       `"seniorName":"senior's first name (the FIRST care recipient if more than one)",` +
       `"relationship":"family relationship to senior (mother, father, etc.)",` +
-      `"additionalRecipients":[{"name":"...","relationship":"...","age":number}] — ` +
+      `"additionalRecipients":[{"name":"...","relationship":"..."}] — ` +
       `ONLY when care is for MORE THAN ONE person (e.g. "both mom and dad"); every person after the first goes here,` +
-      `"age":number (the FIRST care recipient's age),` +
       `"careNeeds":["short need phrase — the KIND of day-to-day help (bathing, meals, rides, medication reminders, company); never a diagnosis, and NEVER a frequency word like occasional/part-time/full-time — how often is not a care need"],` +
       `"city":"city name",` +
       `"zipCode":"5-digit US zip code",` +
@@ -1495,8 +1494,8 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
         audience: "family",
         context: `${knownName} just said they're looking for care for THEMSELVES. You ALREADY introduced yourself — ` +
           `never re-introduce. Speak to them directly ("you", never "your loved one" or third person). Warmly ` +
-          `acknowledge them BY NAME and ask how old they are and what kind of help would make day-to-day easier.`,
-        fallback: `Thanks, ${knownName} — I'd love to help you directly. How old are you, and what would you like a hand with day to day?`,
+          `acknowledge them BY NAME and ask what kind of help would make day-to-day easier (never their age).`,
+        fallback: `Thanks, ${knownName} — I'd love to help you directly. What would you like a hand with day to day?`,
         maxTokens: 90,
         emotionalDirective,
       });
@@ -1878,7 +1877,6 @@ const CLIENT_STEPS = buildClientSteps({
 // the paywall so a parse error can't slip through unnoticed.
 function buildIntakeSummary(d: Record<string, unknown>): string {
   const seniorName = (d.seniorName as string) || "your loved one";
-  const age        = d.age ? `${d.age}` : "";
   // Care needs only — diagnoses/conditions are never collected (non-medical scope).
   const conditions = Array.isArray(d.careNeeds) && (d.careNeeds as string[]).length
     ? describeCareNeeds(d.careNeeds as string[])
@@ -1916,11 +1914,8 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   // person at the confirmation gate.
   const extraRecipients = normalizeAdditionalRecipients(d.additionalRecipients);
   const recipientLabel = extraRecipients.length
-    ? [
-        `${seniorName}${age ? ` (${age})` : ""}`,
-        ...extraRecipients.map((r) => (r.age ? `${r.name} (${r.age})` : r.name)),
-      ].join(" and ")
-    : `${seniorName}${age || conditions ? ` (${[age, conditions].filter(Boolean).join(", ")})` : ""}`;
+    ? [seniorName, ...extraRecipients.map((r) => r.name)].join(" and ")
+    : `${seniorName}${conditions ? ` (${conditions})` : ""}`;
   pieces.push(`care for ${recipientLabel}${extraRecipients.length && conditions ? ` — ${conditions}` : ""}`);
   if (loc) pieces.push(`in ${loc}`);
   if (sched) pieces.push(sched);
@@ -2141,7 +2136,6 @@ export async function persistClientCareRecords(
   const geoPrecision = (d.geoPrecision === "street" || d.geoPrecision === "zip" || d.geoPrecision === "city")
     ? d.geoPrecision as GeoPrecision : undefined;
 
-  const seniorName   = (d.seniorName   ?? "") as string;
   const city         = (d.city         ?? "") as string;
   const zipCode      = (d.zipCode      ?? "") as string;
   const street       = (d.street       ?? "") as string;
@@ -2163,7 +2157,6 @@ export async function persistClientCareRecords(
   // The job description is NOT copied into the care plan's Notes (founder, 2026-10-09): it is the public
   // post's text; care-plan Notes are the family's private per-person field, added later on the Care Plan
   // page or through update_care_plan, and carried onto visits from there.
-  const seniorAge    = d.age as number | undefined;
   // Home address (account holder) — may differ from care address
   const homeStreet   = (d.homeStreet  as string | undefined) || street;
   const homeCity     = (d.homeCity    as string | undefined) || city;
@@ -2184,7 +2177,6 @@ export async function persistClientCareRecords(
   for (const r of recipients) {
     recipientPlans[recipientPlanKeyForFullName(r.name)] = {
       name:         r.name,
-      age:          r.age ?? (recipientPlanKeyForFullName(r.name) === recipientPlanKeyForFullName(seniorName) ? seniorAge : undefined),
       relationship: r.relationship ?? "",
       careNeeds,
       careNeedDetails,
@@ -2323,7 +2315,6 @@ export async function persistClientCareRecords(
         merged.push({
           firstName: jpWrite.careRecipientFirstName, lastName: jpWrite.careRecipientLastName ?? "",
           relationship: jpWrite.relationship ?? "",
-          ...(jpWrite.careRecipientAge !== undefined ? { age: jpWrite.careRecipientAge } : {}),
         });
         have.add(smsPrimaryKey);
       }
@@ -4097,7 +4088,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           d.seniorName as string | undefined,
           ...normalizeAdditionalRecipients(d.additionalRecipients).map((r) => r.name),
         ].filter(Boolean).join(" and ") || undefined,
-        seniorAge:    d.age          as string | undefined,
         careNeeds:    d.careNeeds    as string | string[] | undefined,
         city:         d.city         as string | undefined,
         clientName:   d.firstName    as string | undefined,
@@ -4115,7 +4105,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         phone,
         firstName:   (d.firstName    ?? "") as string,
         seniorName:  (d.seniorName   ?? "") as string,
-        seniorAge:   d.age ? Number(d.age) : undefined,
         careNeeds:   Array.isArray(d.careNeeds)  ? d.careNeeds  as string[] : undefined,
         city:        d.city         as string | undefined,
         relationship: d.relationship as string | undefined,

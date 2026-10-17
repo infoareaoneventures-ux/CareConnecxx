@@ -106,7 +106,7 @@ const sameLoc = (a: Partial<LocationEntry>, b: Partial<LocationEntry>) =>
 
 export interface CarePlanRecipient {
   key: string; firstName: string; lastName: string; name: string;
-  relationship: string; age: string; photoURL: string | null; isPrimary: boolean;
+  relationship: string; photoURL: string | null; isPrimary: boolean;
   plan: RecipientPlanData;
   locationLabel: string;
   lifestyleSpecified: boolean;
@@ -162,14 +162,14 @@ async function load(clientId: string): Promise<LoadedPage> {
   if (pFirst) {
     const key = recipientPlanKey(pFirst, pLast);
     seen.add(key);
-    list.push({ key, firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(" ") || "Primary Recipient", relationship: String(wizard.relationship ?? ""), age: String(wizard.careRecipientAge ?? ""), photoURL: (wizard.careRecipientPhotoURL as string | undefined) ?? null, isPrimary: true });
+    list.push({ key, firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(" ") || "Primary Recipient", relationship: String(wizard.relationship ?? ""), photoURL: (wizard.careRecipientPhotoURL as string | undefined) ?? null, isPrimary: true });
     for (const r of (wizard.additionalRecipients as Array<Record<string, unknown>> | undefined) ?? []) {
       const rFirst = String(r.firstName ?? "").trim(); const rLast = String(r.lastName ?? "").trim();
       if (!rFirst) continue;
       const rKey = recipientPlanKey(rFirst, rLast);
       if (seen.has(rKey)) continue;
       seen.add(rKey);
-      list.push({ key: rKey, firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(" "), relationship: String(r.relationship ?? ""), age: String(r.age ?? ""), photoURL: (r.photoURL as string | undefined) ?? null, isPrimary: false });
+      list.push({ key: rKey, firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(" "), relationship: String(r.relationship ?? ""), photoURL: (r.photoURL as string | undefined) ?? null, isPrimary: false });
     }
     // Orphaned plans (a plan with no roster row that wasn't deliberately deleted) still show.
     const deletedKeys = new Set(((wizard.deletedRecipients as Array<Record<string, unknown>> | undefined) ?? []).map((d) => recipientPlanKey(String(d.firstName ?? "").trim(), String(d.lastName ?? "").trim())));
@@ -182,7 +182,7 @@ async function load(clientId: string): Promise<LoadedPage> {
       const lastName = storedName ? storedName.split(" ").slice(1).join(" ") : (lastFromKey === "noname" ? "" : lastFromKey.replace(/\b\w/g, (c) => c.toUpperCase()));
       if (!firstName) continue;
       seen.add(key);
-      list.push({ key, firstName, lastName, name: [firstName, lastName].filter(Boolean).join(" "), relationship: typeof (p as Record<string, unknown>).relationship === "string" ? String((p as Record<string, unknown>).relationship) : "", age: typeof (p as Record<string, unknown>).age === "string" ? String((p as Record<string, unknown>).age) : "", photoURL: null, isPrimary: false });
+      list.push({ key, firstName, lastName, name: [firstName, lastName].filter(Boolean).join(" "), relationship: typeof (p as Record<string, unknown>).relationship === "string" ? String((p as Record<string, unknown>).relationship) : "", photoURL: null, isPrimary: false });
     }
   }
 
@@ -309,7 +309,7 @@ export async function setRecipientLocation(
 
 // ── saveNewRecipient ────────────────────────────────────────────────────────
 export interface NewRecipientInput {
-  firstName: string; lastName?: string; relationship: string; age?: string | number;
+  firstName: string; lastName?: string; relationship: string;
   careNeeds?: string[]; notes?: string;
   location: Partial<LocationEntry>;
 }
@@ -330,11 +330,11 @@ export async function addRecipient(clientId: string, input: NewRecipientInput): 
   }
   if (!input.location?.street?.trim()) return { ok: false, message: "Please select or enter a care location with a street address" };
 
-  const entry = { firstName, lastName, relationship, age: String(input.age ?? "").trim() };
+  const entry = { firstName, lastName, relationship };
   const jpRef = db.collection("job_postings").doc(clientId);
   const isFirstRecipient = !page.wizard.careRecipientFirstName;
   if (isFirstRecipient) {
-    await jpRef.set({ careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, careRecipientAge: entry.age }, { merge: true });
+    await jpRef.set({ careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship }, { merge: true });
   } else {
     await jpRef.set({ additionalRecipients: FV.arrayUnion(entry) }, { merge: true });
   }
@@ -380,7 +380,7 @@ export async function removeRecipient(clientId: string, firstName: string): Prom
   if (matches.length > 1) return { ok: false, code: "INVALID_INPUT", message: `More than one care recipient named "${firstName}" — this needs to be done on the website.` };
   if (page.recipients.length === 1) return { ok: false, code: "INVALID_INPUT", message: "Can't remove the only care recipient on the household." };
   const r = matches[0];
-  const archived = { firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age || "", deletedAt: new Date().toISOString() };
+  const archived = { firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, deletedAt: new Date().toISOString() };
 
   // Preserve the deleted recipient's locations in the shared pool (the page does).
   const recipientLocs = (page.rawPlans[r.key]?.locations ?? []).filter((l) => l.street || l.city);
@@ -396,7 +396,7 @@ export async function removeRecipient(clientId: string, firstName: string): Prom
     const [next, ...remaining] = additionals;
     if (next) {
       await jpRef.update({
-        careRecipientFirstName: next.firstName, careRecipientLastName: next.lastName ?? "", relationship: next.relationship ?? "", careRecipientAge: next.age ?? "",
+        careRecipientFirstName: next.firstName, careRecipientLastName: next.lastName ?? "", relationship: next.relationship ?? "", careRecipientAge: FV.delete(),
         additionalRecipients: remaining, deletedRecipients: FV.arrayUnion(archived),
       });
     } else {

@@ -1220,7 +1220,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               Let's get specific! What else should care providers know about this job?
             </h2>
             <textarea
-              placeholder="Describe any details a care provider should know. Include job responsibilities such as household tasks, personal care, or transportation assistance. For your own privacy and security, please do not include contact information above."
               value={form.jobDescription}
               onChange={e => update('jobDescription', e.target.value.slice(0, 2500))}
               rows={4}

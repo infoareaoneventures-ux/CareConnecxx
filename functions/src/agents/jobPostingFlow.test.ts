@@ -340,7 +340,8 @@ describe("handleJpAskDescription — medication instructions never reach the pos
     expect(merged).toBeUndefined();
     const sent = String(sendMessage.mock.calls.at(-1)?.[1]);
     expect(sent).toContain("medication instructions can't be saved here");
-    expect(sent).toContain("describe a typical care day");
+    expect(sent).toContain("What else should care providers know about this job?"); // the site's Details heading, verbatim (2026-10-17)
+    expect(sent).toContain("Care providers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.");
   });
 });
 

@@ -256,10 +256,7 @@ describe('Evia ↔ Web collection contract', () => {
     );
 
     it('uid-keyed parity docs are written uid-keyed by Evia (no .add() drift)', () => {
-        // clientIntakes/{uid}: the onboarding write must use .doc(uid).set, with
-        // .add() allowed only as the no-uid fallback. Cheap heuristic: the
-        // uid-keyed write must exist.
-        expect(backendSource).toMatch(/collection\(["']clientIntakes["']\)\s*\.doc\(/);
+        // clientIntakes is no longer written by anything (legacy AI-matching pipeline retired 2026-10-17).
         // caregivers/{uid}: finalization keys by auth uid
         expect(backendSource).toMatch(/collection\(["']caregivers["']\)\s*\.doc\(authUid\)/);
         // senior_profiles/{uid}: Evia parity write exists

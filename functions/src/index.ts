@@ -87,15 +87,6 @@ export * from './stripeConnectWebhook';
 
 // Appointment lifecycle: mark `completed` when scheduled end passes
 
-// Export Care Coordinator Matching Functions
-export * from './matching';
-
-// Export AI Matching Function
-export * from './aiMatching';
-
-// Export Semantic AI Matching Triggers (background Gemini embeddings)
-export * from './triggers/aiMatchTriggers';
-
 // Export Job Application Triggers (maintains JobPost.applicantCount)
 export * from './triggers/jobApplicationTriggers';
 
@@ -211,9 +202,6 @@ export { onCaregiverAccountChange } from './triggers/caregiverAccountEvents';
 // Family twin (2026-10-04): identity verified / reset, membership revoked / active again → bell + text once.
 export { onClientAccountChange } from './triggers/clientAccountEvents';
 
-// CLIENT INTAKE GEOCODING — writes lat/lng to users/{uid} when clientIntakes is saved
-export { geocodeClientIntake } from './triggers/clientIntakeGeocode';
-
 // CAREGIVER GEOCODING — re-geocodes lat/lng server-side when address fields change
 export { geocodeCaregiverDoc } from './triggers/caregiverGeocode';
 
@@ -245,17 +233,6 @@ export { processResetAccountQueue } from './triggers/resetAccountQueue';
 // Flat membership (2026-09-25): Transportation added after the criminal check
 // cleared → MVR-only Checkr check, no charge (replaces the MVR add-on checkout).
 export { startMvrOnTransportationAdded } from './triggers/transportationMvr';
-
-// MATCH PATTERNS — U7 (plan 2026-07-18-001, R36/KTD14): hired/rejected
-// aggregates are restricted to funnel/offline analytics and may not feed
-// frontend ranking prompts. The callable keeps its shape (frontend is
-// fail-soft on empty patterns) but intentionally returns no outcome data.
-export const getMatchPatterns = functions.https.onCall(async (_data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
-  }
-  return { patterns: "" };
-});
 
 // JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)
 

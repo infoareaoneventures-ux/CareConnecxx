@@ -32,7 +32,6 @@ const KNOWN_OFFENDERS = new Set<string>([
   "components/Schedule.tsx",
   "components/admin/AdminClientManager.tsx",
   "components/admin/AdminMessages.tsx",
-  "components/admin/AssignmentManager.tsx",
   "components/caregiver/CaregiverBookingsPage.tsx",
   "components/caregiver/CaregiverCalendarPage.tsx",
   "components/caregiver/CaregiverCareRequestsCard.tsx",

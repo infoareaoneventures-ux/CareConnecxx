@@ -15,7 +15,6 @@ import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
 import { nearestDistanceMiles } from '../hooks/useNearbyCaregiversWithScores';
 import firebase from 'firebase/compat/app';
-import { AIMatchScore } from '../services/aiMatchingService';
 import { dbService } from '../services/api';
 import { logMatchSignal } from '../services/matchFeedback';
 import { ClientNavigation } from './client/ClientNavigation';
@@ -94,7 +93,7 @@ function formatLastActive(iso?: string): string {
 export default function FindCaregivers() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [caregivers, setCaregivers] = useState<(Caregiver & { matchScore?: AIMatchScore })[]>([]);
+  const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [clientIntakeData, setClientIntakeData] = useState<any>(null);
@@ -103,8 +102,8 @@ export default function FindCaregivers() {
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(searchParams.get('tab') === 'favorites');
   const { gate, Modals: GateModals } = useAccessGates();
   const { blockedIds } = useCareConnex();
-  const [viewingCaregiver, setViewingCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
-  const [interviewCaregiver, setInterviewCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
+  const [viewingCaregiver, setViewingCaregiver] = useState<Caregiver | null>(null);
+  const [interviewCaregiver, setInterviewCaregiver] = useState<Caregiver | null>(null);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
   const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
@@ -311,10 +310,6 @@ export default function FindCaregivers() {
       if (!auth || !db) return;
       const fdb = db;
       const user = auth.currentUser;
-      const precomputedData = user ? await dbService.getClientMatches(user.uid) : null;
-      const precomputedMatches = precomputedData?.topMatches || [];
-      const matchMap = new Map(precomputedMatches.map((m) => [m.caregiverId, m]));
-
       // Discover caregivers from the `caregivers` collection ONLY. The old
       // parallel `users` query (role==caregiver) is gone: it exposed the whole
       // user directory to any authed client (firestore.rules users list was
@@ -382,27 +377,7 @@ export default function FindCaregivers() {
 
       caregiversSnap?.forEach(pushDoc);
 
-      let caregiversWithScores: (Caregiver & { matchScore?: AIMatchScore })[] = caregiverList;
-
-      if (matchMap.size > 0) {
-        caregiversWithScores = caregiverList.map((cg) => {
-          const pre = matchMap.get(cg.id);
-          if (!pre) return cg;
-          const matchScore: AIMatchScore = {
-            caregiverId: cg.id,
-            caregiverName: `${cg.firstName} ${cg.lastName}`.trim(),
-            overallScore: pre.score,
-            reasoning: pre.reasons,
-            redFlags: pre.redFlags || [],
-            confidence: pre.confidence,
-            breakdown: { ruleBasedScore: pre.score, predictiveScore: pre.score },
-            factors: { distance: cg.distance ?? 0, skillsMatch: pre.score, availability: 1, experience: cg.experience || 0, rating: cg.rating, retention: 0 },
-          } as AIMatchScore;
-          return { ...cg, matchScore };
-        });
-      }
-
-      setCaregivers(caregiversWithScores);
+      setCaregivers(caregiverList);
     } catch (error) {
       console.error('Error fetching caregivers:', error);
     }
@@ -463,7 +438,7 @@ export default function FindCaregivers() {
     gate('message', caregiverName, () => openChat(caregiverId, caregiverName));
   };
 
-  const handleRequestInterview = (cg: Caregiver & { matchScore?: AIMatchScore }) => {
+  const handleRequestInterview = (cg: Caregiver) => {
     const name = `${cg.firstName} ${cg.lastName}`.trim();
     gate('interview', name, () => setInterviewCaregiver(cg));
   };
@@ -916,7 +891,7 @@ export default function FindCaregivers() {
 
 // ─── Caregiver Card ───────────────────────────────────────────
 interface CaregiverCardProps {
-  caregiver: Caregiver & { matchScore?: AIMatchScore };
+  caregiver: Caregiver;
   isFavorite: boolean;
   isBestMatch?: boolean;
   isBooked?: boolean;

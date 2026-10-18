@@ -1088,18 +1088,20 @@ async function handleJpAskRate(
   // parse the answer) is gone; removed from JP_STEP_ORDER too.
   await mergeJobData(phone, { jobHourlyRate, jobPaymentMethod: "card" });
   await updateJobStep(phone, "jp_ask_description");
-  const name = await recipientsDisplayName(phone, session);
   await sendMessage(chatId,
-    `${rateLabel} — sounds good! Last question: can you briefly describe a typical care day for ${name}?\n\n` +
-    "A sentence or two is great. Care Providers browsing jobs can read this, so leave out medical details, addresses, and anything private."
+    // The site's Details box, word for word (2026-10-17): its heading is the question, the one line under it is the warning.
+    `${rateLabel} — sounds good! Last question: what else should care providers know about this job?\n\n` +
+    `A sentence or two is great. ${JOB_DESCRIPTION_PUBLIC_LINE}`
   );
 }
+
+// The line under the site's job-description box (Step5Describe.tsx / ClientJobPostingWizard.tsx), verbatim.
+const JOB_DESCRIPTION_PUBLIC_LINE = "Care providers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.";
 
 async function handleJpAskDescription(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  const name = await recipientsDisplayName(phone, session);
-  const REASK = `Can you describe a typical care day for ${name}? A sentence or two is great. Care Providers browsing jobs can read this, so leave out medical details, addresses, and anything private.`;
+  const REASK = `What else should care providers know about this job? A sentence or two is great. ${JOB_DESCRIPTION_PUBLIC_LINE}`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);

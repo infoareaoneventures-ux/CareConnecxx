@@ -797,55 +797,6 @@ service cloud.firestore {
 
     
     // ==========================================
-    // MATCH ASSIGNMENTS (Care Coordinator System)
-    // ==========================================
-    match /match_assignments/{assignmentId} {
-      // Docs carry clientId/seniorId/careNeeds (PHI) — read is the owning
-      // client or admin, never the whole authed userbase.
-      allow read: if isAdmin() || (
-        isAuthenticated() && resource.data.clientId == request.auth.uid
-      );
-      allow create: if isAdmin();
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-    
-    // ==========================================
-    // APPROVED MATCHES (Subcollection under clients)
-    // ==========================================
-    match /users/{userId}/approved_matches/{matchId} {
-      // Client can read their own approved matches
-      // Coordinators and admins can read/write
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAdmin();
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-    
-    // ==========================================
-    // MATCH OUTCOMES (AI matching learning loop)
-    // ==========================================
-    match /match_outcomes/{outcomeId} {
-      // Analytics rows written best-effort from the client matching flow
-      // (services/api.ts recordMatchOutcome); read by coordinator/admin
-      // dashboards. Backend readers use the admin SDK. World-open
-      // create/update let anyone pollute the AI matching learning loop —
-      // create is now bound to the caller's own clientId, mutation is
-      // admin-only.
-      allow read: if isAdmin() || (
-        isAuthenticated() && (
-          resource.data.clientId == request.auth.uid ||
-          resource.data.coordinatorId == request.auth.uid
-        )
-      );
-      allow create: if isAdmin() || (
-        isAuthenticated() && request.resource.data.clientId == request.auth.uid
-      );
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-
-    // ==========================================
     // SHIFTS (GPS Clock In/Out)
     // ==========================================
     match /shifts/{shiftId} {
@@ -1001,17 +952,6 @@ service cloud.firestore {
     match /caregiver_booked_slots/{caregiverId} {
       allow read: if isAuthenticated();
       allow write: if false; // Cloud Functions only (admin SDK)
-    }
-
-    // ==========================================
-    // CLIENT MATCHES (AI-generated, background)
-    // ==========================================
-    match /clientMatches/{clientId} {
-      // Client can read their own precomputed matches
-      // Admins can read all for coordinator dashboard
-      allow read: if isOwner(clientId) || isAdmin();
-      // Only Cloud Functions (admin SDK) write
-      allow write: if false;
     }
 
     // ==========================================

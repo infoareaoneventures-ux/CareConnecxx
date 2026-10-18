@@ -1,5 +1,4 @@
 import * as admin from "firebase-admin";
-import { buildWebJobPostDoc } from "../agents/jobPostContract";
 
 // Family-side job_posts writers only (2026-09-27). Everything caregiver-facing
 // that used to live here — the new-job fan-out to nearby caregivers
@@ -11,75 +10,6 @@ import { buildWebJobPostDoc } from "../agents/jobPostContract";
 // (browse_job_board / get_job_details / start_apply_flow in mcp/server.ts).
 
 const db = admin.firestore();
-
-// ── createJobPost ─────────────────────────────────────────────────────────────
-
-export async function createJobPost(
-  intakeId: string,
-  intakeData: any,
-  clientId: string
-): Promise<void> {
-  try {
-    let lat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat ?? null;
-    let lng = intakeData.lng ?? intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng ?? null;
-    let geoPrecision: "street" | "zip" | "city" | null =
-      (intakeData.geoPrecision === "street" || intakeData.geoPrecision === "zip" || intakeData.geoPrecision === "city") ? intakeData.geoPrecision : null;
-    const city = intakeData.city ?? intakeData.location?.city ?? undefined;
-    const careTypes: string[] = intakeData.careTypes ?? [];
-
-    // Geocode fallback (parity with buildAndSaveJobPost): an intake with only a
-    // city/zip used to produce a coordless job here — radius notifications dead.
-    // One geocoder (utils/geocode.ts geocodeAddress): street first when the
-    // intake carries one, else ZIP, else city — marked on the post.
-    if (lat == null || lng == null) {
-      const { geocodeAddress } = await import("../utils/geocode");
-      const point = await geocodeAddress({
-        street: (intakeData.streetAddress ?? intakeData.street ?? intakeData.location?.street) as string | undefined,
-        city: city as string | undefined,
-        zipCode: (intakeData.zipCode ?? intakeData.location?.zipCode) as string | undefined,
-        state: (intakeData.state ?? intakeData.location?.state) as string | undefined,
-      }).catch(() => null);
-      if (point) { lat = point.lat; lng = point.lng; geoPrecision = point.geoPrecision; }
-    }
-
-    // Web JobPost contract via the shared builder — the caregiver Job Board
-    // renders title/location-string/rate/date; the old hand-rolled shape here
-    // (summary + location OBJECT + Timestamp createdAt) rendered blank and
-    // could crash the board's JSX. Merge-write: Evia's post-payment
-    // buildAndSaveJobPost targets the same job_posts/{uid} doc.
-    const recipientFirst = (intakeData.recipientFirstName ?? intakeData.recipientName ?? "") as string;
-    const daysPerWeek    = Number(intakeData.daysPerWeek ?? 0);
-    const timeOfDay      = typeof intakeData.timeOfDay === "string" && intakeData.timeOfDay
-      ? [intakeData.timeOfDay as string]
-      : (Array.isArray(intakeData.timeOfDay) ? intakeData.timeOfDay as string[] : []);
-    await db.collection("job_posts").doc(intakeId).set(buildWebJobPostDoc({
-      clientId,
-      source:      "intake_trigger",
-      title:       `Care for ${recipientFirst.split(" ")[0] || "a Loved One"}`,
-      clientName:  ((intakeData.contactName ?? intakeData.firstName ?? "") as string) || undefined,
-      careTypes,
-      startDate:   (intakeData.startDate ?? undefined) as string | undefined,
-      frequency:   daysPerWeek >= 5 ? "full_time" : daysPerWeek >= 3 ? "part_time" : daysPerWeek > 0 ? "occasional" : undefined,
-      daysPerWeek,
-      timeOfDay,
-      hourlyRate:  Number(intakeData.budgetMax ?? 0) || Number(intakeData.budgetMin ?? 0) || "flexible",
-      city,
-      zipCode:     (intakeData.zipCode ?? undefined) as string | undefined,
-      lat,
-      lng,
-      geoPrecision,
-      recipientsCount: Number(intakeData.recipientsCount ?? 0) || undefined,
-      phone:       (intakeData.phone ?? undefined) as string | undefined,
-      intakeId,
-    }), { merge: true });
-
-    if (!lat || !lng) {
-      console.warn(`[createJobPost] Intake ${intakeId} has no coordinates — caregivers will not be notified`);
-    }
-  } catch (err) {
-    console.error("[createJobPost] failed:", err);
-  }
-}
 
 // ── closeJobPost ──────────────────────────────────────────────────────────────
 

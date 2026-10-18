@@ -2,16 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard, Calendar, DollarSign,
   ChevronLeft, AlertCircle, MessageSquare, Search,
-  FileText, TrendingUp, UserCheck, X, HeartHandshake,
+  FileText, TrendingUp, UserCheck, X,
   Heart, Users, Phone, Filter, Download, Shield,
-  Star, ClipboardList, BookOpen, ShieldCheck, BellRing, Sparkles, Flag,
+  Star, BookOpen, ShieldCheck, BellRing, Sparkles, Flag,
 } from 'lucide-react';
 import { BloomMark } from './ui/BloomMark';
 import { AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
 import { dbService } from '../services/api';
 import { AdminShiftHoursMediation } from './payroll/AdminShiftHoursMediation';
-import { MatchingDashboard } from './admin/MatchingDashboard';
-import { AssignmentManager } from './admin/AssignmentManager';
 import { InvoicingTab } from './admin/InvoicingTab';
 import { AdminMessages } from './admin/AdminMessages';
 import { AdminClientManager } from './admin/AdminClientManager';
@@ -34,7 +32,7 @@ interface AdminViewProps {
 
 type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'team' | 'coordinators'
-  | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
+  | 'appointments' | 'reviews' | 'intakes'
   | 'finance' | 'disputes' | 'messages' | 'blog' | 'audit'
   | 'cara_control' | 'alerts' | 'reports' | 'waitlist';
 
@@ -191,8 +189,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         { id: 'reviews' as TabId, label: 'Reviews', icon: Star },
         { id: 'intakes' as TabId, label: 'Intake Leads', icon: FileText, badge: pendingLeadsCount },
         { id: 'waitlist' as TabId, label: 'Waitlist', icon: Phone },
-        { id: 'matching' as TabId, label: 'Matching', icon: HeartHandshake },
-        { id: 'assignments' as TabId, label: 'Assignments', icon: ClipboardList },
       ],
     },
     {
@@ -229,7 +225,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'team', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'cara_control', 'reports'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'team', 'coordinators', 'appointments', 'reviews', 'disputes', 'messages', 'blog', 'cara_control', 'reports'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -320,8 +316,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'coordinators' && <CoordinatorManagement onShowToast={(msg, type) => showToast(msg)} />}
             {activeTab === 'appointments' && <AdminAppointments />}
             {activeTab === 'reviews'      && <AdminReviews />}
-            {activeTab === 'matching'     && <MatchingDashboard coordinatorId="admin" />}
-            {activeTab === 'assignments'  && <AssignmentManager />}
             {activeTab === 'disputes'     && <AdminShiftHoursMediation />}
             {activeTab === 'messages'     && <AdminMessages />}
             {activeTab === 'blog'         && <AdminBlogManager />}

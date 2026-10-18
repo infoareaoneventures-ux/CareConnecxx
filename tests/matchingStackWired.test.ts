@@ -47,9 +47,10 @@ describe("matching stack is wired (not dead code)", () => {
     }
   });
 
-  it("matchService and aiMatchingService each have real consumers", () => {
+  it("matchService has real consumers; aiMatchingService stays deleted (legacy AI-matching pipeline retired 2026-10-17)", () => {
     expect(importsOf("matchService").length).toBeGreaterThan(0);
-    expect(importsOf("aiMatchingService").length).toBeGreaterThan(0);
+    expect(fs.existsSync(path.join(ROOT, "services/aiMatchingService.ts"))).toBe(false);
+    expect(importsOf("aiMatchingService").length).toBe(0);
   });
 
   it("dbService.getMatches resolves to a real matchingEngine module", () => {

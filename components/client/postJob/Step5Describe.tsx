@@ -79,7 +79,6 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
           <textarea
             value={data.description}
             onChange={e => onChange({ description: e.target.value })}
-            placeholder="Describe any details a care provider should know. Include job responsibilities such as household tasks, personal care, or transportation assistance. For your own privacy and security, please do not include contact information above."
             rows={8}
             className="w-full px-4 py-3 rounded-xl border-2 border-slate-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100 focus:outline-none resize-none"
           />

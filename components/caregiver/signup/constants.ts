@@ -20,6 +20,96 @@ export const SERVICE_DISPLAY_LABEL: Record<string, string> = {
 };
 export const serviceLabel = (name: string): string => SERVICE_DISPLAY_LABEL[name] ?? name;
 
+// ── Care kinds (child care, 2026-10-18) ────────────────────────────────────
+// ONE new fact on both doors: who the care is for. It lives on each care
+// provider profile (`careKinds`, one or both) and on the family's household
+// record (`job_postings/{uid}.careKinds`); a job post carries the kinds its
+// ticked services imply (`job_posts.careKinds`). A MISSING field means
+// ['senior'] everywhere — no backfill. Mirrored byte-for-byte in
+// functions/src/agents/caregiverServiceLabels.ts (parity test).
+export const CARE_KINDS = ['senior', 'child'] as const;
+export type CareKind = (typeof CARE_KINDS)[number];
+export const CARE_KIND_LABEL: Record<CareKind, string> = { senior: 'Senior care', child: 'Child care' };
+export const DEFAULT_CARE_KINDS: readonly CareKind[] = ['senior'];
+
+// The child-care eight (founder, 2026-10-18): plain names, nothing underneath,
+// no age in a name (the age-range chips carry that). Transportation keeps the
+// senior list's exact name on purpose — ticked once, it counts for both kinds
+// and the driving-record rule carries over unchanged.
+export const CHILD_SERVICES = [
+  'Supervision',
+  'Baby Care',
+  'Bathing & Dressing',
+  'Meals & Snacks',
+  'Activities & Play',
+  'School & Homework',
+  'Transportation',
+  'Tidying & Laundry',
+] as const;
+
+/** Every service name either list can store, senior order first, Transportation once. */
+export const ALL_SERVICES: readonly string[] = [...PRIMARY_SERVICES, ...CHILD_SERVICES.filter((s) => !(PRIMARY_SERVICES as readonly string[]).includes(s))];
+
+/** Normalize a stored/absent value to the kinds it means: missing or empty = ['senior']. */
+export function normalizeCareKinds(value: unknown): CareKind[] {
+  const arr = Array.isArray(value) ? value : [];
+  const kinds = CARE_KINDS.filter((k) => arr.includes(k));
+  return kinds.length ? kinds : [...DEFAULT_CARE_KINDS];
+}
+
+/** The list(s) a person sees for the kinds they picked, as [{ kind, services }] in senior-then-child order. */
+export function serviceListsForKinds(value: unknown): Array<{ kind: CareKind; services: readonly string[] }> {
+  const kinds = normalizeCareKinds(value);
+  return [
+    ...(kinds.includes('senior') ? [{ kind: 'senior' as CareKind, services: PRIMARY_SERVICES as readonly string[] }] : []),
+    ...(kinds.includes('child') ? [{ kind: 'child' as CareKind, services: CHILD_SERVICES as readonly string[] }] : []),
+  ];
+}
+
+/** The kinds a set of ticked services implies. Transportation alone implies nothing; `fallback` (the household's or provider's answer) decides then. */
+export function kindsOfServices(services: readonly unknown[], fallback: unknown = undefined): CareKind[] {
+  const names = services.filter((s): s is string => typeof s === 'string');
+  const senior = names.some((s) => s !== 'Transportation' && (PRIMARY_SERVICES as readonly string[]).includes(s));
+  const child = names.some((s) => s !== 'Transportation' && (CHILD_SERVICES as readonly string[]).includes(s));
+  const kinds = CARE_KINDS.filter((k) => (k === 'senior' ? senior : child));
+  return kinds.length ? kinds : normalizeCareKinds(fallback);
+}
+
+/** A care provider sees a post only when they offer EVERY kind the post needs. */
+export function providerCoversPost(providerKinds: unknown, postKinds: unknown): boolean {
+  const have = normalizeCareKinds(providerKinds);
+  return normalizeCareKinds(postKinds).every((k) => have.includes(k));
+}
+
+/** A family sees a care provider who offers ANY kind the household needs. */
+export function providerMatchesHousehold(providerKinds: unknown, householdKinds: unknown): boolean {
+  const have = normalizeCareKinds(providerKinds);
+  return normalizeCareKinds(householdKinds).some((k) => have.includes(k));
+}
+
+// Age ranges for a child — an informational chip beside pets / smoking, never a
+// filter, never a number (the no-age rule stays for everyone else).
+export const AGE_RANGES = [
+  { id: 'infant', label: 'Infant' },
+  { id: 'toddler', label: 'Toddler' },
+  { id: '3-5', label: 'Ages 3–5' },
+  { id: '6-12', label: 'Ages 6–12' },
+  { id: 'teen', label: 'Teen' },
+] as const;
+export type AgeRangeId = (typeof AGE_RANGES)[number]['id'];
+export const ageRangeLabel = (id: string): string => AGE_RANGES.find((a) => a.id === id)?.label ?? id;
+
+// The relationship list, the same five on both doors (founder, 2026-10-18).
+// Older stored values (Grandparent, Sibling, Spouse) still read back as-is.
+export const RELATIONSHIPS = ['Myself', 'Parent', 'Spouse or Partner', 'Child', 'Other'] as const;
+
+/** The default job title by kind: 'Senior care in {city}' / 'Child care in {city}' / 'Senior and child care in {city}'. */
+export function defaultJobTitle(city: string | null | undefined, kinds: unknown = undefined): string {
+  const k = normalizeCareKinds(kinds);
+  const what = k.length === 2 ? 'Senior and child care' : k[0] === 'child' ? 'Child care' : 'Senior care';
+  return city ? `${what} in ${city}` : `${what} needed`;
+}
+
 // Certifications
 export const CERTIFICATIONS = ['CNA', 'HHA', 'RN', 'LPN'] as const;
 

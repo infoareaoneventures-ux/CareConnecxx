@@ -342,7 +342,7 @@ const RolePicker: React.FC<{ tone: 'dark' | 'light'; onPick: (r: OnboardingRole)
         className="w-full px-6 py-5 rounded-2xl border hairline bg-white hover:shadow-md transition text-left"
       >
         <div className="font-semibold text-lg text-ink-900">Find a care provider</div>
-        <div className="text-ink-600 mt-1">For a parent, spouse, or loved one</div>
+        <div className="text-ink-600 mt-1">For a parent, spouse, child, or loved one</div>
       </button>
       <button
         onClick={() => onPick('caregiver')}

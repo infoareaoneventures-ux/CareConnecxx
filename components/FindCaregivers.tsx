@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
+import { CareKind, normalizeCareKinds, providerMatchesHousehold, serviceListsForKinds } from './caregiver/signup/constants';
 import { formatExperience } from '../utils/experience';
 import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
@@ -56,16 +57,7 @@ interface Caregiver {
 
 type SortOption = 'rating' | 'price-low' | 'price-high';
 
-const SENIOR_SPECIALTIES = [
-  { key: 'Mobility Assistance', icon: Activity },
-  { key: 'Dementia / Memory Care', icon: Brain },
-  { key: 'Medication Reminders', icon: Pill },
-  { key: 'Personal Care', icon: Users },
-  { key: 'Companionship', icon: Heart },
-  { key: 'Transportation', icon: Car },
-  { key: 'Meal Preparation', icon: Users },
-  { key: 'Light Housekeeping', icon: Users },
-];
+// The services filter lists the household's own list(s) — signup/constants.ts serviceListsForKinds (child care, 2026-10-18).
 
 const LANGUAGES = ['English', 'Spanish', 'Mandarin', 'Tagalog', 'Vietnamese', 'Korean', 'Russian', 'Arabic'];
 const EXPERIENCE_TIERS = [
@@ -119,6 +111,8 @@ export default function FindCaregivers() {
   const [minRating, setMinRating] = useState(0);
   const [minExperience, setMinExperience] = useState(0);
   const [selectedSpecialties, setSelectedSpecialties] = useState<Set<string>>(new Set());
+  // Child care (2026-10-18): the household's answer (job_postings.careKinds; missing = senior) decides who shows and which services the filter lists.
+  const [householdKinds, setHouseholdKinds] = useState<CareKind[]>(['senior']);
   const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -326,6 +320,10 @@ export default function FindCaregivers() {
         caregiversSnap?.docs.filter(d => isCaregiverBookable(d.data() as any)).map(d => d.id) ?? []
       );
 
+      const jpKindsSnap = user ? await fdb.collection('job_postings').doc(user.uid).get().catch(() => null) : null;
+      const jpKinds = normalizeCareKinds((jpKindsSnap?.data() as any)?.careKinds);
+      setHouseholdKinds(jpKinds);
+
       const seen = new Set<string>();
       const caregiverList: Caregiver[] = [];
 
@@ -334,6 +332,8 @@ export default function FindCaregivers() {
         // Only show caregivers that have completed their profile wizard (onboardingStatus: profile_complete)
         if (!approvedIds.has(doc.id)) return;
         const data = doc.data() || {};
+        // A family meets care providers who offer ANY kind the household needs (missing = senior on both sides).
+        if (!providerMatchesHousehold(data.careKinds, jpKinds)) return;
         const firstName = data.firstName || data.name?.split(' ')[0] || '';
         const lastName = data.lastName || data.name?.split(' ').slice(1).join(' ') || '';
         if (!firstName && !lastName && !data.name) return;
@@ -629,9 +629,9 @@ export default function FindCaregivers() {
 
       {/* Specialties */}
       <div>
-        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Senior Care Specialties</label>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care services</label>
         <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-          {SENIOR_SPECIALTIES.map(({ key }) => (
+          {Array.from(new Set(serviceListsForKinds(householdKinds).flatMap(l => [...l.services]))).map(key => (
             <label key={key} className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
               <input
                 type="checkbox"

@@ -53,6 +53,7 @@ import {
 import { coerceClientRate } from "./onboardingContract";
 import { businessTodayStr, formatDateForDisplay } from "../utils/scheduledTime";
 import { canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "./careNeedsTaxonomy";
+import { careKindsFromWords, ageRangesFromWords, normalizeCareKinds, serviceListsForKinds, serviceLabel as careServiceLabel } from "./caregiverServiceLabels";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, offersTransportation } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { isCaregiverMembershipActive } from "./caregiverAccessGate";
@@ -663,7 +664,9 @@ export async function absorbClientFields(text: string, existing: Record<string, 
       "Schema: " +
       `{"firstName":"family member first name (the person texting, not the senior)",` +
       `"seniorName":"senior's first name (the FIRST care recipient if more than one)",` +
-      `"relationship":"family relationship to senior (mother, father, etc.)",` +
+      `"relationship":"family relationship to the care recipient (mother, father, son, daughter, etc.)",` +
+      `"careKinds":"who the care is for, ONLY when stated: 'senior' (an older adult), 'child', or 'both'",` +
+      `"ageRanges":["ONLY for a child, their age range by name: Infant, Toddler, Ages 3-5, Ages 6-12, Teen"],` +
       `"additionalRecipients":[{"name":"...","relationship":"..."}] — ` +
       `ONLY when care is for MORE THAN ONE person (e.g. "both mom and dad"); every person after the first goes here,` +
       `"careNeeds":["short need phrase — the KIND of day-to-day help (bathing, meals, rides, medication reminders, company); never a diagnosis, and NEVER a frequency word like occasional/part-time/full-time — how often is not a care need"],` +
@@ -704,6 +707,9 @@ export async function absorbClientFields(text: string, existing: Record<string, 
       if (canon) { out.careNeeds = canon.careNeeds; out.careNeedDetails = canon.careNeedDetails; }
       continue;
     }
+    // Child care (2026-10-18): constrained answers, canonicalized or dropped — never a raw word.
+    if (k === "careKinds") { const kinds = careKindsFromWords(v); if (kinds) out.careKinds = kinds; continue; }
+    if (k === "ageRanges") { const ids = ageRangesFromWords(v); if (ids.length) out.ageRanges = ids; continue; }
     out[k] = v;
   }
   return out;
@@ -1940,13 +1946,14 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
   const todayDow = new Date().toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "long" });
   const raw = await parseWithClaude(
     `Today is ${todayDow}, ${todayIso}. The family is correcting their care intake. Extract ONLY the fields they're changing; omit the rest. ` +
-    "Return raw JSON with any of: {\"seniorName\":\"\",\"age\":0,\"careNeeds\":[],\"city\":\"\"," +
+    "Return raw JSON with any of: {\"seniorName\":\"\",\"careNeeds\":[],\"careKinds\":\"\",\"ageRanges\":[],\"city\":\"\"," +
     "\"zipCode\":\"\",\"selectedDays\":[],\"daysFlexible\":false,\"timeOfDay\":\"\",\"startDate\":\"\",\"rate\":0,\"relationship\":\"\"," +
     "\"emergencyContactName\":\"\",\"emergencyContactPhone\":\"\",\"firstName\":\"\"," +
     "\"daysPerWeek\":0,\"hoursPerDay\":0}. " +
     "selectedDays is an array of uppercase 3-letter day codes e.g. ['MON','WED','FRI']. rate is a NUMBER of dollars per hour " +
     "(never a word). startDate is YYYY-MM-DD relative to today, or \"ASAP\" if they want it right away. " +
-    "relationship is one of: myself, parent, spouse, other. " +
+    "relationship is one of: myself, parent, spouse, child, other. careKinds is 'senior', 'child' or 'both' (who the care is for). " +
+    "ageRanges (a child only) is a list of: Infant, Toddler, Ages 3-5, Ages 6-12, Teen. " +
     "Only include a field if they clearly changed it.",
     text
   ).catch(() => "{}");
@@ -1980,7 +1987,7 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
       // save_onboarding_field applies (daughter/son/child/mother/etc. →
       // parent, wife/husband/partner → spouse) — this edit path writes
       // directly via mergeOnboardingData, bypassing that tool entirely.
-      out[k] = k === "relationship" ? normalizeOnboardingFieldValue("relationship", v) : v;
+      out[k] = (k === "relationship" || k === "careKinds" || k === "ageRanges") ? normalizeOnboardingFieldValue(k, v) : v;
     }
     return out;
   } catch {
@@ -2173,6 +2180,9 @@ export async function persistClientCareRecords(
   // Care needs are shared across recipients at signup — same behavior as the
   // web PostJob flow; per-person details are edited later in the CarePlan tabs.
   const recipients = allCareRecipients(d);
+  // Child care (2026-10-18): the age-range chips ride on the plan only when the care is for a child.
+  const householdKinds = normalizeCareKinds(d.careKinds);
+  const ageRanges = householdKinds.includes("child") ? ageRangesFromWords(d.ageRanges) : [];
   const recipientPlans: Record<string, unknown> = {};
   for (const r of recipients) {
     recipientPlans[recipientPlanKeyForFullName(r.name)] = {
@@ -2180,6 +2190,7 @@ export async function persistClientCareRecords(
       relationship: r.relationship ?? "",
       careNeeds,
       careNeedDetails,
+      ...(ageRanges.length ? { ageRanges } : {}),
       // Provenance for multi-recipient households: these needs are a
       // signup-time COPY shared across everyone — the care-plan interview
       // confirms them per person rather than trusting them as individual.
@@ -4921,16 +4932,12 @@ async function handleJobAskCareLevel(
   // these feed into the same careNeeds field the web wizard writes, which
   // CarePlan.tsx renders as parent categories and caregiver skill-matching
   // searches on; a near-miss variant here never matches (see careNeedCategories.ts).
-  const NEEDS_MAP: Record<string, string> = {
-    "1": "Mobility Assistance", "2": "Dementia / Memory Care",
-    "3": "Medication Reminders", "4": "Personal Care",
-    "5": "Meal Preparation", "6": "Transportation",
-    "7": "Light Housekeeping", "8": "Companionship",
-  };
+  // Child care (2026-10-18): the numbered menu covers the list(s) for who the care is for.
+  const menuNames = serviceListsForKinds(session.onboardingData?.careKinds).flatMap((l) => l.services).filter((s, i, a) => a.indexOf(s) === i);
+  const NEEDS_MAP: Record<string, string> = Object.fromEntries(menuNames.map((s, i) => [String(i + 1), s]));
   const raw = await parseWithClaude(
     'Return a JSON array of care need numbers that match the user\'s message. ' +
-    '1=Mobility, 2=Memory Care/Dementia, 3=Medications, 4=Personal Care (bathing/dressing), ' +
-    '5=Meals/Nutrition, 6=Transportation, 7=Housekeeping, 8=Companionship. ' +
+    menuNames.map((s, i) => `${i + 1}=${careServiceLabel(s)}`).join(", ") + ". " +
     'Match by number or keyword. Return only a JSON array of number strings like ["1","3"].',
     text
   );

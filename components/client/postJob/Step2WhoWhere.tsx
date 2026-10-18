@@ -6,8 +6,10 @@ import { dbService } from '../../../services/api';
 import { db } from '../../../lib/firebase';
 import firebase from '../../../lib/firebase';
 import { geocodeAddress, streetPointOf, GeocodedPoint } from '../../../utils/geocode';
+import { RELATIONSHIPS } from '../../caregiver/signup/constants';
 
-const RELATIONSHIP_CHIPS = ['Parent', 'Spouse or Partner', 'Other'];
+// The five relationships, both doors (2026-10-18) — minus Myself, which is its own person here.
+const RELATIONSHIP_CHIPS: string[] = RELATIONSHIPS.filter(r => r !== 'Myself');
 
 interface SavedPerson {
   id: string;

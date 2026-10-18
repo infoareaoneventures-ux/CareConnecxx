@@ -17,7 +17,7 @@ const SITE_URL = 'https://www.eviacares.com';
 export const SEO: React.FC<SEOProps> = ({
   title,
   description,
-  keywords = "senior care, care provider, elderly care, in-home care, finding care, care provider jobs",
+  keywords = "senior care, child care, care provider, elderly care, in-home care, finding care, care provider jobs",
   image = DEFAULT_IMAGE,
   canonicalUrl,
   noindex = false,
@@ -119,7 +119,7 @@ export const generateLocalBusinessSchema = () => ({
   image: `${SITE_URL}/icon-512.png`,
   url: SITE_URL,
   telephone: '',
-  description: 'Senior care marketplace connecting families with local care providers who have completed a background check',
+  description: 'Senior and child care marketplace connecting families with local care providers who have completed a background check',
   priceRange: '$$',
   areaServed: 'US'
 });
@@ -127,12 +127,12 @@ export const generateLocalBusinessSchema = () => ({
 export const generateServiceSchema = () => ({
   '@context': 'https://schema.org',
   '@type': 'Service',
-  name: 'Senior Care Matching',
+  name: 'Senior and Child Care Matching',
   provider: {
     '@type': 'Organization',
     name: 'Evia'
   },
-  description: 'Care provider matching for non-medical in-home senior care',
+  description: 'Care provider matching for non-medical in-home senior and child care',
   serviceType: 'Non-medical in-home care'
 });
 

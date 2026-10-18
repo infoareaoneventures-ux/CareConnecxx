@@ -1,4 +1,4 @@
-import { serviceLabel } from '../caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds, kindsOfServices, AGE_RANGES } from '../caregiver/signup/constants';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Shield, ChevronLeft, ChevronRight, User, Check,
@@ -37,7 +37,11 @@ interface WizardForm {
   emergencyLastName: string;
   emergencyPhone: string;
   emergencyRelationship: string;
+  /** Who the care is for — senior / child / both (job_postings.careKinds). Child care, 2026-10-18. */
+  careKinds: CareKind[];
   careNeeds: string[];
+  /** Age-range chip ids when child care is on (informational, like pets/smoking). */
+  ageRanges: string[];
   petsInHome: boolean;
   smokingHousehold: boolean;
   rate?: number;
@@ -66,16 +70,14 @@ const TIME_OPTIONS = [
   { value: 'evening',   label: 'Evening',   sub: '6pm–12am' },
   { value: 'overnight', label: 'Overnight', sub: '12am–6am' },
 ];
-const CARE_NEEDS_OPTIONS = [
-  'Mobility Assistance',
-  'Dementia / Memory Care',
-  'Medication Reminders',
-  'Personal Care',
-  'Companionship',
-  'Transportation',
-  'Meal Preparation',
-  'Light Housekeeping',
+// The senior eight — ONE source (signup/constants.ts); the child eight sit beside them (2026-10-18).
+const CARE_NEEDS_OPTIONS: string[] = [...PRIMARY_SERVICES];
+const CARE_KIND_CHOICES: Array<{ value: CareKind[]; label: string }> = [
+  { value: ['senior'], label: CARE_KIND_LABEL.senior },
+  { value: ['child'], label: CARE_KIND_LABEL.child },
+  { value: ['senior', 'child'], label: 'Both' },
 ];
+const sameKinds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(k => b.includes(k));
 // ── Helper: today as yyyy-mm-dd (local time, not UTC) ──────────────────────
 
 function todayISO(): string {
@@ -112,7 +114,9 @@ const INITIAL_FORM: WizardForm = {
     emergencyLastName: '',
     emergencyPhone: '',
     emergencyRelationship: '',
+    careKinds: ['senior'],
     careNeeds: [],
+    ageRanges: [],
     petsInHome: false,
     smokingHousehold: false,
     rate: undefined,
@@ -312,7 +316,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     if (s === 6) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
     if (s === 10) return form.careRecipientFirstName.trim().length > 0;
     if (s === 11) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
-    if (s === 12) return form.careNeeds.length > 0;
+    if (s === 12) return form.careNeeds.length > 0 && (!kindsOfServices(form.careNeeds, form.careKinds).includes('child') || form.ageRanges.length > 0);
     if (s === 13) return !!form.rate && (form.rate ?? 0) > 0;
     return true;
   };
@@ -880,6 +884,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 { val: 'myself', label: 'Myself' },
                 { val: 'parent', label: 'Parent' },
                 { val: 'spouse', label: 'Spouse or Partner' },
+                { val: 'child', label: 'Child' },
                 { val: 'other', label: 'Other' },
               ].map(opt => (
                 <button
@@ -969,7 +974,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 <div className="flex gap-2 flex-wrap">
                   {[
                     { val: 'parent',  label: 'Parent' },
-                    { val: 'spouse',  label: 'Spouse / Partner' },
+                    { val: 'spouse',  label: 'Spouse or Partner' },
+                    { val: 'child',   label: 'Child' },
                     { val: 'other',   label: 'Other' },
                   ].map(opt => (
                     <button
@@ -1111,15 +1117,33 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             </h2>
             <p className="text-slate-500 text-sm text-center -mt-2">Select all that apply.</p>
 
-            {/* Care types */}
+            {/* Who the care is for — one question; a senior-only answer shows exactly the list this step always showed */}
             <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-2">Care needed</label>
+              <label className="block text-xs font-semibold text-slate-500 mb-2">Who is the care for?</label>
+              <div className="grid grid-cols-3 gap-2">
+                {CARE_KIND_CHOICES.map(choice => {
+                  const on = sameKinds(normalizeCareKinds(form.careKinds), choice.value);
+                  return (
+                    <button key={choice.label} type="button"
+                      onClick={() => setForm(f => ({ ...f, careKinds: choice.value, careNeeds: f.careNeeds.filter(n => serviceListsForKinds(choice.value).some(l => (l.services as readonly string[]).includes(n))), ageRanges: choice.value.includes('child') ? f.ageRanges : [] }))}
+                      className={`px-3 py-2.5 rounded-xl border-2 text-xs font-semibold transition-all ${on ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}>
+                      {choice.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Care types — one list, or both under their own headings */}
+            {serviceListsForKinds(form.careKinds).map(list => (
+            <div key={list.kind}>
+              <label className="block text-xs font-semibold text-slate-500 mb-2">{serviceListsForKinds(form.careKinds).length > 1 ? CARE_KIND_LABEL[list.kind] : 'Care needed'}</label>
               <div className="grid grid-cols-2 gap-2">
-                {CARE_NEEDS_OPTIONS.map(need => {
+                {list.services.map(need => {
                   const selected = form.careNeeds.includes(need);
                   return (
                     <button
-                      key={need}
+                      key={`${list.kind}-${need}`}
                       onClick={() => toggleNeed(need)}
                       className={`flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-xs font-medium transition-all text-left ${
                         selected
@@ -1133,7 +1157,22 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                   );
                 })}
               </div>
+              {list.kind === 'child' && (
+                <div className="mt-2">
+                  <label className="block text-xs font-semibold text-slate-500 mb-2">Age range</label>
+                  <div className="flex flex-wrap gap-2">
+                    {AGE_RANGES.map(a => (
+                      <button key={a.id} type="button"
+                        onClick={() => setForm(f => ({ ...f, ageRanges: f.ageRanges.includes(a.id) ? f.ageRanges.filter(x => x !== a.id) : [...f.ageRanges, a.id] }))}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${form.ageRanges.includes(a.id) ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-300 text-slate-700 hover:border-indigo-300'}`}>
+                        {a.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
+            ))}
 
             {/* Household */}
             <div>

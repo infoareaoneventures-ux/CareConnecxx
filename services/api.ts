@@ -416,6 +416,7 @@ export const dbService = {
             'recipientsCount', 'city', 'state', 'zipCode', 'neighborhood',
             'careTypes', 'careLevel', 'petsInHome', 'smokingHousehold',
             'paymentMethod', 'rateFlexible',
+            'careKinds', 'ageRanges', // child care (2026-10-18): the post's kinds + the child's age-range chips
         ];
 
         const sanitizedPost: any = {};
@@ -2422,6 +2423,10 @@ export interface WizardJobPostingData {
     emergencyLastName: string;
     emergencyPhone: string;
     careNeeds: string[];
+    /** Who the care is for (senior / child / both) — stored on job_postings as the household's answer (2026-10-18). */
+    careKinds?: string[];
+    /** Age-range chip ids when child care is on. */
+    ageRanges?: string[];
     rate: number;
     rateFlexible: boolean;
     paymentMethod: string;

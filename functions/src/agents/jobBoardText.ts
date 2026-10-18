@@ -93,8 +93,8 @@ export function jobDetailsText(d: JobDetails): string {
   const where = d.location
     ? `${d.location}${d.distanceMiles != null ? ` (${d.distanceMiles.toFixed(1)} mi away)` : ""}`
     : (d.distanceMiles != null ? `${d.distanceMiles.toFixed(1)} mi away` : "");
-  const pills = [d.frequency, d.day ? "Daytime" : "", d.night ? "Nights" : "",
-    d.seniors ? `${d.seniors} seniors` : "", d.transportation ? "Transportation" : ""].filter(Boolean).join(" · ");
+  const pills = [d.kind ?? "", d.frequency, d.day ? "Daytime" : "", d.night ? "Nights" : "",
+    d.seniors ? `${d.seniors} people` : "", ...d.ageRanges, d.transportation ? "Transportation" : ""].filter(Boolean).join(" · ");
   const out: string[] = [d.title];
   if (d.postedBy) out.push(`Posted by ${d.postedBy}`);
   if (where) out.push(where);

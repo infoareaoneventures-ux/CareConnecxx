@@ -48,7 +48,7 @@ import type { JobCard } from "../jobBoardPage";
 
 const card = (over: Partial<JobCard> = {}): JobCard => ({
   jobId: "job1", title: "Senior care in San Jose", location: "San Jose, CA, 95134", distanceMiles: 5.7, rate: "$10/hr",
-  paymentMethod: "via credit", frequency: "Part-time", day: true, night: false, seniors: null, transportation: false,
+  paymentMethod: "via credit", frequency: "Part-time", day: true, night: false, seniors: null, kind: null, ageRanges: [], transportation: false,
   date: "Sep 27, 2026", hours: "Morning", careTypes: ["Companionship"], daysOfWeek: ["Mon"], action: "Apply Now", ...over,
 });
 

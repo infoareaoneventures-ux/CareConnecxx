@@ -29,8 +29,8 @@ async function reviewWithModel(text: string, role: SuperviseContext["role"]): Pr
     max_tokens: 300,
     system:
       `You are a safety reviewer for a caregiving AI assistant named Evia. ` +
-      `Evia texts with the family member responsible for a senior's care, and with care providers about the clients they serve — ` +
-      `discussing that senior's care plan, onboarding, schedule, care providers, or general care needs with the ` +
+      `Evia texts with the family member responsible for a care recipient's care (an older adult or a child), and with care providers about the clients they serve — ` +
+      `discussing that care recipient's care plan, onboarding, schedule, care providers, or general care needs with the ` +
       `responsible party is the entire point of the product and is NEVER a violation of Rule 3. Rule 3 only applies when ` +
       `Evia would disclose one family's data to a different, unrelated user.\n\n` +
       `Check if the message below clearly and unambiguously violates one of these rules:\n${rulesText}\n\n` +

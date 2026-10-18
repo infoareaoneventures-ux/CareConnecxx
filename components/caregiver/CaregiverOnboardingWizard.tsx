@@ -10,6 +10,7 @@ import { evaluateServiceArea, OUT_OF_AREA_MESSAGE } from '../../utils/serviceAre
 import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
+  CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds,
   serviceLabel,
   EXPERIENCE_LEVELS,
   JOB_TYPES,
@@ -37,6 +38,8 @@ interface WizardForm {
   jobTypes: string[];
   weeklyAvailability: Record<string, string[]>;
   neverAvailable: string[];
+  /** What care they provide — senior / child / both (caregivers.careKinds; missing = senior). Child care, 2026-10-18. */
+  careKinds: CareKind[];
   selectedServices: string[];
   yearsExperience: string;
   hourlyRate: string;
@@ -76,6 +79,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       thursday: [], friday: [], saturday: [],
     },
     neverAvailable: [],
+    careKinds: ['senior'],
     selectedServices: [],
     yearsExperience: '',
     hourlyRate: '',
@@ -129,6 +133,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         maxClients:          p.maxClients    ? String(p.maxClients)    : '',
         serviceRadius:       p.serviceRadius ? String(p.serviceRadius) : '10',
         selectedServices:    loadedServices,
+        careKinds:           normalizeCareKinds(p.careKinds),
         yearsExperience:     p.yearsExperience || p.experience || '',
         jobTypes:            Array.isArray(p.jobTypes) ? p.jobTypes : [],
         profilePhoto:        p.photo ? { file: null, preview: p.photo } : prev.profilePhoto,
@@ -263,6 +268,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     try {
       const nextStep = 'rates';
       await dbService.updateUser('caregivers', uid, cleanData({
+        careKinds: normalizeCareKinds(form.careKinds),
         primaryServices: form.selectedServices.map(name => ({ name, yearsExperience: form.yearsExperience })),
         skills: form.selectedServices,
         services: form.selectedServices,
@@ -392,7 +398,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       // ── Services ─────────────────────────────────────────────────────────
       case 'services':
         return <ServicesStep
-          selectedServices={form.selectedServices} yearsExperience={form.yearsExperience}
+          careKinds={form.careKinds} selectedServices={form.selectedServices} yearsExperience={form.yearsExperience}
           onChange={updateField}
           onNext={handleSaveServices} isLoading={isLoading} onShowToast={onShowToast}
         />;
@@ -834,17 +840,31 @@ const AvailabilityStep: React.FC<{
 
 // ─── Services Step ─────────────────────────────────────────────────────────────
 
+const CARE_KIND_CHOICES: Array<{ value: CareKind[]; label: string }> = [
+  { value: ['senior'], label: CARE_KIND_LABEL.senior },
+  { value: ['child'], label: CARE_KIND_LABEL.child },
+  { value: ['senior', 'child'], label: 'Both' },
+];
+const sameKinds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(k => b.includes(k));
+
 const ServicesStep: React.FC<{
+  careKinds: CareKind[];
   selectedServices: string[];
   yearsExperience: string;
   onChange: (field: string, value: any) => void;
   onNext: () => void;
   isLoading: boolean;
   onShowToast: AddToastFunction;
-}> = ({ selectedServices, yearsExperience, onChange, onNext, isLoading, onShowToast }) => {
+}> = ({ careKinds, selectedServices, yearsExperience, onChange, onNext, isLoading, onShowToast }) => {
   const toggleService = (name: string) =>
     onChange('selectedServices', selectedServices.includes(name)
       ? selectedServices.filter(s => s !== name) : [...selectedServices, name]);
+  // The one question (child care, 2026-10-18): services no longer on a shown list drop off.
+  const pickKinds = (kinds: CareKind[]) => {
+    onChange('careKinds', kinds);
+    onChange('selectedServices', selectedServices.filter(s => serviceListsForKinds(kinds).some(l => (l.services as readonly string[]).includes(s))));
+  };
+  const lists = serviceListsForKinds(careKinds);
 
   const handleNext = () => {
     if (selectedServices.length === 0) { onShowToast('Please select at least one service', 'error'); return; }
@@ -857,12 +877,28 @@ const ServicesStep: React.FC<{
       <h2 className="text-xl font-bold text-slate-800 text-center">What services do you offer?</h2>
 
       <div>
-        <p className="text-sm font-semibold text-slate-700 mb-2">Senior Care — select all that apply</p>
+        <p className="text-sm font-semibold text-slate-700 mb-2">What care do you provide?</p>
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {CARE_KIND_CHOICES.map(choice => {
+            const on = sameKinds(normalizeCareKinds(careKinds), choice.value);
+            return (
+              <button key={choice.label} type="button" onClick={() => pickKinds(choice.value)}
+                className={`px-3 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ${on ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>
+                {choice.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {lists.map(list => (
+      <div key={list.kind}>
+        <p className="text-sm font-semibold text-slate-700 mb-2">{CARE_KIND_LABEL[list.kind]} — select all that apply</p>
         <div className="flex flex-col gap-2">
-          {PRIMARY_SERVICES.map(service => {
+          {list.services.map(service => {
             const isOn = selectedServices.includes(service);
             return (
-              <button key={service} onClick={() => toggleService(service)}
+              <button key={`${list.kind}-${service}`} onClick={() => toggleService(service)}
                 className={`w-full text-left px-4 py-2.5 rounded-xl border-2 transition-all flex items-center justify-between ${
                   isOn ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'
                 }`}>
@@ -879,6 +915,7 @@ const ServicesStep: React.FC<{
           })}
         </div>
       </div>
+      ))}
 
       <div>
         <p className="text-sm font-semibold text-slate-700 mb-1">Years of care experience</p>
@@ -970,8 +1007,8 @@ const RatesStep: React.FC<{
       {showDetailed && (
         <div className="space-y-3 bg-slate-50 rounded-2xl p-4">
           {[
-            { field: 'rateFor2Seniors', label: 'Rate for two seniors', value: rateFor2Seniors, placeholder: 'Two seniors' },
-            { field: 'rateFor3PlusSeniors', label: 'Rate for three or more seniors', value: rateFor3PlusSeniors, placeholder: 'Three+ seniors' },
+            { field: 'rateFor2Seniors', label: '2 People', value: rateFor2Seniors, placeholder: 'Rate for two people' },
+            { field: 'rateFor3PlusSeniors', label: '3+ People', value: rateFor3PlusSeniors, placeholder: 'Rate for three or more' },
           ].map(({ field, label, value, placeholder }) => (
             <div key={field}>
               <label className="block text-xs font-semibold text-slate-700 mb-1">{label}</label>
@@ -984,7 +1021,7 @@ const RatesStep: React.FC<{
             </div>
           ))}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Max seniors at one time</label>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Max clients at once</label>
             <select value={maxClients} onChange={e => onChange('maxClients', e.target.value)}
               className="w-full px-3 py-2 rounded-lg border-2 border-slate-200 bg-white text-slate-900 focus:outline-none focus:border-indigo-500">
               <option value="">Select</option>

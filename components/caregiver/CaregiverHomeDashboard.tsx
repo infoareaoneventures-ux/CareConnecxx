@@ -1,4 +1,4 @@
-import { serviceLabel } from './signup/constants';
+import { serviceLabel, providerCoversPost } from './signup/constants';
 import { drivingJobsHiddenFor, jobIncludesDriving } from '../../utils/transportDocs';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -153,7 +153,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   const hiddenJobIds = new Set<string>(Array.isArray((profile as any).hiddenJobIds) ? (profile as any).hiddenJobIds : []);
   const openJobs = (() => {
     const hideDriving = drivingJobsHiddenFor(profile as any); // Not approved driving record → no driving jobs (same as the Jobs page + Evia)
-    let filtered = rawJobs.filter((j: any) => !appliedJobIds.has(j.id) && !hiddenJobIds.has(j.id) && j.clientActive !== false && !(hideDriving && jobIncludesDriving(j)));
+    // Child care (2026-10-18): a post shows only when she offers EVERY kind it needs (missing = senior on both sides).
+    let filtered = rawJobs.filter((j: any) => !appliedJobIds.has(j.id) && !hiddenJobIds.has(j.id) && j.clientActive !== false && !(hideDriving && jobIncludesDriving(j)) && providerCoversPost((profile as any)?.careKinds, j.careKinds));
     if (hasLocation && radius > 0) {
       filtered = filtered.filter((j: any) => {
         if (j.lat == null || j.lng == null) return true;

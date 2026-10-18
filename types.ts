@@ -157,6 +157,8 @@ export interface Caregiver {
 
   // NEW: Skills & Services
   skills?: string[];  // e.g., ["Driving", "Meal Preparation", "Medical Assistance"]
+  /** What care they provide: 'senior' and/or 'child' (missing = ['senior']). Child care, 2026-10-18. */
+  careKinds?: string[];
 
   // NEW: Availability
   weeklyAvailability?: WeeklySchedule;
@@ -283,6 +285,10 @@ export interface JobPost {
 
   // Care needs
   careTypes?: string[];
+  /** Who the care is for, read from the ticked services at save (missing = ['senior']). Child care, 2026-10-18. */
+  careKinds?: string[];
+  /** Age-range chip ids (AGE_RANGES) when the post's kinds include child — informational, never a filter. */
+  ageRanges?: string[];
   careLevel?: JobCareLevel;
   petsInHome?: boolean;
   smokingHousehold?: boolean;

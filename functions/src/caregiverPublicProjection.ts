@@ -9,7 +9,8 @@ const db = admin.firestore();
 // every older copy as stale.
 // v4 (2026-10-06): + clearedForFamilies (approval + active membership) — families meet only
 // caregivers who can act on what they send.
-const PROJECTION_VERSION = "2026-10-06-v4";
+// v5 (2026-10-18): + careKinds (child care) — re-projects every copy so the field is present (missing = senior).
+const PROJECTION_VERSION = "2026-10-18-v5";
 
 function projectionData(id: string, source: Record<string, unknown>): Record<string, unknown> {
   return {

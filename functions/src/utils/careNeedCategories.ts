@@ -9,6 +9,8 @@
  * careNeeds has no parent to nest under, and never matches a caregiver's
  * skills during search (both symptoms traced to this one root cause, 2026-09-11).
  */
+// Child care (2026-10-18): the senior eight PLUS the child eight (Transportation once) — every name
+// either site list can store (caregiverServiceLabels.ts CANONICAL_SERVICES is the same union).
 export const CANONICAL_CARE_CATEGORIES = [
   "Mobility Assistance",
   "Dementia / Memory Care",
@@ -18,6 +20,13 @@ export const CANONICAL_CARE_CATEGORIES = [
   "Transportation",
   "Meal Preparation",
   "Light Housekeeping",
+  "Supervision",
+  "Baby Care",
+  "Bathing & Dressing",
+  "Meals & Snacks",
+  "Activities & Play",
+  "School & Homework",
+  "Tidying & Laundry",
 ] as const;
 
 export type CanonicalCareCategory = typeof CANONICAL_CARE_CATEGORIES[number];
@@ -29,6 +38,14 @@ export type CanonicalCareCategory = typeof CANONICAL_CARE_CATEGORIES[number];
 // substrings against the lowercased raw term, in this order — first match
 // wins, so put more specific keywords before generic ones.
 const SYNONYM_MAP: Array<{ keywords: string[]; category: CanonicalCareCategory }> = [
+  // Child-care names first: these words never mean a senior category.
+  { category: "Baby Care", keywords: ["baby care", "infant", "diaper", "nap", "bottle", "newborn", "baby"] },
+  { category: "Bathing & Dressing", keywords: ["bathing & dressing", "potty"] },
+  { category: "Meals & Snacks", keywords: ["meals & snacks", "snack"] },
+  { category: "Activities & Play", keywords: ["activities & play", "play", "craft", "games"] },
+  { category: "School & Homework", keywords: ["school & homework", "homework", "school", "pickup", "pick-up", "drop-off", "dropoff"] },
+  { category: "Tidying & Laundry", keywords: ["tidying & laundry", "kids laundry", "tidy"] },
+  { category: "Supervision", keywords: ["supervision", "supervise", "watching", "babysit", "nanny", "sitter"] },
   {
     category: "Dementia / Memory Care",
     keywords: ["dementia", "memory", "alzheimer", "cognitive"],

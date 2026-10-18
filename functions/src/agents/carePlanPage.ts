@@ -18,17 +18,16 @@
 import * as admin from "firebase-admin";
 import { randomUUID } from "crypto";
 import { recipientPlanKey } from "./careRecipients";
+import { CANONICAL_SERVICES, RELATIONSHIPS as CONTRACT_RELATIONSHIPS, AGE_RANGES, ageRangesFromWords, ageRangeLabel } from "./caregiverServiceLabels";
 import { geocodeAddress, lookupZipPlace, GeoPrecision } from "../utils/geocode";
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
 
 // ── The page's vocabularies ─────────────────────────────────────────────────
-export const CARE_TYPES = [
-  "Mobility Assistance", "Dementia / Memory Care", "Medication Reminders",
-  "Personal Care", "Companionship", "Transportation",
-  "Meal Preparation", "Light Housekeeping",
-] as const;
+// Child care (2026-10-18): the page's pills are the senior eight AND the child eight (Transportation once) —
+// which list(s) a recipient sees follows the household's careKinds; the stored names are the same either way.
+export const CARE_TYPES: readonly string[] = CANONICAL_SERVICES;
 
 // The sub-task chips under each care type (CARE_NEED_SUBS) left the page 2026-10-04;
 // recipientPlans[key].careNeedDetails stays in the shape, always {}.
@@ -36,7 +35,8 @@ export const FAV_ACTIVITIES = ["Walk", "Reading", "Cooking", "Gardening", "Watch
 export const ENTERTAINMENT = ["Music", "Movies", "TV Shows", "Theater", "Other"];
 export const FREQ_OPTIONS = ["Daily", "Weekly", "Monthly", "Occasionally"];
 export const PET_TYPES = ["Dog", "Cat", "Fish", "Other"];
-export const RELATIONSHIPS = ["Myself", "Parent", "Grandparent", "Spouse", "Sibling", "Other"];
+// The five on both doors (founder, 2026-10-18); older stored values (Grandparent, Sibling, Spouse) still read back.
+export const RELATIONSHIPS: readonly string[] = CONTRACT_RELATIONSHIPS;
 const LEGACY_NAMES: Record<string, string> = { "Personal Care (Bathing & Dressing)": "Personal Care" };
 
 /** The page's fixed care-type pills, matched loosely (case, legacy label). */
@@ -45,6 +45,14 @@ export function toCareType(raw: string): string | null {
   const hit = CARE_TYPES.find((t) => t.toLowerCase() === s.trim().toLowerCase());
   if (hit) return hit;
   const loose = s.trim().toLowerCase();
+  // Child-care names first (2026-10-18): these words never mean a senior pill.
+  if (/supervis|babysit|nanny|sitter/.test(loose)) return "Supervision";
+  if (/baby|infant|diaper|\bnap/.test(loose)) return "Baby Care";
+  if (/potty/.test(loose)) return "Bathing & Dressing";
+  if (/snack/.test(loose)) return "Meals & Snacks";
+  if (/\bplay|craft|games/.test(loose)) return "Activities & Play";
+  if (/school|homework/.test(loose)) return "School & Homework";
+  if (/tidy/.test(loose)) return "Tidying & Laundry";
   if (/dementia|memory/.test(loose)) return "Dementia / Memory Care";
   if (/medication|meds/.test(loose)) return "Medication Reminders";
   if (/meal|cook/.test(loose)) return "Meal Preparation";
@@ -77,6 +85,8 @@ export interface TasksData {
 }
 export interface RecipientPlanData {
   careNeeds: string[];
+  /** Child care (2026-10-18): the age-range chips (AGE_RANGES ids) — present only on a child's plan. */
+  ageRanges?: string[];
   careNeedDetails: Record<string, string[]>;
   locations: LocationEntry[];
   notes: string;
@@ -108,6 +118,9 @@ export interface CarePlanRecipient {
   key: string; firstName: string; lastName: string; name: string;
   relationship: string; photoURL: string | null; isPrimary: boolean;
   plan: RecipientPlanData;
+  /** The chips under the name on a child's tab ("Child · Ages 3–5"): ids and the labels shown. */
+  ageRanges: string[];
+  ageRangeLabels: string[];
   locationLabel: string;
   lifestyleSpecified: boolean;
 }
@@ -118,7 +131,7 @@ export interface CarePlanPage {
   /** The signup-time emergency contact card (job_postings.emergency*), shown alongside the list. */
   setupContact: { firstName: string; lastName: string; phone: string; relationship: string } | null;
   reviewed: boolean;
-  options: { careTypes: string[]; favoriteActivities: string[]; entertainment: string[]; frequencies: string[]; petTypes: string[]; relationships: string[] };
+  options: { careTypes: string[]; favoriteActivities: string[]; entertainment: string[]; frequencies: string[]; petTypes: string[]; relationships: string[]; ageRanges: string[] };
 }
 
 interface LoadedPage extends CarePlanPage {
@@ -155,7 +168,7 @@ async function load(clientId: string): Promise<LoadedPage> {
   const effectivePool = locationPool.length > 0 ? locationPool : wizardLocations;
 
   // roster
-  const list: Array<Omit<CarePlanRecipient, "plan" | "locationLabel" | "lifestyleSpecified">> = [];
+  const list: Array<Omit<CarePlanRecipient, "plan" | "locationLabel" | "lifestyleSpecified" | "ageRanges" | "ageRangeLabels">> = [];
   const seen = new Set<string>();
   const pFirst = String(wizard.careRecipientFirstName ?? "");
   const pLast = String(wizard.careRecipientLastName ?? "");
@@ -193,6 +206,7 @@ async function load(clientId: string): Promise<LoadedPage> {
     if (stored) {
       return {
         careNeeds: stored.careNeeds ?? wizardNeeds,
+        ...(Array.isArray(stored.ageRanges) && stored.ageRanges.length ? { ageRanges: stored.ageRanges } : {}),
         careNeedDetails: stored.careNeedDetails ?? {},
         locations: stored.locations ?? wizardLocations.slice(0, 1),
         notes: stored.notes ?? wizardNotes,
@@ -205,7 +219,8 @@ async function load(clientId: string): Promise<LoadedPage> {
 
   const recipients: CarePlanRecipient[] = list.map((r) => {
     const plan = getPlan(r.key);
-    return { ...r, plan, locationLabel: locLabel(plan.locations[0]), lifestyleSpecified: hasLifestyle(plan.lifestyle) };
+    const ageRanges = Array.isArray(plan.ageRanges) ? plan.ageRanges : [];
+    return { ...r, plan, ageRanges, ageRangeLabels: ageRanges.map(ageRangeLabel), locationLabel: locLabel(plan.locations[0]), lifestyleSpecified: hasLifestyle(plan.lifestyle) };
   });
 
   const legacy = (legacySnap?.exists ? legacySnap.data() : {}) as Record<string, unknown>;
@@ -217,7 +232,7 @@ async function load(clientId: string): Promise<LoadedPage> {
   return {
     recipients, locationPool: effectivePool, emergencyContacts, setupContact,
     reviewed: !!cp.carePlanReviewedAt,
-    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: RELATIONSHIPS },
+    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: [...RELATIONSHIPS], ageRanges: AGE_RANGES.map((a) => a.label) },
     wizard, rawPlans, wizardLocations,
   };
 }
@@ -311,6 +326,8 @@ export async function setRecipientLocation(
 export interface NewRecipientInput {
   firstName: string; lastName?: string; relationship: string;
   careNeeds?: string[]; notes?: string;
+  /** Child care (2026-10-18): the age-range chips, names or ids — kept only when given. */
+  ageRanges?: unknown;
   location: Partial<LocationEntry>;
 }
 export type AddRecipientResult =
@@ -350,7 +367,8 @@ export async function addRecipient(clientId: string, input: NewRecipientInput): 
     location = await geocodeLocation({ street: input.location.street!.trim(), city: (input.location.city ?? "").trim(), state: (input.location.state ?? "").trim(), zipCode: (input.location.zipCode ?? "").trim() });
     updatedPool = [...currentPool, location];
   }
-  const blankPlan: RecipientPlanData = { careNeeds, careNeedDetails, locations: [location], notes: (input.notes ?? "").trim(), lifestyle: emptyLifestyle(), tasks: emptyTasks() };
+  const ageRanges = ageRangesFromWords(input.ageRanges);
+  const blankPlan: RecipientPlanData = { careNeeds, ...(ageRanges.length ? { ageRanges } : {}), careNeedDetails, locations: [location], notes: (input.notes ?? "").trim(), lifestyle: emptyLifestyle(), tasks: emptyTasks() };
   const cpRef = db.collection("carePlans").doc(clientId);
   const cpPayload: Record<string, unknown> = { [`recipientPlans.${key}`]: blankPlan };
   if (updatedPool !== currentPool) cpPayload.locationPool = updatedPool;

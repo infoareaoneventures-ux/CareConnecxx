@@ -1,4 +1,4 @@
-import { serviceLabel } from './signup/constants';
+import { serviceLabel, providerCoversPost, ageRangeLabel, normalizeCareKinds } from './signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -420,7 +420,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {jobs.map(job => {
+                {jobs.filter(job => providerCoversPost((profile as any)?.careKinds, (job as any).careKinds)).map(job => {
                   const p = profile as any;
                   const cgLat = p.latitude ?? p.lat;
                   const cgLng = p.longitude ?? p.lng;
@@ -461,7 +461,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                       {/* Header: title + rate */}
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="min-w-0 flex-1">
-                          <h4 className="font-bold text-slate-900 text-sm leading-snug mb-1">{job.title || 'Senior Care'}</h4>
+                          <h4 className="font-bold text-slate-900 text-sm leading-snug mb-1">{job.title || 'Care needed'}</h4>
                           <div className="flex items-center gap-1.5 text-xs text-slate-500">
                             <MapPin className="w-3 h-3 flex-shrink-0" />
                             <span>{job.location || (job as any).zipCode || 'Location TBD'}</span>
@@ -484,7 +484,9 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                         <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700">{freqLabel}</span>
                         {isDay && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 flex items-center gap-1"><Sun className="w-3 h-3" />Day</span>}
                         {isNight && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 flex items-center gap-1"><Moon className="w-3 h-3" />Night</span>}
-                        {seniors > 1 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex items-center gap-1"><UsersIcon className="w-3 h-3" />{seniors} seniors</span>}
+                        {seniors > 1 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex items-center gap-1"><UsersIcon className="w-3 h-3" />{seniors} people</span>}
+                        {normalizeCareKinds((job as any).careKinds).includes('child') && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">{normalizeCareKinds((job as any).careKinds).length === 2 ? 'Senior and child care' : 'Child care'}</span>}
+                        {Array.isArray((job as any).ageRanges) && ((job as any).ageRanges as string[]).map(id => <span key={id} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">{ageRangeLabel(id)}</span>)}
                         {needsTransport && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 flex items-center gap-1"><Car className="w-3 h-3" />Transport</span>}
                       </div>
 
@@ -601,7 +603,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                 ) : null;
               })()}
               {viewingJob.recipientsCount != null && (
-                <div className="flex justify-between"><span className="text-slate-500">Seniors</span><span className="font-medium">{viewingJob.recipientsCount} {viewingJob.recipientsCount === 1 ? 'senior' : 'seniors'}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">People</span><span className="font-medium">{viewingJob.recipientsCount} {viewingJob.recipientsCount === 1 ? 'person' : 'people'}</span></div>
               )}
               {viewingJob.minHoursPerWeek != null && (
                 <div className="flex justify-between"><span className="text-slate-500">Hours/week</span><span className="font-medium">{viewingJob.minHoursPerWeek}+ hrs</span></div>

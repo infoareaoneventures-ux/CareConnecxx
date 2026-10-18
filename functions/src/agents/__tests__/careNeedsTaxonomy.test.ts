@@ -4,13 +4,13 @@ const parseWithClaude = vi.fn(async (..._a: unknown[]) => "{}");
 vi.mock("../../utils/parseWithClaude", () => ({ parseWithClaude: (...a: unknown[]) => parseWithClaude(...a) }));
 
 import { CARE_NEED_CATEGORIES, canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "../careNeedsTaxonomy";
-import { PRIMARY_SERVICES } from "../caregiverServiceLabels";
+import { PRIMARY_SERVICES, CHILD_SERVICES } from "../caregiverServiceLabels";
 
 beforeEach(() => { parseWithClaude.mockReset(); parseWithClaude.mockResolvedValue("{}"); });
 
 describe("care needs = the care provider side's eight, nothing underneath (2026-10-04)", () => {
   it("the categories ARE the eight services", () => {
-    expect(CARE_NEED_CATEGORIES).toEqual([...PRIMARY_SERVICES]);
+    expect(CARE_NEED_CATEGORIES).toEqual([...PRIMARY_SERVICES, ...CHILD_SERVICES.filter((s) => s !== "Transportation")]); // + the child eight since 2026-10-18
   });
 
   it("names and single words land offline; 'bathing' is Personal Care and no sub-task is stored", async () => {

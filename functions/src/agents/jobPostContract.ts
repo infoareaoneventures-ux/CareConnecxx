@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import type { GeoPrecision } from "../utils/geocode";
+import { defaultJobTitleFor, kindsOfServices, ageRangesFromWords } from "./caregiverServiceLabels";
 
 // Evia ↔ Web job-post contract (client-side parity wave, 2026-07-10).
 //
@@ -24,8 +25,10 @@ import type { GeoPrecision } from "../utils/geocode";
 // dedicated title question at all — it just silently uses this same default,
 // so an SMS-posted job's title matches what a site user would get by simply
 // not bothering to customize the site's own auto-filled suggestion.
-export function defaultJobTitle(city?: string | null): string {
-  return city ? `Senior care in ${city}` : "Senior care needed";
+// Child care (2026-10-18): the same pattern by kind — "Senior care in X" / "Child care in X" /
+// "Senior and child care in X" (caregiverServiceLabels.ts defaultJobTitleFor; missing kinds = senior).
+export function defaultJobTitle(city?: string | null, kinds?: unknown): string {
+  return defaultJobTitleFor(city, kinds);
 }
 
 export interface WebJobPostInput {
@@ -35,6 +38,10 @@ export interface WebJobPostInput {
   description?:     string;
   clientName?:      string;
   careTypes?:       string[];
+  /** Child care (2026-10-18): the household's / flow's answer — the post's kinds are derived from careTypes, this only decides a Transportation-only post. */
+  careKinds?:       unknown;
+  /** The age-range chips (AGE_RANGES ids) — kept only when the post's kinds include child. */
+  ageRanges?:       unknown;
   careLevel?:       string;
   startDate?:       string;                  // "2026-08-01" or "ASAP" or free text
   endDate?:         string;                  // set only for a date-limited (non-ongoing) request
@@ -60,6 +67,9 @@ export interface WebJobPostInput {
 
 export function buildWebJobPostDoc(p: WebJobPostInput): Record<string, unknown> {
   const careTypes  = p.careTypes ?? [];
+  // Child care (2026-10-18): a post's kinds come from what was ticked; the chips ride only on a child post.
+  const careKinds  = kindsOfServices(careTypes, p.careKinds);
+  const ageRanges  = careKinds.includes("child") ? ageRangesFromWords(p.ageRanges) : [];
   const days       = p.days ?? [];
   const timeOfDay  = p.timeOfDay ?? [];
   const startDate  = (p.startDate || "ASAP") as string;
@@ -111,6 +121,8 @@ export function buildWebJobPostDoc(p: WebJobPostInput): Record<string, unknown> 
     ...(typeof p.lng === "number" ? { lng: p.lng } : {}),
     ...(typeof p.lat === "number" && typeof p.lng === "number" && p.geoPrecision ? { geoPrecision: p.geoPrecision } : {}),
     careTypes,
+    careKinds,
+    ...(ageRanges.length ? { ageRanges } : {}),
     requirements: careTypes,           // legacy mirror (jobMatchService keywords)
     ...(p.careLevel ? { careLevel: p.careLevel } : {}),
     ...(p.recipientsCount ? { recipientsCount: p.recipientsCount } : {}),

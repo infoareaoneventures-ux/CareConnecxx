@@ -8,6 +8,7 @@ import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
 import { isQuestionOrOther, isBackOutRequest, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { mapCaregiverServices, orderedCanonicalServices, serviceLabels, SERVICE_LABELS, serviceMenuText } from "./caregiverServices";
+import { CHILD_SERVICE_LABELS, normalizeCareKinds, careKindsFromWords, kindsOfServices, careKindBadge, CareKind } from "./caregiverServiceLabels";
 import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, BIO_MIN_CHARS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
 import { LANGUAGE_OPTIONS, JOB_TYPE_OPTIONS, MAX_CLIENTS_OPTIONS, TRAVEL_OPTIONS, jobTypeLabel } from "./caregiverMyProfile";
 
@@ -59,7 +60,7 @@ export const RATES_FACTS = (current: RatesDraft) =>
   `(${EXPERIENCE_BUCKETS.join(", ")}) and how many clients at once (${MAX_CLIENTS_OPTIONS.join(", ")}); YES saves the whole section together, like the page's Save. ` +
   `The Rates section currently reads:\n${ratesRecap(current)}\n${SAVE_RULE}`;
 export const SKILLS_FACTS =
-  `The Care Services editor offers exactly these eight services: ${SERVICE_LABELS.join(", ")} — nothing else can be added. ` +
+  `The Care Services editor asks what care she provides (senior care, child care, or both) and offers exactly these services — senior care: ${SERVICE_LABELS.join(", ")}; child care: ${CHILD_SERVICE_LABELS.join(", ")} — nothing else can be added. ` +
   "Medication Reminders Only means reminding when it is time, never giving medication; care providers here do not give medication or medical treatment. " +
   `Families see the saved services on the care provider's profile and in matching. ${SAVE_RULE}`;
 export const LANGUAGES_FACTS =
@@ -117,7 +118,7 @@ export async function startProfileFlow(
   await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "collect", profileUpdateField: field, stateExpiresAt: FLOW_TTL() });
   const q: Record<string, string> = {
     rates: RATES_Q,
-    skills: `Which services would you like to add or remove? The list is: ${SERVICE_LABELS.join(", ")}. (For example "add Personal Care" or "remove Transportation".)`,
+    skills: `Which services would you like to add or remove? Senior care: ${SERVICE_LABELS.join(", ")}. Child care: ${CHILD_SERVICE_LABELS.join(", ")}. (For example "add Personal Care", "add child care — Supervision and Homework", or "remove Transportation".)`,
     bio: BIO_Q,
     languages: LANGUAGES_Q,
     jobtype: JOB_TYPE_Q,
@@ -321,17 +322,17 @@ async function handleSkillsUpdate(
   // Transportation needs the three documents on the record first — the same
   // rule the page enforces before Save.
   const step = (session.profileUpdateStep as string) ?? "collect";
-  const menu = SERVICE_LABELS.join(", ");
+  const menu = `Senior care: ${SERVICE_LABELS.join(", ")}. Child care: ${CHILD_SERVICE_LABELS.join(", ")}`;
 
   if (step === "collect") {
-    const reAsk = `Which services would you like to add or remove? The list is: ${menu}. (For example "add Personal Care" or "remove Transportation".)`;
+    const reAsk = `Which services would you like to add or remove? ${menu}. (For example "add Personal Care", "add child care — Supervision and Homework", or "remove Transportation".)`;
     if (await isQuestionOrOther(text, reAsk)) {
       await sendMessage(chatId, await answerMidFlow(text, reAsk, SKILLS_FACTS));
       return;
     }
     const raw = await parseWithClaude(
       "Parse the care provider's request to change the care services on her profile. Reply JSON: " +
-        '{"action":"add"|"remove"|"replace","skills":["each service or kind of care she named, in her words"]}. ' +
+        '{"action":"add"|"remove"|"replace","skills":["each service or kind of care she named, in her words"],"careKinds":"senior | child | both — ONLY when she says which care she provides (seniors, children, or both)"}. ' +
         "If she hasn't said yet, reply: __none__.",
       text,
       150,
@@ -347,10 +348,12 @@ async function handleSkillsUpdate(
     }
     let action: "add" | "remove" | "replace" = "add";
     let words: string[] = [];
+    let kindsSaid: CareKind[] | null = null;
     try {
       const parsed = JSON.parse(raw);
       action = ["add", "remove", "replace"].includes(parsed.action) ? parsed.action : "add";
       words = Array.isArray(parsed.skills) ? parsed.skills.map((s: unknown) => String(s).trim()).filter(Boolean) : [];
+      kindsSaid = careKindsFromWords(parsed.careKinds);
     } catch { /* fall through */ }
 
     const mapping = words.length ? await mapCaregiverServices(words) : { matched: [], medical: [], unmapped: [], unresolved: [] };
@@ -358,27 +361,33 @@ async function handleSkillsUpdate(
     if (mapping.medical.length) notes.push(`Care Providers here don't administer medication or give medical treatment, so "${mapping.medical.join('", "')}" isn't a service I can add — the closest one on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
     if (mapping.unmapped.length) notes.push(`"${mapping.unmapped.join('", "')}" isn't one of the services on the list, so I've left it off.`);
     if (mapping.unresolved.length) notes.push(`I couldn't place "${mapping.unresolved.join('", "')}" — which of the list did you mean?`);
-    if (mapping.matched.length === 0) {
+    const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+    const cg = (cgSnap.data() ?? {}) as Record<string, unknown>;
+    const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+    const current = orderedCanonicalServices([...arr(cg.skills), ...arr(cg.services), ...arr(cg.specialties)]);
+    const currentKinds = normalizeCareKinds(cg.careKinds);
+
+    if (mapping.matched.length === 0 && !kindsSaid) {
       await db.collection("agent_sessions").doc(phone).update({
         profileUpdateStep:  "collect",
         profileUpdateField: "skills",
         stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       });
-      await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Pick from these:\n${serviceMenuText()}`);
+      await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Pick from these:\n${serviceMenuText(["senior", "child"])}`);
       return;
     }
-
-    const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-    const cg = (cgSnap.data() ?? {}) as Record<string, unknown>;
-    const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
-    const current = orderedCanonicalServices([...arr(cg.skills), ...arr(cg.services), ...arr(cg.specialties)]);
 
     let proposed: string[];
     if (action === "add") proposed = orderedCanonicalServices([...current, ...mapping.matched]);
     else if (action === "remove") proposed = current.filter((s) => !mapping.matched.includes(s));
-    else proposed = mapping.matched;
+    else proposed = mapping.matched.length ? mapping.matched : current;
+    // Child care (2026-10-18): the care she provides — what she said, else what the ticked services imply,
+    // always on top of what the record already says (a service from the other list adds that kind).
+    const impliedKinds = kindsOfServices(proposed, currentKinds);
+    const proposedKinds = normalizeCareKinds([...(action === "replace" && kindsSaid ? kindsSaid : [...currentKinds, ...(kindsSaid ?? [])]), ...impliedKinds]);
+    const kindsChanged = proposedKinds.join("|") !== currentKinds.join("|");
 
-    if (proposed.join("|") === current.join("|")) {
+    if (proposed.join("|") === current.join("|") && !kindsChanged) {
       await clearProfileFlow(phone);
       await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Your services already read: ${serviceLabels(current).join(", ") || "(none)"} — nothing to change.`);
       return;
@@ -387,21 +396,23 @@ async function handleSkillsUpdate(
     await db.collection("agent_sessions").doc(phone).update({
       profileUpdateStep:  "confirm",
       profileUpdateField: "skills",
-      profileUpdateValue: JSON.stringify(proposed),
+      profileUpdateValue: JSON.stringify({ services: proposed, careKinds: proposedKinds }),
       stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
+    const kindLine = kindsChanged ? ` You'd provide ${careKindBadge(proposedKinds)?.toLowerCase() ?? "senior care"}.` : "";
     await sendMessage(chatId,
-      `${notes.join(" ")}${notes.length ? " " : ""}Your services will be: ${serviceLabels(proposed).join(", ") || "(none)"}.\n\n` +
+      `${notes.join(" ")}${notes.length ? " " : ""}Your services will be: ${serviceLabels(proposed).join(", ") || "(none)"}.${kindLine}\n\n` +
       `Reply YES to save that, or NO to leave them as they are.`,
     );
     return;
   }
 
-  // confirm
-  const proposed = (() => {
-    try { return orderedCanonicalServices(JSON.parse((session.profileUpdateValue as string) ?? "[]") as unknown[]); }
-    catch { return [] as string[]; }
+  // confirm — the parked value is {services, careKinds} (2026-10-18); an older parked array still reads.
+  const parked = (() => {
+    try { return JSON.parse((session.profileUpdateValue as string) ?? "[]") as unknown; } catch { return []; }
   })();
+  const proposed = orderedCanonicalServices(Array.isArray(parked) ? parked : ((parked as { services?: unknown[] })?.services ?? []));
+  const parkedKinds = Array.isArray(parked) ? null : normalizeCareKinds((parked as { careKinds?: unknown })?.careKinds);
   const reAskConfirm = `So — save these services: ${serviceLabels(proposed).join(", ") || "(none)"}? Reply YES or NO.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, SKILLS_FACTS));
@@ -415,6 +426,7 @@ async function handleSkillsUpdate(
     await db.collection("caregivers").doc(caregiverId).update({
       services:           proposed,
       skills:             proposed,
+      ...(parkedKinds ? { careKinds: parkedKinds } : {}),
     });
     await sendMessage(chatId, `Done — your services now read: ${serviceLabels(proposed).join(", ") || "(none)"}.`);
   } else {

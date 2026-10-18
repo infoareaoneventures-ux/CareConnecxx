@@ -21,7 +21,7 @@
 //   TRAVEL                        Location & Travel › Edit (serviceRadius; the address is Account Settings)
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
-import { serviceLabel } from "./caregiverServiceLabels";
+import { serviceLabel, normalizeCareKinds, serviceListsForKinds, CARE_KIND_LABEL } from "./caregiverServiceLabels";
 import { hasValidTransportDocs } from "./caregiverMatchScoring";
 import { gridFromWeekly, gridText, DAY_KEYS, type Grid } from "./caregiverAvailabilityGrid";
 import { formatExperience } from "./caregiverProfilePage";
@@ -62,6 +62,7 @@ export interface MyProfilePage {
   bio: string;
   languages: string[];
   services: string[];               // stored values (labels applied at render)
+  careKinds: string[];              // child care (2026-10-18): senior / child / both — missing = senior
   rates: Array<{ label: "1 Person" | "2 People" | "3+ People"; rate: number }>;
   experience: string;               // the bucket string as stored
   maxClients: string;
@@ -132,6 +133,7 @@ export async function loadMyProfilePage(caregiverId: string): Promise<MyProfileP
     bio: str(p.bio),
     languages: Array.isArray(p.languages) && p.languages.length ? (p.languages as string[]) : ["English"],
     services,
+    careKinds: normalizeCareKinds(p.careKinds),
     rates,
     experience: str(p.yearsExperience) || str(p.experience),
     maxClients: str(p.maxClients) || "1",
@@ -159,7 +161,15 @@ export function myProfileText(page: MyProfilePage): string {
   lines.push("Reply BIO to edit your bio, or LANGUAGES to change your languages.");
 
   lines.push("", "Care Services");
-  lines.push(page.services.length ? page.services.map(serviceLabel).join(", ") : "No services added yet.");
+  if (page.careKinds.length === 2) {
+    // Both lists, each under its own name — the editor shows them the same way.
+    for (const l of serviceListsForKinds(page.careKinds)) {
+      const mine = page.services.filter((s) => (l.services as readonly string[]).includes(s));
+      lines.push(`${CARE_KIND_LABEL[l.kind]}: ${mine.length ? mine.map(serviceLabel).join(", ") : "none yet"}`);
+    }
+  } else {
+    lines.push(page.services.length ? page.services.map(serviceLabel).join(", ") : "No services added yet.");
+  }
   lines.push("Reply SERVICES to add or remove one.");
 
   lines.push("", "Rates");

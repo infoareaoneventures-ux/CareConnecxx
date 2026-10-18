@@ -26,6 +26,8 @@
 import { parseWithClaude } from "../utils/parseWithClaude";
 import {
   PRIMARY_SERVICES,
+  CHILD_SERVICES,
+  RELATIONSHIPS,
   CANONICAL_SERVICES,
   SERVICE_DISPLAY_LABEL,
   SERVICE_LABELS,
@@ -38,6 +40,8 @@ import {
 
 export {
   PRIMARY_SERVICES,
+  CHILD_SERVICES,
+  RELATIONSHIPS,
   CANONICAL_SERVICES,
   SERVICE_DISPLAY_LABEL,
   SERVICE_LABELS,
@@ -97,6 +101,35 @@ const DIRECT_HITS: Record<string, string> = {
   "housekeeping": "Light Housekeeping",
   "cleaning": "Light Housekeeping",
   "laundry": "Light Housekeeping",
+  // Child care (2026-10-18): the child eight by name and the common single words.
+  "supervision": "Supervision",
+  "supervising": "Supervision",
+  "babysitting": "Supervision",
+  "babysit": "Supervision",
+  "watching kids": "Supervision",
+  "baby care": "Baby Care",
+  "infant care": "Baby Care",
+  "diapering": "Baby Care",
+  "diapers": "Baby Care",
+  "naps": "Baby Care",
+  "bathing & dressing": "Bathing & Dressing",
+  "bathing and dressing": "Bathing & Dressing",
+  "potty training": "Bathing & Dressing",
+  "meals & snacks": "Meals & Snacks",
+  "meals and snacks": "Meals & Snacks",
+  "snacks": "Meals & Snacks",
+  "activities & play": "Activities & Play",
+  "activities and play": "Activities & Play",
+  "play": "Activities & Play",
+  "playtime": "Activities & Play",
+  "school & homework": "School & Homework",
+  "school and homework": "School & Homework",
+  "homework": "School & Homework",
+  "homework help": "School & Homework",
+  "school pickup": "School & Homework",
+  "tidying & laundry": "Tidying & Laundry",
+  "tidying and laundry": "Tidying & Laundry",
+  "tidying": "Tidying & Laundry",
 };
 
 function cleanRaw(raw: unknown): string[] {
@@ -140,15 +173,19 @@ export async function mapCaregiverServices(raw: unknown): Promise<ServiceMapping
 
   const enumList = CANONICAL_SERVICES.map((s) => `"${s}"`).join(", ");
   const reply = await parseWithClaude(
-    "You sort a care provider's words about the care she offers into a FIXED list of eight services. " +
+    "You sort a care provider's words about the care she offers into a FIXED list of services — eight for seniors and eight for children (Transportation is on both). " +
       `Allowed services (use these exact strings): [${enumList}]. ` +
       'Reply with raw JSON only: {"services": [allowed strings her words clearly describe], ' +
       '"medical": [her phrases that describe hands-on medical or nursing care], ' +
-      '"unmapped": [her phrases that fit none of the eight and are not medical]}. ' +
-      "Rules: bathing, dressing, toileting, grooming, hygiene → Personal Care. Cooking, meals, feeding → Meal Preparation. " +
+      '"unmapped": [her phrases that fit none of the list and are not medical]}. ' +
+      "Rules (seniors): bathing, dressing, toileting, grooming, hygiene → Personal Care. Cooking, meals, feeding → Meal Preparation. " +
       "Driving, rides, taking someone to appointments, errands by car → Transportation. Alzheimer's, memory loss, confusion → Dementia / Memory Care. " +
       "Walking, transfers, wheelchair, fall prevention → Mobility Assistance. Reminding someone to take their pills, pill reminders → Medication Reminders. " +
-      "Keeping company, conversation, visits → Companionship. Laundry, cleaning, tidying, dishes → Light Housekeeping. " +
+      "Keeping company, conversation, visits → Companionship. Laundry, cleaning, tidying, dishes (for an adult's home) → Light Housekeeping. " +
+      "CHILD CARE: watching / supervising / babysitting children → Supervision. Infants, diapering, bottles, naps → Baby Care. " +
+      "Bathing, dressing, potty help for a child → Bathing & Dressing. Kids' meals and snacks → Meals & Snacks. Play, crafts, games, outings with children → Activities & Play. " +
+      "School pickup / drop-off, homework help → School & Homework. Tidying up after kids, children's laundry → Tidying & Laundry. " +
+      "When the words clearly concern a CHILD, use the child names; when they concern an older adult, the senior names; a bare 'bathing' with no one named → Personal Care. " +
       "MEDICAL (never a service): administering or giving medication, injections, insulin, managing dosages, filling pill boxes, wound care, catheter care, vitals, therapy, nursing. " +
       '"All of them" / "everything on the list" → every allowed service. ' +
       "A phrase may fit more than one service; only CLEAR fits go in services — a vague phrase (\"help around the house\") goes in unmapped. No explanations.",

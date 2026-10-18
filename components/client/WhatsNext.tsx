@@ -12,6 +12,7 @@ import {
   OnboardingStepId,
 } from '../../hooks/useOnboardingProgress';
 import { startIdentityVerification } from '../../services/stripeService';
+import { defaultJobTitle, kindsOfServices } from '../caregiver/signup/constants';
 import { db } from '../../lib/firebase';
 import { dbService } from '../../services/api';
 
@@ -105,9 +106,11 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
         const city = w.city || '';
         const state = w.state || '';
         dbService.createJobPost({
-          title: `Senior care${city ? ` in ${city}` : ''}`,
+          title: defaultJobTitle(city, kindsOfServices(w.careNeeds || [], w.careKinds)),
           description: w.jobDescription || 'Looking for a caring and reliable care provider.',
           careTypes: w.careNeeds || [],
+          careKinds: kindsOfServices(w.careNeeds || [], w.careKinds),
+          ...(Array.isArray(w.ageRanges) && w.ageRanges.length && kindsOfServices(w.careNeeds || [], w.careKinds).includes('child') ? { ageRanges: w.ageRanges } : {}),
           requirements: w.careNeeds || [],
           startDate: w.startDate || new Date().toISOString().split('T')[0],
           city,

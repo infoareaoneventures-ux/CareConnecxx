@@ -22,7 +22,7 @@ describe("buildOnboardingDirective", () => {
 
   it("client with everything collected instructs complete_collection, not more asking", () => {
     const d = buildOnboardingDirective("client", {
-      firstName: "Imran", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"],
+      firstName: "Imran", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"], careKinds: ["senior"],
       homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
       city: "Austin", zipCode: "78701", daysPerWeek: 5, timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],

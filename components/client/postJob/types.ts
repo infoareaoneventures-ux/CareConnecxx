@@ -1,5 +1,6 @@
 import { JobTimeOfDay, JobCareLevel, JobPaymentMethod } from '../../../types';
 import type { GeocodedPoint } from '../../../utils/geocode';
+import { PRIMARY_SERVICES, CareKind } from '../../caregiver/signup/constants';
 
 export interface CareRecipientEntry {
   id?: string;
@@ -40,9 +41,13 @@ export interface JobPostFormData {
   smokingHousehold: boolean;
 
   // Step 3: Care Needs
+  /** Who the care is for — the household's answer (job_postings.careKinds); the post's own kinds are read from careTypes at save. */
+  careKinds: CareKind[];
   careTypes: string[];
   careNeedDetails: Record<string, string[]>;
   careLevel: JobCareLevel | '';
+  /** Age-range chip ids when child care is on (informational, like pets/smoking). */
+  ageRanges: string[];
 
   // Step 4: Rate & Payment
   rate: number | undefined;
@@ -75,9 +80,11 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
   neighborhood: '',
   locationPoint: null,
 
+  careKinds: ['senior'],
   careTypes: [],
   careNeedDetails: {},
   careLevel: '',
+  ageRanges: [],
   petsInHome: false,
   smokingHousehold: false,
 
@@ -97,16 +104,9 @@ export interface StepProps {
   onShowToast: (msg: string, type: 'success' | 'error' | 'info') => void;
 }
 
-export const CARE_TYPES = [
-  'Mobility Assistance',
-  'Dementia / Memory Care',
-  'Medication Reminders',
-  'Personal Care',
-  'Companionship',
-  'Transportation',
-  'Meal Preparation',
-  'Light Housekeeping',
-];
+// The senior eight — ONE source (components/caregiver/signup/constants.ts); the
+// child eight live beside it as CHILD_SERVICES (2026-10-18).
+export const CARE_TYPES: string[] = [...PRIMARY_SERVICES];
 
 export const TIME_OF_DAY_OPTIONS: Array<{ value: JobTimeOfDay; label: string; sub: string }> = [
   { value: 'morning',   label: 'Morning',   sub: '6am–12pm' },

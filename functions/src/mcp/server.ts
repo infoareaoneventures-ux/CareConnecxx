@@ -28,7 +28,7 @@ import {
   readCarePlanPage, resolveRecipient, savePlanSection, setRecipientLocation, addRecipient, removeRecipient,
   saveEmergencyContacts, confirmCarePlanReviewed, toCareType,
 } from "../agents/carePlanPage";
-import { SERVICE_LABELS as CARE_TYPE_LABELS } from "../agents/caregiverServiceLabels";
+import { SERVICE_LABELS as CARE_TYPE_LABELS, CHILD_SERVICE_LABELS, ageRangesFromWords, AGE_RANGES, CANONICAL_SERVICES } from "../agents/caregiverServiceLabels";
 import { cancelVisit, cancelWholeBooking, cancelPendingRequest, cancelPendingAmendment, withdrawReplacementRequest } from "../agents/bookingCancel";
 import { createScheduleAmendment, loadCaregiverAvailability, checkVisitBlock, normDayAbbr, blockToRange, describeBlock, describeRange, ABBR_TO_FULL as VISIT_DAY_FULL, type TimeBlock as VisitTimeBlock } from "../agents/visitRequest";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
@@ -114,7 +114,7 @@ export interface McpTool {
 export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_senior_profile",
-    description: "Get the profile of the senior being cared for: name and care needs (non-medical — no diagnoses or medications exist).",
+    description: "Get the profile of the care recipient: name and care needs (non-medical — no diagnoses or medications exist).",
     input_schema: {
       type: "object",
       properties: {
@@ -171,7 +171,7 @@ export const MCP_TOOLS: McpTool[] = [
         minRating:          { type: "number", description: "Rating pills: 3, 4 or 4.5 (omit for Any)." },
         minExperienceYears: { type: "number", description: "Experience: 1, 3, 5 or 10 (omit for Any)." },
         transportationOnly: { type: "boolean", description: "Transportation only — care providers offering it with a cleared driving record (the page's Specialties › Transportation box)." },
-        specialties:        { type: "array", items: { type: "string" }, description: "Senior care specialties — any of (e.g. 'Dementia / Memory Care', 'Mobility Assistance')." },
+        specialties:        { type: "array", items: { type: "string" }, description: "Care services — any of (senior or child names, e.g. 'Dementia / Memory Care', 'Supervision')." },
         languages:          { type: "array", items: { type: "string" }, description: "Languages — any of." },
         sortBy:             { type: "string", enum: ["rating", "price-low", "price-high"], description: "Sort by: Highest rated (default), Price: Low to High, Price: High to Low." },
         favoritesOnly:      { type: "boolean", description: "The Favorites tab — only care providers the family has hearted." },
@@ -753,11 +753,12 @@ export const MCP_TOOLS: McpTool[] = [
     name: "create_senior_profile",
     description:
       "Add a care recipient — the website's Care Plan page '+ Add' form, exactly. Use when a family says they care for someone " +
-      "else too (\"I also look after my dad\"). The form REQUIRES first name, relationship (Myself / Parent / Grandparent / Spouse / " +
-      "Sibling / Other) and a care location with a street address (pick one already on file from get_care_plan's locationPool, or " +
-      "give a new street/city/state/zip); it also takes care needs (the page's fixed pills: Mobility Assistance, Dementia / Memory " +
-      "Care, Medication Reminders Only, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping — nothing " +
-      "underneath), and a note. Collect what's missing conversationally, read it back, then call. Non-medical: never record " +
+      "else too (\"I also look after my dad\"). The form REQUIRES first name, relationship (Myself / Parent / Spouse or Partner / " +
+      "Child / Other) and a care location with a street address (pick one already on file from get_care_plan's locationPool, or " +
+      "give a new street/city/state/zip); it also takes care needs (the page's fixed pills — senior care: Mobility Assistance, Dementia / Memory " +
+      "Care, Medication Reminders Only, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping; child care: Supervision, Baby Care, " +
+      "Bathing & Dressing, Meals & Snacks, Activities & Play, School & Homework, Transportation, Tidying & Laundry — nothing underneath), " +
+      "for a child their age range by name (ageRanges: Infant, Toddler, Ages 3–5, Ages 6–12, Teen — never a number), and a note. Collect what's missing conversationally, read it back, then call. Non-medical: never record " +
       "medications, diagnoses or conditions. Only for a NEW recipient — edits go through update_care_plan.",
     input_schema: {
       type: "object",
@@ -767,8 +768,9 @@ export const MCP_TOOLS: McpTool[] = [
         firstName:       { type: "string", description: "The recipient's first name." },
         lastName:        { type: "string", description: "Last name (optional)." },
         name:            { type: "string", description: "Full name — alternative to firstName/lastName." },
-        relationship:    { type: "string", description: "Myself, Parent, Grandparent, Spouse, Sibling or Other (required)." },
-        careNeeds:       { type: "array", items: { type: "string" }, description: "Care needs from the page's list." },
+        relationship:    { type: "string", description: "Myself, Parent, Spouse or Partner, Child or Other (required)." },
+        careNeeds:       { type: "array", items: { type: "string" }, description: "Care needs from the page's lists (senior or child names)." },
+        ageRanges:       { type: "array", items: { type: "string" }, description: "For a child only: age range(s) by name — Infant, Toddler, Ages 3–5, Ages 6–12, Teen." },
         notes:           { type: "string", description: "The Notes section, if the family gave one." },
         location:        { type: "object", description: "Care location: { street, city, state, zipCode } — street is required.", properties: { street: { type: "string" }, city: { type: "string" }, state: { type: "string" }, zipCode: { type: "string" } } },
       },
@@ -921,8 +923,10 @@ export const MCP_TOOLS: McpTool[] = [
     name: "update_care_plan",
     description:
       "Edit one section of the website's Care Plan page for one care recipient — the pencil on that section: " +
-      "'careNeeds' (the page's eight pills — Mobility Assistance, Dementia / Memory Care, Medication Reminders Only, Personal Care, " +
-      "Companionship, Transportation, Meal Preparation, Light Housekeeping; nothing underneath), 'notes', 'lifestyle' (pass only the fields changing), " +
+      "'careNeeds' (the page's pills — senior care: Mobility Assistance, Dementia / Memory Care, Medication Reminders Only, Personal Care, " +
+      "Companionship, Transportation, Meal Preparation, Light Housekeeping; child care: Supervision, Baby Care, Bathing & Dressing, Meals & Snacks, " +
+      "Activities & Play, School & Homework, Transportation, Tidying & Laundry; nothing underneath), 'ageRanges' (a child only — Infant, Toddler, Ages 3–5, " +
+      "Ages 6–12, Teen, by name, never a number), 'notes', 'lifestyle' (pass only the fields changing), " +
       "'careLocation' (street/city/state/zipCode — an address already in locationPool is reused, a new one is geocoded and " +
       "added to the pool), 'emergencyContacts' (the Emergency Contacts card — items {name, relation, phone, isPrimary}; the " +
       "card holds at most 2 contacts including the signup contact; phone must be 10+ digits), or 'reviewed' (the 'Looks good' " +
@@ -933,10 +937,10 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-        field:    { type: "string", enum: ["careNeeds", "notes", "lifestyle", "careLocation", "emergencyContacts", "reviewed"], description: "Which section to edit." },
+        field:    { type: "string", enum: ["careNeeds", "ageRanges", "notes", "lifestyle", "careLocation", "emergencyContacts", "reviewed"], description: "Which section to edit." },
         value:    {
           description:
-            "careNeeds: array of pills (set) or one pill (append/remove) — names or the family's words ('bathing' is Personal Care). " +
+            "careNeeds: array of pills (set) or one pill (append/remove) — names or the family's words ('bathing' is Personal Care). ageRanges: array of the names (set). " +
             "notes: string. lifestyle: partial object of {favoriteActivities[], favoriteActivitiesOther, helpActivities[], entertainment[], entertainmentOther, " +
             "enjoysConversation, prefersQuiet, familyInArea, familyVisitFreq, friendsVisitors, friendsVisitFreq, hasAppointments, appointmentsDetails}. " +
             "careLocation: {street, city, state, zipCode}. emergencyContacts: array (set) or one contact (append/remove) of {name, relation, phone, isPrimary}. reviewed: true.",
@@ -1570,7 +1574,7 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "The family's Care Requests > Posts tab: every job post with exactly what its card shows — title, status, type " +
       "(jobFrequency), start/end date, location, rate (or rate flexible), days, time of day, care types, description, " +
-      "recipientsCount ('1 senior'), caregiversNeeded with hiredCount ('0 of 1 hired'), and pendingApplicantCount. " +
+      "recipientsCount ('1 person'), caregiversNeeded with hiredCount ('0 of 1 hired'), and pendingApplicantCount. " +
       "status 'open' = the Open pill, 'closed' = the Closed pill (anything not open).",
     input_schema: {
       type: "object",
@@ -1656,8 +1660,8 @@ export const MCP_TOOLS: McpTool[] = [
             payMax:    { type: "number", description: "Pay Rate ($/hr) maximum" },
             timeOfDay: { type: "array", items: { type: "string", enum: ["morning", "afternoon", "evening", "overnight"] }, description: "Morning 6am–12pm, Afternoon 12pm–6pm, Evening 6pm–12am, Overnight 12am–6am" },
             days:      { type: "array", items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }, description: "weekends = Sat, Sun; weekdays = Mon–Fri" },
-            seniors:   { type: "array", items: { type: "string", enum: ["1", "2", "3+"] }, description: "Seniors in Home" },
-            careTypes: { type: "array", items: { type: "string", enum: ["Mobility Assistance", "Dementia / Memory Care", "Medication Reminders", "Personal Care", "Companionship", "Transportation", "Meal Preparation", "Light Housekeeping"] }, description: "Care Type (exact names)" },
+            seniors:   { type: "array", items: { type: "string", enum: ["1", "2", "3+"] }, description: "People in the home" },
+            careTypes: { type: "array", items: { type: "string", enum: [...CANONICAL_SERVICES] }, description: "Care Type (exact names — senior or child list)" },
           },
         },
       },
@@ -1667,7 +1671,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_job_details",
     description:
-      "The Jobs page's Details modal for ONE job: title, rate, location, frequency, care types, starting date, days, time, seniors, hours/week, " +
+      "The Jobs page's Details modal for ONE job: title, rate, location, frequency, care types, starting date, days, time, people in the home, hours/week, " +
       "description, and the footer the site shows (their interview or application status for it, or Apply Now / the gate). " +
       "The family's name is NOT shown until the family has accepted them — say so if asked. This tool TEXTS THE DETAILS ITSELF — say nothing else this turn. " +
       "Pass the number they said; with no number or id it shows the job just noticed / just discussed.",
@@ -2544,7 +2548,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResource[] = [
   {
     uri: "cara://senior/{seniorId}/profile",
     name: "Senior Profile",
-    description: "Name and care needs for the senior (non-medical).",
+    description: "Name and care needs for the care recipient (non-medical).",
     mimeType: "application/json",
   },
   {
@@ -3236,7 +3240,7 @@ async function executeToolCall(
         const page = await readCarePlanPage(clientId);
         return {
           success: true,
-          results: page.recipients.map((r) => ({ key: r.key, name: r.name, firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, isPrimary: r.isPrimary })),
+          results: page.recipients.map((r) => ({ key: r.key, name: r.name, firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, ageRanges: r.ageRangeLabels, isPrimary: r.isPrimary })),
           hasMore: false,
         };
       }
@@ -4470,7 +4474,7 @@ async function executeToolCall(
       const { clientId, field, value, action, recipientFirstName } = input as {
         clientId: string; field: string; value: unknown; action: "set" | "append" | "remove"; recipientFirstName?: string;
       };
-      const ALLOWED_FIELDS = ["careNeeds", "notes", "lifestyle", "careLocation", "emergencyContacts", "reviewed"];
+      const ALLOWED_FIELDS = ["careNeeds", "ageRanges", "notes", "lifestyle", "careLocation", "emergencyContacts", "reviewed"];
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
       if (!ALLOWED_FIELDS.includes(field)) {
         return { success: false, error: `Field '${field}' is not on the Care Plan page. Sections: ${ALLOWED_FIELDS.join(", ")}` };
@@ -4532,7 +4536,7 @@ async function executeToolCall(
 
       if (field === "careNeeds") {
         const pills = (Array.isArray(value) ? value : [value]).map((v) => toCareType(String(v)));
-        if (pills.some((p) => !p)) return toolError("INVALID_INPUT", `Care needs must be from the page's list: ${CARE_TYPE_LABELS.join(", ")}`);
+        if (pills.some((p) => !p)) return toolError("INVALID_INPUT", `Care needs must be from the page's lists — senior care: ${CARE_TYPE_LABELS.join(", ")}; child care: ${CHILD_SERVICE_LABELS.join(", ")}`);
         let careNeeds: string[];
         if (action === "append") careNeeds = Array.from(new Set([...plan.careNeeds, ...(pills as string[])]));
         else if (action === "remove") careNeeds = plan.careNeeds.filter((n) => !(pills as string[]).includes(n));
@@ -4541,6 +4545,15 @@ async function executeToolCall(
         const updated = await savePlanSection(clientId, recipient, { careNeeds, careNeedDetails });
         logAudit({ eventType: "senior_profile_updated", userId: clientId, data: { source: "mcp:update_care_plan", field, action, recipient: recipient.key } }).catch(() => {});
         return { success: true, updated: field, action, recipient: recipient.name, careNeeds: updated.careNeeds };
+      }
+
+      // Child care (2026-10-18): the age-range chips on a child's plan — names only, never a number.
+      if (field === "ageRanges") {
+        const ids = ageRangesFromWords(value);
+        if (!ids.length) return toolError("INVALID_INPUT", `Age ranges must be from the page's chips: ${AGE_RANGES.map((a) => a.label).join(", ")}`);
+        const updated = await savePlanSection(clientId, recipient, { ageRanges: ids });
+        logAudit({ eventType: "senior_profile_updated", userId: clientId, data: { source: "mcp:update_care_plan", field, recipient: recipient.key } }).catch(() => {});
+        return { success: true, updated: field, action: "set", recipient: recipient.name, ageRanges: updated.ageRanges ?? ids };
       }
 
       if (field === "notes") {
@@ -4801,7 +4814,7 @@ async function executeToolCall(
     }
 
     if (name === "create_senior_profile") {
-      const { clientId, name: fullName, firstName, lastName, relationship, careNeeds, notes, location } = input as Record<string, unknown>;
+      const { clientId, name: fullName, firstName, lastName, relationship, careNeeds, notes, location, ageRanges } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
       const [fromFullFirst, ...fromFullRest] = String(fullName ?? "").trim().split(/\s+/).filter(Boolean);
       const first = String(firstName ?? fromFullFirst ?? "").trim();
@@ -4811,6 +4824,7 @@ async function executeToolCall(
       const r = await addRecipient(clientId as string, {
         firstName: first, lastName: last, relationship: String(relationship ?? ""),
         careNeeds: Array.isArray(careNeeds) ? (careNeeds as string[]) : [],
+        ageRanges,
         notes: typeof notes === "string" ? notes : "",
         location: { street: String(loc.street ?? ""), city: String(loc.city ?? ""), state: String(loc.state ?? ""), zipCode: String(loc.zipCode ?? "") },
       });

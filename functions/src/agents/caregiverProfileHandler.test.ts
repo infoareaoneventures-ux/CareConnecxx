@@ -247,6 +247,33 @@ describe("caregiverProfileHandler", () => {
     });
   });
 
+  // Child care (2026-10-18): the editor asks what care she provides; a child-list service widens it.
+  describe("SKILLS flow — child care", () => {
+    it("\"add child care\" with child-list services parks services + careKinds, says both, and YES writes careKinds too", async () => {
+      parseWithClaude
+        .mockResolvedValueOnce("NO")  // isQuestionOrOther
+        .mockResolvedValueOnce('{"action":"add","skills":["supervision","homework help"],"careKinds":"child"}'); // direct hits → no mapper call
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "add child care — supervision and homework help", {}, CHAT, "skills");
+      const parkedJson = updateMock.mock.calls.find(c => c[0].profileUpdateValue)?.[0].profileUpdateValue;
+      const parked = JSON.parse(parkedJson);
+      expect(parked.services).toEqual(["Companionship", "Supervision", "School & Homework"]); // existing senior service kept, menu order
+      expect(parked.careKinds).toEqual(["senior", "child"]);
+      expect(String(sendMessage.mock.calls.at(-1)?.[1])).toContain("senior and child care");
+
+      parseWithClaude.mockReset();
+      parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("YES");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "yes", { profileUpdateStep: "confirm", profileUpdateField: "skills", profileUpdateValue: parkedJson }, CHAT);
+      expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ services: parked.services, skills: parked.services, careKinds: ["senior", "child"] }));
+    });
+
+    it("an older parked array (pre-2026-10-18) still saves services and leaves careKinds alone", async () => {
+      parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("YES");
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "yes", { profileUpdateStep: "confirm", profileUpdateField: "skills", profileUpdateValue: JSON.stringify(["Companionship"]) }, CHAT);
+      const call = updateMock.mock.calls.find(c => c[0].services);
+      expect(call?.[0]).toEqual({ services: ["Companionship"], skills: ["Companionship"] });
+    });
+  });
+
   describe("SKILLS flow", () => {
     it("collect step — add: her words mapped onto the website's eight, off-list words left off and said so, read back by shown name", async () => {
       parseWithClaude
@@ -262,7 +289,7 @@ describe("caregiverProfileHandler", () => {
       }));
       const proposedJson = updateMock.mock.calls.find(c => c[0].profileUpdateValue)?.[0].profileUpdateValue;
       const proposed = JSON.parse(proposedJson);
-      expect(proposed).toEqual(["Dementia / Memory Care", "Medication Reminders", "Companionship"]); // existing kept, menu order, nothing raw
+      expect(proposed.services).toEqual(["Dementia / Memory Care", "Medication Reminders", "Companionship"]); // existing kept, menu order, nothing raw (parked as {services, careKinds} since 2026-10-18)
       const text = sendMessage.mock.calls.at(-1)?.[1] as string;
       expect(text).toContain('"hospice" isn\'t one of the services on the list');
       expect(text).toContain("Your services will be: Dementia / Memory Care, Medication Reminders Only, Companionship");
@@ -314,7 +341,7 @@ describe("caregiverProfileHandler", () => {
 
       const proposedJson = updateMock.mock.calls.find(c => c[0].profileUpdateValue)?.[0].profileUpdateValue;
       const proposed = JSON.parse(proposedJson);
-      expect(proposed).toEqual([]);
+      expect(proposed.services).toEqual([]);
     });
   });
 
@@ -440,7 +467,8 @@ describe("caregiverProfileHandler", () => {
     it("services / languages / looking for / travel — each briefed with its own list and the save rule", async () => {
       parseWithClaude.mockResolvedValueOnce("YES"); hoisted.quickComplete.mockResolvedValueOnce("A.");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "can I add wound care?", {}, CHAT, "skills");
-      expect(briefing()).toContain("exactly these eight services");
+      expect(briefing()).toContain("senior care: Mobility Assistance"); // both lists are briefed since 2026-10-18
+      expect(briefing()).toContain("child care: Supervision");
       expect(briefing()).toContain("Medication Reminders Only means reminding when it is time, never giving medication");
       parseWithClaude.mockResolvedValueOnce("YES"); hoisted.quickComplete.mockResolvedValueOnce("A.");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "is Somali on the list?", {}, CHAT, "languages");

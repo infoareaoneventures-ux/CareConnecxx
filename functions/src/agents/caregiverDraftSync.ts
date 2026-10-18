@@ -60,6 +60,8 @@ export function mapCaregiversDocToOnboardingData(
     : Array.isArray(d.services) ? d.services
     : undefined;
   if (Array.isArray(skills) && skills.length) out.specialties = skills;
+  // Child care (2026-10-18): the kinds answered on the site's services step.
+  if (Array.isArray(d.careKinds) && d.careKinds.length) out.careKinds = d.careKinds;
 
   // jobTypes (the wizard's MULTI-select, hyphenated ids) → jobType (Evia's
   // session field: one underscored id, or the list when several were picked).

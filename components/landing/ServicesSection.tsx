@@ -1,6 +1,6 @@
 import React from 'react';
 import { ViewType } from '../../types';
-import { PRIMARY_SERVICES, serviceLabel } from '../caregiver/signup/constants';
+import { PRIMARY_SERVICES, CHILD_SERVICES, serviceLabel } from '../caregiver/signup/constants';
 
 interface ServicesSectionProps {
     onNavigate: (view: ViewType) => void;
@@ -48,6 +48,25 @@ const ALSO: readonly Service[] = ['Light Housekeeping', 'Medication Reminders', 
 const SERVICE_ORDER: readonly Service[] = FEATURED;
 const alsoLine = ALSO.map(serviceLabel);
 
+// Child care (founder, 2026-10-18): the same layout and the same rule — the
+// child eight (signup/constants.ts CHILD_SERVICES), four as cards, four named in
+// one line, one plain non-medical sentence each. Transportation is the one name
+// both lists share.
+type ChildService = (typeof CHILD_SERVICES)[number];
+const CHILD_COPY: Record<ChildService, { description: string }> = {
+    'Supervision': { description: 'A watchful adult in the home — playtime, routines and bedtime handled while you are out or at work.' },
+    'Baby Care': { description: 'Feeding, diapering, naps and the gentle rhythm of a day with a baby.' },
+    'Bathing & Dressing': { description: 'Bath time, getting dressed and the small routines of the morning and evening.' },
+    'Meals & Snacks': { description: 'Breakfast, lunch, dinner and snacks made and shared at the table.' },
+    'Activities & Play': { description: 'Games, crafts, reading and time outside — a day that keeps a child busy and happy.' },
+    'School & Homework': { description: 'School routines, homework help and the after-school hours covered.' },
+    'Transportation': { description: 'Rides to school, activities and appointments by a care provider whose driving record has been checked.' },
+    'Tidying & Laundry': { description: 'Toys put away, kids\' laundry done and the home kept comfortable.' },
+};
+const CHILD_FEATURED: readonly ChildService[] = ['Supervision', 'Baby Care', 'Activities & Play', 'School & Homework'];
+const CHILD_ALSO: readonly ChildService[] = ['Bathing & Dressing', 'Meals & Snacks', 'Transportation', 'Tidying & Laundry'];
+const childAlsoLine = CHILD_ALSO.map(serviceLabel);
+
 export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) => {
     return (
         <section className="bg-white py-24 border-t border-slate-100">
@@ -62,6 +81,7 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
                     </p>
                 </div>
 
+                <h3 className="text-2xl font-semibold text-ink-900 mb-6 tracking-tight">Senior care</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
                     {SERVICE_ORDER.map((name) => {
                         const service = SERVICE_COPY[name];
@@ -92,6 +112,40 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
                 <div className="mt-12 max-w-3xl mx-auto text-center">
                     <p className="text-slate-600 leading-relaxed text-[15px]">
                         Care providers also offer {alsoLine.slice(0, -1).join(', ')} and {alsoLine[alsoLine.length - 1]}.
+                    </p>
+                </div>
+
+                <h3 className="text-2xl font-semibold text-ink-900 mt-20 mb-6 tracking-tight">Child care</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                    {CHILD_FEATURED.map((name) => {
+                        const service = CHILD_COPY[name];
+                        return (
+                            <div
+                                key={name}
+                                role="link"
+                                tabIndex={0}
+                                className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm hover:shadow-xl hover:border-slate-200 transition-all duration-300 group cursor-pointer"
+                                onClick={() => onNavigate('client-apply')}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate('client-apply'); } }}
+                            >
+                                <h3 className="text-xl font-bold text-slate-900 mb-3 tracking-tight">
+                                    {serviceLabel(name)}
+                                </h3>
+                                <p className="text-slate-600 leading-relaxed text-[15px]">
+                                    {service.description}
+                                </p>
+
+                                <div className="mt-6 flex items-center text-primary-600 font-semibold text-sm group-hover:gap-2 transition-all">
+                                    Find care providers <span className="opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+
+                <div className="mt-12 max-w-3xl mx-auto text-center">
+                    <p className="text-slate-600 leading-relaxed text-[15px]">
+                        Care providers also offer {childAlsoLine.slice(0, -1).join(', ')} and {childAlsoLine[childAlsoLine.length - 1]}.
                     </p>
                 </div>
 

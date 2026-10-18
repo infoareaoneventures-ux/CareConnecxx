@@ -47,7 +47,7 @@ describe("buildCaregiverOnboardingDirective", () => {
     const d = buildCaregiverOnboardingDirective({
       name: "Maria", street: "12 Oak St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "https://x/p.jpg",
       jobType: "part_time", availability: { days: ["Monday"], hours: "9am-5pm" },
-      specialties: ["dementia"], yearsExperience: "5-10 years",
+      careKinds: ["senior"], specialties: ["dementia"], yearsExperience: "5-10 years",
       hourlyRate: 25, serviceRadius: 10, email: "maria@example.com", bio: "I treat every client like family. ".repeat(6),
     });
     expect(d).toContain("complete_collection");
@@ -180,7 +180,8 @@ describe("buildCaregiverOnboardingDirective", () => {
     // the website's onboarding services step offers exactly these eight — no
     // hospice care / post-surgery recovery / etc. (2026-09-26, confirmed against
     // the live "What services do you offer?" screen).
-    expect(d).toContain("exactly these eight");
+    expect(d).toContain("exactly these — no others"); // the list(s) for the care they provide (2026-10-18)
+    expect(d).toContain("what care do you provide");
     expect(d).not.toContain("hospice care?");
     expect(d).not.toContain("post-surgery recovery?");
   });

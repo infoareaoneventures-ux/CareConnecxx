@@ -1,4 +1,4 @@
-import { serviceLabel } from '../../caregiver/signup/constants';
+import { serviceLabel, kindsOfServices, CARE_KIND_LABEL, ageRangeLabel } from '../../caregiver/signup/constants';
 import React from 'react';
 import { Loader2 } from 'lucide-react';
 import { StepProps, TIME_OF_DAY_OPTIONS, CARE_LEVEL_OPTIONS } from './types';
@@ -46,6 +46,9 @@ export const Step6Review: React.FC<Step6Props> = ({
   const careLevelLabel = CARE_LEVEL_OPTIONS.find(o => o.value === data.careLevel)?.label || '';
   const rateSummary = data.rateFlexible ? 'Rate depends on experience' : `$${data.rate}/hr`;
 
+  const postKinds = kindsOfServices(data.careTypes, data.careKinds);
+  const kindLabel = postKinds.length === 2 ? 'Senior and child care' : CARE_KIND_LABEL[postKinds[0]];
+  const ageBits = postKinds.includes('child') ? data.ageRanges.map(ageRangeLabel) : [];
   const householdBits: string[] = [];
   if (data.petsInHome) householdBits.push('pets in home');
   if (data.smokingHousehold) householdBits.push('smoking household');
@@ -75,7 +78,7 @@ export const Step6Review: React.FC<Step6Props> = ({
         />
         <Row
           label="Care needs"
-          value={<>{data.careTypes.map(serviceLabel).join(', ') || '—'}{careLevelLabel && <> · <span className="text-slate-500">{careLevelLabel}</span></>}</>}
+          value={<>{data.careTypes.map(serviceLabel).join(', ') || '—'}{careLevelLabel && <> · <span className="text-slate-500">{careLevelLabel}</span></>}<br /><span className="text-xs text-slate-500">{[kindLabel, ...ageBits].join(' · ')}</span></>}
           onEdit={() => onEditStep(2)}
         />
         <Row label="Rate & payment" value={`${rateSummary} · Credit Card`} onEdit={() => onEditStep(3)} />

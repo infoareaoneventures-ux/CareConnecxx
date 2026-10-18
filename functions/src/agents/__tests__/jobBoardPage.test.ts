@@ -185,6 +185,26 @@ describe("loadAvailableJobs — the Available Jobs tab and the dashboard's Nearb
     expect(nocoords.distanceMiles).toBeNull();
   });
 
+  it("child care (2026-10-18): a provider sees a post only when they offer every kind it needs — missing careKinds = senior on both sides", async () => {
+    seedJob("kid", { lat: 37.3382, lng: -121.8863, createdAt: "2026-09-27T00:00:00Z", careTypes: ["Supervision"], careKinds: ["child"], ageRanges: ["toddler"] });
+    seedJob("both", { lat: 37.3382, lng: -121.8863, createdAt: "2026-09-28T00:00:00Z", careTypes: ["Companionship", "Baby Care"], careKinds: ["senior", "child"] });
+    // today's provider (no careKinds on the record) never sees a child post
+    let page = (await loadAvailableJobs("cg1"))!;
+    expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["near", "nocoords", "sc"]);
+    // a both-provider sees everything, the child posts badged
+    seedCg({ careKinds: ["senior", "child"] });
+    page = (await loadAvailableJobs("cg1"))!;
+    expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["both", "kid", "near", "nocoords", "sc"]);
+    expect(page.jobs.find((j) => j.jobId === "kid")!.kind).toBe("Child care");
+    expect(page.jobs.find((j) => j.jobId === "kid")!.ageRanges).toEqual(["Toddler"]);
+    expect(page.jobs.find((j) => j.jobId === "both")!.kind).toBe("Senior and child care");
+    expect(page.jobs.find((j) => j.jobId === "near")!.kind).toBeNull();
+    // a child-care-only provider never sees a senior post, nor a both-post
+    seedCg({ careKinds: ["child"] });
+    page = (await loadAvailableJobs("cg1"))!;
+    expect(page.jobs.map((j) => j.jobId)).toEqual(["kid"]);
+  });
+
   it("no travel distance set → every open job shows, including the far one (site rule)", async () => {
     seedCg({ serviceRadius: 0, travelRadius: 0 });
     const page = (await loadAvailableJobs("cg1"))!;
@@ -312,7 +332,7 @@ describe("normalizeJobBoardFilters — only the sidebar's own values survive", (
 describe("jobBoardFiltersLabel — the header names the sidebar set in its own words", () => {
   it("joins every set control", () => {
     expect(jobBoardFiltersLabel({ search: "san jose", payMin: 25, timeOfDay: ["morning", "evening"], days: ["Sat", "Sun"], seniors: ["1", "3+"], careTypes: ["Medication Reminders", "Companionship"] }))
-      .toBe('"san jose", $25+/hr, Morning, Evening, Sat, Sun, 1 senior, 3+ seniors, Medication Reminders Only, Companionship');
+      .toBe('"san jose", $25+/hr, Morning, Evening, Sat, Sun, 1 person, 3+ people, Medication Reminders Only, Companionship'); // "people", never "seniors" (2026-10-18)
     expect(jobBoardFiltersLabel({ payMax: 30 })).toBe("up to $30/hr");
     expect(jobBoardFiltersLabel({ payMin: 20, payMax: 30 })).toBe("$20–$30/hr");
     expect(jobBoardFiltersLabel({})).toBe("");

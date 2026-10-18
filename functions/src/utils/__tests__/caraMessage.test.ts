@@ -107,7 +107,7 @@ describe("voice prompts — anti-invention clause (R1)", () => {
   it("FAMILY_VOICE's senior-name rule is briefing-conditional, not unconditional", () => {
     expect(mod.FAMILY_VOICE).not.toContain("Use the senior's name — never 'your loved one'.");
     expect(mod.FAMILY_VOICE).toContain(
-      "When the briefing gives the senior's name, use it — never 'your loved one'; " +
+      "When the briefing gives the care recipient's name, use it — never 'your loved one'; " +
       "when it doesn't, refer to 'their visit' and never invent a name."
     );
   });

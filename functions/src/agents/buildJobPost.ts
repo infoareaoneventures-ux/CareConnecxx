@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { recipientPlanKey, resolveRecipientKey, normalizeAdditionalRecipients, allCareRecipients, CareRecipient } from "./careRecipients";
 import { buildWebJobPostDoc, defaultJobTitle } from "./jobPostContract";
+import { kindsOfServices, ageRangesFromWords } from "./caregiverServiceLabels";
 import { resolveJobPostPoint } from "./jobPostCoords";
 import { buildJobPostingsDoc, buildCarePlanLocationEntry, mapJobPostingsDocToOnboardingData } from "./clientJobPostingContract";
 
@@ -131,6 +132,11 @@ export async function buildAndSaveJobPost(params: {
   const zipCode       = hasJobLocation ? ((jobData.zipCode as string) ?? "") : ((onboardingData.zipCode ?? "") as string);
 
   const careNeeds      = (jobData.jobCareNeeds     ?? []) as string[];
+  // Child care (2026-10-18): the post's kinds follow the ticked services; a Transportation-only post
+  // falls back to the answer given in the flow, else the household's record, else senior.
+  const careKinds      = kindsOfServices(careNeeds, jobData.jobCareKinds ?? onboardingData.careKinds);
+  const ageRanges      = careKinds.includes("child") ? ageRangesFromWords(jobData.ageRanges ?? onboardingData.ageRanges) : [];
+  if (Array.isArray(jobData.jobCareKinds) && jobData.jobCareKinds.length) effectiveOnboarding.careKinds = jobData.jobCareKinds;
   const careNeedDetails: Record<string, string[]> = {}; // sub-tasks left the family screens 2026-10-04
   const careLevel      = (jobData.jobCareLevel     ?? "moderate") as string;
   const startDate      = (jobData.jobStartDate     ?? "") as string;
@@ -157,7 +163,7 @@ export async function buildAndSaveJobPost(params: {
   // website's own wizard auto-suggests (Step5Describe.tsx) before a site user
   // bothers to customize it. This fallback only covers a session that
   // predates that step or a direct MCP call that skipped it.
-  const title = ((jobData.jobTitle as string | undefined)?.trim()) || defaultJobTitle(city || null);
+  const title = ((jobData.jobTitle as string | undefined)?.trim()) || defaultJobTitle(city || null, careKinds);
 
   const stateHint = (jobData.state ?? onboardingData.state ?? "") as string;
   // The post's point = the site's rule (jobPostCoords.ts): the Care Plan
@@ -218,6 +224,7 @@ export async function buildAndSaveJobPost(params: {
       // careNeedDetails stays in the shape (always {}) — the sub-task chips were
       // dropped from every family screen 2026-10-04.
       careNeedDetails,
+      ...(ageRanges.length ? { ageRanges } : {}), // child care (2026-10-18): the chips, on a child's plan only
       careLevel,
       // (no `conditions` — diagnoses are out of scope; the site never writes them)
       // No `notes` here (founder, 2026-10-09): the job description is the PUBLIC post's only; the care plan's
@@ -299,6 +306,8 @@ export async function buildAndSaveJobPost(params: {
     description,
     clientName:      ((onboardingData.firstName ?? "") as string) || undefined,
     careTypes:       careNeeds,
+    careKinds,
+    ageRanges,
     careLevel,
     startDate,
     frequency,

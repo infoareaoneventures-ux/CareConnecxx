@@ -14,6 +14,7 @@
 
 import { allCareRecipients, normalizeAdditionalRecipients, toWebsiteRelationship } from "./careRecipients";
 import { coerceClientRate } from "./onboardingContract";
+import { normalizeCareKinds } from "./caregiverServiceLabels";
 import { businessTodayStr } from "../utils/scheduledTime";
 import type { GeoPrecision } from "../utils/geocode";
 
@@ -139,6 +140,8 @@ export interface ClientJobPostingsDoc {
   relationship?: string;
   emergencyFirstName?: string; emergencyLastName?: string; emergencyPhone?: string; emergencyRelationship?: string;
   careNeeds: string[];
+  /** Child care (2026-10-18): the household's answer to "who is the care for" — senior / child / both; missing = senior. */
+  careKinds?: string[];
   petsInHome: boolean; smokingHousehold: boolean;
   rate?: number; rateFlexible: boolean; paymentMethod?: string;
   jobDescription?: string;
@@ -197,6 +200,7 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     emergencyPhone: formatWizardPhone(d.emergencyContactPhone),
     emergencyRelationship: (d.emergencyContactRelationship as string) || undefined,
     careNeeds,
+    ...(Array.isArray(d.careKinds) && d.careKinds.length ? { careKinds: normalizeCareKinds(d.careKinds) } : {}),
     petsInHome: d.petsInHome === true,
     smokingHousehold: d.smokingHousehold === true,
     rate,
@@ -373,6 +377,7 @@ export function mapJobPostingsDocToOnboardingData(
   if (d.emergencyRelationship) out.emergencyContactRelationship = d.emergencyRelationship;
 
   if (Array.isArray(d.careNeeds) && d.careNeeds.length) out.careNeeds = d.careNeeds;
+  if (Array.isArray(d.careKinds) && d.careKinds.length) out.careKinds = normalizeCareKinds(d.careKinds);
   if (typeof d.petsInHome === "boolean") out.petsInHome = d.petsInHome;
   if (typeof d.smokingHousehold === "boolean") out.smokingHousehold = d.smokingHousehold;
   // The wizard has no "flexible" rate — only a numeric rate maps back.
@@ -438,7 +443,7 @@ export function buildClientDraftMirror(uid: string, phone: string, d: Record<str
   take("caregiversNeeded", has(d.caregiversNeeded));
   take("emergencyFirstName", has(d.emergencyContactName)); take("emergencyLastName", has(d.emergencyContactName));
   take("emergencyPhone", has(d.emergencyContactPhone)); take("emergencyRelationship", has(d.emergencyContactRelationship));
-  take("careNeeds", has(d.careNeeds));
+  take("careNeeds", has(d.careNeeds)); take("careKinds", has(d.careKinds));
   if (d.petsInHome !== undefined) out.petsInHome = d.petsInHome === true;
   if (d.smokingHousehold !== undefined) out.smokingHousehold = d.smokingHousehold === true;
   if (d.rate !== undefined && d.rate !== null && d.rate !== "") { take("rate", true); out.rateFlexible = full.rateFlexible === true; }

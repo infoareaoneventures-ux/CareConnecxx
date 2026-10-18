@@ -5,6 +5,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { enforceClientGate } from "./clientAccessGate";
 import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
 import { defaultJobTitle } from "./jobPostContract";
+import { normalizeCareKinds, careKindsFromWords, ageRangesFromWords, kindsOfServices, careKindBadge, ageRangeLabel, AGE_RANGES, CareKind } from "./caregiverServiceLabels";
 import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { allCareRecipients, recipientPlanKey } from "./careRecipients";
@@ -735,7 +736,7 @@ async function handleJpAskLocation(
       jobTitle: defaultJobTitle(loc.city || null),
     });
     await updateJobStep(phone, "jp_ask_care_needs");
-    await sendMessage(chatId, `Got it — ${loc.street}.\n\n${await careNeedsQuestion(phone)}`);
+    await sendMessage(chatId, `Got it — ${loc.street}.\n\n${await careNeedsQuestion(phone, session)}`);
     return;
   }
 
@@ -809,7 +810,7 @@ async function handleJpAskLocationEnvironment(
   }
   await updateJobStep(phone, "jp_ask_care_needs");
   await sendMessage(chatId,
-    `Got it — ${petsInHome ? "pets, yes" : "no pets"}, ${smokingHousehold ? "smoking, yes" : "no smoking"}.\n\n${await careNeedsQuestion(phone)}`
+    `Got it — ${petsInHome ? "pets, yes" : "no pets"}, ${smokingHousehold ? "smoking, yes" : "no smoking"}.\n\n${await careNeedsQuestion(phone, session)}`
   );
 }
 
@@ -838,17 +839,39 @@ async function recipientsDisplayName(phone: string, session: AgentSession): Prom
   return (await resolveJobRecipient(phone, session)).name;
 }
 
-async function careNeedsQuestion(phone: string): Promise<string> {
+// Child care (2026-10-18): the site's care-needs step shows the list(s) for who the care is for — the
+// household's answer on job_postings/{uid}.careKinds (or the one given in THIS flow). Nothing on record
+// means senior care (no backfill, missing = senior) — exactly today's menu; a family who names a child
+// service, or says the care is for a child, switches the list and the answer is saved where the site
+// saves it. No extra question.
+async function householdCareKinds(phone: string, session: AgentSession): Promise<CareKind[] | null> {
+  const jobData = await getJobData(phone);
+  if (Array.isArray(jobData.jobCareKinds) && jobData.jobCareKinds.length) return normalizeCareKinds(jobData.jobCareKinds);
+  const uid = (session as unknown as { userId?: string }).userId;
+  if (uid) {
+    const jp = await db.collection("job_postings").doc(uid).get().catch(() => null);
+    const kinds = jp?.data()?.careKinds;
+    if (Array.isArray(kinds) && kinds.length) return normalizeCareKinds(kinds);
+  }
+  const d = (session as unknown as { onboardingData?: Record<string, unknown> }).onboardingData;
+  if (Array.isArray(d?.careKinds) && d!.careKinds.length) return normalizeCareKinds(d!.careKinds);
+  return null;
+}
+
+const AGE_RANGES_Q = `Which age range? Pick what applies: ${AGE_RANGES.map((a) => a.label).join(", ")}.`;
+
+async function careNeedsQuestion(phone: string, session: AgentSession): Promise<string> {
   const jobData = await getJobData(phone);
   const recipients = (jobData.careRecipients as JobRecipient[]) ?? [];
   const name = recipients.length
     ? recipients.map((r) => r.isSelf ? "you" : r.firstName).join(" and ")
     : "your loved one";
+  const kinds = (await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined);
   // 2026-09-08 (live-caught): "you" is second person — "does you need" reads
   // as broken grammar; every other name here is third person ("does Samira
   // need"). needCareVerb (below) picks the right conjugation either way.
-  // The website's step: the eight by name, nothing underneath (2026-10-04).
-  return `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText()}`;
+  // The website's step: the list(s) by name, nothing underneath (2026-10-04 / 2026-10-18).
+  return `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText(kinds)}`;
 }
 
 function needCareVerb(name: string): "do" | "does" {
@@ -1023,7 +1046,11 @@ async function handleJpAskCareNeeds(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const name = await recipientsDisplayName(phone, session);
-  const REASK = `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText()}`;
+  const jobData0 = await getJobData(phone);
+  const knownKinds = (await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined);
+  const awaitingAges = jobData0.awaitingAgeRanges === true;
+  const REASK = awaitingAges ? AGE_RANGES_Q
+    : `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText(knownKinds)}`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1031,7 +1058,27 @@ async function handleJpAskCareNeeds(
     await sendMessage(chatId, REASK);
     return;
   }
-  // Names or the family's words → the website's eight (the mapper both sides
+
+  // Child care (2026-10-18) — the age-range chips, asked only for a child, by name, never a number.
+  if (awaitingAges) {
+    const raw = await parseWithClaude(
+      `The family was asked a child's age range. Map their message onto these names only: ${AGE_RANGES.map((a) => a.label).join(", ")}. ` +
+        'Reply with a JSON array of the matching names (one per child), or [] if none apply.',
+      text,
+    ).catch(() => "[]");
+    let picked: unknown = [];
+    try { picked = JSON.parse(raw); } catch { picked = raw; }
+    const ids = ageRangesFromWords(picked);
+    if (!ids.length) { await sendMessage(chatId, `${JP_DIDNT_CATCH} ${AGE_RANGES_Q}`); return; }
+    await mergeJobData(phone, { ageRanges: ids, awaitingAgeRanges: admin.firestore.FieldValue.delete() });
+    await updateJobStep(phone, "jp_ask_rate");
+    await sendMessage(chatId, `${ids.map(ageRangeLabel).join(", ")} — noted! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`);
+    return;
+  }
+
+  let kinds = knownKinds;
+
+  // Names or the family's words → the website's lists (the mapper both sides
   // share); medical care is never a need; off-list words are left off and said
   // so; nothing is stored underneath a category (2026-10-04).
   const canon = await canonicalizeCareNeeds([text]);
@@ -1041,6 +1088,22 @@ async function handleJpAskCareNeeds(
   if (canon.unresolved.length) notes.push(`I couldn't place "${canon.unresolved.join('", "')}" — which of the list did you mean?`);
   const careNeeds = canon.careNeeds;
   if (careNeeds.length === 0) {
+    // "It's for my son" with no service named: switch the list to who the care is for (saved where the
+    // site saves it) and show that list. The model reads the message (mandatory LLM rule — never a keyword
+    // match on free text); careKindsFromWords only clamps its one-word answer onto the enum.
+    const whoRaw = canon.medical.length || canon.unmapped.length || canon.unresolved.length ? "NONE" : await parseWithClaude(
+      "The family was asked what type of care is needed and named no service. Does this message say WHO the care is for? " +
+      "Reply SENIOR if it is an older adult (a parent, spouse, grandparent, themselves), CHILD if it is a child (son, daughter, kid, baby, toddler, teen), " +
+      "BOTH if both, or NONE if the message does not say. Reply with exactly one word.",
+      text,
+    );
+    const said = /^(SENIOR|CHILD|BOTH)$/i.test(whoRaw.trim()) ? careKindsFromWords(whoRaw.trim().toLowerCase() === "both" ? "both" : whoRaw.trim().toLowerCase()) : null;
+    if (said && said.join("|") !== kinds.join("|")) {
+      kinds = said;
+      await saveCareKindsForFlow(phone, session, kinds);
+      await sendMessage(chatId, `Got it — ${careKindBadge(kinds)?.toLowerCase() ?? "senior care"}. What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText(kinds)}`);
+      return;
+    }
     await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}${REASK}`);
     return;
   }
@@ -1048,11 +1111,31 @@ async function handleJpAskCareNeeds(
   // jobCareLevel derived, never asked — see the JP_STEP_ORDER comment at the
   // top of the file for why.
   const jobCareLevel = deriveCareLevel([], careNeeds);
-  await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel });
+  // The post's kinds follow what was ticked (a Transportation-only post keeps the household's answer);
+  // the silent title default follows the kinds (jobPostContract.ts defaultJobTitle).
+  const postKinds = kindsOfServices(careNeeds, kinds);
+  // A service from the other list widens the household's answer (the site's "Both") — saved once, where the site saves it.
+  if (postKinds.some((k) => !kinds.includes(k))) await saveCareKindsForFlow(phone, session, normalizeCareKinds([...kinds, ...postKinds]));
+  const city = (jobData0.city as string) || "";
+  await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel, jobCareKinds: postKinds, jobTitle: defaultJobTitle(city || null, postKinds) });
+  if (postKinds.includes("child") && !(Array.isArray(jobData0.ageRanges) && jobData0.ageRanges.length)) {
+    await mergeJobData(phone, { awaitingAgeRanges: true });
+    await sendMessage(chatId, `${needsLabel} — noted! ${AGE_RANGES_Q}`);
+    return;
+  }
   await updateJobStep(phone, "jp_ask_rate");
   await sendMessage(chatId,
     `${needsLabel} — noted! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`
   );
+}
+
+/** The household's answer, saved where the site saves it (job_postings/{uid}.careKinds) and on this flow. */
+async function saveCareKindsForFlow(phone: string, session: AgentSession, kinds: CareKind[]): Promise<void> {
+  await mergeJobData(phone, { jobCareKinds: kinds });
+  const uid = (session as unknown as { userId?: string }).userId;
+  if (!uid) return;
+  try { await db.collection("job_postings").doc(uid).set({ careKinds: kinds }, { merge: true }); }
+  catch (err) { console.warn("[jobPostingFlow] careKinds write-back skipped:", err instanceof Error ? err.message : err); }
 }
 
 async function handleJpAskRate(
@@ -1248,6 +1331,8 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
   const days      = (jobData.jobDays       as string[]) ?? [];
   const times     = (jobData.jobTimeOfDay  as string[]) ?? [];
   const careNeeds = (jobData.jobCareNeeds  as string[]) ?? [];
+  const kindBadge = careKindBadge(kindsOfServices(careNeeds, jobData.jobCareKinds));
+  const ages      = (Array.isArray(jobData.ageRanges) ? (jobData.ageRanges as string[]) : []).map(ageRangeLabel);
   const rate      = (jobData.jobHourlyRate as number)   ?? 0;
   const payMethod = (jobData.jobPaymentMethod as string) ?? "card";
   const pets      = (jobData.petsInHome       as boolean) ? "yes" : "no";
@@ -1283,6 +1368,8 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
     `Days: ${daysLabel}`,
     `Time: ${timesLabel}`,
     `Care needs: ${needsLabel}`,
+    kindBadge ? `Care: ${kindBadge}` : "",
+    ages.length ? `Ages: ${ages.join(", ")}` : "",
     `Rate: ${rateLabel} (${payMethod})`,
     `Pets: ${pets} | Smoking: ${smoking}`,
     desc ? `"${desc}"` : "",

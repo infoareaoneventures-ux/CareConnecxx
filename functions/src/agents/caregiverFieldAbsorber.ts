@@ -14,7 +14,7 @@
 
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { isFieldFilled, toExperienceBucket, toServiceRadius, availabilityComplete } from "./onboardingContract";
-import { orderedCanonicalServices } from "./caregiverServiceLabels";
+import { orderedCanonicalServices, careKindsFromWords } from "./caregiverServiceLabels";
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 const JOB_TYPES = new Set(["occasional", "part_time", "full_time"]);
@@ -49,7 +49,8 @@ export async function absorbCaregiverFields(
       `"state":"2-letter US state code",` +
       `"zipCode":"5-digit US zip code",` +
       `"yearsExperience":number,` +
-      `"specialties":["short care specialty like 'dementia' or 'mobility assistance'"],` +
+      `"specialties":["short care specialty like 'dementia', 'mobility assistance' or 'babysitting'"],` +
+      `"careKinds":"who they care for, ONLY when stated: 'senior' (older adults), 'child' (children), or 'both'",` +
       `"availability":{"days":["Monday"],"hours":"9am-5pm"},` +
       `"jobType":"occasional | part_time | full_time — or a list of those when they name more than one",` +
       `"hourlyRate":number,` +
@@ -77,6 +78,9 @@ export async function absorbCaregiverFields(
     const bucket = toExperienceBucket(parsed.yearsExperience);
     if (bucket) candidates.yearsExperience = bucket;
   }
+  // Child care (2026-10-18): the kinds they provide, canonicalized (never a raw word on the record).
+  const kinds = careKindsFromWords(parsed.careKinds);
+  if (kinds) candidates.careKinds = kinds;
   // Care services = the website's eight only (2026-10-04): the caregiver's words
   // are mapped onto PRIMARY_SERVICES before anything is kept — never a raw word
   // on the record. What fits nothing is dropped here; the loop's save tool (not

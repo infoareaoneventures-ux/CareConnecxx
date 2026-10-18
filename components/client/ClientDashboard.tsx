@@ -768,7 +768,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                   <p className="text-sm font-bold text-primary-600 mb-2">${post.rate}/hr</p>
                                 ) : null}
                                 <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
-                                  <span className="flex items-center gap-1 text-xs text-slate-500"><User className="w-3 h-3" />{post.seniorCount ?? 1} senior</span>
+                                  <span className="flex items-center gap-1 text-xs text-slate-500"><User className="w-3 h-3" />{post.seniorCount ?? 1} {(post.seniorCount ?? 1) === 1 ? 'person' : 'people'}</span>
                                   <span className="flex items-center gap-1 text-xs text-slate-500"><Users className="w-3 h-3" />{post.applicantCount ?? 0} applicant{(post.applicantCount ?? 0) !== 1 ? 's' : ''}</span>
                                 </div>
                               </div>
@@ -1593,7 +1593,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                   <p className="text-sm font-bold text-primary-600 mb-2">${post.rate}/hr</p>
                                 ) : null}
                                 <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
-                                  <span className="flex items-center gap-1 text-xs text-slate-500"><User className="w-3 h-3" />{post.seniorCount ?? 1} senior</span>
+                                  <span className="flex items-center gap-1 text-xs text-slate-500"><User className="w-3 h-3" />{post.seniorCount ?? 1} {(post.seniorCount ?? 1) === 1 ? 'person' : 'people'}</span>
                                   <span className="flex items-center gap-1 text-xs text-slate-500"><Users className="w-3 h-3" />{post.applicantCount ?? 0} applicant{(post.applicantCount ?? 0) !== 1 ? 's' : ''}</span>
                                 </div>
                               </div>

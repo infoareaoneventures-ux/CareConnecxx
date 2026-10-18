@@ -842,9 +842,9 @@ describe("client care records + payment mirror", () => {
     const session = seed("client_confirm_intake", { ...CLIENT_DATA },
       { userType: "client", userId: CLIENT_UID });
     intakeConfirmIntent = "edit";
-    intakeCorrectionJson = '{"relationship":"daughter"}';
+    intakeCorrectionJson = '{"relationship":"mother"}'; // the relationship names the RECIPIENT (2026-10-18: "daughter" now means a child)
 
-    await handleOnboardingStep(PHONE, CHAT, "I'm her daughter, not her spouse", session);
+    await handleOnboardingStep(PHONE, CHAT, "she's my mother, not my spouse", session);
 
     expect(stored().onboardingData.relationship).toBe("parent");
   });

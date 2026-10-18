@@ -81,7 +81,7 @@ describe("browse_job_board — the sidebar filters pass through, validated", () 
     expect(props.filters.properties.timeOfDay.items.enum).toEqual(["morning", "afternoon", "evening", "overnight"]);
     expect(props.filters.properties.days.items.enum).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
     expect(props.filters.properties.seniors.items.enum).toEqual(["1", "2", "3+"]);
-    expect(props.filters.properties.careTypes.items.enum).toHaveLength(8);
+    expect(props.filters.properties.careTypes.items.enum).toHaveLength(15); // senior eight + child eight, Transportation once (2026-10-18)
     expect(tool.description).toContain("NO distance filter");
   });
 

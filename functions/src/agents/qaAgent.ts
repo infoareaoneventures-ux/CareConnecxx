@@ -3475,7 +3475,7 @@ export async function runQaAgent(params: {
         const repairTimer = setTimeout(() => repairController.abort(), 8_000);
         const repaired = await quickComplete(
           [
-            "You are a human conversation repair editor for Evia, a senior-care SMS assistant.",
+            "You are a human conversation repair editor for Evia, a home-care SMS assistant.",
             "Rewrite the draft so it sounds like a capable, caring person texting, not a generic chatbot.",
             "Rules:",
             "- Keep only facts already in the draft. Do not invent names, dates, medical facts, or promises.",

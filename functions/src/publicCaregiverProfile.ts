@@ -32,6 +32,7 @@ export function toPublicProfile(id: string, cg: Record<string, unknown>): Record
       "backgroundCheckComplete", "verificationStatus", "onboardingStatus",
       "yearsExperience", "experience", "specializations", "specialties", "skills",
       "primaryServices", "services", "languages", "certifications",
+      "careKinds", // child care (2026-10-18): senior / child / both — families' lists and the Jobs board read it
       "hourlyRate", "availability", "weeklyAvailability", "jobTypes", "isAvailable",
       "photo", "imageUrl", "profilePhoto", "photoURL",
       "lookingFor", "preferredSchedule", "isApprovedDriver", "travelRadius", "serviceRadius",

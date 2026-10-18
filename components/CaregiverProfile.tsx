@@ -13,6 +13,7 @@ import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilitySe
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import {
   PRIMARY_SERVICES,
+  CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds,
   serviceLabel,
   EXPERIENCE_LEVELS,
   TIME_BLOCKS,
@@ -41,6 +42,8 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const [editBio, setEditBio] = useState('');
   const [editLanguages, setEditLanguages] = useState<string[]>(['English']);
   const [editServices, setEditServices] = useState<string[]>([]);
+  // What care they provide — senior / child / both (caregivers.careKinds; missing = senior). Child care, 2026-10-18.
+  const [editCareKinds, setEditCareKinds] = useState<CareKind[]>(['senior']);
   const [editExperience, setEditExperience] = useState('');
   const [editRate, setEditRate] = useState('');
   const [editRateTwo, setEditRateTwo] = useState('');
@@ -321,9 +324,10 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <h3 className="font-bold text-slate-900">Care Services</h3>
                 <SectionActions
                   section="services"
-                  onEdit={() => { setEditServices(displayServices); setEditingSection('services'); }}
+                  onEdit={() => { setEditServices(displayServices); setEditCareKinds(normalizeCareKinds((profile as any).careKinds)); setEditingSection('services'); }}
                   onSave={() => {
                     saveSection({
+                      careKinds: editCareKinds,
                       services: editServices,
                       skills: editServices,
                     });
@@ -331,8 +335,25 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 />
               </div>
               {editingSection === 'services' ? (
+                <div>
+                <p className="text-xs font-semibold text-slate-500 mb-2">What care do you provide?</p>
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  {([{ value: ['senior'] as CareKind[], label: CARE_KIND_LABEL.senior }, { value: ['child'] as CareKind[], label: CARE_KIND_LABEL.child }, { value: ['senior', 'child'] as CareKind[], label: 'Both' }]).map(choice => {
+                    const on = editCareKinds.length === choice.value.length && choice.value.every(k => editCareKinds.includes(k));
+                    return (
+                      <button key={choice.label} type="button"
+                        onClick={() => { setEditCareKinds(choice.value); setEditServices(prev => prev.filter(s => serviceListsForKinds(choice.value).some(l => (l.services as readonly string[]).includes(s)))); }}
+                        className={`text-sm px-3 py-2.5 rounded-xl border font-medium transition-all ${on ? 'bg-primary-50 border-primary-400 text-primary-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                        {choice.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {serviceListsForKinds(editCareKinds).map(list => (
+                <div key={list.kind} className="mb-3">
+                {serviceListsForKinds(editCareKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-2">{CARE_KIND_LABEL[list.kind]}</p>}
                 <div className="grid grid-cols-2 gap-2">
-                  {PRIMARY_SERVICES.map(service => (
+                  {list.services.map(service => (
                     <button
                       key={service}
                       onClick={() => setEditServices(prev =>
@@ -352,6 +373,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                       {serviceLabel(service)}
                     </button>
                   ))}
+                </div>
+                </div>
+                ))}
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-2">

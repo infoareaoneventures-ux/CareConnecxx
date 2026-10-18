@@ -1,4 +1,4 @@
-import { serviceLabel } from './signup/constants';
+import { serviceLabel, providerCoversPost, ageRangeLabel, normalizeCareKinds } from './signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -204,7 +204,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                     const allJobs = snapshot.docs.map(doc => normalizeJobPost({ id: doc.id, ...doc.data() }));
                     // Driving jobs are not listed while her driving record is Not approved (utils/transportDocs.ts drivingJobsHiddenFor).
                     const hideDriving = drivingJobsHiddenFor(caregiverProfile as any);
-                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false && !(hideDriving && jobIncludesDriving(job))));
+                    // Child care (2026-10-18): a post shows only when she offers EVERY kind it needs (missing = senior on both sides).
+                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false && !(hideDriving && jobIncludesDriving(job)) && providerCoversPost((caregiverProfile as any)?.careKinds, (job as any).careKinds)));
                     setJobsLoading(false);
                 },
                 (error) => {
@@ -660,9 +661,9 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                 </div>
             </div>
 
-            {/* Number of seniors */}
+            {/* Number of people */}
             <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Seniors in Home</label>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">People in the home</label>
                 <div className="space-y-1.5">
                     {(['1', '2', '3+'] as const).map(v => (
                         <label key={v} className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
@@ -672,7 +673,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                 onChange={() => toggleChip(filterSeniorsCount, setFilterSeniorsCount, v)}
                                 className="accent-teal-600 rounded"
                             />
-                            {v} {v === '1' ? 'senior' : 'seniors'}
+                            {v} {v === '1' ? 'person' : 'people'}
                         </label>
                     ))}
                 </div>
@@ -856,8 +857,14 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium"><Moon className="w-3 h-3" /> Night</span>
                                                 )}
                                                 {job.recipientsCount && job.recipientsCount > 1 && (
-                                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-medium"><Users className="w-3 h-3" /> {job.recipientsCount} seniors</span>
+                                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-medium"><Users className="w-3 h-3" /> {job.recipientsCount} people</span>
                                                 )}
+                                                {normalizeCareKinds((job as any).careKinds).includes('child') && (
+                                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-medium">{normalizeCareKinds((job as any).careKinds).length === 2 ? 'Senior and child care' : 'Child care'}</span>
+                                                )}
+                                                {Array.isArray((job as any).ageRanges) && ((job as any).ageRanges as string[]).map(id => (
+                                                    <span key={id} className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-medium">{ageRangeLabel(id)}</span>
+                                                ))}
                                                 {(job.careTypes?.includes('Transportation') || job.requirements?.includes('Driving')) && (
                                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[11px] font-medium"><Car className="w-3 h-3" /> Transportation</span>
                                                 )}
@@ -1478,7 +1485,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                     ) : null;
                                 })()}
                                 {viewingJob.recipientsCount != null && (
-                                    <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Seniors</span><span className="font-medium">{viewingJob.recipientsCount} {viewingJob.recipientsCount === 1 ? 'senior' : 'seniors'}</span></div>
+                                    <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">People</span><span className="font-medium">{viewingJob.recipientsCount} {viewingJob.recipientsCount === 1 ? 'person' : 'people'}</span></div>
                                 )}
                                 {viewingJob.minHoursPerWeek != null && (
                                     <div className="flex justify-between"><span className="text-[var(--color-neutral-500)]">Hours/week</span><span className="font-medium">{viewingJob.minHoursPerWeek}+ hrs</span></div>

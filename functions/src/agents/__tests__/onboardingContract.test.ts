@@ -43,6 +43,8 @@ describe("onboardingContract", () => {
       "hourlyRate", "serviceRadius",
       "email", "bio",
     ]);
+    // careKinds (senior / child / both, 2026-10-18) is asked at the services step but never required — missing = senior.
+    expect(CAREGIVER_REQUIRED_FIELDS).not.toContain("careKinds");
   });
 
   it("requiredFieldsForRole routes by role", () => {
@@ -120,7 +122,7 @@ describe("onboardingContract", () => {
     it("offering Transportation adds no required field — transport documents were retired 2026-10-06 (MVR only)", () => {
       const base = {
         name: "Maria", street: "1 Main St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "https://x/p.jpg",
-        jobType: "part_time", availability: { days: ["Monday"], hours: "mornings" }, specialties: ["Companionship"],
+        jobType: "part_time", availability: { days: ["Monday"], hours: "mornings" }, careKinds: ["senior"], specialties: ["Companionship"],
         yearsExperience: "3-5 years", hourlyRate: 25, serviceRadius: 10, email: "m@x.com", bio: "x".repeat(150),
       };
       expect(missingRequiredFields("caregiver", base)).toEqual([]);
@@ -263,9 +265,23 @@ describe("onboardingContract", () => {
   // CarePlan.tsx's duplicate-recipient guard exact-matches against.
   describe("normalizeOnboardingFieldValue — relationship canonicalization", () => {
     it("maps parent-indicating freeform values to the canonical 'parent'", () => {
-      for (const v of ["daughter", "son", "child", "mother", "mom", "father", "dad"]) {
+      for (const v of ["mother", "mom", "father", "dad", "grandmother", "grandpa"]) {
         expect(normalizeOnboardingFieldValue("relationship", v)).toBe("parent");
       }
+    });
+    it("maps child-indicating values to the canonical 'child' — the relationship names the RECIPIENT (child care, 2026-10-18)", () => {
+      for (const v of ["daughter", "son", "child", "kid", "grandson", "toddler"]) {
+        expect(normalizeOnboardingFieldValue("relationship", v)).toBe("child");
+      }
+    });
+    it("canonicalizes the kinds question and the age-range chips (child care, 2026-10-18)", () => {
+      expect(normalizeOnboardingFieldValue("careKinds", "child care")).toEqual(["child"]);
+      expect(normalizeOnboardingFieldValue("careKinds", "both")).toEqual(["senior", "child"]);
+      expect(normalizeOnboardingFieldValue("careKinds", "it's for my mom")).toEqual(["senior"]);
+      expect(normalizeOnboardingFieldValue("careKinds", ["senior"])).toEqual(["senior"]);
+      expect(normalizeOnboardingFieldValue("careKinds", "no idea")).toBe("no idea"); // unparseable passes through; the save rejects it
+      expect(normalizeOnboardingFieldValue("ageRanges", ["Toddler", "Ages 6–12"])).toEqual(["toddler", "6-12"]);
+      expect(normalizeOnboardingFieldValue("ageRanges", "a teenager and a 4 year old")).toEqual(["3-5", "teen"]);
     });
     it("maps spouse-indicating freeform values to the canonical 'spouse'", () => {
       for (const v of ["wife", "husband", "partner"]) {

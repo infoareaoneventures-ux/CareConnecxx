@@ -24,7 +24,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
          <SEO
             title="Find a Care Provider in Santa Clara County"
             description="Evia connects families in Santa Clara County with local care providers who have completed a background check. Non-medical help at home, coordinated over text or on the site."
-            keywords="senior care, care provider, elderly care, in-home care, companionship, personal care, dementia care, Santa Clara County"
+            keywords="senior care, child care, care provider, elderly care, in-home care, companionship, personal care, dementia care, Santa Clara County"
             schema={{
               '@context': 'https://schema.org',
               '@graph': [
@@ -32,7 +32,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                 generateServiceSchema(),
                 {
                   '@type': 'WebPage',
-                  name: 'Evia - Senior Care Marketplace',
+                  name: 'Evia - Senior and Child Care Marketplace',
                   description: 'Connect with local care providers who have completed a background check. Matching by your care needs, schedule and distance.',
                   url: 'https://www.eviacares.com/'
                 }

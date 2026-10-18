@@ -1,5 +1,5 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
-import { PRIMARY_SERVICES, serviceLabel } from '../caregiver/signup/constants';
+import { PRIMARY_SERVICES, serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -190,7 +190,7 @@ export const PostsPage: React.FC = () => {
   const [loadedPost, setLoadedPost] = useState<any>(null);
   const [loadedPlan, setLoadedPlan] = useState<{
     recipients: Array<{ key: string; name: string; firstName: string; lastName: string; relationship: string; photoURL: string }>;
-    recipientPlans: Record<string, { careNeeds: string[]; careNeedDetails: Record<string, string[]>; locations: any[]; notes: string; lifestyle: any; tasks: any }>;
+    recipientPlans: Record<string, { careNeeds: string[]; ageRanges?: string[]; careNeedDetails: Record<string, string[]>; locations: any[]; notes: string; lifestyle: any; tasks: any }>;
     emergencyContacts: Array<{ name: string; relation: string; relationship?: string; phone: string; isPrimary?: boolean }>;
     locationPool: any[];
     primaryAddress: string;
@@ -927,6 +927,7 @@ export const PostsPage: React.FC = () => {
             name: r.name, relationship: r.relationship,
             photoURL: r.relationship?.toLowerCase() === 'myself' ? (clientPhotoURL || r.photoURL) : r.photoURL,
             careNeeds: draft?.careNeeds || plan?.careNeeds || [],
+            ...(Array.isArray(plan?.ageRanges) && plan.ageRanges.length ? { ageRanges: plan.ageRanges } : {}),
             careNeedDetails: draft?.careNeedDetails || plan?.careNeedDetails || {},
             lifestyle: draft?.lifestyle || null,
             tasks: plan?.tasks || {},
@@ -1276,6 +1277,14 @@ export const PostsPage: React.FC = () => {
                           {careTypes.length > 3 && <span className="text-xs text-slate-400">+{careTypes.length - 3} more</span>}
                         </div>
                       )}
+                      {/* Child care: the age-range chips, informational like pets / smoking (2026-10-18) */}
+                      {Array.isArray((post as any).ageRanges) && (post as any).ageRanges.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {((post as any).ageRanges as string[]).map(id => (
+                            <span key={id} className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full">{ageRangeLabel(id)}</span>
+                          ))}
+                        </div>
+                      )}
 
                       {/* Footer */}
                       <div className="flex items-center justify-between border-t border-slate-100 pt-3">
@@ -1283,7 +1292,7 @@ export const PostsPage: React.FC = () => {
                           {post.recipientsCount != null && (
                             <span className="inline-flex items-center gap-1 text-sm text-slate-600">
                               <User className="w-3.5 h-3.5 text-slate-400" />
-                              <span className="font-semibold">{post.recipientsCount}</span> {post.recipientsCount === 1 ? 'senior' : 'seniors'}
+                              <span className="font-semibold">{post.recipientsCount}</span> {post.recipientsCount === 1 ? 'person' : 'people'}
                             </span>
                           )}
                           <span className="inline-flex items-center gap-1.5 text-sm text-slate-700">
@@ -1780,7 +1789,7 @@ export const PostsPage: React.FC = () => {
                             <div className="flex flex-wrap items-center gap-1.5 mb-1">
                               {post.recipientsCount != null && (
                                 <span className="text-xs font-semibold px-2 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200">
-                                  {post.recipientsCount} {post.recipientsCount === 1 ? 'senior' : 'seniors'}
+                                  {post.recipientsCount} {post.recipientsCount === 1 ? 'person' : 'people'}
                                 </span>
                               )}
                             </div>
@@ -2209,6 +2218,13 @@ export const PostsPage: React.FC = () => {
                                       {loadedPlan.recipientPlans[r.key].careNeeds.length > 3 && (
                                         <span className="text-[10px] text-slate-400">+{loadedPlan.recipientPlans[r.key].careNeeds.length - 3} more</span>
                                       )}
+                                    </div>
+                                  )}
+                                  {(loadedPlan.recipientPlans[r.key]?.ageRanges || []).length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {(loadedPlan.recipientPlans[r.key].ageRanges as string[]).map(id => (
+                                        <span key={id} className="text-[10px] bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded-full">{ageRangeLabel(id)}</span>
+                                      ))}
                                     </div>
                                   )}
                                 </div>

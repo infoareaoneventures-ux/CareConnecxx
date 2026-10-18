@@ -21,6 +21,7 @@
 import * as admin from "firebase-admin";
 import { haversineMiles } from "../ai/scoring";
 import { caregiverBlockReason, jobRequiresTransport, CaregiverGateReason } from "./caregiverAccessGate";
+import { providerCoversPost, careKindBadge, ageRangeLabel, CANONICAL_SERVICES } from "./caregiverServiceLabels";
 
 const db = admin.firestore();
 
@@ -95,7 +96,9 @@ export interface JobCard {
   frequency: string;                 // Occasional / Part-time / Full-time
   day: boolean;                      // Day pill (morning/afternoon)
   night: boolean;                    // Night pill (evening/overnight)
-  seniors: number | null;            // "N seniors" pill when > 1
+  seniors: number | null;            // "N people" pill when > 1 (the field keeps its name)
+  kind: string | null;               // "Child care" / "Senior and child care" badge — null for senior-only (2026-10-18)
+  ageRanges: string[];               // the child's age-range chips, as shown
   transportation: boolean;           // Transportation pill
   date: string | null;
   hours: string | null;
@@ -151,6 +154,8 @@ export function buildJobCard(job: Doc, cg: Doc, coords: { lat: number; lng: numb
     day:           tod.some((t) => t === "morning" || t === "afternoon"),
     night:         tod.some((t) => t === "evening" || t === "overnight"),
     seniors:       recipients && recipients > 1 ? recipients : null,
+    kind:          careKindBadge(job.careKinds),
+    ageRanges:     (Array.isArray(job.ageRanges) ? (job.ageRanges as string[]) : []).map(ageRangeLabel),
     transportation: jobRequiresTransport(job),
     date:          dateLabel(job.date),
     hours:         hoursLabel(job),
@@ -165,8 +170,8 @@ export function jobCardLine(card: JobCard): string {
   const where = card.location
     ? `${card.location}${card.distanceMiles != null ? ` (${card.distanceMiles.toFixed(1)} mi away)` : ""}`
     : (card.distanceMiles != null ? `${card.distanceMiles.toFixed(1)} mi away` : "");
-  const pills = [card.frequency, card.day ? "Daytime" : "", card.night ? "Nights" : "",
-    card.seniors ? `${card.seniors} seniors` : "", card.transportation ? "Transportation" : ""].filter(Boolean).join(" · ");
+  const pills = [card.kind ?? "", card.frequency, card.day ? "Daytime" : "", card.night ? "Nights" : "",
+    card.seniors ? `${card.seniors} people` : "", ...card.ageRanges, card.transportation ? "Transportation" : ""].filter(Boolean).join(" · ");
   return [card.title, where, card.rate, pills, card.date, card.hours].filter(Boolean).join(" · ");
 }
 
@@ -189,10 +194,8 @@ export interface JobBoardFilters {
 export const JOB_BOARD_TIME_OF_DAY = ["morning", "afternoon", "evening", "overnight"] as const;
 export const JOB_BOARD_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 export const JOB_BOARD_SENIORS = ["1", "2", "3+"] as const;
-export const JOB_BOARD_CARE_TYPES = [
-  "Mobility Assistance", "Dementia / Memory Care", "Medication Reminders", "Personal Care",
-  "Companionship", "Transportation", "Meal Preparation", "Light Housekeeping",
-];
+// Child care (2026-10-18): the senior eight + the child eight (Transportation once).
+export const JOB_BOARD_CARE_TYPES: readonly string[] = CANONICAL_SERVICES;
 // components/caregiver/signup/constants.ts serviceLabel: the one care type whose
 // checkbox reads differently from its stored value.
 const CARE_TYPE_DISPLAY: Record<string, string> = { "Medication Reminders": "Medication Reminders Only" };
@@ -266,7 +269,7 @@ export function jobBoardFiltersLabel(f: JobBoardFilters | undefined): string {
   else if (hasMax) parts.push(`up to $${f.payMax}/hr`);
   if (f.timeOfDay?.length) parts.push(f.timeOfDay.map((t) => TIME_OF_DAY_LABEL[t] ?? t).join(", "));
   if (f.days?.length) parts.push(f.days.join(", "));
-  if (f.seniors?.length) parts.push(f.seniors.map((s) => `${s} ${s === "1" ? "senior" : "seniors"}`).join(", "));
+  if (f.seniors?.length) parts.push(f.seniors.map((s) => `${s} ${s === "1" ? "person" : "people"}`).join(", "));
   if (f.careTypes?.length) parts.push(f.careTypes.map((ct) => CARE_TYPE_DISPLAY[ct] ?? ct).join(", "));
   return parts.join(", ");
 }
@@ -372,7 +375,9 @@ export async function loadAvailableJobs(
     .map((d) => normalizeJobPost({ id: d.id, ...(d.data() as Doc) }))
     .filter((j) => !applied.has(j.id as string) && !hidden.has(j.id as string) && j.clientActive !== false)
     .filter((j) => !blocked.has(j.clientId as string))
-    .filter((j) => !(drivingJobsHiddenFor(cg) && jobRequiresTransport(j)));
+    .filter((j) => !(drivingJobsHiddenFor(cg) && jobRequiresTransport(j)))
+    // Child care (2026-10-18): a provider sees a post only when they offer every kind it needs (missing = senior).
+    .filter((j) => providerCoversPost(cg.careKinds, j.careKinds));
   let jobs = applyJobBoardFilters(listed, opts.filters, cg);
   if (opts.sort === "nearest" && coords) {
     jobs = jobs

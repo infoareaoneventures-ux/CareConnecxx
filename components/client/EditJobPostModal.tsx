@@ -1,5 +1,5 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
-import { serviceLabel } from '../caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, serviceListsForKinds, kindsOfServices } from '../caregiver/signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2, Check, Calendar, DollarSign, Heart, Home } from 'lucide-react';
@@ -7,16 +7,8 @@ import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 import { JobPost } from '../../types';
 
-const CARE_TYPES = [
-  'Mobility Assistance',
-  'Dementia / Memory Care',
-  'Medication Reminders',
-  'Personal Care',
-  'Companionship',
-  'Transportation',
-  'Meal Preparation',
-  'Light Housekeeping',
-];
+// The senior eight — ONE source (caregiver/signup/constants.ts). The modal shows the list(s) for the post's own kinds (2026-10-18).
+const CARE_TYPES: string[] = [...PRIMARY_SERVICES];
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -118,6 +110,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
         daysOfWeek: form.daysOfWeek,
         timeOfDay: form.timeOfDay,
         careTypes: form.careTypes,
+        careKinds: kindsOfServices(form.careTypes, post.careKinds),
         petsInHome: form.petsInHome,
         smokingHousehold: form.smokingHousehold,
         caregiversNeeded: form.caregiversNeeded,
@@ -271,7 +264,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
           <section>
             <SectionHead icon={<Heart className="w-4 h-4" />} label="Care Needs" />
             <div className="flex flex-wrap gap-2">
-              {CARE_TYPES.map(ct => (
+              {Array.from(new Set(serviceListsForKinds(post.careKinds).flatMap(l => [...l.services]))).map(ct => (
                 <button key={ct} type="button" onClick={() => toggleArr('careTypes', ct)} className={chip(form.careTypes.includes(ct))}>
                   {serviceLabel(ct)}
                 </button>

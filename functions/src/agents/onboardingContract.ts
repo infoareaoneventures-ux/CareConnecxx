@@ -30,6 +30,7 @@
 
 // Pure helpers only (no I/O) — caregiverAvailability is itself a leaf module.
 import { normalizeDays, hasTimeOfDaySignal } from "./caregiverAvailability";
+import { careKindsFromWords, ageRangesFromWords } from "./caregiverServiceLabels";
 
 export type OnboardingRole = "client" | "caregiver";
 
@@ -215,6 +216,9 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "schedule",
   // Multi-recipient household
   "additionalRecipients",
+  // Child care (2026-10-18): who the care is for — ["senior"] / ["child"] / both — asked once where the
+  // recipient is named; and, only when child is among them, the age-range chips (never a number).
+  "careKinds", "ageRanges",
   // Home address (account holder's address — distinct from care address).
   // homeZipCode is required (see CLIENT_REQUIRED_FIELDS); the rest are allowed.
   "homeStreet", "homeCity", "homeState",
@@ -241,6 +245,9 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   // offers them, under the profile page's canonical names (founder,
   // 2026-10-11: rateFor2Seniors / rateFor3PlusSeniors, never rateForTwo/Three).
   "rateFor2Seniors", "rateFor3PlusSeniors", "maxClients",
+  // Child care (2026-10-18): the care they provide — ["senior"] / ["child"] / both. The services step asks it
+  // first (caregiverOnboardingDirective.ts) but it is not required: a record without it reads as senior care.
+  "careKinds",
   // Nothing the wizard doesn't collect is allowed here (no certifications,
   // gender, languages, canDrive, bioSkipped — removed 2026-09-25;
   // transportDocs — removed 2026-10-06 with the documents step).
@@ -301,6 +308,8 @@ const CLIENT_FIELD_ALIASES: Record<string, string> = {
   start: "startDate", startingdate: "startDate",
   numberofcaregivers: "caregiversNeeded", caregivercount: "caregiversNeeded",
   recipientname: "seniorName", carerecipientname: "seniorName", lovedonename: "seniorName",
+  carekind: "careKinds", carekinds: "careKinds", kindofcare: "careKinds", carefor: "careKinds", whoisthecarefor: "careKinds", caretypekind: "careKinds",
+  agerange: "ageRanges", ageranges: "ageRanges", childage: "ageRanges", childages: "ageRanges", kidsages: "ageRanges",
   emailaddress: "email",
   homeaddress: "homeStreet", homestreetaddress: "homeStreet", homezip: "homeZipCode", homezipcode: "homeZipCode",
   careaddress: "street", carestreet: "street", carezip: "zipCode", carezipcode: "zipCode", zip: "zipCode",
@@ -319,6 +328,7 @@ const CAREGIVER_FIELD_ALIASES: Record<string, string> = {
   ratefortwo: "rateFor2Seniors", ratefortwoseniors: "rateFor2Seniors", rateforthree: "rateFor3PlusSeniors", rateforthreeseniors: "rateFor3PlusSeniors", rateforthreeplusseniors: "rateFor3PlusSeniors",
   radius: "serviceRadius", traveldistance: "serviceRadius", travelradius: "serviceRadius", distance: "serviceRadius",
   emailaddress: "email", about: "bio", aboutme: "bio", description: "bio",
+  carekind: "careKinds", carekinds: "careKinds", kindofcare: "careKinds", carefor: "careKinds", caretype: "careKinds", caretypes: "careKinds",
 };
 
 /**
@@ -373,10 +383,16 @@ const JOB_TYPE_CANON: Record<string, string> = {
 // recipient is a parent), canonicalized here so a raw "daughter"/"child"/"son"
 // doesn't reach carePlans/senior_profiles unmapped — see toWebsiteRelationship
 // in clientJobPostingContract.ts for the translation into the website's enum.
+// Child care (2026-10-18): the relationship list is the five on both doors — Myself, Parent, Spouse or Partner,
+// Child, Other — so a son / daughter / kid IS the recipient's relationship now ("child"), no longer folded into
+// "parent" (which used to read the texter as the child of an older recipient).
 const RELATIONSHIP_CANON: Record<string, string> = {
-  "parent": "parent", "mother": "parent", "mom": "parent", "father": "parent",
-  "dad": "parent", "daughter": "parent", "son": "parent", "child": "parent",
-  "spouse": "spouse", "wife": "spouse", "husband": "spouse", "partner": "spouse",
+  "parent": "parent", "mother": "parent", "mom": "parent", "father": "parent", "dad": "parent",
+  "grandparent": "parent", "grandmother": "parent", "grandfather": "parent", "grandma": "parent", "grandpa": "parent",
+  "child": "child", "kid": "child", "son": "child", "daughter": "child", "my son": "child", "my daughter": "child",
+  "grandchild": "child", "grandson": "child", "granddaughter": "child", "baby": "child", "toddler": "child",
+  "spouse": "spouse", "wife": "spouse", "husband": "spouse", "partner": "spouse", "spouse or partner": "spouse",
+  "myself": "self", "me": "self",
 };
 
 // Canonicalize an already-extracted enum-ish field value before it is persisted
@@ -414,8 +430,18 @@ export function normalizeOnboardingFieldValue(fieldName: string, value: unknown)
   if (fieldName === "relationship" && typeof value === "string") {
     const key = value.trim().toLowerCase();
     if (key === "self") return "self";
-    if (key === "parent" || key === "spouse" || key === "other") return key;
+    if (key === "parent" || key === "spouse" || key === "other" || key === "child") return key;
     return RELATIONSHIP_CANON[key] ?? "other";
+  }
+  // Child care (2026-10-18): the kinds question and the age-range chips are constrained answers —
+  // canonicalized here so a save_onboarding_field("careKinds", "child care") lands as ["child"].
+  if (fieldName === "careKinds") {
+    const kinds = careKindsFromWords(value);
+    return kinds ?? value;
+  }
+  if (fieldName === "ageRanges") {
+    const ids = ageRangesFromWords(value);
+    return ids.length ? ids : value;
   }
   if (fieldName in NUMERIC_FIELD_RANGE) {
     const n = coerceNumericOnboardingField(fieldName, value);

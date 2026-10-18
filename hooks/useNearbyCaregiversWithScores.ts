@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { Caregiver } from '../types';
 import { hasValidTransportDocs } from '../utils/transportDocs';
+import { normalizeCareKinds, providerMatchesHousehold } from '../components/caregiver/signup/constants';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
 
 /**
@@ -203,10 +204,13 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
         const seenIds = new Set<string>();
         const caregiverList: (Caregiver & { _skillsScore: number; _availScore: number })[] = [];
 
+        // Child care (2026-10-18): a family meets care providers who offer ANY kind the household needs (missing = senior on both sides).
+        const householdKinds = normalizeCareKinds(jpDoc.exists ? (jpDoc.data() as any)?.careKinds : undefined);
         const pushDoc = (doc: any) => {
           if (seenIds.has(doc.id)) return;
           if (!approvedIds.has(doc.id)) return;
           const data = doc.data() || {};
+          if (!providerMatchesHousehold(data.careKinds, householdKinds)) return;
           const name = data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim();
           if (!name) return;
           seenIds.add(doc.id);

@@ -10,6 +10,8 @@ import {
   mapCaregiverServices,
   CANONICAL_SERVICES,
   PRIMARY_SERVICES,
+  CHILD_SERVICES,
+  RELATIONSHIPS,
   SERVICE_LABELS,
   serviceLabel,
   serviceMenuText,
@@ -35,12 +37,18 @@ describe("canonical enum parity with the webapp", () => {
       "Meal Preparation",
       "Light Housekeeping",
     ]);
-    expect(CANONICAL_SERVICES).toHaveLength(8) /* the wizard's eight — the six "additional services" were removed 2026-10-04 */;
+    // 2026-10-18: + the child-care eight (Transportation once) — 15 names either site list can store.
+    expect(CHILD_SERVICES).toEqual(["Supervision", "Baby Care", "Bathing & Dressing", "Meals & Snacks", "Activities & Play", "School & Homework", "Transportation", "Tidying & Laundry"]);
+    expect(CANONICAL_SERVICES).toHaveLength(15);
+    expect(CANONICAL_SERVICES.filter((s) => s === "Transportation")).toHaveLength(1);
+    expect(RELATIONSHIPS).toEqual(["Myself", "Parent", "Spouse or Partner", "Child", "Other"]);
   });
 
   it("the site's constants file holds the same eight and the same display label (byte parity)", () => {
     const site = fs.readFileSync(path.resolve(__dirname, "../../../../components/caregiver/signup/constants.ts"), "utf8");
     for (const s of PRIMARY_SERVICES) expect(site).toContain(`'${s}',`);
+    for (const s of CHILD_SERVICES) expect(site).toContain(`'${s}',`);
+    for (const r of RELATIONSHIPS) expect(site).toContain(`'${r}'`);
     expect(site).toContain("'Medication Reminders': 'Medication Reminders Only'");
   });
 

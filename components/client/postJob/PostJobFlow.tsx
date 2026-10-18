@@ -15,6 +15,7 @@ import { Step4Rate } from './Step4Rate';
 import { Step5Describe } from './Step5Describe';
 import { Step6Review } from './Step6Review';
 import { JobPostFormData, INITIAL_FORM_DATA } from './types';
+import { kindsOfServices } from '../../caregiver/signup/constants';
 
 const TOTAL_STEPS = 6;
 
@@ -49,6 +50,7 @@ export const PostJobFlow: React.FC = () => {
       // through jobPostCoords.ts): the selected Care Plan location's saved
       // street-level point, else the street geocoded once here. The street
       // itself is never sent to the post; only lat/lng (+ geoPrecision) are.
+      const postKinds = kindsOfServices(data.careTypes, data.careKinds);
       const point = data.locationPoint?.geoPrecision === 'street'
         ? data.locationPoint
         : await geocodeAddress({ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode }).catch(() => null);
@@ -78,6 +80,10 @@ export const PostJobFlow: React.FC = () => {
         careLevel: data.careLevel || undefined,
         petsInHome: data.petsInHome,
         smokingHousehold: data.smokingHousehold,
+        // Who the care is for, read from the ticked services (Transportation alone
+        // falls back to the household's answer); the age chips ride along for child care.
+        careKinds: postKinds,
+        ...(postKinds.includes('child') && data.ageRanges.length ? { ageRanges: data.ageRanges } : {}),
       };
 
       const id = await dbService.createJobPost(payload as any, currentUser.uid);
@@ -147,6 +153,7 @@ export const PostJobFlow: React.FC = () => {
             const updates: Record<string, any> = {
               [`recipientPlans.${key}.careNeeds`]: data.careTypes,
               [`recipientPlans.${key}.careNeedDetails`]: data.careNeedDetails || {},
+              ...(postKinds.includes('child') ? { [`recipientPlans.${key}.ageRanges`]: data.ageRanges } : {}),
             };
             // Only set location if recipient has none saved yet
             if (!existingLocs?.length) {
@@ -156,7 +163,7 @@ export const PostJobFlow: React.FC = () => {
               await cpRef.update(updates);
             } catch (e: any) {
               if (e.code === 'not-found') {
-                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, careNeedDetails: data.careNeedDetails || {}, locations: locationEntry } } });
+                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, careNeedDetails: data.careNeedDetails || {}, locations: locationEntry, ...(postKinds.includes('child') ? { ageRanges: data.ageRanges } : {}) } } });
               }
             }
           }

@@ -32,6 +32,7 @@ import {
   toExperienceBucket,
 } from "./onboardingContract";
 import { MAX_CLIENTS_OPTIONS } from "./onboardingContract";
+import { normalizeCareKinds } from "./caregiverServiceLabels";
 
 /** The site wizard's step ids in order (CaregiverOnboardingWizard.tsx stepsArr; email is skipped when on file). */
 export const WIZARD_STEP_ORDER: readonly string[] = ["welcome", "location", "email", "photo", "availability", "services", "rates", "bio", "done"];
@@ -88,6 +89,8 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   copy("state",   d.state);
   copy("city",    d.city);
   copy("zipCode", d.zipCode);
+  // Child care (2026-10-18): the kinds they provide — only when answered; a missing field reads as senior.
+  if (Array.isArray(d.careKinds) && d.careKinds.length) out.careKinds = normalizeCareKinds(d.careKinds);
   // No coords: triggers/caregiverGeocode.ts derives lat/lng/latitude/longitude
   // (+ geoPrecision) from the street fields above on this very write. NEVER
   // write `location` as a {lat,lng} OBJECT either: the webapp renders caregiver

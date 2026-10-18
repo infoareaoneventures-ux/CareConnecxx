@@ -817,38 +817,6 @@
       ]
     },
     {
-      "collectionGroup": "post_visit_feedback",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "caregiverId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "post_visit_feedback",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "caregiverId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "clientId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "appointments",
       "queryScope": "COLLECTION",
       "fields": [
@@ -1545,38 +1513,6 @@
       ]
     },
     {
-      "collectionGroup": "post_visit_feedback",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "caregiverId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "clientId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "post_visit_feedback",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "caregiverId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "health_signals",
       "queryScope": "COLLECTION",
       "fields": [
@@ -1872,24 +1808,6 @@
         },
         {
           "fieldPath": "date",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "replacement_candidates",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "phone",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "contactedAt",
           "order": "DESCENDING"
         }
       ]

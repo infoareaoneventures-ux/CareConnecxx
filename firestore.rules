@@ -1130,15 +1130,6 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Post-visit feedback — admin + owning client read, functions write only
-    match /post_visit_feedback/{docId} {
-      allow read: if request.auth != null && (
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true ||
-        resource.data.clientId == request.auth.uid
-      );
-      allow write: if false;
-    }
-
     // Admin alerts — safety escalations, signup/booking/background-check events.
     // Written server-side (Admin SDK); the AdminAlertsPanel reads + marks resolved.
     match /admin_alerts/{alertId} {

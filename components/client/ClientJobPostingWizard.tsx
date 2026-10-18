@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { AvatarUpload } from '../ui/AvatarUpload';
 import { evaluateServiceArea, OUT_OF_AREA_MESSAGE } from '../../utils/serviceArea';
+import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
 import { resumeStepForDraft } from '../../utils/jobPostingDraftResume';
 import { dbService, createJobPosting, loadJobPostingDraft, saveJobPostingDraft } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -75,12 +76,6 @@ const CARE_NEEDS_OPTIONS = [
   'Meal Preparation',
   'Light Housekeeping',
 ];
-const JOB_DESCRIPTION_EXAMPLES = [
-  "My mom is 78, lives alone, and needs help with morning routines and light housekeeping 3 days a week. She loves gardening and chatting over coffee.",
-  "Looking for a kind, experienced care provider for my father who has early-stage Alzheimer's. He needs companionship, medication reminders, and help with meals.",
-  "My husband had a stroke 6 months ago. He needs assistance with mobility, bathing, and physical therapy exercises. Patience and positivity are a must.",
-];
-
 // ── Helper: today as yyyy-mm-dd (local time, not UTC) ──────────────────────
 
 function todayISO(): string {
@@ -146,7 +141,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailSaved, setEmailSaved] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
-  const [exampleIdx, setExampleIdx] = useState(0);
   const [clientFirstName, setClientFirstName] = useState('');
   const [clientLastName, setClientLastName] = useState('');
   const [clientAddress, setClientAddress] = useState({ street: '', zipCode: '', city: '', state: '' });
@@ -199,13 +193,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     };
     load();
   }, []);
-
-  // Rotate examples on step 14
-  useEffect(() => {
-    if (step !== 14) return;
-    const id = setInterval(() => setExampleIdx(i => (i + 1) % JOB_DESCRIPTION_EXAMPLES.length), 4000);
-    return () => clearInterval(id);
-  }, [step]);
 
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -374,6 +361,12 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   };
 
   const handleSave = async () => {
+    // The same refusal the Post a job Details box applies (standing rule: every free-text save, both doors).
+    if (isMedicationInstruction(form.jobDescription)) {
+      setSaveError(MEDICATION_INSTRUCTION_MESSAGE);
+      addToast(MEDICATION_INSTRUCTION_MESSAGE, 'error');
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -1224,39 +1217,18 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center leading-snug">
-              Let's get specific! What else should care providers know about this job or your loved one?
+              Let's get specific! What else should care providers know about this job?
             </h2>
             <textarea
-              placeholder="Job description"
+              placeholder="Describe any details a care provider should know. Include job responsibilities such as household tasks, personal care, or transportation assistance. For your own privacy and security, please do not include contact information above."
               value={form.jobDescription}
               onChange={e => update('jobDescription', e.target.value.slice(0, 2500))}
               rows={4}
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 resize-none"
             />
             <div className="flex justify-between text-xs text-slate-400">
-              <span>For your privacy, avoid sharing contact info here.</span>
+              <span>Care providers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.</span>
               <span>{2500 - form.jobDescription.length} chars left</span>
-            </div>
-            {/* Rotating example */}
-            <div className="bg-slate-50 rounded-2xl p-3">
-              <p className="text-slate-500 text-xs font-semibold uppercase tracking-wide mb-2">Example from another family</p>
-              <div className="flex gap-2 items-start">
-                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
-                  <User size={14} className="text-indigo-500" />
-                </div>
-                <p className="text-slate-600 text-xs leading-relaxed italic">
-                  "{JOB_DESCRIPTION_EXAMPLES[exampleIdx]}"
-                </p>
-              </div>
-              <div className="flex gap-1 justify-center mt-2">
-                {JOB_DESCRIPTION_EXAMPLES.map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setExampleIdx(i)}
-                    className={`w-1.5 h-1.5 rounded-full transition-colors ${i === exampleIdx ? 'bg-indigo-500' : 'bg-slate-300'}`}
-                  />
-                ))}
-              </div>
             </div>
             {saveError && (
               <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-3 py-2">

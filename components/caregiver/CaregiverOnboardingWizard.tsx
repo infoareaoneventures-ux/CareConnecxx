@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   ChevronLeft, Loader2, Upload, Sparkles,
-  User, Heart, ChevronDown, ChevronUp, Lightbulb, FileText, X,
+  User, Heart, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { dbService, uploadCaregiverProfilePhoto, CAREGIVER_PHOTO_FIELDS } from '../../services/api';
 import { blocksToWeeklySlots } from '../../services/availabilityService';
@@ -14,8 +14,6 @@ import {
   EXPERIENCE_LEVELS,
   JOB_TYPES,
   MAX_CLIENTS_OPTIONS,
-  WRITING_IDEAS,
-  EXAMPLE_BIO,
   BIO_MIN_CHARS,
   BIO_MAX_CHARS,
 } from './signup/constants';
@@ -1013,8 +1011,6 @@ const BioStep: React.FC<{
   isLoading: boolean;
   onShowToast: AddToastFunction;
 }> = ({ bio, onChange, onNext, isLoading }) => {
-  const [showIdeas, setShowIdeas] = useState(false);
-  const [showExample, setShowExample] = useState(false);
   const minChars = BIO_MIN_CHARS; // one bio rule with the profile editor (sweep C7, 2026-10-11)
   const maxChars = BIO_MAX_CHARS;
   const count = bio.length;
@@ -1037,59 +1033,11 @@ const BioStep: React.FC<{
         </div>
       </div>
 
-      <div className="flex gap-2">
-        <button onClick={() => setShowIdeas(true)}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border-2 border-slate-200 text-xs font-medium text-slate-600 hover:border-slate-300 hover:bg-slate-50 transition-all">
-          <Lightbulb size={13} />Writing ideas
-        </button>
-        <button onClick={() => setShowExample(true)}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border-2 border-slate-200 text-xs font-medium text-slate-600 hover:border-slate-300 hover:bg-slate-50 transition-all">
-          <FileText size={13} />See example
-        </button>
-      </div>
-
       <button onClick={onNext} disabled={isLoading || count < minChars}
         className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
         {isLoading ? <><Loader2 size={16} className="animate-spin" />Finishing up…</> : 'Continue'}
       </button>
 
-      {showIdeas && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[300] p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-xl">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-base font-bold text-slate-800">Writing Ideas</h3>
-              <button onClick={() => setShowIdeas(false)} className="p-1 rounded-lg hover:bg-slate-100"><X size={18} className="text-slate-500" /></button>
-            </div>
-            <ul className="space-y-2.5">
-              {WRITING_IDEAS.map((idea, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
-                  <span className="text-indigo-500 mt-0.5">•</span>{idea}
-                </li>
-              ))}
-            </ul>
-            <button onClick={() => setShowIdeas(false)}
-              className="w-full mt-4 bg-indigo-600 text-white font-semibold py-2.5 rounded-full hover:bg-indigo-700 transition-colors text-sm">
-              Got it
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showExample && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[300] p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-xl max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-base font-bold text-slate-800">Example Bio</h3>
-              <button onClick={() => setShowExample(false)} className="p-1 rounded-lg hover:bg-slate-100"><X size={18} className="text-slate-500" /></button>
-            </div>
-            <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{EXAMPLE_BIO}</div>
-            <button onClick={() => setShowExample(false)}
-              className="w-full mt-4 bg-indigo-600 text-white font-semibold py-2.5 rounded-full hover:bg-indigo-700 transition-colors text-sm">
-              Got it
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

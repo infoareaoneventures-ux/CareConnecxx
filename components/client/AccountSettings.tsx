@@ -11,6 +11,7 @@ import { auth, db, storage } from '../../lib/firebase';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { usePhoneReauth } from '../../hooks/usePhoneReauth';
 import { submitAccountAction } from '../../services/accountActionQueue';
+import { CARE_KIND_LABEL, CareKind, normalizeCareKinds, careTypeChangeBlockedBy } from '../caregiver/signup/constants';
 
 // Only a real link renders as an avatar — a stray word saved in the photo field (a prod
 // account had photoURL === 'skipped') must fall back to the initials, not a broken <img>.
@@ -21,6 +22,25 @@ const DELETE_RECAPTCHA_CONTAINER = 'account-settings-delete-recaptcha';
 // ── Types ───────────────────────────────────────────────────────────────────
 interface PersonalInfo  { firstName: string; lastName: string; email: string; phone: string; }
 interface CareLocation  { address: string; city: string; state: string; zip: string; }
+/** One roster entry (job_postings): what the care-type rule checks a change against. */
+interface RosterRow { name: string; relationship: string; careKind?: string; }
+
+// The household's ONE care-type setting (founder, 2026-10-18): asked once at signup,
+// changed only here. It gates every list on the site and in Evia; a pick that would
+// leave someone on the roster uncovered is refused and names them.
+const CARE_TYPE_CHOICES: Array<{ value: CareKind[]; label: string }> = [
+  { value: ['senior'], label: CARE_KIND_LABEL.senior },
+  { value: ['child'], label: CARE_KIND_LABEL.child },
+  { value: ['senior', 'child'], label: 'Both' },
+];
+const sameKinds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(k => b.includes(k));
+/** The refusal line, naming the person the pick would leave uncovered. */
+export function careTypeBlockedLine(row: RosterRow): string {
+  const rel = String(row.relationship || '').trim();
+  if (rel.toLowerCase() === 'myself') return 'You are on the care plan yourself. Choose Both, or remove yourself first.';
+  const article = /^[aeiou]/i.test(rel) ? 'an' : 'a';
+  return `${row.name} is ${article} ${rel || 'care recipient'}. Choose Both, or remove ${row.name} first.`;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 const LABEL_W = 'w-40 flex-shrink-0';
@@ -64,7 +84,7 @@ export const AccountSettings: React.FC = () => {
 
   // ── Section open/close ────────────────────────────────────────────────────
   const [open, setOpen] = useState({
-    basics: true, blocked: false,
+    basics: true, careType: true, blocked: false,
   });
   const toggle = (key: keyof typeof open) =>
     setOpen(prev => ({ ...prev, [key]: !prev[key] }));
@@ -86,6 +106,8 @@ export const AccountSettings: React.FC = () => {
   const [photoURL, setPhotoURL]                  = useState<string | null>(null);
   const [photoUploading, setPhotoUploading]      = useState(false);
   const [subscription, setSubscription]          = useState<SubscriptionStatus | null>(null);
+  const [careKinds, setCareKinds]                = useState<CareKind[]>(['senior']);
+  const [roster, setRoster]                      = useState<RosterRow[]>([]);
   const photoInputRef                            = useRef<HTMLInputElement>(null);
 
   // ── Zip → city/state autofill ─────────────────────────────────────────────
@@ -136,6 +158,20 @@ export const AccountSettings: React.FC = () => {
     // Google provider
     const googleProv = currentUser.providerData?.find((p: any) => p.providerId === 'google.com');
     if (googleProv?.email) setGoogleEmail(googleProv.email);
+
+    // Care type + roster — the household's one care-type setting lives on job_postings/{uid}.
+    if (db) {
+      db.collection('job_postings').doc(currentUser.uid).get().then(snap => {
+        const jp = (snap.data() as any) || {};
+        setCareKinds(normalizeCareKinds(jp.careKinds));
+        const rows: RosterRow[] = [];
+        if (jp.careRecipientFirstName) rows.push({ name: [jp.careRecipientFirstName, jp.careRecipientLastName].filter(Boolean).join(' '), relationship: jp.relationship || '', careKind: jp.careRecipientCareKind });
+        (Array.isArray(jp.additionalRecipients) ? jp.additionalRecipients : []).forEach((r: any) => {
+          if (r?.firstName) rows.push({ name: [r.firstName, r.lastName].filter(Boolean).join(' '), relationship: r.relationship || '', careKind: r.careKind });
+        });
+        setRoster(rows);
+      }).catch(() => {});
+    }
 
     // Firestore — phone, address, and settings
     if (db) {
@@ -283,6 +319,18 @@ export const AccountSettings: React.FC = () => {
     await submitAccountAction('request_phone_change', { email: personalInfo.email });
     setPhoneRequestSent(true);
   }, 'Verification link sent');
+
+  const handlePickCareType = (kinds: CareKind[]) => {
+    if (sameKinds(kinds, careKinds)) return;
+    const blocked = careTypeChangeBlockedBy(kinds, roster);
+    if (blocked) { addToast(careTypeBlockedLine(blocked), 'error'); return; }
+    saving(async () => {
+      const user = authService.getCurrentUser();
+      if (!user?.uid || !db) return;
+      await db.collection('job_postings').doc(user.uid).set({ careKinds: kinds }, { merge: true });
+      setCareKinds(kinds);
+    }, 'Care type saved');
+  };
 
   const handleSaveLocation = () => saving(async () => {
     const user = authService.getCurrentUser();
@@ -693,6 +741,26 @@ export const AccountSettings: React.FC = () => {
                 </Row>
               </div>
 
+            </Section>
+
+            {/* ── Care type — the one place the household's setting changes ── */}
+            <Section title="Care type" open={open.careType} onToggle={() => toggle('careType')}>
+              <div className="divide-y divide-slate-100">
+                <Row label="Care type">
+                  <div className="grid grid-cols-3 gap-2 max-w-md">
+                    {CARE_TYPE_CHOICES.map(choice => {
+                      const on = sameKinds(careKinds, choice.value);
+                      return (
+                        <button key={choice.label} type="button" disabled={isLoading} onClick={() => handlePickCareType(choice.value)}
+                          className={`px-3 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${on ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
+                          {choice.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">Which lists you see when you add a person or post a job. Everyone on your Care Plan has to fit the type you choose.</p>
+                </Row>
+              </div>
             </Section>
 
             {/* ── 2. Blocked Users ──────────────────────────────────── */}

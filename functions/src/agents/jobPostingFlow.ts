@@ -5,7 +5,8 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { enforceClientGate } from "./clientAccessGate";
 import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
 import { defaultJobTitle } from "./jobPostContract";
-import { normalizeCareKinds, careKindsFromWords, ageRangesFromWords, kindsOfServices, careKindBadge, ageRangeLabel, AGE_RANGES, CareKind } from "./caregiverServiceLabels";
+import { normalizeCareKinds, ageRangesFromWords, kindsOfServices, careKindBadge, ageRangeLabel, AGE_RANGES, CareKind, relationshipsForKinds, rosterCareKinds, serviceListsForKinds } from "./caregiverServiceLabels";
+import { careTypeSettingHint } from "./householdCareType";
 import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { allCareRecipients, recipientPlanKey } from "./careRecipients";
@@ -103,10 +104,13 @@ function isDispatchableJobStep(step: string): boolean {
 // address added on the site shows up here too, and vice versa (buildJobPost.ts
 // is what makes the "vice versa" half true — see its own comments).
 
-export interface JobRecipient { firstName: string; lastName: string; relationship: string; isSelf: boolean; }
+export interface JobRecipient { firstName: string; lastName: string; relationship: string; isSelf: boolean; /** Only for "Other" in a Both household (child care, 2026-10-18): the family's two-way pick. */ careKind?: "senior" | "child"; }
 export interface JobLocation { street: string; city: string; state: string; zipCode: string; petsInHome: boolean; smokingHousehold: boolean; }
 
-const RELATIONSHIP_CHIPS = ["Parent", "Spouse or Partner", "Other"];
+// The relationship choices follow the household's ONE care-type setting (child care, 2026-10-18): Child only
+// with child care, the senior ones only with senior care, Other always — the site's add-person chips.
+const relationshipChipsFor = (kinds: readonly CareKind[]): string[] => relationshipsForKinds(kinds, { includeMyself: false });
+const chipsLine = (chips: readonly string[]): string => chips.length > 1 ? `${chips.slice(0, -1).join(", ")}, or ${chips[chips.length - 1]}` : chips.join("");
 
 // 2026-09-07 (live-caught): a parsed classification value ("occasional",
 // "Parent", ...) was being matched against its expected enum with a plain,
@@ -175,11 +179,14 @@ async function fetchRecipientOptions(uid: string, onboardingData: Record<string,
   const jpSnap = await db.collection("job_postings").doc(uid).get().catch(() => null);
   if (jpSnap?.exists) {
     const jp = jpSnap.data() as Record<string, unknown>;
+    const asKind = (v: unknown): "senior" | "child" | undefined => (v === "child" || v === "senior" ? v : undefined);
+    const pFirst = String(jp.careRecipientFirstName ?? "").trim();
+    if (pFirst) addOpt({ firstName: pFirst, lastName: String(jp.careRecipientLastName ?? ""), relationship: String(jp.relationship ?? ""), isSelf: false, ...(asKind(jp.careRecipientCareKind) ? { careKind: asKind(jp.careRecipientCareKind) } : {}) });
     const extra = Array.isArray(jp.additionalRecipients) ? jp.additionalRecipients as Array<Record<string, unknown>> : [];
     for (const r of extra) {
       const f = String(r.firstName ?? "").trim();
       if (!f) continue;
-      addOpt({ firstName: f, lastName: String(r.lastName ?? ""), relationship: String(r.relationship ?? ""), isSelf: false });
+      addOpt({ firstName: f, lastName: String(r.lastName ?? ""), relationship: String(r.relationship ?? ""), isSelf: false, ...(asKind(r.careKind) ? { careKind: asKind(r.careKind) } : {}) });
     }
   }
   return options;
@@ -563,7 +570,7 @@ async function handleJpAskRecipients(
     }
     if (typeof parsed.newName === "string" && parsed.newName.trim()) newName = parsed.newName.trim();
     if (typeof parsed.newRelationship === "string") {
-      newRelationship = matchEnum(parsed.newRelationship, RELATIONSHIP_CHIPS);
+      newRelationship = matchEnum(parsed.newRelationship, relationshipChipsFor((await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined)));
     }
     impliesNewPerson = parsed.impliesNewPerson === true;
   }
@@ -591,8 +598,7 @@ async function handleJpAskRecipients(
     const jobData = await getJobData(phone);
     const relationship = newRelationship ?? ((jobData.pendingNewRecipientRelationship as string | undefined) ?? null);
     if (relationship) {
-      chosen.push({ firstName: first, lastName: rest.join(" "), relationship, isSelf: false });
-      await finishRecipientSelection(phone, chatId, chosen);
+      await addNewRecipientOrAskKind(phone, chatId, session, chosen, first, rest.join(" "), relationship);
       return;
     }
     // Relationship not stated — ask it before moving on. Anyone already
@@ -604,11 +610,34 @@ async function handleJpAskRecipients(
       pendingNewRecipientLastName: rest.join(" "),
     });
     await updateJobStep(phone, "jp_ask_recipient_relationship");
-    await sendMessage(chatId, `Got it — and what's your relationship to ${first}? (Parent, Spouse or Partner, or Other)`);
+    const chips = relationshipChipsFor((await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined));
+    await sendMessage(chatId, `Got it — and what's your relationship to ${first}? (${chipsLine(chips)})`);
     return;
   }
 
   await finishRecipientSelection(phone, chatId, chosen);
+}
+
+// A new person with their relationship known: "Other" in a Both household is the one case the
+// relationship can't settle, so the site's two-way pick (older adult / child) is asked once, here;
+// everyone else joins the post straight away (child care, 2026-10-18).
+async function addNewRecipientOrAskKind(
+  phone: string, chatId: string, session: AgentSession, chosen: JobRecipient[], first: string, last: string, relationship: string,
+): Promise<void> {
+  const household = (await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined);
+  if (relationship === "Other" && household.length === 2) {
+    await mergeJobData(phone, {
+      careRecipients: chosen,
+      pendingNewRecipientFirstName: first,
+      pendingNewRecipientLastName: last,
+      pendingNewRecipientRelationship: "Other",
+      awaitingRecipientKind: true,
+    });
+    await updateJobStep(phone, "jp_ask_recipient_relationship");
+    await sendMessage(chatId, `Got it — is ${first} an older adult or a child?`);
+    return;
+  }
+  await finishRecipientSelection(phone, chatId, [...chosen, { firstName: first, lastName: last, relationship, isSelf: false }]);
 }
 
 async function finishRecipientSelection(
@@ -627,7 +656,10 @@ async function handleJpAskRecipientRelationship(
 ): Promise<void> {
   const jobData = await getJobData(phone);
   const first = (jobData.pendingNewRecipientFirstName as string) ?? "them";
-  const REASK = `What's your relationship to ${first}? (Parent, Spouse or Partner, or Other)`;
+  const household = (await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined);
+  const chips = relationshipChipsFor(household);
+  const awaitingKind = jobData.awaitingRecipientKind === true;
+  const REASK = awaitingKind ? `Is ${first} an older adult or a child?` : `What's your relationship to ${first}? (${chipsLine(chips)})`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -635,21 +667,33 @@ async function handleJpAskRecipientRelationship(
     await sendMessage(chatId, REASK);
     return;
   }
+  const last = (jobData.pendingNewRecipientLastName as string) ?? "";
+  const existing = (jobData.careRecipients as JobRecipient[]) ?? [];
+  if (awaitingKind) {
+    // The site's two-way pick for "Other" in a Both household — the model reads the answer, the enum clamps it.
+    const raw = await parseWithClaude(
+      'The family was asked whether a person is an older adult or a child. Reply SENIOR for an older adult, CHILD for a child, or OTHER if the message does not say. Reply with exactly one word.',
+      text
+    );
+    const kind = /^child$/i.test(raw.trim()) ? "child" : /^senior$/i.test(raw.trim()) ? "senior" : null;
+    if (!kind) { await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`); return; }
+    await mergeJobData(phone, { awaitingRecipientKind: admin.firestore.FieldValue.delete(), pendingNewRecipientRelationship: admin.firestore.FieldValue.delete() });
+    await finishRecipientSelection(phone, chatId, [...existing, { firstName: first, lastName: last, relationship: "Other", isSelf: false, careKind: kind }]);
+    return;
+  }
   const raw = await parseWithClaude(
-    'Map the relationship described to exactly one of: Parent, Spouse or Partner, Other. ' +
-    '"mom"/"dad"/"mother"/"father"/"parent" = Parent. "husband"/"wife"/"partner"/"spouse" = "Spouse or Partner". Anything else relationship-like = Other. ' +
-    'Reply with exactly one of those three values.',
+    `Map the relationship described to exactly one of: ${chips.join(", ")}. ` +
+    '"mom"/"dad"/"mother"/"father"/"parent" = Parent. "husband"/"wife"/"partner"/"spouse" = "Spouse or Partner". ' +
+    (chips.includes("Child") ? '"son"/"daughter"/"kid"/"child"/"grandchild" = Child. ' : "") +
+    'Anything else relationship-like = Other. Reply with exactly one of those values.',
     text
   );
-  const relationship = matchEnum(raw, RELATIONSHIP_CHIPS);
+  const relationship = matchEnum(raw, chips);
   if (!relationship) {
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;
   }
-  const last = (jobData.pendingNewRecipientLastName as string) ?? "";
-  const existing = (jobData.careRecipients as JobRecipient[]) ?? [];
-  const chosen = [...existing, { firstName: first, lastName: last, relationship, isSelf: false }];
-  await finishRecipientSelection(phone, chatId, chosen);
+  await addNewRecipientOrAskKind(phone, chatId, session, existing, first, last, relationship);
 }
 
 async function handleJpAskCaregiversNeeded(
@@ -839,14 +883,11 @@ async function recipientsDisplayName(phone: string, session: AgentSession): Prom
   return (await resolveJobRecipient(phone, session)).name;
 }
 
-// Child care (2026-10-18): the site's care-needs step shows the list(s) for who the care is for — the
-// household's answer on job_postings/{uid}.careKinds (or the one given in THIS flow). Nothing on record
-// means senior care (no backfill, missing = senior) — exactly today's menu; a family who names a child
-// service, or says the care is for a child, switches the list and the answer is saved where the site
-// saves it. No extra question.
-async function householdCareKinds(phone: string, session: AgentSession): Promise<CareKind[] | null> {
-  const jobData = await getJobData(phone);
-  if (Array.isArray(jobData.jobCareKinds) && jobData.jobCareKinds.length) return normalizeCareKinds(jobData.jobCareKinds);
+// Child care (2026-10-18): the household's ONE care-type setting — Account Settings › Care type on the
+// site, job_postings/{uid}.careKinds, picked once at signup. Nothing on record means senior care (no
+// backfill, missing = senior) — exactly today's menu. The flow never widens it: the lists a post shows
+// follow the RECIPIENTS on it (their relationships), gated by this setting.
+async function householdCareKinds(_phone: string, session: AgentSession): Promise<CareKind[] | null> {
   const uid = (session as unknown as { userId?: string }).userId;
   if (uid) {
     const jp = await db.collection("job_postings").doc(uid).get().catch(() => null);
@@ -1047,10 +1088,15 @@ async function handleJpAskCareNeeds(
 ): Promise<void> {
   const name = await recipientsDisplayName(phone, session);
   const jobData0 = await getJobData(phone);
-  const knownKinds = (await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined);
+  const household = (await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined);
+  // The list(s) follow the recipients on THIS post (their relationships), gated by the household's setting —
+  // a senior-only household never sees the child list; a post for a child shows the child list + the chips.
+  const onPost = rosterCareKinds(((jobData0.careRecipients as JobRecipient[] | undefined) ?? []).map((r) => ({ relationship: r.isSelf ? "Myself" : r.relationship, careKind: r.careKind })));
+  const gated = onPost.filter((k) => household.includes(k));
+  const kinds: CareKind[] = gated.length ? gated : household;
   const awaitingAges = jobData0.awaitingAgeRanges === true;
   const REASK = awaitingAges ? AGE_RANGES_Q
-    : `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText(knownKinds)}`;
+    : `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText(kinds)}`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1076,8 +1122,6 @@ async function handleJpAskCareNeeds(
     return;
   }
 
-  let kinds = knownKinds;
-
   // Names or the family's words → the website's lists (the mapper both sides
   // share); medical care is never a need; off-list words are left off and said
   // so; nothing is stored underneath a category (2026-10-04).
@@ -1086,24 +1130,17 @@ async function handleJpAskCareNeeds(
   if (canon.medical.length) notes.push(`Care Providers here don't administer medication or give medical treatment, so "${canon.medical.join('", "')}" isn't a type of care I can add — the closest on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
   if (canon.unmapped.length) notes.push(`"${canon.unmapped.join('", "')}" isn't one of the types of care on the list, so I've left it off.`);
   if (canon.unresolved.length) notes.push(`I couldn't place "${canon.unresolved.join('", "')}" — which of the list did you mean?`);
-  const careNeeds = canon.careNeeds;
+  // A service from a list this post can't show (a child service on a senior-only household, or for a
+  // senior) is left off with the one-line pointer to the household setting — the site has no way to tick
+  // it either; the flow never changes the setting itself.
+  const shown = new Set(serviceListsForKinds(kinds).flatMap((l) => l.services as readonly string[]));
+  const careNeeds = canon.careNeeds.filter((s) => shown.has(s));
+  const offList = canon.careNeeds.filter((s) => !shown.has(s));
+  if (offList.length) {
+    const offKinds = kindsOfServices(offList, kinds).filter((k) => !household.includes(k));
+    notes.push(offKinds.length ? careTypeSettingHint(offKinds[0]) : `"${offList.map(serviceLabel).join('", "')}" isn't on ${name}'s list, so I've left it off.`);
+  }
   if (careNeeds.length === 0) {
-    // "It's for my son" with no service named: switch the list to who the care is for (saved where the
-    // site saves it) and show that list. The model reads the message (mandatory LLM rule — never a keyword
-    // match on free text); careKindsFromWords only clamps its one-word answer onto the enum.
-    const whoRaw = canon.medical.length || canon.unmapped.length || canon.unresolved.length ? "NONE" : await parseWithClaude(
-      "The family was asked what type of care is needed and named no service. Does this message say WHO the care is for? " +
-      "Reply SENIOR if it is an older adult (a parent, spouse, grandparent, themselves), CHILD if it is a child (son, daughter, kid, baby, toddler, teen), " +
-      "BOTH if both, or NONE if the message does not say. Reply with exactly one word.",
-      text,
-    );
-    const said = /^(SENIOR|CHILD|BOTH)$/i.test(whoRaw.trim()) ? careKindsFromWords(whoRaw.trim().toLowerCase() === "both" ? "both" : whoRaw.trim().toLowerCase()) : null;
-    if (said && said.join("|") !== kinds.join("|")) {
-      kinds = said;
-      await saveCareKindsForFlow(phone, session, kinds);
-      await sendMessage(chatId, `Got it — ${careKindBadge(kinds)?.toLowerCase() ?? "senior care"}. What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText(kinds)}`);
-      return;
-    }
     await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}${REASK}`);
     return;
   }
@@ -1111,11 +1148,9 @@ async function handleJpAskCareNeeds(
   // jobCareLevel derived, never asked — see the JP_STEP_ORDER comment at the
   // top of the file for why.
   const jobCareLevel = deriveCareLevel([], careNeeds);
-  // The post's kinds follow what was ticked (a Transportation-only post keeps the household's answer);
+  // The post's kinds follow what was ticked (a Transportation-only post keeps the recipients' kinds);
   // the silent title default follows the kinds (jobPostContract.ts defaultJobTitle).
   const postKinds = kindsOfServices(careNeeds, kinds);
-  // A service from the other list widens the household's answer (the site's "Both") — saved once, where the site saves it.
-  if (postKinds.some((k) => !kinds.includes(k))) await saveCareKindsForFlow(phone, session, normalizeCareKinds([...kinds, ...postKinds]));
   const city = (jobData0.city as string) || "";
   await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel, jobCareKinds: postKinds, jobTitle: defaultJobTitle(city || null, postKinds) });
   if (postKinds.includes("child") && !(Array.isArray(jobData0.ageRanges) && jobData0.ageRanges.length)) {
@@ -1127,15 +1162,6 @@ async function handleJpAskCareNeeds(
   await sendMessage(chatId,
     `${needsLabel} — noted! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`
   );
-}
-
-/** The household's answer, saved where the site saves it (job_postings/{uid}.careKinds) and on this flow. */
-async function saveCareKindsForFlow(phone: string, session: AgentSession, kinds: CareKind[]): Promise<void> {
-  await mergeJobData(phone, { jobCareKinds: kinds });
-  const uid = (session as unknown as { userId?: string }).userId;
-  if (!uid) return;
-  try { await db.collection("job_postings").doc(uid).set({ careKinds: kinds }, { merge: true }); }
-  catch (err) { console.warn("[jobPostingFlow] careKinds write-back skipped:", err instanceof Error ? err.message : err); }
 }
 
 async function handleJpAskRate(

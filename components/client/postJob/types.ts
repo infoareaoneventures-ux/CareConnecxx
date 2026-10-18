@@ -7,6 +7,8 @@ export interface CareRecipientEntry {
   firstName: string;
   lastName: string;
   relationship: string;
+  /** Only for relationship Other in a Both household: which list this person follows (the relationship decides everyone else). */
+  careKind?: CareKind;
   isSelf?: boolean;
 }
 
@@ -41,7 +43,7 @@ export interface JobPostFormData {
   smokingHousehold: boolean;
 
   // Step 3: Care Needs
-  /** Who the care is for — the household's answer (job_postings.careKinds); the post's own kinds are read from careTypes at save. */
+  /** The household's care-type setting (job_postings.careKinds, read-only here — Account Settings / signup write it); the lists on Step 3 follow the picked recipients inside it, and the post's own kinds are read from careTypes at save. */
   careKinds: CareKind[];
   careTypes: string[];
   careNeedDetails: Record<string, string[]>;

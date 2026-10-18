@@ -18,7 +18,8 @@
 import * as admin from "firebase-admin";
 import { randomUUID } from "crypto";
 import { recipientPlanKey } from "./careRecipients";
-import { CANONICAL_SERVICES, RELATIONSHIPS as CONTRACT_RELATIONSHIPS, AGE_RANGES, ageRangesFromWords, ageRangeLabel } from "./caregiverServiceLabels";
+import { CANONICAL_SERVICES, RELATIONSHIPS as CONTRACT_RELATIONSHIPS, AGE_RANGES, ageRangesFromWords, ageRangeLabel, CareKind, normalizeCareKinds, recipientCareKind, relationshipsForKinds, serviceListsForKinds } from "./caregiverServiceLabels";
+import { careTypeSettingHint } from "./householdCareType";
 import { geocodeAddress, lookupZipPlace, GeoPrecision } from "../utils/geocode";
 
 const db = admin.firestore();
@@ -117,6 +118,10 @@ const sameLoc = (a: Partial<LocationEntry>, b: Partial<LocationEntry>) =>
 export interface CarePlanRecipient {
   key: string; firstName: string; lastName: string; name: string;
   relationship: string; photoURL: string | null; isPrimary: boolean;
+  /** Only stored for "Other" (the two-way pick); everyone else's kind follows the relationship (child care, 2026-10-18). */
+  careKind?: "senior" | "child";
+  /** Which list this person sees: Child → child; Myself / Parent / Spouse or Partner → senior; Other → careKind. */
+  kind: CareKind;
   plan: RecipientPlanData;
   /** The chips under the name on a child's tab ("Child · Ages 3–5"): ids and the labels shown. */
   ageRanges: string[];
@@ -125,6 +130,8 @@ export interface CarePlanRecipient {
   lifestyleSpecified: boolean;
 }
 export interface CarePlanPage {
+  /** The household's ONE setting (Account Settings › Care type; job_postings.careKinds; missing = senior). */
+  householdKinds: CareKind[];
   recipients: CarePlanRecipient[];
   locationPool: LocationEntry[];
   emergencyContacts: EmergencyContact[];
@@ -168,21 +175,22 @@ async function load(clientId: string): Promise<LoadedPage> {
   const effectivePool = locationPool.length > 0 ? locationPool : wizardLocations;
 
   // roster
-  const list: Array<Omit<CarePlanRecipient, "plan" | "locationLabel" | "lifestyleSpecified" | "ageRanges" | "ageRangeLabels">> = [];
+  const list: Array<Omit<CarePlanRecipient, "plan" | "locationLabel" | "lifestyleSpecified" | "ageRanges" | "ageRangeLabels" | "kind">> = [];
+  const asKind = (v: unknown): "senior" | "child" | undefined => (v === "child" || v === "senior" ? v : undefined);
   const seen = new Set<string>();
   const pFirst = String(wizard.careRecipientFirstName ?? "");
   const pLast = String(wizard.careRecipientLastName ?? "");
   if (pFirst) {
     const key = recipientPlanKey(pFirst, pLast);
     seen.add(key);
-    list.push({ key, firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(" ") || "Primary Recipient", relationship: String(wizard.relationship ?? ""), photoURL: (wizard.careRecipientPhotoURL as string | undefined) ?? null, isPrimary: true });
+    list.push({ key, firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(" ") || "Primary Recipient", relationship: String(wizard.relationship ?? ""), careKind: asKind(wizard.careRecipientCareKind), photoURL: (wizard.careRecipientPhotoURL as string | undefined) ?? null, isPrimary: true });
     for (const r of (wizard.additionalRecipients as Array<Record<string, unknown>> | undefined) ?? []) {
       const rFirst = String(r.firstName ?? "").trim(); const rLast = String(r.lastName ?? "").trim();
       if (!rFirst) continue;
       const rKey = recipientPlanKey(rFirst, rLast);
       if (seen.has(rKey)) continue;
       seen.add(rKey);
-      list.push({ key: rKey, firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(" "), relationship: String(r.relationship ?? ""), photoURL: (r.photoURL as string | undefined) ?? null, isPrimary: false });
+      list.push({ key: rKey, firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(" "), relationship: String(r.relationship ?? ""), careKind: asKind(r.careKind), photoURL: (r.photoURL as string | undefined) ?? null, isPrimary: false });
     }
     // Orphaned plans (a plan with no roster row that wasn't deliberately deleted) still show.
     const deletedKeys = new Set(((wizard.deletedRecipients as Array<Record<string, unknown>> | undefined) ?? []).map((d) => recipientPlanKey(String(d.firstName ?? "").trim(), String(d.lastName ?? "").trim())));
@@ -217,10 +225,13 @@ async function load(clientId: string): Promise<LoadedPage> {
     return { careNeeds: wizardNeeds, careNeedDetails: {}, locations: wizardLocations.slice(0, 1), notes: wizardNotes, lifestyle: emptyLifestyle(), tasks: emptyTasks() };
   };
 
+  const householdKinds = normalizeCareKinds(wizard.careKinds);
   const recipients: CarePlanRecipient[] = list.map((r) => {
     const plan = getPlan(r.key);
-    const ageRanges = Array.isArray(plan.ageRanges) ? plan.ageRanges : [];
-    return { ...r, plan, ageRanges, ageRangeLabels: ageRanges.map(ageRangeLabel), locationLabel: locLabel(plan.locations[0]), lifestyleSpecified: hasLifestyle(plan.lifestyle) };
+    const kind = recipientCareKind(r.relationship, r.careKind);
+    // The chips exist only on a child's plan.
+    const ageRanges = kind === "child" && Array.isArray(plan.ageRanges) ? plan.ageRanges : [];
+    return { ...r, kind, plan, ageRanges, ageRangeLabels: ageRanges.map(ageRangeLabel), locationLabel: locLabel(plan.locations[0]), lifestyleSpecified: hasLifestyle(plan.lifestyle) };
   });
 
   const legacy = (legacySnap?.exists ? legacySnap.data() : {}) as Record<string, unknown>;
@@ -230,9 +241,11 @@ async function load(clientId: string): Promise<LoadedPage> {
     : null;
 
   return {
+    householdKinds,
     recipients, locationPool: effectivePool, emergencyContacts, setupContact,
     reviewed: !!cp.carePlanReviewedAt,
-    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: [...RELATIONSHIPS], ageRanges: AGE_RANGES.map((a) => a.label) },
+    // The relationship choices the page offers follow the household's care type (Child only with child care, the senior ones only with senior care, Other always).
+    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: relationshipsForKinds(householdKinds), ageRanges: AGE_RANGES.map((a) => a.label) },
     wizard, rawPlans, wizardLocations,
   };
 }
@@ -325,6 +338,8 @@ export async function setRecipientLocation(
 // ── saveNewRecipient ────────────────────────────────────────────────────────
 export interface NewRecipientInput {
   firstName: string; lastName?: string; relationship: string;
+  /** Only for the relationship "Other" in a Both household: "senior" | "child" (the page's two-way pick). */
+  careKind?: unknown;
   careNeeds?: string[]; notes?: string;
   /** Child care (2026-10-18): the age-range chips, names or ids — kept only when given. */
   ageRanges?: unknown;
@@ -342,22 +357,38 @@ export async function addRecipient(clientId: string, input: NewRecipientInput): 
   const relationship = (input.relationship ?? "").trim();
   if (!relationship) return { ok: false, message: "Please select a relationship" };
   const page = await load(clientId);
+  // The relationship choices follow the household's ONE care-type setting (child care, 2026-10-18):
+  // Child only when the household includes child care, the senior ones only with senior care, Other always.
+  const allowedRelationships = relationshipsForKinds(page.householdKinds);
+  const relationshipOk = allowedRelationships.some((a) => a.toLowerCase() === relationship.toLowerCase());
+  if (!relationshipOk) {
+    const wantsChild = relationship.toLowerCase() === "child";
+    const known = CONTRACT_RELATIONSHIPS.some((a) => a.toLowerCase() === relationship.toLowerCase());
+    if (known) return { ok: false, message: careTypeSettingHint(wantsChild ? "child" : "senior") };
+    return { ok: false, message: `Please select a relationship: ${allowedRelationships.join(", ")}` };
+  }
   if (relationship.toLowerCase() === "myself" && page.recipients.some((r) => r.relationship.toLowerCase() === "myself")) {
     return { ok: false, message: "You can only add yourself once" };
   }
   if (!input.location?.street?.trim()) return { ok: false, message: "Please select or enter a care location with a street address" };
 
-  const entry = { firstName, lastName, relationship };
+  // "Other" in a Both household carries the family's two-way pick; everyone else's kind follows the relationship.
+  const careKind = relationship.toLowerCase() === "other" && page.householdKinds.length === 2 && (input.careKind === "child" || input.careKind === "senior") ? input.careKind : undefined;
+  if (relationship.toLowerCase() === "other" && page.householdKinds.length === 2 && !careKind) return { ok: false, message: "For Other, say whether they are an older adult or a child" };
+  const kind = recipientCareKind(relationship, careKind ?? (page.householdKinds.length === 1 ? page.householdKinds[0] : undefined));
+  const entry = { firstName, lastName, relationship, ...(careKind ? { careKind } : {}) };
   const jpRef = db.collection("job_postings").doc(clientId);
   const isFirstRecipient = !page.wizard.careRecipientFirstName;
   if (isFirstRecipient) {
-    await jpRef.set({ careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship }, { merge: true });
+    await jpRef.set({ careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careRecipientCareKind: careKind } : {}) }, { merge: true });
   } else {
     await jpRef.set({ additionalRecipients: FV.arrayUnion(entry) }, { merge: true });
   }
 
   const key = recipientPlanKey(entry.firstName, entry.lastName);
-  const careNeeds = (input.careNeeds ?? []).map(toCareType).filter((v): v is string => !!v);
+  // Care needs come from this person's OWN list (senior or child) — never the other one.
+  const ownList = new Set(serviceListsForKinds([kind]).flatMap((l) => l.services as readonly string[]));
+  const careNeeds = (input.careNeeds ?? []).map(toCareType).filter((v): v is string => !!v && ownList.has(v));
   const careNeedDetails: Record<string, string[]> = {}; // no sub-tasks since 2026-10-04
   // Merge the address into the shared locationPool (geocoded), like the page.
   const currentPool = [...page.locationPool];
@@ -367,7 +398,7 @@ export async function addRecipient(clientId: string, input: NewRecipientInput): 
     location = await geocodeLocation({ street: input.location.street!.trim(), city: (input.location.city ?? "").trim(), state: (input.location.state ?? "").trim(), zipCode: (input.location.zipCode ?? "").trim() });
     updatedPool = [...currentPool, location];
   }
-  const ageRanges = ageRangesFromWords(input.ageRanges);
+  const ageRanges = kind === "child" ? ageRangesFromWords(input.ageRanges) : []; // the chips exist only on a child's plan
   const blankPlan: RecipientPlanData = { careNeeds, ...(ageRanges.length ? { ageRanges } : {}), careNeedDetails, locations: [location], notes: (input.notes ?? "").trim(), lifestyle: emptyLifestyle(), tasks: emptyTasks() };
   const cpRef = db.collection("carePlans").doc(clientId);
   const cpPayload: Record<string, unknown> = { [`recipientPlans.${key}`]: blankPlan };

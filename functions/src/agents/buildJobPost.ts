@@ -34,7 +34,7 @@ function unionRecipientsByName(base: CareRecipient[], extra: CareRecipient[]): C
   return out;
 }
 
-type JobDataRecipient = { firstName: string; lastName?: string; relationship?: string; isSelf?: boolean };
+type JobDataRecipient = { firstName: string; lastName?: string; relationship?: string; isSelf?: boolean; careKind?: "senior" | "child" };
 
 function jobRecipientName(r: JobDataRecipient, onboardingData: Record<string, unknown>): string {
   return r.isSelf
@@ -82,7 +82,7 @@ export async function buildAndSaveJobPost(params: {
     const primaryKey = recipientPlanKey(rosterSeniorName);
     const thisJobExtras: CareRecipient[] = jobRecipients
       .filter((r) => recipientPlanKey(jobRecipientName(r, onboardingData)) !== primaryKey)
-      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? "") }));
+      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? ""), ...(r.careKind ? { careKind: r.careKind } : {}) }));
     rosterAdditional = unionRecipientsByName(
       normalizeAdditionalRecipients(siteState.additionalRecipients),
       thisJobExtras,
@@ -99,7 +99,7 @@ export async function buildAndSaveJobPost(params: {
     rosterRelationship = primary.isSelf ? "self" : (primary.relationship ?? (onboardingData.relationship as string) ?? "");
     rosterAdditional = jobRecipients
       .filter((_, i) => i !== primaryIdx)
-      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? "") }));
+      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? ""), ...(r.careKind ? { careKind: r.careKind } : {}) }));
   } else {
     // Legacy fallback — a session that predates the who/where step, or a
     // direct MCP call that skipped it.

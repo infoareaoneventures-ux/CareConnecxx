@@ -103,6 +103,47 @@ export const ageRangeLabel = (id: string): string => AGE_RANGES.find((a) => a.id
 // Older stored values (Grandparent, Sibling, Spouse) still read back as-is.
 export const RELATIONSHIPS = ['Myself', 'Parent', 'Spouse or Partner', 'Child', 'Other'] as const;
 
+// ── Who decides a recipient's kind (founder, 2026-10-18 evening) ────────────
+// The family picks the household's care type ONCE (signup / Account Settings:
+// job_postings.careKinds). Everywhere else the RELATIONSHIP decides which list a
+// recipient sees: Child → child; Myself / Parent / Spouse or Partner (and the
+// older stored values) → senior; Other → the recipient's own stored `careKind`
+// (a two-way pick shown only for Other in a Both household). No per-recipient
+// control anywhere else.
+export const CHILD_RELATIONSHIPS: readonly string[] = ['Child'];
+export const AMBIGUOUS_RELATIONSHIPS: readonly string[] = ['Other'];
+
+/** The kind a recipient belongs to, from their relationship (and, for Other, their stored careKind). */
+export function recipientCareKind(relationship: unknown, careKind: unknown = undefined): CareKind {
+  const rel = String(relationship ?? '').trim().toLowerCase();
+  if (CHILD_RELATIONSHIPS.some((r) => r.toLowerCase() === rel)) return 'child';
+  if (AMBIGUOUS_RELATIONSHIPS.some((r) => r.toLowerCase() === rel) && careKind === 'child') return 'child';
+  return 'senior';
+}
+
+/** The relationship choices a household can offer: Child only when it includes child care; the senior ones only when it includes senior care; Other always. */
+export function relationshipsForKinds(householdKinds: unknown, opts: { includeMyself?: boolean } = {}): string[] {
+  const kinds = normalizeCareKinds(householdKinds);
+  return RELATIONSHIPS.filter((r) => {
+    if (r === 'Myself' && opts.includeMyself === false) return false;
+    if (CHILD_RELATIONSHIPS.includes(r)) return kinds.includes('child');
+    if (AMBIGUOUS_RELATIONSHIPS.includes(r)) return true;
+    return kinds.includes('senior');
+  });
+}
+
+/** The kinds a roster implies (a child on file → child, anyone else → senior); empty roster → []. */
+export function rosterCareKinds(recipients: ReadonlyArray<{ relationship?: unknown; careKind?: unknown }>): CareKind[] {
+  const set = new Set(recipients.map((r) => recipientCareKind(r.relationship, r.careKind)));
+  return CARE_KINDS.filter((k) => set.has(k));
+}
+
+/** The first recipient a proposed household setting would leave uncovered, or null when the setting is allowed. */
+export function careTypeChangeBlockedBy<T extends { relationship?: unknown; careKind?: unknown }>(proposedKinds: unknown, recipients: readonly T[]): T | null {
+  const kinds = normalizeCareKinds(proposedKinds);
+  return recipients.find((r) => !kinds.includes(recipientCareKind(r.relationship, r.careKind))) ?? null;
+}
+
 /** The default job title by kind: 'Senior care in {city}' / 'Child care in {city}' / 'Senior and child care in {city}'. */
 export function defaultJobTitle(city: string | null | undefined, kinds: unknown = undefined): string {
   const k = normalizeCareKinds(kinds);

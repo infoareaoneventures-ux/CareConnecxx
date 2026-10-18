@@ -162,6 +162,7 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     return {
       firstName: first, lastName: last,
       relationship: r.relationship,
+      ...(r.careKind ? { careKind: r.careKind } : {}), // Other's two-way pick (child care, 2026-10-18)
     };
   });
 
@@ -367,6 +368,7 @@ export function mapJobPostingsDocToOnboardingData(
     out.additionalRecipients = (d.additionalRecipients as Array<Record<string, unknown>>).map((r) => ({
       name: joinName(r.firstName as string | undefined, r.lastName as string | undefined),
       relationship: r.relationship,
+      ...(r.careKind === "child" || r.careKind === "senior" ? { careKind: r.careKind } : {}),
     }));
   }
   if (d.relationship) out.relationship = d.relationship === "myself" ? "self" : d.relationship;

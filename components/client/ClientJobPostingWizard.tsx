@@ -1,4 +1,4 @@
-import { serviceLabel, PRIMARY_SERVICES, CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds, kindsOfServices, AGE_RANGES } from '../caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds, kindsOfServices, AGE_RANGES, relationshipsForKinds, rosterCareKinds } from '../caregiver/signup/constants';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Shield, ChevronLeft, ChevronRight, User, Check,
@@ -31,8 +31,10 @@ interface WizardForm {
   careRecipientLastName: string;
   adultsCount: number;
   caregiversNeeded: number;
-  additionalRecipients: { firstName: string; lastName: string; relationship: string }[];
+  additionalRecipients: { firstName: string; lastName: string; relationship: string; careKind?: CareKind }[];
   relationship: string;
+  /** Only for relationship Other in a Both household: which list the primary recipient follows. */
+  careRecipientCareKind?: CareKind;
   emergencyFirstName: string;
   emergencyLastName: string;
   emergencyPhone: string;
@@ -78,6 +80,17 @@ const CARE_KIND_CHOICES: Array<{ value: CareKind[]; label: string }> = [
   { value: ['senior', 'child'], label: 'Both' },
 ];
 const sameKinds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(k => b.includes(k));
+// This wizard is the site's signup door, so the household's care type is asked here ONCE (step 9,
+// before the relationship) and never again on the site — Account Settings changes it later.
+// The relationships offered follow that answer; Other in a Both household asks older adult / child.
+const WIZARD_RELATIONSHIPS: Array<{ val: string; label: string }> = [
+  { val: 'myself', label: 'Myself' },
+  { val: 'parent', label: 'Parent' },
+  { val: 'spouse', label: 'Spouse or Partner' },
+  { val: 'child', label: 'Child' },
+  { val: 'other', label: 'Other' },
+];
+const KIND_PICK: Array<{ value: CareKind; label: string }> = [{ value: 'senior', label: 'Older adult' }, { value: 'child', label: 'Child' }];
 // ── Helper: today as yyyy-mm-dd (local time, not UTC) ──────────────────────
 
 function todayISO(): string {
@@ -230,12 +243,21 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     return { ...f, adultsCount: f.adultsCount - 1, additionalRecipients: f.additionalRecipients.slice(0, -1) };
   });
 
-  const updateAdditional = (idx: number, field: 'firstName' | 'lastName' | 'relationship', val: string) =>
+  const updateAdditional = (idx: number, field: 'firstName' | 'lastName' | 'relationship' | 'careKind', val: string) =>
     setForm(f => {
       const updated = [...f.additionalRecipients];
       updated[idx] = { ...updated[idx], [field]: val };
       return { ...f, additionalRecipients: updated };
     });
+
+  // The lists step 12 shows: the recipients' kinds (relationship; Other → their careKind) inside the household's answer.
+  const bothKinds = normalizeCareKinds(form.careKinds).length === 2;
+  const wizardPostKinds: CareKind[] = (() => {
+    const household = normalizeCareKinds(form.careKinds);
+    const roster = rosterCareKinds([{ relationship: form.relationship, careKind: form.careRecipientCareKind }, ...form.additionalRecipients]).filter(k => household.includes(k));
+    return roster.length ? roster : household;
+  })();
+  const offeredRelationships = (includeMyself: boolean) => WIZARD_RELATIONSHIPS.filter(o => relationshipsForKinds(form.careKinds, { includeMyself }).includes(o.label));
 
   const handleHomeZip = (raw: string) => {
     const val = raw.replace(/\D/g, '').slice(0, 5);
@@ -316,7 +338,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     if (s === 6) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
     if (s === 10) return form.careRecipientFirstName.trim().length > 0;
     if (s === 11) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
-    if (s === 12) return form.careNeeds.length > 0 && (!kindsOfServices(form.careNeeds, form.careKinds).includes('child') || form.ageRanges.length > 0);
+    if (s === 9) return !!form.relationship && !(form.relationship === 'other' && bothKinds && !form.careRecipientCareKind);
+    if (s === 12) return form.careNeeds.length > 0 && (!kindsOfServices(form.careNeeds, wizardPostKinds).includes('child') || form.ageRanges.length > 0);
     if (s === 13) return !!form.rate && (form.rate ?? 0) > 0;
     return true;
   };
@@ -879,26 +902,49 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             <h2 className="text-xl font-bold text-slate-800 text-center">
               What is your relationship to the person needing care?
             </h2>
+            {/* Who the care is for — asked once, here; Account Settings changes it later */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-2">Who is the care for?</label>
+              <div className="grid grid-cols-3 gap-2">
+                {CARE_KIND_CHOICES.map(choice => {
+                  const on = sameKinds(normalizeCareKinds(form.careKinds), choice.value);
+                  return (
+                    <button key={choice.label} type="button"
+                      onClick={() => setForm(f => {
+                        const offered = WIZARD_RELATIONSHIPS.filter(o => relationshipsForKinds(choice.value).includes(o.label)).map(o => o.val);
+                        return {
+                          ...f,
+                          careKinds: choice.value,
+                          relationship: offered.includes(f.relationship) ? f.relationship : '',
+                          careRecipientCareKind: choice.value.length === 2 ? f.careRecipientCareKind : undefined,
+                          additionalRecipients: f.additionalRecipients.map(r => ({ ...r, relationship: offered.includes(r.relationship) ? r.relationship : '', ...(choice.value.length === 2 ? {} : { careKind: undefined }) })),
+                          careNeeds: f.careNeeds.filter(n => serviceListsForKinds(choice.value).some(l => (l.services as readonly string[]).includes(n))),
+                          ageRanges: choice.value.includes('child') ? f.ageRanges : [],
+                        };
+                      })}
+                      className={`px-3 py-2.5 rounded-xl border-2 text-xs font-semibold transition-all ${on ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}>
+                      {choice.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="flex flex-col gap-2 mt-2">
-              {[
-                { val: 'myself', label: 'Myself' },
-                { val: 'parent', label: 'Parent' },
-                { val: 'spouse', label: 'Spouse or Partner' },
-                { val: 'child', label: 'Child' },
-                { val: 'other', label: 'Other' },
-              ].map(opt => (
+              {offeredRelationships(true).map(opt => (
                 <button
                   key={opt.val}
                   onClick={() => {
                     setForm(f => ({
                       ...f,
                       relationship: opt.val,
+                      careRecipientCareKind: opt.val === 'other' ? f.careRecipientCareKind : undefined,
                       ...(opt.val === 'myself' ? {
                         careRecipientFirstName: clientFirstName,
                         careRecipientLastName:  clientLastName,
                       } : {}),
                     }));
-                    setTimeout(next, 150);
+                    // Other in a Both household needs one more answer (older adult / child) before moving on.
+                    if (!(opt.val === 'other' && bothKinds)) setTimeout(next, 150);
                   }}
                   className={`w-full border-2 rounded-2xl px-4 py-3 text-left transition-all ${
                     form.relationship === opt.val
@@ -910,6 +956,20 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 </button>
               ))}
             </div>
+            {form.relationship === 'other' && bothKinds && (
+              <div>
+                <p className="text-slate-600 text-sm mb-2">Is this person an older adult or a child?</p>
+                <div className="flex gap-2">
+                  {KIND_PICK.map(k => (
+                    <button key={k.value} type="button"
+                      onClick={() => { setForm(f => ({ ...f, careRecipientCareKind: k.value })); setTimeout(next, 150); }}
+                      className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${form.careRecipientCareKind === k.value ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200 text-slate-600 hover:border-indigo-300'}`}>
+                      {k.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         );
 
@@ -972,12 +1032,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 {/* Relationship */}
                 <p className="text-slate-600 text-sm">What is your relationship to this person?</p>
                 <div className="flex gap-2 flex-wrap">
-                  {[
-                    { val: 'parent',  label: 'Parent' },
-                    { val: 'spouse',  label: 'Spouse or Partner' },
-                    { val: 'child',   label: 'Child' },
-                    { val: 'other',   label: 'Other' },
-                  ].map(opt => (
+                  {offeredRelationships(false).map(opt => (
                     <button
                       key={opt.val}
                       type="button"
@@ -992,6 +1047,19 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                     </button>
                   ))}
                 </div>
+                {person.relationship === 'other' && bothKinds && (
+                  <div>
+                    <p className="text-slate-600 text-sm mb-1">Is this person an older adult or a child?</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {KIND_PICK.map(k => (
+                        <button key={k.value} type="button" onClick={() => updateAdditional(idx, 'careKind', k.value)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${person.careKind === k.value ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200 text-slate-600 hover:border-indigo-300'}`}>
+                          {k.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -1117,27 +1185,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             </h2>
             <p className="text-slate-500 text-sm text-center -mt-2">Select all that apply.</p>
 
-            {/* Who the care is for — one question; a senior-only answer shows exactly the list this step always showed */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-2">Who is the care for?</label>
-              <div className="grid grid-cols-3 gap-2">
-                {CARE_KIND_CHOICES.map(choice => {
-                  const on = sameKinds(normalizeCareKinds(form.careKinds), choice.value);
-                  return (
-                    <button key={choice.label} type="button"
-                      onClick={() => setForm(f => ({ ...f, careKinds: choice.value, careNeeds: f.careNeeds.filter(n => serviceListsForKinds(choice.value).some(l => (l.services as readonly string[]).includes(n))), ageRanges: choice.value.includes('child') ? f.ageRanges : [] }))}
-                      className={`px-3 py-2.5 rounded-xl border-2 text-xs font-semibold transition-all ${on ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}>
-                      {choice.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Care types — one list, or both under their own headings */}
-            {serviceListsForKinds(form.careKinds).map(list => (
+            {/* Care types — the list(s) the recipients' relationships call for (asked once on step 9), one list or both under their own headings */}
+            {serviceListsForKinds(wizardPostKinds).map(list => (
             <div key={list.kind}>
-              <label className="block text-xs font-semibold text-slate-500 mb-2">{serviceListsForKinds(form.careKinds).length > 1 ? CARE_KIND_LABEL[list.kind] : 'Care needed'}</label>
+              <label className="block text-xs font-semibold text-slate-500 mb-2">{serviceListsForKinds(wizardPostKinds).length > 1 ? CARE_KIND_LABEL[list.kind] : 'Care needed'}</label>
               <div className="grid grid-cols-2 gap-2">
                 {list.services.map(need => {
                   const selected = form.careNeeds.includes(need);

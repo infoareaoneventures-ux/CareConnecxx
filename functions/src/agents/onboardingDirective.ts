@@ -12,7 +12,8 @@ import {
   missingRequiredFields,
 } from "./onboardingContract";
 import { buildCaregiverOnboardingDirective } from "./caregiverOnboardingDirective";
-import { serviceMenuText, normalizeCareKinds, AGE_RANGES } from "./caregiverServiceLabels";
+import { serviceMenuText, normalizeCareKinds, AGE_RANGES, rosterCareKinds } from "./caregiverServiceLabels";
+import { allCareRecipients } from "./careRecipients";
 
 // Human-readable label for each CLIENT field — mirrors the web wizard's 14-step
 // sequence so the SMS conversation asks the same questions in the same order.
@@ -79,7 +80,10 @@ const FIELD_LABEL: Record<string, string> = {
 
 /** The care-types line for the kinds on record: one list, or both lists each under its own name. */
 function careTypesLine(data: Record<string, unknown>): string {
-  const kinds = normalizeCareKinds(data.careKinds);
+  // The household's answer when given; otherwise the relationships already named decide (a child on the
+  // roster → the child list) — missing everything = senior, exactly today's menu.
+  const fromRoster = rosterCareKinds(allCareRecipients(data));
+  const kinds = Array.isArray(data.careKinds) && data.careKinds.length ? normalizeCareKinds(data.careKinds) : (fromRoster.length ? fromRoster : normalizeCareKinds(undefined));
   const menu = serviceMenuText(kinds);
   return kinds.length === 2
     ? menu.split("\n\n").map((block) => block.replace(":\n", ": ").replace(/\n/g, ", ")).join("; ")

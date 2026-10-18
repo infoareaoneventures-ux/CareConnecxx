@@ -103,6 +103,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_care_plan:          ["care_plan"],
   create_senior_profile:     ["care_plan"],
   remove_care_recipient:     ["care_plan"],
+  set_household_care_type:   ["care_plan"],
   set_recipient_photo:       ["care_plan"],
   // U7
   create_job_post:           ["booking"],
@@ -291,7 +292,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // would be believed and acted on.
   "cancel_interview",
   "reschedule_interview", "accept_interview_reschedule",
-  "delete_memory_file", "remove_care_recipient",
+  "delete_memory_file", "remove_care_recipient", "set_household_care_type",
   // Booking-pipeline parity (2026-08-30) — cancelling/resending a booking or
   // visit, or accepting/declining a schedule amendment, is exactly the kind
   // of mutation a family/caregiver would believe happened if we falsely

@@ -378,10 +378,18 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 ))}
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-2">
+                // Read view grouped by kind when the profile offers both (founder, 2026-10-18): Transportation shows under each.
+                <div className="space-y-3">
                   {displayServices.length > 0
-                    ? displayServices.map((s: string) => (
-                        <span key={s} className="text-sm bg-primary-50 text-primary-700 px-3 py-1.5 rounded-full font-medium">{serviceLabel(s)}</span>
+                    ? serviceListsForKinds((profile as any).careKinds).map(list => ({ kind: list.kind, services: list.services.filter(s => displayServices.includes(s)) })).filter(g => g.services.length > 0).map(g => (
+                        <div key={g.kind}>
+                          {serviceListsForKinds((profile as any).careKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>}
+                          <div className="flex flex-wrap gap-2">
+                            {g.services.map((s: string) => (
+                              <span key={`${g.kind}-${s}`} className="text-sm bg-primary-50 text-primary-700 px-3 py-1.5 rounded-full font-medium">{serviceLabel(s)}</span>
+                            ))}
+                          </div>
+                        </div>
                       ))
                     : <p className="text-sm text-slate-400 italic">No services added yet. Tap Edit to add.</p>
                   }

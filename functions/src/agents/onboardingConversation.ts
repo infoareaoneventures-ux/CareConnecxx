@@ -53,7 +53,7 @@ import {
 import { coerceClientRate } from "./onboardingContract";
 import { businessTodayStr, formatDateForDisplay } from "../utils/scheduledTime";
 import { canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "./careNeedsTaxonomy";
-import { careKindsFromWords, ageRangesFromWords, normalizeCareKinds, serviceListsForKinds, serviceLabel as careServiceLabel } from "./caregiverServiceLabels";
+import { careKindsFromWords, ageRangesFromWords, normalizeCareKinds, serviceListsForKinds, serviceLabel as careServiceLabel, recipientCareKind } from "./caregiverServiceLabels";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue, offersTransportation } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { isCaregiverMembershipActive } from "./caregiverAccessGate";
@@ -2182,9 +2182,14 @@ export async function persistClientCareRecords(
   const recipients = allCareRecipients(d);
   // Child care (2026-10-18): the age-range chips ride on the plan only when the care is for a child.
   const householdKinds = normalizeCareKinds(d.careKinds);
-  const ageRanges = householdKinds.includes("child") ? ageRangesFromWords(d.ageRanges) : [];
+  const intakeAgeRanges = householdKinds.includes("child") ? ageRangesFromWords(d.ageRanges) : [];
+  // In a single-kind household an "other" relationship follows the household; in a Both household the
+  // recipient's own careKind (the two-way pick) decides. The chips land only on a child's plan.
+  const soloKind = householdKinds.length === 1 ? householdKinds[0] : undefined;
   const recipientPlans: Record<string, unknown> = {};
   for (const r of recipients) {
+    const kind = recipientCareKind(r.relationship, r.careKind ?? soloKind);
+    const ageRanges = kind === "child" ? intakeAgeRanges : [];
     recipientPlans[recipientPlanKeyForFullName(r.name)] = {
       name:         r.name,
       relationship: r.relationship ?? "",

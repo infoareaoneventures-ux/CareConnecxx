@@ -411,11 +411,14 @@ describe("handleJpAskCareNeeds — child care (2026-10-18): the list follows who
   afterEach(() => { delete process.env.CONVERGENCE_UNFLIPPED; });
 
   it("child-list services make a child post: careKinds + a child title, then the age-range chips in the same step", async () => {
+    // A Both household posting for a child recipient — the relationship on the post decides the list (2026-10-18 evening).
+    const CHILD_POST = { jobFrequency: "occasional", careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }] };
+    hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: CHILD_POST }) });
     modelReplies("NO"); // isQuestionOrOther
     mapper.mapperReply.mockResolvedValueOnce("NO") // back-out check
       .mockResolvedValueOnce(JSON.stringify({ services: ["Supervision", "School & Homework"], medical: [], unmapped: [] }));
     await handleJobPostingStep(PHONE, CHAT, "someone to watch my toddler and help with school pickup", {
-      ...SESSION, jobPostingStep: "jp_ask_care_needs", jobPostingData: { jobFrequency: "occasional" },
+      ...SESSION, userId: "fam1", jobPostingStep: "jp_ask_care_needs", jobPostingData: CHILD_POST,
     });
     const needs = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeeds)?.[0].jobPostingData;
     expect(needs.jobCareNeeds).toEqual(["Supervision", "School & Homework"]);
@@ -426,6 +429,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18): the list follows who
     expect(sent).toContain("Supervision, School & Homework — noted!");
     expect(sent).toContain("Infant, Toddler, Ages 3–5, Ages 6–12, Teen");
     expect(hoisted.updateMock.mock.calls.some(([arg]) => arg?.jobPostingStep === "jp_ask_rate")).toBe(false); // rate waits for the chips
+    hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ jobPostingData: {} }) });
   });
 
   it("the chips answer is saved by name (never a number) and the flow moves on to the rate", async () => {
@@ -444,18 +448,45 @@ describe("handleJpAskCareNeeds — child care (2026-10-18): the list follows who
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ jobPostingData: {} }) });
   });
 
-  it("\"it's for my son\" with no service named switches the list to child care and shows it — no extra question for anyone else", async () => {
-    modelReplies("NO", "CHILD"); // isQuestionOrOther, then the who-is-it-for read (the model, never a keyword match)
+  it("a child service on a senior-only household is left off with the one-line pointer to Account Settings — nothing saved, the flow never changes the setting", async () => {
+    modelReplies("NO"); // isQuestionOrOther
     mapper.mapperReply.mockResolvedValueOnce("NO") // back-out check
-      .mockResolvedValueOnce(JSON.stringify({ services: [], medical: [], unmapped: [] }));
-    await handleJobPostingStep(PHONE, CHAT, "it's for my son", {
+      .mockResolvedValueOnce(JSON.stringify({ services: ["Supervision"], medical: [], unmapped: [] }));
+    await handleJobPostingStep(PHONE, CHAT, "someone to watch my son after school", {
       ...SESSION, jobPostingStep: "jp_ask_care_needs", jobPostingData: { jobFrequency: "occasional" },
     });
-    expect(hoisted.updateMock.mock.calls.some(([arg]) => JSON.stringify(arg?.jobPostingData?.jobCareKinds) === JSON.stringify(["child"]))).toBe(true);
+    expect(hoisted.updateMock.mock.calls.some(([arg]) => arg?.jobPostingData?.jobCareNeeds || arg?.jobPostingData?.jobCareKinds || arg?.careKinds)).toBe(false);
     const sent = String(sendMessage.mock.calls.at(-1)?.[1]);
-    expect(sent).toContain("Got it — child care.");
-    expect(sent).toContain("Supervision\nBaby Care\nBathing & Dressing");
-    expect(sent).not.toContain("Dementia");
+    expect(sent).toContain("Child care isn't on this household yet — change the care type to Both in Account Settings, or tell me to and I'll do it.");
+    expect(sent).toContain("Mobility Assistance\nDementia / Memory Care"); // re-asks with the senior list
+    expect(sent).not.toContain("Supervision\nBaby Care");
+  });
+
+  it("in a Both household the list follows the recipients on the post: a child recipient gets the child list, a parent the senior list", async () => {
+    hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: { jobFrequency: "occasional", careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }] } }) });
+    modelReplies("NO"); // isQuestionOrOther
+    mapper.mapperReply.mockResolvedValueOnce("NO") // back-out check
+      .mockResolvedValueOnce(JSON.stringify({ services: [], medical: [], unmapped: [] })); // nothing named → the menu is re-asked
+    await handleJobPostingStep(PHONE, CHAT, "hmm", {
+      ...SESSION, userId: "fam1", jobPostingStep: "jp_ask_care_needs", jobPostingData: { jobFrequency: "occasional", careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }] },
+    });
+    const menu = String(sendMessage.mock.calls.at(-1)?.[1]);
+    expect(menu).toContain("Supervision\nBaby Care\nBathing & Dressing");
+    expect(menu).not.toContain("Dementia");
+    hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ jobPostingData: {} }) });
+  });
+
+  it("a new person who is \"Other\" in a Both household is asked once whether they are an older adult or a child; the answer rides on the recipient", async () => {
+    hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: { jobFrequency: "occasional", careRecipients: [], pendingNewRecipientFirstName: "Lee", pendingNewRecipientLastName: "", pendingNewRecipientRelationship: "Other", awaitingRecipientKind: true } }) });
+    modelReplies("NO", "CHILD"); // isQuestionOrOther, then the two-way read (the model, never a keyword match)
+    mapper.mapperReply.mockResolvedValueOnce("NO"); // back-out check
+    await handleJobPostingStep(PHONE, CHAT, "a child", {
+      ...SESSION, userId: "fam1", jobPostingStep: "jp_ask_recipient_relationship", jobPostingData: { jobFrequency: "occasional", careRecipients: [], pendingNewRecipientFirstName: "Lee", pendingNewRecipientRelationship: "Other", awaitingRecipientKind: true },
+    });
+    const saved = hoisted.updateMock.mock.calls.find(([arg]) => Array.isArray(arg?.jobPostingData?.careRecipients) && arg.jobPostingData.careRecipients.length)?.[0].jobPostingData;
+    expect(saved.careRecipients).toEqual([{ firstName: "Lee", lastName: "", relationship: "Other", isSelf: false, careKind: "child" }]);
+    expect(String(sendMessage.mock.calls.at(-1)?.[1])).toContain("care for Lee");
+    hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ jobPostingData: {} }) });
   });
 
   it("a senior household (nothing on record) sees exactly today's menu — the senior eight, no chips, no new question", async () => {

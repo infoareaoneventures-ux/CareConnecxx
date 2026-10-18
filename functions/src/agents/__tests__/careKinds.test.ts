@@ -17,10 +17,48 @@ import {
   normalizeCareKinds, serviceListsForKinds, kindsOfServices, providerCoversPost, providerMatchesHousehold,
   careKindsFromWords, ageRangesFromWords, ageRangeLabel, careKindBadge, defaultJobTitleFor, serviceMenuText,
   SERVICE_LABELS, CHILD_SERVICE_LABELS,
+  recipientCareKind, relationshipsForKinds, rosterCareKinds, careTypeChangeBlockedBy,
 } from "../caregiverServiceLabels";
+import { careTypeRefusalLine, careTypeSettingHint, rosterFromJobPostings, careTypeLabel } from "../householdCareType";
 import { buildWebJobPostDoc, defaultJobTitle } from "../jobPostContract";
 import { buildJobPostingsDoc, mapJobPostingsDocToOnboardingData } from "../clientJobPostingContract";
 import { buildJobCard, jobCardLine, passesJobBoardFilters, JOB_BOARD_CARE_TYPES } from "../jobBoardPage";
+
+describe("who decides a recipient's kind (founder, 2026-10-18 evening): the relationship, gated by the household's ONE setting", () => {
+  it("Child → child; Myself / Parent / Spouse or Partner (and the older stored values) → senior; Other → its own careKind", () => {
+    expect(recipientCareKind("Child")).toBe("child");
+    expect(recipientCareKind("child")).toBe("child");
+    expect(recipientCareKind("Parent")).toBe("senior");
+    expect(recipientCareKind("Myself")).toBe("senior");
+    expect(recipientCareKind("Grandparent")).toBe("senior"); // legacy stored value still reads
+    expect(recipientCareKind("Other")).toBe("senior");
+    expect(recipientCareKind("Other", "child")).toBe("child");
+    expect(recipientCareKind("Parent", "child")).toBe("senior"); // careKind only counts for Other
+  });
+  it("the relationship choices follow the household: Child only with child care, the senior ones only with senior care, Other always", () => {
+    expect(relationshipsForKinds(undefined)).toEqual(["Myself", "Parent", "Spouse or Partner", "Other"]);
+    expect(relationshipsForKinds(["child"])).toEqual(["Child", "Other"]);
+    expect(relationshipsForKinds(["senior", "child"])).toEqual(["Myself", "Parent", "Spouse or Partner", "Child", "Other"]);
+    expect(relationshipsForKinds(["senior", "child"], { includeMyself: false })).toEqual(["Parent", "Spouse or Partner", "Child", "Other"]);
+  });
+  it("a roster implies its kinds; a setting that leaves someone uncovered is refused with the page's sentence", () => {
+    const roster = [{ name: "H M", relationship: "Parent" }, { name: "S Mahad", relationship: "Child" }];
+    expect(rosterCareKinds(roster)).toEqual(["senior", "child"]);
+    expect(rosterCareKinds([])).toEqual([]);
+    expect(careTypeChangeBlockedBy(["senior", "child"], roster)).toBeNull();
+    expect(careTypeChangeBlockedBy(["child"], roster)?.name).toBe("H M");
+    expect(careTypeChangeBlockedBy(["senior"], roster)?.name).toBe("S Mahad");
+    expect(careTypeRefusalLine({ name: "H M", relationship: "Parent" })).toBe("H M is a Parent. Choose Both, or remove H M first.");
+    expect(careTypeSettingHint("child")).toBe("Child care isn't on this household yet — change the care type to Both in Account Settings, or tell me to and I'll do it.");
+    expect(careTypeLabel(["senior", "child"])).toBe("Both");
+    expect(careTypeLabel(undefined)).toBe("Senior care");
+  });
+  it("the roster read off job_postings carries the primary, the additional people, and Other's two-way pick", () => {
+    const roster = rosterFromJobPostings({ careRecipientFirstName: "H", careRecipientLastName: "M", relationship: "Parent", additionalRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child" }, { firstName: "Lee", relationship: "Other", careKind: "child" }, { firstName: "" }] });
+    expect(roster.map((r) => [r.name, r.kind, r.isPrimary])).toEqual([["H M", "senior", true], ["S Mahad", "child", false], ["Lee", "child", false]]);
+    expect(rosterFromJobPostings(undefined)).toEqual([]);
+  });
+});
 
 describe("care kinds — the contract", () => {
   it("a missing or empty value means senior care; only the two kinds survive", () => {

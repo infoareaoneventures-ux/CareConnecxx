@@ -317,6 +317,46 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     expect(geocodeStreetAddress).not.toHaveBeenCalled();
   });
 
+  it("the relationship choices follow the household's ONE care-type setting: Child is refused on a senior household with the Account Settings line; allowed on Both; Other in a Both household carries its two-way pick (child care, 2026-10-18)", async () => {
+    seedRoster();
+    const refused = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "S", lastName: "Mahad", relationship: "Child", location: { street: "1 Elm St" } }) as any;
+    expect(refused._toolError).toBe(true);
+    expect(refused.message).toBe("Child care isn't on this household yet — change the care type to Both in Account Settings, or tell me to and I'll do it.");
+    seedRoster({ careKinds: ["senior", "child"] });
+    const ok = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "S", lastName: "Mahad", relationship: "Child", ageRanges: ["Toddler"], careNeeds: ["Supervision", "Companionship"], location: { street: "1 Elm St" } }) as any;
+    expect(ok.success).toBe(true);
+    const plan = hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.s_mahad;
+    expect(plan.ageRanges).toEqual(["toddler"]);
+    expect(plan.careNeeds).toEqual(["Supervision"]); // the senior pill is not on a child's list
+    const other = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "Lee", relationship: "Other", location: { street: "1 Elm St" } }) as any;
+    expect(other._toolError).toBe(true);
+    expect(other.message).toContain("older adult or a child");
+    const otherOk = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "Lee", relationship: "Other", careKind: "child", location: { street: "1 Elm St" } }) as any;
+    expect(otherOk.success).toBe(true);
+    expect(hoisted.docState.get(`job_postings/${CLIENT}`).additionalRecipients).toContainEqual({ firstName: "Lee", lastName: "", relationship: "Other", careKind: "child" });
+    const list = await handleToolCall("list_household_seniors", { clientId: CLIENT }) as any;
+    expect(list.careType).toBe("Both");
+    expect(list.relationships).toEqual(["Myself", "Parent", "Spouse or Partner", "Child", "Other"]);
+    expect(list.results.map((r: any) => [r.name, r.kind])).toEqual([["Jane Doe", "Senior care"], ["S Mahad", "Child care"], ["Lee", "Child care"]]);
+  });
+
+  it("set_household_care_type — the Account Settings › Care type row with the roster rule: refused with the page's sentence when someone would be uncovered, otherwise written once", async () => {
+    seedRoster({ additionalRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child" }], careKinds: ["senior", "child"] });
+    const refused = await handleToolCall("set_household_care_type", { clientId: CLIENT, careType: "child" }) as any;
+    expect(refused.success).toBe(false);
+    expect(refused.error).toBe("Jane Doe is a Parent. Choose Both, or remove Jane Doe first.");
+    expect(refused.sayVerbatim).toBe(true);
+    const refused2 = await handleToolCall("set_household_care_type", { clientId: CLIENT, careType: "senior" }) as any;
+    expect(refused2.error).toBe("S Mahad is a Child. Choose Both, or remove S Mahad first.");
+    seedRoster();
+    const ok = await handleToolCall("set_household_care_type", { clientId: CLIENT, careType: "both" }) as any;
+    expect(ok.success).toBe(true);
+    expect(ok.careType).toBe("Both");
+    expect(hoisted.docState.get(`job_postings/${CLIENT}`).careKinds).toEqual(["senior", "child"]);
+    const same = await handleToolCall("set_household_care_type", { clientId: CLIENT, careType: "both" }) as any;
+    expect(same.unchanged).toBe(true);
+  });
+
   it("enforces the form's rules: relationship required, a street address required, 'Myself' only once, no special characters", async () => {
     seedRoster({ relationship: "Myself" });
     expect(((await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "Bob", location: { street: "1 Elm St" } })) as any)._toolError).toBe(true);

@@ -11,6 +11,8 @@
 export interface CareRecipient {
   name:          string;   // first name (conversational capture is first-name based)
   relationship?: string;   // account holder's relationship to them (mother, father, ...)
+  /** Only for the relationship "Other" (child care, 2026-10-18): the family's two-way pick, older adult or child. */
+  careKind?: "senior" | "child";
 }
 
 // Evia's internal "self" sentinel (checked throughout onboardingSteps.client.ts/
@@ -94,9 +96,11 @@ export function normalizeAdditionalRecipients(raw: unknown): CareRecipient[] {
     if (seen.has(key)) continue;
     seen.add(key);
     const relationship = (r as Record<string, unknown>).relationship;
+    const careKind = (r as Record<string, unknown>).careKind;
     out.push({
       name,
       ...(relationship ? { relationship: String(relationship) } : {}),
+      ...(careKind === "child" || careKind === "senior" ? { careKind } : {}),
     });
   }
   return out;

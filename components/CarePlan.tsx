@@ -1,6 +1,6 @@
 
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../utils/medicationInstruction';
-import { serviceLabel, PRIMARY_SERVICES, CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds, kindsOfServices, AGE_RANGES, ageRangeLabel } from './caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, CareKind, normalizeCareKinds, serviceListsForKinds, kindsOfServices, AGE_RANGES, ageRangeLabel, recipientCareKind, relationshipsForKinds } from './caregiver/signup/constants';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Phone, FileText, ChevronLeft, Plus, Trash2, Loader2, User,
@@ -69,32 +69,16 @@ interface RecipientPlanData {
   lifestyle: LifestyleData; tasks: TasksData;
 }
 
-interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; photoURL?: string; }
+interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; careKind?: string; photoURL?: string; }
 
 
 // ── Child care (2026-10-18): the one question + the chips, shared by the Add form and the editor ──
-const CARE_KIND_CHOICES: Array<{ value: CareKind[]; label: string }> = [
-  { value: ['senior'], label: CARE_KIND_LABEL.senior },
-  { value: ['child'], label: CARE_KIND_LABEL.child },
-  { value: ['senior', 'child'], label: 'Both' },
-];
-const sameKinds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(k => b.includes(k));
-const CareKindsControl: React.FC<{ value: readonly string[]; onPick: (kinds: CareKind[]) => void }> = ({ value, onPick }) => (
-  <div className="mb-3">
-    <p className="text-xs font-semibold text-slate-500 mb-2">Who is the care for?</p>
-    <div className="grid grid-cols-3 gap-2">
-      {CARE_KIND_CHOICES.map(choice => {
-        const on = sameKinds(normalizeCareKinds(value), choice.value);
-        return (
-          <button key={choice.label} type="button" onClick={() => onPick(choice.value)}
-            className={`px-3 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${on ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
-            {choice.label}
-          </button>
-        );
-      })}
-    </div>
-  </div>
-);
+// No care-type control on this page (founder, 2026-10-18 evening): the household
+// picked its care type once (signup / Account Settings → job_postings.careKinds)
+// and each recipient's RELATIONSHIP decides which list they see — Child → the
+// child list + age chips; Myself / Parent / Spouse or Partner → the senior list;
+// Other → a two-way pick (older adult / child) stored as `careKind` on that person.
+const KIND_PICK: Array<{ value: CareKind; label: string }> = [{ value: 'senior', label: 'Older adult' }, { value: 'child', label: 'Child' }];
 const AgeRangeChips: React.FC<{ value: readonly string[]; onToggle: (id: string) => void }> = ({ value, onToggle }) => (
   <div className="mt-3">
     <p className="text-xs font-semibold text-slate-500 mb-2">Age range</p>
@@ -108,8 +92,6 @@ const AgeRangeChips: React.FC<{ value: readonly string[]; onToggle: (id: string)
     </div>
   </div>
 );
-/** Services still on a shown list after the kinds change; chips go with child care. */
-const keepForKinds = (needs: string[], kinds: CareKind[]) => needs.filter(n => serviceListsForKinds(kinds).some(l => (l.services as readonly string[]).includes(n)));
 
 const getKey = (firstName: string, lastName: string) =>
   `${firstName.toLowerCase()}_${(lastName || 'noname').toLowerCase()}`
@@ -251,7 +233,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [savingSetup, setSavingSetup] = useState(false);
 
   const [showAddRecipient, setShowAddRecipient] = useState(false);
-  const [newRecipient, setNewRecipient] = useState({ firstName: '', lastName: '', relationship: '' });
+  const [newRecipient, setNewRecipient] = useState<{ firstName: string; lastName: string; relationship: string; careKind: CareKind | '' }>({ firstName: '', lastName: '', relationship: '', careKind: '' });
   const [newDraft, setNewDraft] = useState<RecipientPlanData>({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
   const [newCustomLoc, setNewCustomLoc] = useState(false);
   const [newLocEditIdx, setNewLocEditIdx] = useState<number | null>(null);
@@ -383,7 +365,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     const pFirst = wizardData.careRecipientFirstName || '';
     const pLast = wizardData.careRecipientLastName || '';
     seenKeys.add(getKey(pFirst, pLast));
-    list.push({ firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(' ') || 'Primary Recipient', relationship: wizardData.relationship || '', photoURL: wizardData.careRecipientPhotoURL || '' });
+    list.push({ firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(' ') || 'Primary Recipient', relationship: wizardData.relationship || '', careKind: wizardData.careRecipientCareKind || undefined, photoURL: wizardData.careRecipientPhotoURL || '' });
     (wizardData.additionalRecipients || []).forEach((r: any, i: number) => {
       const rFirst = (r.firstName || '').trim();
       const rLast = (r.lastName || '').trim();
@@ -391,7 +373,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       const rKey = getKey(rFirst, rLast);
       if (seenKeys.has(rKey)) return; // skip duplicates
       seenKeys.add(rKey);
-      list.push({ firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(' '), relationship: r.relationship || '', photoURL: r.photoURL || '' });
+      list.push({ firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(' '), relationship: r.relationship || '', careKind: r.careKind || undefined, photoURL: r.photoURL || '' });
     });
     orphanedPlanRecipients.forEach((r) => {
       const rKey = getKey(r.firstName, r.lastName);
@@ -473,12 +455,15 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     );
   }, [carePlanDocLoaded, recipients, wizardData]);
 
-  // The household's answer (job_postings.careKinds; missing = senior) decides which list(s) the care-needs editors show.
+  // The household's care-type setting (job_postings.careKinds; missing = senior) gates the lists;
+  // Account Settings is the one writer. Each recipient's relationship picks their list inside it.
   const householdKinds = normalizeCareKinds(wizardData?.careKinds);
-  const pickHouseholdKinds = (kinds: CareKind[]) => {
-    setWizardData((prev: any) => ({ ...(prev || {}), careKinds: kinds }));
-    if (currentPlanId && db) db.collection('job_postings').doc(currentPlanId).set({ careKinds: kinds }, { merge: true }).catch(() => {});
+  const bothKinds = householdKinds.length === 2;
+  const listsForRecipient = (relationship: unknown, careKind?: unknown) => {
+    const k = recipientCareKind(relationship, careKind);
+    return serviceListsForKinds(householdKinds.includes(k) ? [k] : householdKinds);
   };
+  const relationshipOptions = relationshipsForKinds(householdKinds, { includeMyself: !recipients.some(r => r.relationship?.toLowerCase() === 'myself') });
   const needsAgeRange = (needs: string[], ageRanges?: string[]) => kindsOfServices(needs, householdKinds).includes('child') && !(ageRanges || []).length;
 
   const startEdit = (section: typeof editingSection) => {
@@ -714,6 +699,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       onShowToast('Names cannot contain special characters like / * [ ]', 'error'); return;
     }
     if (!newRecipient.relationship) { onShowToast('Please select a relationship', 'error'); return; }
+    if (newRecipient.relationship === 'Other' && bothKinds && !newRecipient.careKind) { onShowToast('Is this person an older adult or a child?', 'error'); return; }
     if (newRecipient.relationship.toLowerCase() === 'myself' && recipients.some(r => r.relationship?.toLowerCase() === 'myself')) {
       onShowToast('You can only add yourself once', 'error'); return;
     }
@@ -723,7 +709,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     if (!currentPlanId || !db) return;
     setSavingRecipient(true);
     try {
-      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship };
+      const careKind = newRecipient.relationship === 'Other' && bothKinds && newRecipient.careKind ? newRecipient.careKind : undefined;
+      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship, ...(careKind ? { careKind } : {}) };
 
       const isFirstRecipient = !wizardData?.careRecipientFirstName;
       if (isFirstRecipient) {
@@ -731,6 +718,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
           careRecipientFirstName: entry.firstName,
           careRecipientLastName: entry.lastName,
           relationship: entry.relationship,
+          ...(careKind ? { careRecipientCareKind: careKind } : {}),
         }, { merge: true });
       } else {
         await db.collection('job_postings').doc(currentPlanId).set(
@@ -771,11 +759,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       const newIndex = isFirstRecipient ? 0 : recipients.length;
       setRecipientPlans(prev => ({ ...prev, [key]: blankPlan }));
       if (isFirstRecipient) {
-        setWizardData((prev: any) => ({ ...(prev || {}), careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship }));
+        setWizardData((prev: any) => ({ ...(prev || {}), careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careRecipientCareKind: careKind } : {}) }));
       } else {
         setWizardData((prev: any) => ({ ...prev, additionalRecipients: [...(prev?.additionalRecipients || []), entry] }));
       }
-      setNewRecipient({ firstName: '', lastName: '', relationship: '' });
+      setNewRecipient({ firstName: '', lastName: '', relationship: '', careKind: '' });
       setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
       setNewCustomLoc(false);
       setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null);
@@ -1048,12 +1036,21 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                         }
                       }}>
                       <option value="" disabled>Relationship *</option>
-                      {!recipients.some(r => r.relationship?.toLowerCase() === 'myself') && <option value="Myself">Myself</option>}
-                      <option value="Parent">Parent</option>
-                      <option value="Spouse or Partner">Spouse or Partner</option>
-                      <option value="Child">Child</option>
-                      <option value="Other">Other</option>
+                      {relationshipOptions.map(r => <option key={r} value={r}>{r}</option>)}
                     </select>
+                    {newRecipient.relationship === 'Other' && bothKinds && (
+                      <div className="col-span-2">
+                        <p className="text-xs font-semibold text-slate-500 mb-2">Is this person an older adult or a child?</p>
+                        <div className="flex gap-2">
+                          {KIND_PICK.map(k => (
+                            <button key={k.value} type="button" onClick={() => setNewRecipient(p => ({ ...p, careKind: k.value }))}
+                              className={`px-3 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${newRecipient.careKind === k.value ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
+                              {k.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1063,10 +1060,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                     <ClipboardList className="w-4 h-4 text-primary-500" />
                     <p className="text-sm font-semibold text-slate-700">Care Needs & Tasks</p>
                   </div>
-                  <CareKindsControl value={householdKinds} onPick={kinds => { pickHouseholdKinds(kinds); setNewDraft(p => ({ ...p, careNeeds: keepForKinds(p.careNeeds, kinds), ageRanges: kinds.includes('child') ? p.ageRanges : [] })); }} />
-                  {serviceListsForKinds(householdKinds).map(list => (
+                  {listsForRecipient(newRecipient.relationship, newRecipient.careKind).map(list => (
                   <div key={list.kind} className="mb-3">
-                  {serviceListsForKinds(householdKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-2">{CARE_KIND_LABEL[list.kind]}</p>}
                   <div className="space-y-2">
                     {list.services.map(need => {
                       const selected = newDraft.careNeeds.includes(need);
@@ -1227,7 +1222,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   </button>
                   <button onClick={() => {
                     setShowAddRecipient(false);
-                    setNewRecipient({ firstName: '', lastName: '', relationship: '' });
+                    setNewRecipient({ firstName: '', lastName: '', relationship: '', careKind: '' });
                     setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
                     setNewCustomLoc(false);
                   setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null);
@@ -1259,10 +1254,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           <ClipboardList className="w-4 h-4 text-primary-500" />
                           <p className="text-sm font-semibold text-slate-700">Care Needs & Tasks</p>
                         </div>
-                        <CareKindsControl value={householdKinds} onPick={kinds => { pickHouseholdKinds(kinds); setDraftPlan(prev => prev ? { ...prev, careNeeds: keepForKinds(prev.careNeeds, kinds), ageRanges: kinds.includes('child') ? prev.ageRanges : [] } : prev); }} />
-                        {serviceListsForKinds(householdKinds).map(list => (
+                        {listsForRecipient(recipient.relationship, recipient.careKind).map(list => (
                         <div key={list.kind} className="mb-4">
-                        {serviceListsForKinds(householdKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-2">{CARE_KIND_LABEL[list.kind]}</p>}
                         <div className="space-y-2">
                           {list.services.map(need => {
                             const selected = draft.careNeeds.includes(need);

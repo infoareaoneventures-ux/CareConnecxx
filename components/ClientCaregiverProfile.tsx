@@ -1,4 +1,4 @@
-import { serviceLabel } from './caregiver/signup/constants';
+import { serviceLabel, serviceListsForKinds, CARE_KIND_LABEL } from './caregiver/signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
@@ -40,6 +40,8 @@ interface CaregiverProfile {
   bio: string;
   languages: string[];
   skills: string[];
+  /** What care they provide — 'senior' and/or 'child' (missing = senior). The services read view groups by it. */
+  careKinds?: string[];
   education?: string;
   verified: boolean;
   backgroundCheckStatus?: string;
@@ -78,6 +80,7 @@ function mapRawToProfile(id: string, data: any): CaregiverProfile {
     bio: data.bio || data.about || '',
     languages: data.languages || ['English'],
     skills: data.skills || data.services || data.specializations || [],
+    careKinds: Array.isArray(data.careKinds) ? data.careKinds : undefined,
     education: data.education,
     verified: data.verified || false,
     backgroundCheckStatus: data.backgroundCheckStatus,
@@ -439,11 +442,19 @@ export default function ClientCaregiverProfile({
             {/* Care Services — Transportation only shown once it is live (offered + driving record clear) */}
             {caregiver.skills.length > 0 && (
               <Section title="Care Services">
-                <div className="flex flex-wrap gap-2">
-                  {caregiver.skills.filter(s => s !== 'Transportation' || caregiver.hasTransportation).map(s => (
-                    <span key={s} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-medium">
-                      <CheckCircle className="w-3 h-3" /> {serviceLabel(s)}
-                    </span>
+                {/* Grouped by kind when the provider offers both (2026-10-18); Transportation shows under each. */}
+                <div className="space-y-3">
+                  {serviceListsForKinds(caregiver.careKinds).map(list => ({ kind: list.kind, services: list.services.filter(s => caregiver.skills.includes(s) && (s !== 'Transportation' || caregiver.hasTransportation)) })).filter(g => g.services.length > 0).map(g => (
+                    <div key={g.kind}>
+                      {serviceListsForKinds(caregiver.careKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>}
+                      <div className="flex flex-wrap gap-2">
+                        {g.services.map(s => (
+                          <span key={`${g.kind}-${s}`} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-medium">
+                            <CheckCircle className="w-3 h-3" /> {serviceLabel(s)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </Section>

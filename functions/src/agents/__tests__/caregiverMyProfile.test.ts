@@ -58,6 +58,19 @@ describe("the page's option lists are the site's (byte parity)", () => {
   });
 });
 
+describe("Care Services grouped by kind (child care, 2026-10-18)", () => {
+  it("a Both provider reads two labelled groups with Transportation under both; one kind stays the plain list", async () => {
+    hoisted.docs.set("caregivers/cg1", { ...RECORD, careKinds: ["senior", "child"], services: ["Companionship", "Transportation", "Bathing & Dressing"], skills: ["Companionship", "Transportation", "Bathing & Dressing"] });
+    const t = myProfileText(await loadMyProfilePage("cg1"));
+    expect(t).toContain("Senior care: Companionship, Transportation");
+    expect(t).toContain("Child care: Bathing & Dressing, Transportation");
+    hoisted.docs.set("caregivers/cg1", RECORD);
+    const one = myProfileText(await loadMyProfilePage("cg1"));
+    expect(one).toContain("Care Services\nCompanionship, Transportation, Medication Reminders Only");
+    expect(one).not.toContain("Senior care:");
+  });
+});
+
 describe("loadMyProfilePage + myProfileText — the page's sections in order", () => {
   it("renders every section with the page's words, the label for Medication Reminders, and the Edit keywords", async () => {
     hoisted.reviews.push(

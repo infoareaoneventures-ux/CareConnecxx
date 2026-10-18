@@ -164,7 +164,7 @@ export function myProfileText(page: MyProfilePage): string {
   if (page.careKinds.length === 2) {
     // Both lists, each under its own name — the editor shows them the same way.
     for (const l of serviceListsForKinds(page.careKinds)) {
-      const mine = page.services.filter((s) => (l.services as readonly string[]).includes(s));
+      const mine = (l.services as readonly string[]).filter((s) => page.services.includes(s)); // the editor's order; Transportation under both
       lines.push(`${CARE_KIND_LABEL[l.kind]}: ${mine.length ? mine.map(serviceLabel).join(", ") : "none yet"}`);
     }
   } else {

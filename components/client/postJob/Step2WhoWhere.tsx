@@ -6,16 +6,21 @@ import { dbService } from '../../../services/api';
 import { db } from '../../../lib/firebase';
 import firebase from '../../../lib/firebase';
 import { geocodeAddress, streetPointOf, GeocodedPoint } from '../../../utils/geocode';
-import { RELATIONSHIPS } from '../../caregiver/signup/constants';
+import { relationshipsForKinds, normalizeCareKinds, CareKind } from '../../caregiver/signup/constants';
 
-// The five relationships, both doors (2026-10-18) — minus Myself, which is its own person here.
-const RELATIONSHIP_CHIPS: string[] = RELATIONSHIPS.filter(r => r !== 'Myself');
+// The relationships this household can offer (the five, both doors, 2026-10-18 — minus
+// Myself, which is its own person here): Child only when the household's care type
+// includes child care, Parent / Spouse or Partner only when it includes senior care.
+// Other is the one relationship that can't settle the list, so in a Both household
+// it asks once: older adult or child (stored as `careKind` on that person).
+const KIND_PICK: Array<{ value: CareKind; label: string }> = [{ value: 'senior', label: 'Older adult' }, { value: 'child', label: 'Child' }];
 
 interface SavedPerson {
   id: string;
   firstName: string;
   lastName: string;
   relationship?: string;
+  careKind?: CareKind;
   isSelf?: boolean;
   photo?: string;
 }
@@ -77,7 +82,9 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const [savedPeople, setSavedPeople] = useState<SavedPerson[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
-  const [newPerson, setNewPerson] = useState({ firstName: '', lastName: '', relationship: '' });
+  const [newPerson, setNewPerson] = useState<{ firstName: string; lastName: string; relationship: string; careKind: CareKind | '' }>({ firstName: '', lastName: '', relationship: '', careKind: '' });
+  const relationshipChips = relationshipsForKinds(data.careKinds, { includeMyself: false });
+  const bothKinds = normalizeCareKinds(data.careKinds).length === 2;
 
   // Location state
   const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([]);
@@ -136,9 +143,13 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         const jpFirst = (jp.careRecipientFirstName || '').trim();
         const jpLast = (jp.careRecipientLastName || '').trim();
         const jpKey = `${jpFirst.toLowerCase()} ${jpLast.toLowerCase()}`.trim();
+        // The household's care-type setting gates this step's relationship chips and Step 3's lists.
+        const storedKinds = normalizeCareKinds(jp.careKinds);
+        const currentKinds = normalizeCareKinds(data.careKinds);
+        if (storedKinds.length !== currentKinds.length || !storedKinds.every(k => currentKinds.includes(k))) onChange({ careKinds: storedKinds });
         if (jpFirst && !seenNames.has(jpKey)) {
           seenNames.add(jpKey);
-          people.push({ id: `jp-primary`, firstName: jpFirst, lastName: jpLast, relationship: jp.relationship, photo: jp.careRecipientPhotoURL || undefined });
+          people.push({ id: `jp-primary`, firstName: jpFirst, lastName: jpLast, relationship: jp.relationship, ...(jp.careRecipientCareKind === 'child' || jp.careRecipientCareKind === 'senior' ? { careKind: jp.careRecipientCareKind as CareKind } : {}), photo: jp.careRecipientPhotoURL || undefined });
         }
         if (Array.isArray(jp.additionalRecipients)) {
           jp.additionalRecipients.forEach((r: any, i: number) => {
@@ -147,7 +158,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
             const rKey = `${rFirst.toLowerCase()} ${rLast.toLowerCase()}`.trim();
             if (rFirst && !seenNames.has(rKey)) {
               seenNames.add(rKey);
-              people.push({ id: `jp-add-${i}`, firstName: rFirst, lastName: rLast, relationship: r.relationship, photo: r.photoURL || undefined });
+              people.push({ id: `jp-add-${i}`, firstName: rFirst, lastName: rLast, relationship: r.relationship, ...(r.careKind === 'child' || r.careKind === 'senior' ? { careKind: r.careKind as CareKind } : {}), photo: r.photoURL || undefined });
             }
           });
         }
@@ -248,7 +259,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       onChange({ careRecipients: data.careRecipients.filter(r => r.id !== person.id) });
     } else {
       if (maxReached) return;
-      onChange({ careRecipients: [...data.careRecipients, { id: person.id, firstName: person.firstName, lastName: person.lastName, relationship: person.relationship || '' }] });
+      onChange({ careRecipients: [...data.careRecipients, { id: person.id, firstName: person.firstName, lastName: person.lastName, relationship: person.relationship || '', ...(person.careKind ? { careKind: person.careKind } : {}) }] });
     }
   };
 
@@ -259,24 +270,26 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const addNewPerson = () => {
     if (!newPerson.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
     if (!newPerson.relationship) { onShowToast('Please select a relationship', 'error'); return; }
+    if (newPerson.relationship === 'Other' && bothKinds && !newPerson.careKind) { onShowToast('Is this person an older adult or a child?', 'error'); return; }
     if (data.careRecipients.length >= 4) { onShowToast('Maximum 4 care recipients allowed', 'error'); return; }
     const newId = `new-${Date.now()}`;
-    const entry = { id: newId, firstName: newPerson.firstName.trim(), lastName: newPerson.lastName.trim(), relationship: newPerson.relationship };
+    const careKind = newPerson.relationship === 'Other' && bothKinds && newPerson.careKind ? newPerson.careKind : undefined;
+    const entry = { id: newId, firstName: newPerson.firstName.trim(), lastName: newPerson.lastName.trim(), relationship: newPerson.relationship, ...(careKind ? { careKind } : {}) };
     // Auto-increment count to accommodate the new person
     const newCount = Math.min(4, data.recipientsCount + 1) as 1 | 2 | 3 | 4;
     onChange({ careRecipients: [...data.careRecipients, entry], recipientsCount: newCount });
     if (db && currentUser?.uid) {
       db.collection('job_postings').doc(currentUser.uid).set(
-        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion({ firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship }) },
+        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion({ firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careKind } : {}) }) },
         { merge: true }
       ).catch(() => {});
       setSavedPeople(prev => {
         const key = `${entry.firstName.toLowerCase()} ${entry.lastName.toLowerCase()}`.trim();
         if (prev.some(p => `${p.firstName.toLowerCase()} ${p.lastName.toLowerCase()}`.trim() === key)) return prev;
-        return [...prev, { id: newId, firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship }];
+        return [...prev, { id: newId, firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careKind } : {}) }];
       });
     }
-    setNewPerson({ firstName: '', lastName: '', relationship: '' });
+    setNewPerson({ firstName: '', lastName: '', relationship: '', careKind: '' });
     setShowNewForm(false);
   };
 
@@ -555,11 +568,25 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
               </div>
               <p className="text-xs text-amber-600 mb-2">What is your relationship to this person?</p>
               <div className="flex flex-wrap gap-2">
-                {RELATIONSHIP_CHIPS.map(chip => (
+                {relationshipChips.map(chip => (
                   <button key={chip} type="button"
                     onClick={() => { const u = [...data.careRecipients]; u[idx] = { ...u[idx], relationship: chip }; onChange({ careRecipients: u }); }}
                     className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:border-primary-400 hover:text-primary-600 transition-all">
                     {chip}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (r.relationship === 'Other' && bothKinds && !r.careKind) ? (
+            <div key={idx} className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-2">
+              <p className="font-semibold text-slate-800 text-sm mb-2">{r.firstName} {r.lastName}</p>
+              <p className="text-xs text-amber-600 mb-2">Is this person an older adult or a child?</p>
+              <div className="flex flex-wrap gap-2">
+                {KIND_PICK.map(k => (
+                  <button key={k.value} type="button"
+                    onClick={() => { const u = [...data.careRecipients]; u[idx] = { ...u[idx], careKind: k.value }; onChange({ careRecipients: u }); }}
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:border-primary-400 hover:text-primary-600 transition-all">
+                    {k.label}
                   </button>
                 ))}
               </div>
@@ -571,13 +598,26 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
             <div className="border-2 border-primary-200 bg-primary-50 rounded-xl p-4 flex flex-col gap-3">
               <p className="text-sm font-semibold text-slate-700">Who are they to you?</p>
               <div className="flex flex-wrap gap-2">
-                {RELATIONSHIP_CHIPS.map(chip => (
-                  <button key={chip} type="button" onClick={() => setNewPerson(p => ({ ...p, relationship: chip }))}
+                {relationshipChips.map(chip => (
+                  <button key={chip} type="button" onClick={() => setNewPerson(p => ({ ...p, relationship: chip, careKind: chip === 'Other' ? p.careKind : '' }))}
                     className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${newPerson.relationship === chip ? 'border-primary-600 bg-primary-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-primary-300'}`}>
                     {chip}
                   </button>
                 ))}
               </div>
+              {newPerson.relationship === 'Other' && bothKinds && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-700 mb-2">Is this person an older adult or a child?</p>
+                  <div className="flex flex-wrap gap-2">
+                    {KIND_PICK.map(k => (
+                      <button key={k.value} type="button" onClick={() => setNewPerson(p => ({ ...p, careKind: k.value }))}
+                        className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${newPerson.careKind === k.value ? 'border-primary-600 bg-primary-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-primary-300'}`}>
+                        {k.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {newPerson.relationship && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
@@ -587,7 +627,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                   <button type="button" onClick={addNewPerson} className="w-full bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors">Add</button>
                 </>
               )}
-              <button type="button" onClick={() => { setShowNewForm(false); setNewPerson({ firstName: '', lastName: '', relationship: '' }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+              <button type="button" onClick={() => { setShowNewForm(false); setNewPerson({ firstName: '', lastName: '', relationship: '', careKind: '' }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
             </div>
           ) : (
             <button type="button" onClick={() => setShowNewForm(true)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600 transition-all text-sm font-medium">

@@ -10,7 +10,7 @@ import firebase from '../../../lib/firebase';
 import { geocodeAddress } from '../../../utils/geocode';
 import { Step1Schedule } from './Step1Schedule';
 import { Step2WhoWhere } from './Step2WhoWhere';
-import { Step3CareNeeds } from './Step3CareNeeds';
+import { postCareKinds, Step3CareNeeds } from './Step3CareNeeds';
 import { Step4Rate } from './Step4Rate';
 import { Step5Describe } from './Step5Describe';
 import { Step6Review } from './Step6Review';
@@ -50,7 +50,8 @@ export const PostJobFlow: React.FC = () => {
       // through jobPostCoords.ts): the selected Care Plan location's saved
       // street-level point, else the street geocoded once here. The street
       // itself is never sent to the post; only lat/lng (+ geoPrecision) are.
-      const postKinds = kindsOfServices(data.careTypes, data.careKinds);
+      // Transportation alone defers to the picked recipients' kinds (Step 3's lists), inside the household's setting.
+      const postKinds = kindsOfServices(data.careTypes, postCareKinds(data.careRecipients, data.careKinds));
       const point = data.locationPoint?.geoPrecision === 'street'
         ? data.locationPoint
         : await geocodeAddress({ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode }).catch(() => null);

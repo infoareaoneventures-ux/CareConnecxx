@@ -3,6 +3,7 @@ import {
   PRIMARY_SERVICES, CHILD_SERVICES, ALL_SERVICES, CARE_KINDS, RELATIONSHIPS, AGE_RANGES,
   normalizeCareKinds, serviceListsForKinds, kindsOfServices, providerCoversPost, providerMatchesHousehold,
   defaultJobTitle, ageRangeLabel,
+  recipientCareKind, relationshipsForKinds, rosterCareKinds, careTypeChangeBlockedBy,
 } from '../components/caregiver/signup/constants';
 
 // Child care (2026-10-18): the one new fact — who the care is for — and the
@@ -74,5 +75,48 @@ describe('care kinds contract', () => {
     expect(defaultJobTitle('San Jose', ['child'])).toBe('Child care in San Jose');
     expect(defaultJobTitle('San Jose', ['senior', 'child'])).toBe('Senior and child care in San Jose');
     expect(defaultJobTitle(null, ['child'])).toBe('Child care needed');
+  });
+});
+
+// The follow-up (founder, 2026-10-18 evening): the household picks its care type ONCE
+// (signup / Account Settings) and the RELATIONSHIP decides each recipient's list —
+// no per-step control anywhere else.
+describe('who decides a recipient\'s kind', () => {
+  it('Child → child; Myself / Parent / Spouse or Partner and the older stored values → senior; Other → its stored careKind', () => {
+    expect(recipientCareKind('Child')).toBe('child');
+    expect(recipientCareKind('child')).toBe('child');          // the first-login wizard stores lowercase values
+    expect(recipientCareKind('Parent')).toBe('senior');
+    expect(recipientCareKind('Myself')).toBe('senior');
+    expect(recipientCareKind('Spouse or Partner')).toBe('senior');
+    expect(recipientCareKind('Grandparent')).toBe('senior');  // older stored value
+    expect(recipientCareKind('Other')).toBe('senior');
+    expect(recipientCareKind('Other', 'child')).toBe('child');
+    expect(recipientCareKind('Parent', 'child')).toBe('senior'); // careKind only counts for Other
+    expect(recipientCareKind(undefined)).toBe('senior');
+  });
+
+  it('the relationships a household can offer follow its care type; Other always', () => {
+    expect(relationshipsForKinds(['senior'])).toEqual(['Myself', 'Parent', 'Spouse or Partner', 'Other']);
+    expect(relationshipsForKinds(['child'])).toEqual(['Child', 'Other']);
+    expect(relationshipsForKinds(['senior', 'child'])).toEqual(['Myself', 'Parent', 'Spouse or Partner', 'Child', 'Other']);
+    expect(relationshipsForKinds(undefined)).toEqual(['Myself', 'Parent', 'Spouse or Partner', 'Other']); // missing = senior
+    expect(relationshipsForKinds(['senior', 'child'], { includeMyself: false })).toEqual(['Parent', 'Spouse or Partner', 'Child', 'Other']);
+  });
+
+  it('a roster implies its kinds: a child on file → child, anyone else → senior', () => {
+    expect(rosterCareKinds([])).toEqual([]);
+    expect(rosterCareKinds([{ relationship: 'Parent' }])).toEqual(['senior']);
+    expect(rosterCareKinds([{ relationship: 'Child' }])).toEqual(['child']);
+    expect(rosterCareKinds([{ relationship: 'Myself' }, { relationship: 'Parent' }, { relationship: 'Child' }])).toEqual(['senior', 'child']);
+    expect(rosterCareKinds([{ relationship: 'Other', careKind: 'child' }])).toEqual(['child']);
+  });
+
+  it('the roster rule: a care-type change that leaves someone uncovered names the first such person', () => {
+    const roster = [{ name: 'Basra Yousuf', relationship: 'Myself' }, { name: 'H M', relationship: 'Parent' }, { name: 'S Mahad', relationship: 'Child' }];
+    expect(careTypeChangeBlockedBy(['senior', 'child'], roster)).toBeNull();
+    expect(careTypeChangeBlockedBy(['child'], roster)?.name).toBe('Basra Yousuf');
+    expect(careTypeChangeBlockedBy(['senior'], roster)?.name).toBe('S Mahad');
+    expect(careTypeChangeBlockedBy(['child'], [{ name: 'S Mahad', relationship: 'Child' }])).toBeNull();
+    expect(careTypeChangeBlockedBy(['senior'], [])).toBeNull();
   });
 });

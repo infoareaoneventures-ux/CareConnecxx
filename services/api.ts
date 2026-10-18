@@ -2417,13 +2417,15 @@ export interface WizardJobPostingData {
     careRecipientFirstName: string;
     careRecipientLastName: string;
     adultsCount: number;
-    additionalRecipients: { firstName: string; lastName: string; relationship: string }[];
+    additionalRecipients: { firstName: string; lastName: string; relationship: string; careKind?: string }[];
     relationship: string;
+    /** Only for relationship Other in a Both household: 'senior' | 'child' (the relationship decides everyone else). */
+    careRecipientCareKind?: string;
     emergencyFirstName: string;
     emergencyLastName: string;
     emergencyPhone: string;
     careNeeds: string[];
-    /** Who the care is for (senior / child / both) — stored on job_postings as the household's answer (2026-10-18). */
+    /** Who the care is for (senior / child / both) — the household's setting on job_postings; written at signup here and from Account Settings afterwards (2026-10-18). */
     careKinds?: string[];
     /** Age-range chip ids when child care is on. */
     ageRanges?: string[];
@@ -2474,6 +2476,7 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
             firstName:    sanitizePlainText(r.firstName),
             lastName:     sanitizePlainText(r.lastName),
             relationship: r.relationship,
+            ...(r.careKind === 'child' || r.careKind === 'senior' ? { careKind: r.careKind } : {}),
         })),
     };
 

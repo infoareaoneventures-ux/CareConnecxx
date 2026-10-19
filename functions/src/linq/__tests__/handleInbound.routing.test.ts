@@ -1229,7 +1229,7 @@ describe("care provider onboarding agent-loop flag routing", () => {
 // A checkpoint on a GATE step still resumes through the scripted runner.
 describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
   const COMPLETE_CLIENT = {
-    firstName: "Sarah", seniorName: "Dorothy", age: 82, relationship: "daughter",
+    firstName: "Sarah", seniorName: "Dorothy", age: 82, relationship: "daughter", careKinds: ["senior"], // required at signup since 2026-10-18
     careNeeds: ["companionship"], homeStreet: "1 Main St", homeZipCode: "95110", sameAsHomeAddress: true,
     city: "San Jose", zipCode: "95110", timeOfDay: "mornings",
     careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],

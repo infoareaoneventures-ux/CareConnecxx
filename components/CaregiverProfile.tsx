@@ -14,6 +14,7 @@ import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import {
   PRIMARY_SERVICES,
   CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds,
+  CARE_TYPE_QUESTION_PROVIDER, CARE_TYPE_OPTION_LABELS,
   serviceLabel,
   EXPERIENCE_LEVELS,
   TIME_BLOCKS,
@@ -336,9 +337,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
               </div>
               {editingSection === 'services' ? (
                 <div>
-                <p className="text-xs font-semibold text-slate-500 mb-2">What care do you provide?</p>
+                <p className="text-xs font-semibold text-slate-500 mb-2">{CARE_TYPE_QUESTION_PROVIDER}</p>
                 <div className="grid grid-cols-3 gap-2 mb-4">
-                  {([{ value: ['senior'] as CareKind[], label: CARE_KIND_LABEL.senior }, { value: ['child'] as CareKind[], label: CARE_KIND_LABEL.child }, { value: ['senior', 'child'] as CareKind[], label: 'Both' }]).map(choice => {
+                  {([{ value: ['senior'] as CareKind[], label: CARE_TYPE_OPTION_LABELS[0] }, { value: ['child'] as CareKind[], label: CARE_TYPE_OPTION_LABELS[1] }, { value: ['senior', 'child'] as CareKind[], label: CARE_TYPE_OPTION_LABELS[2] }]).map(choice => {
                     const on = editCareKinds.length === choice.value.length && choice.value.every(k => editCareKinds.includes(k));
                     return (
                       <button key={choice.label} type="button"

@@ -450,7 +450,7 @@ describe("onboarding eval graders (pure, no spend)", () => {
       replies: ["Got it — who are we caring for?", "And how old is Jane?", "What city?", "Perfect, that's everything — setting you up now."],
       perTurnSendCounts: [1, 1, 1, 1],
       finalData: {
-        firstName: "Imran", seniorName: "Jane", age: 82, careNeeds: ["bathing"],
+        firstName: "Imran", seniorName: "Jane", age: 82, careNeeds: ["bathing"], careKinds: ["senior"],
         homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
         city: "Austin", zipCode: "78701", daysPerWeek: 3, timeOfDay: "mornings",
         careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
@@ -527,7 +527,7 @@ describe("eval harness tool engine (no spend)", () => {
 
     // Fill the rest of the required set.
     for (const [fieldName, fieldValue] of [
-      ["seniorName", "Jane"], ["age", 82], ["careNeeds", ["bathing", "meals"]],
+      ["seniorName", "Jane"], ["age", 82], ["careNeeds", ["bathing", "meals"]], ["careKinds", "senior care"],
       ["homeStreet", "1 Main St"], ["homeZipCode", "95110"], ["sameAsHomeAddress", true],
       ["city", "Austin"], ["zipCode", "95110"], ["daysPerWeek", 3], ["timeOfDay", "mornings"],
       ["careFrequency", "part_time"], ["startDate", "2026-08-01"],

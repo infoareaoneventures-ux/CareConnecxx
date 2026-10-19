@@ -21,7 +21,7 @@
 import * as admin from "firebase-admin";
 import { haversineMiles } from "../ai/scoring";
 import { caregiverBlockReason, jobRequiresTransport, CaregiverGateReason } from "./caregiverAccessGate";
-import { providerCoversPost, careKindBadge, ageRangeLabel, CANONICAL_SERVICES } from "./caregiverServiceLabels";
+import { providerCoversPost, careKindBadge, ageRangeLabel, CANONICAL_SERVICES, normalizeCareKinds, CARE_KIND_LABEL, serviceListsForKinds } from "./caregiverServiceLabels";
 
 const db = admin.firestore();
 
@@ -98,7 +98,7 @@ export interface JobCard {
   night: boolean;                    // Night pill (evening/overnight)
   seniors: number | null;            // "N people" pill when > 1 (the field keeps its name)
   kind: string | null;               // "Child care" / "Senior and child care" badge — null for senior-only (2026-10-18)
-  ageRanges: string[];               // the child's age-range chips, as shown
+  ageRanges: string[];               // the stage chip of each child on the post (Stage words, never a number)
   transportation: boolean;           // Transportation pill
   date: string | null;
   hours: string | null;
@@ -184,6 +184,7 @@ export interface JobBoardFilters {
   days?: string[];                 // Mon..Sun — any job day starting with the chip
   seniors?: Array<"1" | "2" | "3+">;
   careTypes?: string[];            // exact overlap with job.careTypes
+  careType?: "senior" | "child";   // the Care type filter at the top of the panel (Both accounts only)
 }
 
 // The sidebar's option sets, verbatim (JobBoard.tsx FilterPanel): Time of Day
@@ -196,6 +197,10 @@ export const JOB_BOARD_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] 
 export const JOB_BOARD_SENIORS = ["1", "2", "3+"] as const;
 // Child care (2026-10-18): the senior eight + the child eight (Transportation once).
 export const JOB_BOARD_CARE_TYPES: readonly string[] = CANONICAL_SERVICES;
+/** The Care Type checkboxes grouped by kind — the list(s) on the provider's profile (missing = senior); both when asked for both. */
+export function jobBoardCareTypesByKind(providerKinds: unknown = ["senior", "child"]): string {
+  return serviceListsForKinds(providerKinds).map((l) => `${CARE_KIND_LABEL[l.kind]}: ${l.services.join(", ")}`).join("; ");
+}
 // components/caregiver/signup/constants.ts serviceLabel: the one care type whose
 // checkbox reads differently from its stored value.
 const CARE_TYPE_DISPLAY: Record<string, string> = { "Medication Reminders": "Medication Reminders Only" };
@@ -247,6 +252,7 @@ export function normalizeJobBoardFilters(raw: unknown): JobBoardFilters {
     return low === opt.toLowerCase() || low === (CARE_TYPE_DISPLAY[opt] ?? "").toLowerCase();
   });
   if (careTypes.length) out.careTypes = careTypes;
+  if (r.careType === "senior" || r.careType === "child") out.careType = r.careType;
   return out;
 }
 
@@ -254,7 +260,7 @@ export function normalizeJobBoardFilters(raw: unknown): JobBoardFilters {
 export function hasJobBoardFilters(f: JobBoardFilters | undefined): boolean {
   if (!f) return false;
   return !!(f.search || typeof f.payMin === "number" || typeof f.payMax === "number"
-    || f.timeOfDay?.length || f.days?.length || f.seniors?.length || f.careTypes?.length);
+    || f.timeOfDay?.length || f.days?.length || f.seniors?.length || f.careTypes?.length || f.careType);
 }
 
 /** The filters in the sidebar's own words, for the list header: `"san jose", $25+/hr, Morning, Sat, Sun, 2 seniors, Companionship`. */
@@ -270,6 +276,7 @@ export function jobBoardFiltersLabel(f: JobBoardFilters | undefined): string {
   if (f.timeOfDay?.length) parts.push(f.timeOfDay.map((t) => TIME_OF_DAY_LABEL[t] ?? t).join(", "));
   if (f.days?.length) parts.push(f.days.join(", "));
   if (f.seniors?.length) parts.push(f.seniors.map((s) => `${s} ${s === "1" ? "person" : "people"}`).join(", "));
+  if (f.careType) parts.push(CARE_KIND_LABEL[f.careType]);
   if (f.careTypes?.length) parts.push(f.careTypes.map((ct) => CARE_TYPE_DISPLAY[ct] ?? ct).join(", "));
   return parts.join(", ");
 }
@@ -304,6 +311,7 @@ export function passesJobBoardFilters(job: Doc, f: JobBoardFilters | undefined):
     const jct = Array.isArray(job.careTypes) ? (job.careTypes as string[]) : [];
     if (!f.careTypes.some((ct) => jct.includes(ct))) return false;
   }
+  if (f.careType && !normalizeCareKinds(job.careKinds).includes(f.careType)) return false;
   return true;
 }
 
@@ -326,7 +334,9 @@ export function withinCaregiverRadius(job: Doc, coords: { lat: number; lng: numb
 export function applyJobBoardFilters(jobs: Doc[], filters: JobBoardFilters | undefined, caregiver: Doc): Doc[] {
   const coords = caregiverCoords(caregiver);
   const radius = caregiverRadiusMiles(caregiver);
-  return jobs.filter((j) => passesJobBoardFilters(j, filters) && withinCaregiverRadius(j, coords, radius));
+  // The Care type filter exists only for a provider who offers both kinds — anyone else never sees it.
+  const f = filters?.careType && normalizeCareKinds(caregiver.careKinds).length !== 2 ? { ...filters, careType: undefined } : filters;
+  return jobs.filter((j) => passesJobBoardFilters(j, f) && withinCaregiverRadius(j, coords, radius));
 }
 
 async function caregiverBlockedIds(caregiverId: string): Promise<Set<string>> {

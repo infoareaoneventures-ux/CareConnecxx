@@ -1,6 +1,6 @@
 
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../utils/medicationInstruction';
-import { serviceLabel, PRIMARY_SERVICES, CareKind, normalizeCareKinds, serviceListsForKinds, kindsOfServices, AGE_RANGES, ageRangeLabel, recipientCareKind, relationshipsForKinds } from './caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, CareKind, normalizeCareKinds, serviceListsForKinds, AGE_RANGES, STAGE_HEADING, ageRangeLabel, recipientCareKind, relationshipsForKinds, recipientStage, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS } from './caregiver/signup/constants';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Phone, FileText, ChevronLeft, Plus, Trash2, Loader2, User,
@@ -62,30 +62,32 @@ interface TasksData {
 
 interface RecipientPlanData {
   careNeeds: string[];
-  /** Age-range chip ids for a child (informational, like pets/smoking). */
+  /** A child's stage — ONE AGE_RANGES id, set on the child (founder 2026-10-18 late). */
+  ageRange?: string;
+  /** Older records' multi-select list: read (first element) as the fallback, never written again. */
   ageRanges?: string[];
   careNeedDetails: Record<string, string[]>;
   locations: LocationEntry[]; notes: string;
   lifestyle: LifestyleData; tasks: TasksData;
 }
 
-interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; careKind?: string; photoURL?: string; }
+interface RecipientEntry { firstName: string; lastName: string; name: string; relationship: string; careKind?: string; ageRange?: string; photoURL?: string; }
 
 
 // ── Child care (2026-10-18): the one question + the chips, shared by the Add form and the editor ──
 // No care-type control on this page (founder, 2026-10-18 evening): the household
 // picked its care type once (signup / Account Settings → job_postings.careKinds)
 // and each recipient's RELATIONSHIP decides which list they see — Child → the
-// child list + age chips; Myself / Parent / Spouse or Partner → the senior list;
-// Other → a two-way pick (older adult / child) stored as `careKind` on that person.
-const KIND_PICK: Array<{ value: CareKind; label: string }> = [{ value: 'senior', label: 'Older adult' }, { value: 'child', label: 'Child' }];
-const AgeRangeChips: React.FC<{ value: readonly string[]; onToggle: (id: string) => void }> = ({ value, onToggle }) => (
+// child list + ONE stage chip row; Myself / Parent / Spouse or Partner / Adult child → the senior list;
+// Other → a two-way pick (adult / child) stored as `careKind` on that person.
+const KIND_PICK: ReadonlyArray<{ value: CareKind; label: string }> = OTHER_KIND_OPTIONS;
+const StageChips: React.FC<{ value?: string; onPick: (id: string) => void }> = ({ value, onPick }) => (
   <div className="mt-3">
-    <p className="text-xs font-semibold text-slate-500 mb-2">Age range</p>
+    <p className="text-xs font-semibold text-slate-500 mb-2">{STAGE_HEADING}</p>
     <div className="flex flex-wrap gap-2">
       {AGE_RANGES.map(a => (
-        <button key={a.id} type="button" onClick={() => onToggle(a.id)}
-          className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${value.includes(a.id) ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-300 bg-white text-slate-700 hover:border-primary-400'}`}>
+        <button key={a.id} type="button" onClick={() => onPick(a.id)}
+          className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${value === a.id ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-300 bg-white text-slate-700 hover:border-primary-400'}`}>
           {a.label}
         </button>
       ))}
@@ -233,7 +235,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const [savingSetup, setSavingSetup] = useState(false);
 
   const [showAddRecipient, setShowAddRecipient] = useState(false);
-  const [newRecipient, setNewRecipient] = useState<{ firstName: string; lastName: string; relationship: string; careKind: CareKind | '' }>({ firstName: '', lastName: '', relationship: '', careKind: '' });
+  const [newRecipient, setNewRecipient] = useState<{ firstName: string; lastName: string; relationship: string; careKind: CareKind | ''; ageRange: string }>({ firstName: '', lastName: '', relationship: '', careKind: '', ageRange: '' });
   const [newDraft, setNewDraft] = useState<RecipientPlanData>({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
   const [newCustomLoc, setNewCustomLoc] = useState(false);
   const [newLocEditIdx, setNewLocEditIdx] = useState<number | null>(null);
@@ -365,7 +367,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     const pFirst = wizardData.careRecipientFirstName || '';
     const pLast = wizardData.careRecipientLastName || '';
     seenKeys.add(getKey(pFirst, pLast));
-    list.push({ firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(' ') || 'Primary Recipient', relationship: wizardData.relationship || '', careKind: wizardData.careRecipientCareKind || undefined, photoURL: wizardData.careRecipientPhotoURL || '' });
+    list.push({ firstName: pFirst, lastName: pLast, name: [pFirst, pLast].filter(Boolean).join(' ') || 'Primary Recipient', relationship: wizardData.relationship || '', careKind: wizardData.careRecipientCareKind || undefined, ageRange: typeof wizardData.careRecipientAgeRange === 'string' && wizardData.careRecipientAgeRange ? wizardData.careRecipientAgeRange : undefined, photoURL: wizardData.careRecipientPhotoURL || '' });
     (wizardData.additionalRecipients || []).forEach((r: any, i: number) => {
       const rFirst = (r.firstName || '').trim();
       const rLast = (r.lastName || '').trim();
@@ -373,7 +375,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       const rKey = getKey(rFirst, rLast);
       if (seenKeys.has(rKey)) return; // skip duplicates
       seenKeys.add(rKey);
-      list.push({ firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(' '), relationship: r.relationship || '', careKind: r.careKind || undefined, photoURL: r.photoURL || '' });
+      list.push({ firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(' '), relationship: r.relationship || '', careKind: r.careKind || undefined, ageRange: typeof r.ageRange === 'string' && r.ageRange ? r.ageRange : undefined, photoURL: r.photoURL || '' });
     });
     orphanedPlanRecipients.forEach((r) => {
       const rKey = getKey(r.firstName, r.lastName);
@@ -417,10 +419,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     const key = getKey(r.firstName, r.lastName);
     const stored = recipientPlans[key];
     if (stored) {
+      // One stage per child: the single field, else the first of an older list, else the roster entry — the list itself is never written back.
+      const { ageRanges: _legacyStages, ...rest } = stored;
+      const stage = recipientStage(stored) ?? r.ageRange;
       return {
-        ...stored,
+        ...rest,
         careNeeds: stored.careNeeds ?? wizardData?.careNeeds ?? [],
-        ageRanges: stored.ageRanges ?? (Array.isArray(wizardData?.ageRanges) ? wizardData.ageRanges : []),
+        ...(stage ? { ageRange: stage } : {}),
         locations: stored.locations ?? wizardLocations.slice(0, 1),
         notes: stored.notes ?? '', // never the job post's description (founder, 2026-10-09: the two are separate)
         careNeedDetails: stored.careNeedDetails ?? {},
@@ -430,7 +435,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     }
     return {
       careNeeds: wizardData?.careNeeds || [],
-      ageRanges: Array.isArray(wizardData?.ageRanges) ? wizardData.ageRanges : [],
+      ...(r.ageRange ? { ageRange: r.ageRange } : {}),
       careNeedDetails: {},
       locations: wizardLocations.slice(0, 1),
       notes: '',
@@ -464,7 +469,24 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     return serviceListsForKinds(householdKinds.includes(k) ? [k] : householdKinds);
   };
   const relationshipOptions = relationshipsForKinds(householdKinds, { includeMyself: !recipients.some(r => r.relationship?.toLowerCase() === 'myself') });
-  const needsAgeRange = (needs: string[], ageRanges?: string[]) => kindsOfServices(needs, householdKinds).includes('child') && !(ageRanges || []).length;
+  // A child (by relationship, inside a household that includes child care) must have a stage — one per child.
+  const needsStage = (relationship: unknown, careKind: unknown, ageRange?: string) => householdKinds.includes('child') && recipientCareKind(relationship, careKind) === 'child' && !ageRange;
+  // Keep the roster entry's stage in step with the plan (job_postings: careRecipientAgeRange for the primary, additionalRecipients[].ageRange otherwise).
+  const syncRosterStage = async (r: RecipientEntry, ageRange: string) => {
+    if (!db || !currentPlanId || !wizardData || r.ageRange === ageRange) return;
+    const jpRef = db.collection('job_postings').doc(currentPlanId);
+    const isPrimary = getKey(wizardData.careRecipientFirstName || '', wizardData.careRecipientLastName || '') === getKey(r.firstName, r.lastName);
+    if (isPrimary) {
+      await jpRef.set({ careRecipientAgeRange: ageRange }, { merge: true });
+      setWizardData((prev: any) => ({ ...(prev || {}), careRecipientAgeRange: ageRange }));
+      return;
+    }
+    const list: any[] = Array.isArray(wizardData.additionalRecipients) ? wizardData.additionalRecipients : [];
+    const next = list.map((e: any) => (getKey((e?.firstName || '').trim(), (e?.lastName || '').trim()) === getKey(r.firstName, r.lastName) ? { ...e, ageRange } : e));
+    if (JSON.stringify(next) === JSON.stringify(list)) return;
+    await jpRef.set({ additionalRecipients: next }, { merge: true });
+    setWizardData((prev: any) => ({ ...(prev || {}), additionalRecipients: next }));
+  };
 
   const startEdit = (section: typeof editingSection) => {
     if (!recipient) return;
@@ -529,6 +551,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         } else throw e;
       }
       setRecipientPlans(prev => ({ ...prev, [key]: updated }));
+      if (editingSection === 'careNeeds' && typeof updated.ageRange === 'string' && updated.ageRange && recipientCareKind(recipient.relationship, recipient.careKind) === 'child') {
+        await syncRosterStage(recipient, updated.ageRange).catch(() => {});
+      }
       if (editingSection === 'locations') setLocationPool(cleanPool);
       // senior_profiles.needs is the field caregiver-matching actually reads
       // (find_nearby_caregivers) — this save only ever wrote carePlans, so an
@@ -693,13 +718,13 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   };
 
   const saveNewRecipient = async () => {
-    if (needsAgeRange(newDraft.careNeeds, newDraft.ageRanges)) { onShowToast("Please pick the child's age range", 'error'); return; }
     if (!newRecipient.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
     if (/[~*/\[\]]/.test(newRecipient.firstName) || /[~*/\[\]]/.test(newRecipient.lastName)) {
       onShowToast('Names cannot contain special characters like / * [ ]', 'error'); return;
     }
     if (!newRecipient.relationship) { onShowToast('Please select a relationship', 'error'); return; }
-    if (newRecipient.relationship === 'Other' && bothKinds && !newRecipient.careKind) { onShowToast('Is this person an older adult or a child?', 'error'); return; }
+    if (newRecipient.relationship === 'Other' && bothKinds && !newRecipient.careKind) { onShowToast(OTHER_KIND_QUESTION, 'error'); return; }
+    if (needsStage(newRecipient.relationship, newRecipient.careKind || undefined, newRecipient.ageRange)) { onShowToast("Please pick the child's stage", 'error'); return; }
     if (newRecipient.relationship.toLowerCase() === 'myself' && recipients.some(r => r.relationship?.toLowerCase() === 'myself')) {
       onShowToast('You can only add yourself once', 'error'); return;
     }
@@ -710,7 +735,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     setSavingRecipient(true);
     try {
       const careKind = newRecipient.relationship === 'Other' && bothKinds && newRecipient.careKind ? newRecipient.careKind : undefined;
-      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship, ...(careKind ? { careKind } : {}) };
+      const ageRange = householdKinds.includes('child') && recipientCareKind(newRecipient.relationship, careKind) === 'child' && newRecipient.ageRange ? newRecipient.ageRange : undefined;
+      const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship, ...(careKind ? { careKind } : {}), ...(ageRange ? { ageRange } : {}) };
 
       const isFirstRecipient = !wizardData?.careRecipientFirstName;
       if (isFirstRecipient) {
@@ -719,6 +745,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
           careRecipientLastName: entry.lastName,
           relationship: entry.relationship,
           ...(careKind ? { careRecipientCareKind: careKind } : {}),
+          ...(ageRange ? { careRecipientAgeRange: ageRange } : {}),
         }, { merge: true });
       } else {
         await db.collection('job_postings').doc(currentPlanId).set(
@@ -729,7 +756,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
       // Save the plan the user filled in during add (never inherits wizard defaults)
       const key = getKey(entry.firstName, entry.lastName);
-      const blankPlan: RecipientPlanData = { ...newDraft };
+      const { ageRanges: _legacyStages, ...draftRest } = newDraft;
+      const blankPlan: RecipientPlanData = { ...draftRest, ...(ageRange ? { ageRange } : {}) };
 
       // Merge new recipient's address into the shared locationPool (with geocoding)
       const newLoc = newDraft.locations.find(l => l.street || l.city);
@@ -759,11 +787,11 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       const newIndex = isFirstRecipient ? 0 : recipients.length;
       setRecipientPlans(prev => ({ ...prev, [key]: blankPlan }));
       if (isFirstRecipient) {
-        setWizardData((prev: any) => ({ ...(prev || {}), careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careRecipientCareKind: careKind } : {}) }));
+        setWizardData((prev: any) => ({ ...(prev || {}), careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careRecipientCareKind: careKind } : {}), ...(ageRange ? { careRecipientAgeRange: ageRange } : {}) }));
       } else {
         setWizardData((prev: any) => ({ ...prev, additionalRecipients: [...(prev?.additionalRecipients || []), entry] }));
       }
-      setNewRecipient({ firstName: '', lastName: '', relationship: '', careKind: '' });
+      setNewRecipient({ firstName: '', lastName: '', relationship: '', careKind: '', ageRange: '' });
       setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
       setNewCustomLoc(false);
       setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null);
@@ -990,7 +1018,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
                           {r.relationship && <span className={`text-xs capitalize ${active ? 'text-white/75' : 'text-slate-400'}`}>{r.relationship}</span>}
-                          {(recipientPlans[getKey(r.firstName, r.lastName)]?.ageRanges || []).length > 0 && <span className={`text-xs ${active ? 'text-white/75' : 'text-slate-400'}`}>· {(recipientPlans[getKey(r.firstName, r.lastName)].ageRanges as string[]).map(ageRangeLabel).join(', ')}</span>}
+                          {(() => { const stage = recipientStage(recipientPlans[getKey(r.firstName, r.lastName)]) ?? r.ageRange; return stage ? <span className={`text-xs ${active ? 'text-white/75' : 'text-slate-400'}`}>· {ageRangeLabel(stage)}</span> : null; })()}
                         </div>
                       </div>
                       {!isReadOnly && recipients.length > 1 && (
@@ -1040,7 +1068,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                     </select>
                     {newRecipient.relationship === 'Other' && bothKinds && (
                       <div className="col-span-2">
-                        <p className="text-xs font-semibold text-slate-500 mb-2">Is this person an older adult or a child?</p>
+                        <p className="text-xs font-semibold text-slate-500 mb-2">{OTHER_KIND_QUESTION}</p>
                         <div className="flex gap-2">
                           {KIND_PICK.map(k => (
                             <button key={k.value} type="button" onClick={() => setNewRecipient(p => ({ ...p, careKind: k.value }))}
@@ -1082,7 +1110,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                       );
                     })}
                   </div>
-                  {list.kind === 'child' && <AgeRangeChips value={newDraft.ageRanges || []} onToggle={id => setNewDraft(p => ({ ...p, ageRanges: (p.ageRanges || []).includes(id) ? (p.ageRanges || []).filter(a => a !== id) : [...(p.ageRanges || []), id] }))} />}
+                  {list.kind === 'child' && recipientCareKind(newRecipient.relationship, newRecipient.careKind || undefined) === 'child' && <StageChips value={newRecipient.ageRange || undefined} onPick={id => setNewRecipient(p => ({ ...p, ageRange: id }))} />}
                   </div>
                   ))}
                 </div>
@@ -1222,7 +1250,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                   </button>
                   <button onClick={() => {
                     setShowAddRecipient(false);
-                    setNewRecipient({ firstName: '', lastName: '', relationship: '', careKind: '' });
+                    setNewRecipient({ firstName: '', lastName: '', relationship: '', careKind: '', ageRange: '' });
                     setNewDraft({ careNeeds: [], careNeedDetails: {}, locations: [], notes: '', lifestyle: emptyLifestyle(), tasks: emptyTasks() });
                     setNewCustomLoc(false);
                   setNewLocEditIdx(null); setNewLocEditDraft(null); setNewLocConfirmDeleteIdx(null);
@@ -1276,10 +1304,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                             );
                           })}
                         </div>
-                        {list.kind === 'child' && <AgeRangeChips value={draft.ageRanges || []} onToggle={id => setDraftPlan(prev => prev ? { ...prev, ageRanges: (prev.ageRanges || []).includes(id) ? (prev.ageRanges || []).filter(a => a !== id) : [...(prev.ageRanges || []), id] } : prev)} />}
+                        {list.kind === 'child' && recipientCareKind(recipient.relationship, recipient.careKind) === 'child' && <StageChips value={draft.ageRange} onPick={id => setDraftPlan(prev => prev ? { ...prev, ageRange: id } : prev)} />}
                         </div>
                         ))}
-                        <SaveBar onSave={() => { if (needsAgeRange(draft.careNeeds, draft.ageRanges)) { onShowToast("Please pick the child's age range", 'error'); return; } saveSection(); }} onCancel={cancelEdit} saving={savingSection} />
+                        <SaveBar onSave={() => { if (needsStage(recipient.relationship, recipient.careKind, draft.ageRange)) { onShowToast("Please pick the child's stage", 'error'); return; } saveSection(); }} onCancel={cancelEdit} saving={savingSection} />
                       </>
                     ) : (
                       <div className="flex items-start justify-between gap-3">
@@ -1302,9 +1330,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                                 })}
                               </div>
                             ) : <p className="text-sm text-slate-400 italic">No care needs specified</p>}
-                            {(rPlan.ageRanges || []).length > 0 && (
+                            {rPlan.ageRange && (
                               <div className="flex flex-wrap gap-1.5 mt-2">
-                                {(rPlan.ageRanges as string[]).map(id => <span key={id} className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full">{ageRangeLabel(id)}</span>)}
+                                <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full">{ageRangeLabel(rPlan.ageRange)}</span>
                               </div>
                             )}
                           </div>

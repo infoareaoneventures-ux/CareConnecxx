@@ -1,4 +1,4 @@
-import { serviceLabel } from '../caregiver/signup/constants';
+import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
 import React, { useState, useEffect, useMemo } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { useNavigate } from 'react-router-dom';
@@ -520,7 +520,7 @@ const ShiftRow: React.FC<{
                                       : <span className="text-[9px] font-bold text-primary-600">{(r.name || '?').split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase()}</span>}
                                   </div>
                                   <p className="text-xs font-semibold text-slate-600">
-                                    {r.name}{r.relationship ? ` · ${r.relationship}` : ''}
+                                    {r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.ageRange ? ` · ${ageRangeLabel(r.ageRange)}` : ''}
                                   </p>
                                 </div>
                                 <div className="space-y-1.5">

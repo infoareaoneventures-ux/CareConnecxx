@@ -323,21 +323,35 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     expect(refused._toolError).toBe(true);
     expect(refused.message).toBe("Child care isn't on this household yet — change the care type to Both in Account Settings, or tell me to and I'll do it.");
     seedRoster({ careKinds: ["senior", "child"] });
-    const ok = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "S", lastName: "Mahad", relationship: "Child", ageRanges: ["Toddler"], careNeeds: ["Supervision", "Companionship"], location: { street: "1 Elm St" } }) as any;
+    // ONE stage per child, set on the child (2026-10-18 late): a single `ageRange` id on the plan AND on the roster entry; refused for an adult.
+    const stagedAdult = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "Omar", relationship: "Adult child", ageRange: "Teen", location: { street: "1 Elm St" } }) as any;
+    expect(stagedAdult._toolError).toBe(true);
+    expect(stagedAdult.message).toBe("Stage is for a child only — Omar is an adult.");
+    const ok = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "S", lastName: "Mahad", relationship: "Child", ageRange: "Toddler", careNeeds: ["Supervision", "Companionship"], location: { street: "1 Elm St" } }) as any;
     expect(ok.success).toBe(true);
     const plan = hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.s_mahad;
-    expect(plan.ageRanges).toEqual(["toddler"]);
+    expect(plan.ageRange).toBe("toddler");
+    expect(plan.ageRanges).toBeUndefined();
+    expect(hoisted.docState.get(`job_postings/${CLIENT}`).additionalRecipients).toContainEqual({ firstName: "S", lastName: "Mahad", relationship: "Child", ageRange: "toddler" });
     expect(plan.careNeeds).toEqual(["Supervision"]); // the senior pill is not on a child's list
     const other = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "Lee", relationship: "Other", location: { street: "1 Elm St" } }) as any;
     expect(other._toolError).toBe(true);
-    expect(other.message).toContain("older adult or a child");
+    expect(other.message).toContain("Is this person an adult or a child?");
     const otherOk = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "Lee", relationship: "Other", careKind: "child", location: { street: "1 Elm St" } }) as any;
     expect(otherOk.success).toBe(true);
     expect(hoisted.docState.get(`job_postings/${CLIENT}`).additionalRecipients).toContainEqual({ firstName: "Lee", lastName: "", relationship: "Other", careKind: "child" });
     const list = await handleToolCall("list_household_seniors", { clientId: CLIENT }) as any;
     expect(list.careType).toBe("Both");
-    expect(list.relationships).toEqual(["Myself", "Parent", "Spouse or Partner", "Child", "Other"]);
-    expect(list.results.map((r: any) => [r.name, r.kind])).toEqual([["Jane Doe", "Senior care"], ["S Mahad", "Child care"], ["Lee", "Child care"]]);
+    expect(list.relationships).toEqual(["Myself", "Parent", "Spouse or Partner", "Adult child", "Child", "Other"]);
+    expect(list.results.map((r: any) => [r.name, r.kind, r.stage])).toEqual([["Jane Doe", "Senior care", null], ["S Mahad", "Child care", "Toddler"], ["Lee", "Child care", null]]);
+    // update_care_plan › ageRange: one stage name, a child only.
+    const restaged = await handleToolCall("update_care_plan", { clientId: CLIENT, field: "ageRange", value: "Preschooler", action: "set", recipientFirstName: "S" }) as any;
+    expect(restaged.success).toBe(true);
+    expect(restaged.ageRange).toBe("Preschooler");
+    expect(hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.s_mahad.ageRange).toBe("3-5");
+    const adultStage = await handleToolCall("update_care_plan", { clientId: CLIENT, field: "ageRange", value: "Teen", action: "set", recipientFirstName: "Jane" }) as any;
+    expect(adultStage._toolError).toBe(true);
+    expect(adultStage.message).toBe("Stage is for a child only — Jane Doe is an adult.");
   });
 
   it("set_household_care_type — the Account Settings › Care type row with the roster rule: refused with the page's sentence when someone would be uncovered, otherwise written once", async () => {

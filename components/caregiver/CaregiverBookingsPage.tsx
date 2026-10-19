@@ -1,4 +1,4 @@
-import { serviceLabel } from './signup/constants';
+import { serviceLabel, ageRangeLabel } from './signup/constants';
 import React, { useEffect, useState } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -46,6 +46,8 @@ interface RecipientLifestyle {
 interface CareRecipient {
   name: string;
   relationship?: string;
+  /** A child's stage (one AGE_RANGES id) — shown as its label next to the relationship. */
+  ageRange?: string;
   age?: string;
   photoURL?: string;
   careNeeds?: string[];
@@ -107,6 +109,7 @@ interface Shift {
   careRecipients?: Array<{
     name: string;
     relationship?: string;
+    ageRange?: string;
     age?: string;
     photoURL?: string | null;
     careNeeds?: string[];
@@ -476,7 +479,7 @@ const RequestCard: React.FC<{
                 <div className="space-y-4">
                   {req.careRecipients.map((r: any, i: number) => {
                     const name = typeof r === 'string' ? r : r.name;
-                    const relationship = typeof r === 'object' ? r.relationship : undefined;
+                    const relationship = typeof r === 'object' ? [r.relationship, r.ageRange ? ageRangeLabel(r.ageRange) : ''].filter(Boolean).join(' · ') : undefined;
                     const photoURL = typeof r === 'object' ? r.photoURL : undefined;
                     const careNeeds: string[] = typeof r === 'object' ? (r.careNeeds || []) : [];
                     const careNeedDetails: Record<string, string[]> = typeof r === 'object' ? (r.careNeedDetails || {}) : {};
@@ -1049,7 +1052,7 @@ const BookingGroupCard: React.FC<{
                   </div>
                   <div>
                     <p className="font-semibold text-slate-800 text-sm">{r.name}</p>
-                    {r.relationship && <p className="text-xs text-slate-400">{r.relationship}</p>}
+                    {(r.relationship || r.ageRange) && <p className="text-xs text-slate-400">{[r.relationship, r.ageRange ? ageRangeLabel(r.ageRange) : ''].filter(Boolean).join(' · ')}</p>}
                   </div>
                 </div>
                 {(r as any).notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{(r as any).notes}"</p>}
@@ -1719,7 +1722,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
                   {/* Tasks per recipient — care plan card format */}
                   {(() => {
                     const doneRaw: string[] = shift.tasksCompleted || [];
-                    const recipients = (shift.careRecipients || []) as Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> }>;
+                    const recipients = (shift.careRecipients || []) as Array<{ name: string; relationship?: string; ageRange?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> }>;
                     const hasTasks = recipients.some(r => (r.careNeeds || []).length > 0) || (shift.careNeeds || []).length > 0;
                     if (!hasTasks) return null;
 
@@ -1768,7 +1771,7 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
                                           ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
                                           : <span className="text-[9px] font-bold text-primary-600">{r.name.split(' ').map((p: string) => p[0]).join('').slice(0,2).toUpperCase()}</span>}
                                       </div>
-                                      <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}</p>
+                                      <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.ageRange ? ` · ${ageRangeLabel(r.ageRange)}` : ''}</p>
                                     </div>
                                   )}
                                     {(r as any).notes && <p className="text-xs text-slate-500 italic mb-1.5">"{(r as any).notes}"</p>}
@@ -2273,7 +2276,7 @@ export const CaregiverBookingsPage: React.FC = () => {
 
     {/* ── Log Hours Modal ── */}
     {logHoursShift && (() => {
-      type RecipientType = { name: string; relationship?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> };
+      type RecipientType = { name: string; relationship?: string; ageRange?: string; age?: string; photoURL?: string | null; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> };
       const recipients = (logHoursShift.careRecipients || []) as RecipientType[];
       const hasTasks = recipients.some(r => (r.careNeeds || []).length > 0) || (logHoursShift.careNeeds || []).length > 0;
       const toggleTask = (key: string) => setLogTasks(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
@@ -2341,7 +2344,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                         const det = r.careNeedDetails || {};
                         return (
                           <div key={ri}>
-                            <p className="text-xs font-semibold text-slate-500 mb-1.5">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}</p>
+                            <p className="text-xs font-semibold text-slate-500 mb-1.5">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.ageRange ? ` · ${ageRangeLabel(r.ageRange)}` : ''}</p>
                             {/* The recipient note, as the expanded completed visit shows it (founder 2026-09-29: a note can read like a task). */}
                             {(r as any).notes && <p className="text-xs text-slate-500 italic mb-1.5">"{(r as any).notes}"</p>}
                             <div className="space-y-1.5">

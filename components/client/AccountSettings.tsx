@@ -11,7 +11,7 @@ import { auth, db, storage } from '../../lib/firebase';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { usePhoneReauth } from '../../hooks/usePhoneReauth';
 import { submitAccountAction } from '../../services/accountActionQueue';
-import { CARE_KIND_LABEL, CareKind, normalizeCareKinds, careTypeChangeBlockedBy } from '../caregiver/signup/constants';
+import { CARE_KIND_LABEL, CareKind, normalizeCareKinds, careTypeChangeBlockedBy, CARE_TYPE_QUESTION_FAMILY } from '../caregiver/signup/constants';
 
 // Only a real link renders as an avatar — a stray word saved in the photo field (a prod
 // account had photoURL === 'skipped') must fall back to the initials, not a broken <img>.
@@ -746,7 +746,7 @@ export const AccountSettings: React.FC = () => {
             {/* ── Care type — the one place the household's setting changes ── */}
             <Section title="Care type" open={open.careType} onToggle={() => toggle('careType')}>
               <div className="divide-y divide-slate-100">
-                <Row label="Care type">
+                <Row label={CARE_TYPE_QUESTION_FAMILY}>
                   <div className="grid grid-cols-3 gap-2 max-w-md">
                     {CARE_TYPE_CHOICES.map(choice => {
                       const on = sameKinds(careKinds, choice.value);

@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("firebase-admin", () => ({ firestore: () => ({ collection: () => ({ doc: () => ({ collection: () => ({}) }) }) }) }));
 vi.mock("../../config/appUrl", () => ({ getAppUrl: () => "https://eviacares.com" }));
 
-import { caregiverCardText, type CaregiverCard } from "../caregiverSearch";
+import { caregiverCardText, describeActiveFilters, type CaregiverCard } from "../caregiverSearch";
 
 // Transportation only counts as a service once the badge is earned — same gate
 // as the profile page (caregiverProfilePage.ts / ClientCaregiverProfile.tsx)
@@ -45,5 +45,13 @@ describe("caregiverCardText — Transportation gated on the badge", () => {
     expect(text).toContain("Companionship, Meal Preparation");
     expect(text).not.toMatch(/\+\d/);
     expect(text).not.toContain("Transportation");
+  });
+});
+
+describe("the Care type filter at the top of the panel (Both accounts only, 2026-10-18 late)", () => {
+  it("names the kind in the list header's filter words", () => {
+    expect(describeActiveFilters({ careType: "child" })).toEqual(["Child care"]);
+    expect(describeActiveFilters({ careType: "senior", specialties: ["Companionship"] })).toEqual(["Companionship", "Senior care"]);
+    expect(describeActiveFilters({})).toEqual([]);
   });
 });

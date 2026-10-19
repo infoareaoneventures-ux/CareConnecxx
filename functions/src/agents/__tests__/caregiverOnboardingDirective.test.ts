@@ -181,7 +181,7 @@ describe("buildCaregiverOnboardingDirective", () => {
     // hospice care / post-surgery recovery / etc. (2026-09-26, confirmed against
     // the live "What services do you offer?" screen).
     expect(d).toContain("exactly these — no others"); // the list(s) for the care they provide (2026-10-18)
-    expect(d).toContain("what care do you provide");
+    expect(d).toContain("what kind of care do you provide — senior care, child care, or both?");
     expect(d).not.toContain("hospice care?");
     expect(d).not.toContain("post-surgery recovery?");
   });
@@ -243,6 +243,16 @@ describe("buildCaregiverOnboardingDirective", () => {
   it("membership price in the money/trust line comes from config/pricing (R7)", () => {
     const d = buildCaregiverOnboardingDirective({});
     expect(d).toContain(`membership is ${caregiverAnnualDisplay()}`);
+  });
+});
+
+describe("buildCaregiverOnboardingDirective — the care-type question (2026-10-18 late)", () => {
+  it("is required and asked word for word right before the services; a finished record without it is never re-opened", () => {
+    const d = buildCaregiverOnboardingDirective({ name: "Maria", street: "12 Oak St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "u", jobType: "part_time", availability: { days: ["Monday"], hours: "9am-5pm" } });
+    expect(d).toContain("What kind of care do you provide — senior care, child care, or both?");
+    expect(d).toMatch(/STILL NEEDED[\s\S]*the kind of care they provide[\s\S]*the care services they offer/);
+    const legacy = buildCaregiverOnboardingDirective({ name: "Maria", street: "12 Oak St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "u", jobType: "part_time", availability: { days: ["Monday"], hours: "9am-5pm" }, specialties: ["Companionship"], yearsExperience: "3-5 years" });
+    expect(legacy).not.toMatch(/STILL NEEDED[\s\S]*the kind of care they provide/);
   });
 });
 

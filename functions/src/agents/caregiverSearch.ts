@@ -23,7 +23,7 @@
 // The former matchingAgent.ts (Claude-scored top-3 with its own message) and
 // the tool's own extras (never re-show, hide hired/declined, widen when
 // empty, care-needs ranking) had no page equivalent and were removed.
-import { serviceLabel, providerMatchesHousehold } from "./caregiverServiceLabels";
+import { serviceLabel, providerMatchesHousehold, normalizeCareKinds, CARE_KIND_LABEL } from "./caregiverServiceLabels";
 import * as admin from "firebase-admin";
 import { isCaregiverBookable, type CaregiverEligibilityFields } from "../utils/caregiverEligibility";
 import { haversineDistanceMiles, hasValidTransportDocs } from "./caregiverMatchScoring";
@@ -49,6 +49,8 @@ export interface CaregiverSearchFilters {
   transportationOnly?: boolean;
   /** Care services (senior or child names) — a caregiver matches if they have ANY selected one. */
   specialties?: string[];
+  /** The Care type filter at the top of the panel (Both accounts only): providers offering that kind. Ignored otherwise. */
+  careType?: "senior" | "child";
   /** Languages — ANY selected one. */
   languages?: string[];
   sortBy?: CaregiverSortOption;
@@ -219,11 +221,14 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
 
   const q = (filters.query ?? "").trim().toLowerCase();
   const wantedSpecialties = (filters.specialties ?? []).map((s) => s.toLowerCase());
+  // The Care type filter exists only on a Both household (the panel shows it there alone).
+  const careTypeView = normalizeCareKinds(householdKinds).length === 2 ? filters.careType : undefined;
   const wantedLanguages = (filters.languages ?? []).map((l) => l.toLowerCase());
   const list = cards.filter((cg) => {
     const raw = cg as unknown as Record<string, unknown>;
     if (blocked.has(cg.id)) return false;
     if (!providerMatchesHousehold(raw._careKinds, householdKinds)) return false;
+    if (careTypeView && !normalizeCareKinds(raw._careKinds).includes(careTypeView)) return false;
     if (filters.favoritesOnly && !cg.isFavorite) return false;
     if (cg.distance != null) {
       if (cg.distance > filters.maxDistanceMiles) return false;
@@ -285,6 +290,7 @@ export function describeActiveFilters(f: CaregiverSearchFilters): string[] {
   if (f.minExperienceYears) out.push(`${f.minExperienceYears}+ years`);
   if (f.transportationOnly) out.push("transportation");
   if (f.specialties?.length) out.push(f.specialties.join(", "));
+  if (f.careType) out.push(CARE_KIND_LABEL[f.careType]);
   if (f.languages?.length) out.push(f.languages.join(", "));
   if (f.favoritesOnly) out.push("favorites");
   return out;

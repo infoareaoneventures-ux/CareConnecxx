@@ -6,14 +6,14 @@ import { dbService } from '../../../services/api';
 import { db } from '../../../lib/firebase';
 import firebase from '../../../lib/firebase';
 import { geocodeAddress, streetPointOf, GeocodedPoint } from '../../../utils/geocode';
-import { relationshipsForKinds, normalizeCareKinds, CareKind } from '../../caregiver/signup/constants';
+import { relationshipsForKinds, normalizeCareKinds, CareKind, AGE_RANGES, STAGE_HEADING, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS, recipientCareKind, recipientStage } from '../../caregiver/signup/constants';
 
 // The relationships this household can offer (the five, both doors, 2026-10-18 — minus
 // Myself, which is its own person here): Child only when the household's care type
 // includes child care, Parent / Spouse or Partner only when it includes senior care.
 // Other is the one relationship that can't settle the list, so in a Both household
-// it asks once: older adult or child (stored as `careKind` on that person).
-const KIND_PICK: Array<{ value: CareKind; label: string }> = [{ value: 'senior', label: 'Older adult' }, { value: 'child', label: 'Child' }];
+// it asks once: adult or child (stored as `careKind` on that person).
+const KIND_PICK: ReadonlyArray<{ value: CareKind; label: string }> = OTHER_KIND_OPTIONS;
 
 interface SavedPerson {
   id: string;
@@ -21,6 +21,8 @@ interface SavedPerson {
   lastName: string;
   relationship?: string;
   careKind?: CareKind;
+  /** A child's stage (one AGE_RANGES id) — read from the roster entry, else the Care Plan. */
+  ageRange?: string;
   isSelf?: boolean;
   photo?: string;
 }
@@ -82,7 +84,8 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const [savedPeople, setSavedPeople] = useState<SavedPerson[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
-  const [newPerson, setNewPerson] = useState<{ firstName: string; lastName: string; relationship: string; careKind: CareKind | '' }>({ firstName: '', lastName: '', relationship: '', careKind: '' });
+  const [newPerson, setNewPerson] = useState<{ firstName: string; lastName: string; relationship: string; careKind: CareKind | ''; ageRange: string }>({ firstName: '', lastName: '', relationship: '', careKind: '', ageRange: '' });
+  const newPersonIsChild = recipientCareKind(newPerson.relationship, newPerson.careKind || undefined) === 'child' && normalizeCareKinds(data.careKinds).includes('child');
   const relationshipChips = relationshipsForKinds(data.careKinds, { includeMyself: false });
   const bothKinds = normalizeCareKinds(data.careKinds).length === 2;
 
@@ -149,7 +152,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         if (storedKinds.length !== currentKinds.length || !storedKinds.every(k => currentKinds.includes(k))) onChange({ careKinds: storedKinds });
         if (jpFirst && !seenNames.has(jpKey)) {
           seenNames.add(jpKey);
-          people.push({ id: `jp-primary`, firstName: jpFirst, lastName: jpLast, relationship: jp.relationship, ...(jp.careRecipientCareKind === 'child' || jp.careRecipientCareKind === 'senior' ? { careKind: jp.careRecipientCareKind as CareKind } : {}), photo: jp.careRecipientPhotoURL || undefined });
+          people.push({ id: `jp-primary`, firstName: jpFirst, lastName: jpLast, relationship: jp.relationship, ...(jp.careRecipientCareKind === 'child' || jp.careRecipientCareKind === 'senior' ? { careKind: jp.careRecipientCareKind as CareKind } : {}), ...(typeof jp.careRecipientAgeRange === 'string' && jp.careRecipientAgeRange ? { ageRange: jp.careRecipientAgeRange } : {}), photo: jp.careRecipientPhotoURL || undefined });
         }
         if (Array.isArray(jp.additionalRecipients)) {
           jp.additionalRecipients.forEach((r: any, i: number) => {
@@ -158,7 +161,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
             const rKey = `${rFirst.toLowerCase()} ${rLast.toLowerCase()}`.trim();
             if (rFirst && !seenNames.has(rKey)) {
               seenNames.add(rKey);
-              people.push({ id: `jp-add-${i}`, firstName: rFirst, lastName: rLast, relationship: r.relationship, ...(r.careKind === 'child' || r.careKind === 'senior' ? { careKind: r.careKind as CareKind } : {}), photo: r.photoURL || undefined });
+              people.push({ id: `jp-add-${i}`, firstName: rFirst, lastName: rLast, relationship: r.relationship, ...(r.careKind === 'child' || r.careKind === 'senior' ? { careKind: r.careKind as CareKind } : {}), ...(typeof r.ageRange === 'string' && r.ageRange ? { ageRange: r.ageRange } : {}), photo: r.photoURL || undefined });
             }
           });
         }
@@ -168,6 +171,13 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         const petsSmokeMap: Record<string, { petsInHome: boolean; smokingHousehold: boolean }> = {};
         if (carePlanSnap && (carePlanSnap as any).exists) {
           const cpData = (carePlanSnap as any).data() as any;
+          // A child's stage saved on the Care Plan (single `ageRange`, else the first of a legacy list) when the roster entry has none.
+          people.forEach(p => {
+            if (p.ageRange) return;
+            const planKey = `${p.firstName.toLowerCase()}_${(p.lastName || 'noname').toLowerCase()}`.replace(/\s+/g, '_');
+            const stage = recipientStage(cpData?.recipientPlans?.[planKey]);
+            if (stage) p.ageRange = stage;
+          });
           (cpData.locationPool || []).forEach((loc: any) => {
             const k = `${(loc.street || '').toLowerCase()}${loc.zipCode || ''}`;
             if (k) petsSmokeMap[k] = { petsInHome: !!loc.petsInHome, smokingHousehold: !!loc.smokingHousehold };
@@ -259,7 +269,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
       onChange({ careRecipients: data.careRecipients.filter(r => r.id !== person.id) });
     } else {
       if (maxReached) return;
-      onChange({ careRecipients: [...data.careRecipients, { id: person.id, firstName: person.firstName, lastName: person.lastName, relationship: person.relationship || '', ...(person.careKind ? { careKind: person.careKind } : {}) }] });
+      onChange({ careRecipients: [...data.careRecipients, { id: person.id, firstName: person.firstName, lastName: person.lastName, relationship: person.relationship || '', ...(person.careKind ? { careKind: person.careKind } : {}), ...(person.ageRange ? { ageRange: person.ageRange } : {}) }] });
     }
   };
 
@@ -270,26 +280,28 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const addNewPerson = () => {
     if (!newPerson.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
     if (!newPerson.relationship) { onShowToast('Please select a relationship', 'error'); return; }
-    if (newPerson.relationship === 'Other' && bothKinds && !newPerson.careKind) { onShowToast('Is this person an older adult or a child?', 'error'); return; }
+    if (newPerson.relationship === 'Other' && bothKinds && !newPerson.careKind) { onShowToast(OTHER_KIND_QUESTION, 'error'); return; }
+    if (newPersonIsChild && !newPerson.ageRange) { onShowToast("Please pick the child's stage", 'error'); return; }
     if (data.careRecipients.length >= 4) { onShowToast('Maximum 4 care recipients allowed', 'error'); return; }
     const newId = `new-${Date.now()}`;
     const careKind = newPerson.relationship === 'Other' && bothKinds && newPerson.careKind ? newPerson.careKind : undefined;
-    const entry = { id: newId, firstName: newPerson.firstName.trim(), lastName: newPerson.lastName.trim(), relationship: newPerson.relationship, ...(careKind ? { careKind } : {}) };
+    const ageRange = newPersonIsChild && newPerson.ageRange ? newPerson.ageRange : undefined;
+    const entry = { id: newId, firstName: newPerson.firstName.trim(), lastName: newPerson.lastName.trim(), relationship: newPerson.relationship, ...(careKind ? { careKind } : {}), ...(ageRange ? { ageRange } : {}) };
     // Auto-increment count to accommodate the new person
     const newCount = Math.min(4, data.recipientsCount + 1) as 1 | 2 | 3 | 4;
     onChange({ careRecipients: [...data.careRecipients, entry], recipientsCount: newCount });
     if (db && currentUser?.uid) {
       db.collection('job_postings').doc(currentUser.uid).set(
-        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion({ firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careKind } : {}) }) },
+        { additionalRecipients: firebase.firestore.FieldValue.arrayUnion({ firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careKind } : {}), ...(ageRange ? { ageRange } : {}) }) },
         { merge: true }
       ).catch(() => {});
       setSavedPeople(prev => {
         const key = `${entry.firstName.toLowerCase()} ${entry.lastName.toLowerCase()}`.trim();
         if (prev.some(p => `${p.firstName.toLowerCase()} ${p.lastName.toLowerCase()}`.trim() === key)) return prev;
-        return [...prev, { id: newId, firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careKind } : {}) }];
+        return [...prev, { id: newId, firstName: entry.firstName, lastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careKind } : {}), ...(ageRange ? { ageRange } : {}) }];
       });
     }
-    setNewPerson({ firstName: '', lastName: '', relationship: '', careKind: '' });
+    setNewPerson({ firstName: '', lastName: '', relationship: '', careKind: '', ageRange: '' });
     setShowNewForm(false);
   };
 
@@ -580,7 +592,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
           ) : (r.relationship === 'Other' && bothKinds && !r.careKind) ? (
             <div key={idx} className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-2">
               <p className="font-semibold text-slate-800 text-sm mb-2">{r.firstName} {r.lastName}</p>
-              <p className="text-xs text-amber-600 mb-2">Is this person an older adult or a child?</p>
+              <p className="text-xs text-amber-600 mb-2">{OTHER_KIND_QUESTION}</p>
               <div className="flex flex-wrap gap-2">
                 {KIND_PICK.map(k => (
                   <button key={k.value} type="button"
@@ -607,12 +619,25 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
               </div>
               {newPerson.relationship === 'Other' && bothKinds && (
                 <div>
-                  <p className="text-sm font-semibold text-slate-700 mb-2">Is this person an older adult or a child?</p>
+                  <p className="text-sm font-semibold text-slate-700 mb-2">{OTHER_KIND_QUESTION}</p>
                   <div className="flex flex-wrap gap-2">
                     {KIND_PICK.map(k => (
                       <button key={k.value} type="button" onClick={() => setNewPerson(p => ({ ...p, careKind: k.value }))}
                         className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${newPerson.careKind === k.value ? 'border-primary-600 bg-primary-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-primary-300'}`}>
                         {k.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {newPersonIsChild && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-700 mb-2">{STAGE_HEADING}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {AGE_RANGES.map(a => (
+                      <button key={a.id} type="button" onClick={() => setNewPerson(p => ({ ...p, ageRange: a.id }))}
+                        className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${newPerson.ageRange === a.id ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-300 bg-white text-slate-700 hover:border-primary-400'}`}>
+                        {a.label}
                       </button>
                     ))}
                   </div>
@@ -627,7 +652,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                   <button type="button" onClick={addNewPerson} className="w-full bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors">Add</button>
                 </>
               )}
-              <button type="button" onClick={() => { setShowNewForm(false); setNewPerson({ firstName: '', lastName: '', relationship: '', careKind: '' }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+              <button type="button" onClick={() => { setShowNewForm(false); setNewPerson({ firstName: '', lastName: '', relationship: '', careKind: '', ageRange: '' }); }} className="w-full bg-white border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
             </div>
           ) : (
             <button type="button" onClick={() => setShowNewForm(true)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:border-primary-400 hover:text-primary-600 transition-all text-sm font-medium">

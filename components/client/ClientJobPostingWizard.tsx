@@ -1,4 +1,4 @@
-import { serviceLabel, PRIMARY_SERVICES, CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds, kindsOfServices, AGE_RANGES, relationshipsForKinds, rosterCareKinds } from '../caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds, AGE_RANGES, STAGE_HEADING, relationshipsForKinds, rosterCareKinds, recipientCareKind, childrenMissingStage, stagesOfRecipients, CARE_TYPE_QUESTION_FAMILY, CARE_TYPE_OPTION_LABELS, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS } from '../caregiver/signup/constants';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Shield, ChevronLeft, ChevronRight, User, Check,
@@ -31,18 +31,20 @@ interface WizardForm {
   careRecipientLastName: string;
   adultsCount: number;
   caregiversNeeded: number;
-  additionalRecipients: { firstName: string; lastName: string; relationship: string; careKind?: CareKind }[];
+  additionalRecipients: { firstName: string; lastName: string; relationship: string; careKind?: CareKind; ageRange?: string }[];
   relationship: string;
   /** Only for relationship Other in a Both household: which list the primary recipient follows. */
   careRecipientCareKind?: CareKind;
+  /** The primary recipient's stage (one AGE_RANGES id) when they are a child — set on the recipient step. */
+  careRecipientAgeRange?: string;
   emergencyFirstName: string;
   emergencyLastName: string;
   emergencyPhone: string;
   emergencyRelationship: string;
-  /** Who the care is for — senior / child / both (job_postings.careKinds). Child care, 2026-10-18. */
+  /** Who the care is for — senior / child / both (job_postings.careKinds). Child care, 2026-10-18. Starts UNPICKED: step 9 requires an answer. */
   careKinds: CareKind[];
   careNeeds: string[];
-  /** Age-range chip ids when child care is on (informational, like pets/smoking). */
+  /** The children's stages, derived from the recipients at save time (never asked here). */
   ageRanges: string[];
   petsInHome: boolean;
   smokingHousehold: boolean;
@@ -75,22 +77,24 @@ const TIME_OPTIONS = [
 // The senior eight — ONE source (signup/constants.ts); the child eight sit beside them (2026-10-18).
 const CARE_NEEDS_OPTIONS: string[] = [...PRIMARY_SERVICES];
 const CARE_KIND_CHOICES: Array<{ value: CareKind[]; label: string }> = [
-  { value: ['senior'], label: CARE_KIND_LABEL.senior },
-  { value: ['child'], label: CARE_KIND_LABEL.child },
-  { value: ['senior', 'child'], label: 'Both' },
+  { value: ['senior'], label: CARE_TYPE_OPTION_LABELS[0] },
+  { value: ['child'], label: CARE_TYPE_OPTION_LABELS[1] },
+  { value: ['senior', 'child'], label: CARE_TYPE_OPTION_LABELS[2] },
 ];
 const sameKinds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(k => b.includes(k));
 // This wizard is the site's signup door, so the household's care type is asked here ONCE (step 9,
 // before the relationship) and never again on the site — Account Settings changes it later.
-// The relationships offered follow that answer; Other in a Both household asks older adult / child.
+// The relationships offered follow that answer (the contract's six); Other in a Both household asks adult / child.
+// A child's stage is asked on the recipient step, one per child (founder, 2026-10-18 late).
 const WIZARD_RELATIONSHIPS: Array<{ val: string; label: string }> = [
   { val: 'myself', label: 'Myself' },
   { val: 'parent', label: 'Parent' },
   { val: 'spouse', label: 'Spouse or Partner' },
+  { val: 'adult child', label: 'Adult child' },
   { val: 'child', label: 'Child' },
   { val: 'other', label: 'Other' },
 ];
-const KIND_PICK: Array<{ value: CareKind; label: string }> = [{ value: 'senior', label: 'Older adult' }, { value: 'child', label: 'Child' }];
+const KIND_PICK: ReadonlyArray<{ value: CareKind; label: string }> = OTHER_KIND_OPTIONS;
 // ── Helper: today as yyyy-mm-dd (local time, not UTC) ──────────────────────
 
 function todayISO(): string {
@@ -127,7 +131,7 @@ const INITIAL_FORM: WizardForm = {
     emergencyLastName: '',
     emergencyPhone: '',
     emergencyRelationship: '',
-    careKinds: ['senior'],
+    careKinds: [],
     careNeeds: [],
     ageRanges: [],
     petsInHome: false,
@@ -243,7 +247,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     return { ...f, adultsCount: f.adultsCount - 1, additionalRecipients: f.additionalRecipients.slice(0, -1) };
   });
 
-  const updateAdditional = (idx: number, field: 'firstName' | 'lastName' | 'relationship' | 'careKind', val: string) =>
+  const updateAdditional = (idx: number, field: 'firstName' | 'lastName' | 'relationship' | 'careKind' | 'ageRange', val: string) =>
     setForm(f => {
       const updated = [...f.additionalRecipients];
       updated[idx] = { ...updated[idx], [field]: val };
@@ -251,7 +255,9 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     });
 
   // The lists step 12 shows: the recipients' kinds (relationship; Other → their careKind) inside the household's answer.
-  const bothKinds = normalizeCareKinds(form.careKinds).length === 2;
+  const bothKinds = form.careKinds.length === 2;
+  const wizardRoster = () => [{ relationship: form.relationship, careKind: form.careRecipientCareKind, ageRange: form.careRecipientAgeRange }, ...form.additionalRecipients];
+  const isChildRecipient = (relationship: string, careKind?: CareKind) => normalizeCareKinds(form.careKinds).includes('child') && recipientCareKind(relationship, careKind) === 'child';
   const wizardPostKinds: CareKind[] = (() => {
     const household = normalizeCareKinds(form.careKinds);
     const roster = rosterCareKinds([{ relationship: form.relationship, careKind: form.careRecipientCareKind }, ...form.additionalRecipients]).filter(k => household.includes(k));
@@ -336,10 +342,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
       return care.zipCode.trim().length >= 5 && evaluateServiceArea({ zip: care.zipCode, city: care.city }) === 'in';
     }
     if (s === 6) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
-    if (s === 10) return form.careRecipientFirstName.trim().length > 0;
+    if (s === 10) return form.careRecipientFirstName.trim().length > 0 && childrenMissingStage(wizardRoster(), form.careKinds).length === 0;
     if (s === 11) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
-    if (s === 9) return !!form.relationship && !(form.relationship === 'other' && bothKinds && !form.careRecipientCareKind);
-    if (s === 12) return form.careNeeds.length > 0 && (!kindsOfServices(form.careNeeds, wizardPostKinds).includes('child') || form.ageRanges.length > 0);
+    if (s === 9) return form.careKinds.length > 0 && !!form.relationship && !(form.relationship === 'other' && bothKinds && !form.careRecipientCareKind);
+    if (s === 12) return form.careNeeds.length > 0;
     if (s === 13) return !!form.rate && (form.rate ?? 0) > 0;
     return true;
   };
@@ -397,7 +403,14 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     setSaving(true);
     setSaveError(null);
     try {
-      await createJobPosting(uid, { ...form, rate: form.rate ?? 0 });
+      // A stage lives only on a child: a stray one left behind by a relationship change never reaches the record.
+      await createJobPosting(uid, {
+        ...form,
+        rate: form.rate ?? 0,
+        careRecipientAgeRange: isChildRecipient(form.relationship, form.careRecipientCareKind) ? form.careRecipientAgeRange : undefined,
+        additionalRecipients: form.additionalRecipients.map(r => (isChildRecipient(r.relationship, r.careKind) ? r : { ...r, ageRange: undefined })),
+        ageRanges: stagesOfRecipients(wizardRoster(), form.careKinds),
+      });
       try {
         const { caregivers } = await dbService.getCaregivers(50, null);
         setNearbyCount(caregivers.length);
@@ -900,14 +913,13 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center">
-              What is your relationship to the person needing care?
+              {CARE_TYPE_QUESTION_FAMILY}
             </h2>
-            {/* Who the care is for — asked once, here; Account Settings changes it later */}
+            {/* The care type — asked once, here, nothing preselected; Account Settings changes it later */}
             <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-2">Who is the care for?</label>
               <div className="grid grid-cols-3 gap-2">
                 {CARE_KIND_CHOICES.map(choice => {
-                  const on = sameKinds(normalizeCareKinds(form.careKinds), choice.value);
+                  const on = sameKinds(form.careKinds, choice.value);
                   return (
                     <button key={choice.label} type="button"
                       onClick={() => setForm(f => {
@@ -917,9 +929,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                           careKinds: choice.value,
                           relationship: offered.includes(f.relationship) ? f.relationship : '',
                           careRecipientCareKind: choice.value.length === 2 ? f.careRecipientCareKind : undefined,
-                          additionalRecipients: f.additionalRecipients.map(r => ({ ...r, relationship: offered.includes(r.relationship) ? r.relationship : '', ...(choice.value.length === 2 ? {} : { careKind: undefined }) })),
+                          careRecipientAgeRange: choice.value.includes('child') ? f.careRecipientAgeRange : undefined,
+                          additionalRecipients: f.additionalRecipients.map(r => ({ ...r, relationship: offered.includes(r.relationship) ? r.relationship : '', ...(choice.value.length === 2 ? {} : { careKind: undefined }), ...(choice.value.includes('child') ? {} : { ageRange: undefined }) })),
                           careNeeds: f.careNeeds.filter(n => serviceListsForKinds(choice.value).some(l => (l.services as readonly string[]).includes(n))),
-                          ageRanges: choice.value.includes('child') ? f.ageRanges : [],
+                          ageRanges: [],
                         };
                       })}
                       className={`px-3 py-2.5 rounded-xl border-2 text-xs font-semibold transition-all ${on ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}>
@@ -929,7 +942,9 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 })}
               </div>
             </div>
+            {form.careKinds.length > 0 && (
             <div className="flex flex-col gap-2 mt-2">
+              <p className="text-slate-600 text-sm font-medium">What is your relationship to the person needing care?</p>
               {offeredRelationships(true).map(opt => (
                 <button
                   key={opt.val}
@@ -938,12 +953,13 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                       ...f,
                       relationship: opt.val,
                       careRecipientCareKind: opt.val === 'other' ? f.careRecipientCareKind : undefined,
+                      careRecipientAgeRange: opt.val === 'child' || opt.val === 'other' ? f.careRecipientAgeRange : undefined,
                       ...(opt.val === 'myself' ? {
                         careRecipientFirstName: clientFirstName,
                         careRecipientLastName:  clientLastName,
                       } : {}),
                     }));
-                    // Other in a Both household needs one more answer (older adult / child) before moving on.
+                    // Other in a Both household needs one more answer (adult / child) before moving on.
                     if (!(opt.val === 'other' && bothKinds)) setTimeout(next, 150);
                   }}
                   className={`w-full border-2 rounded-2xl px-4 py-3 text-left transition-all ${
@@ -956,9 +972,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 </button>
               ))}
             </div>
+            )}
             {form.relationship === 'other' && bothKinds && (
               <div>
-                <p className="text-slate-600 text-sm mb-2">Is this person an older adult or a child?</p>
+                <p className="text-slate-600 text-sm mb-2">{OTHER_KIND_QUESTION}</p>
                 <div className="flex gap-2">
                   {KIND_PICK.map(k => (
                     <button key={k.value} type="button"
@@ -1000,6 +1017,21 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 />
               </div>
             </div>
+
+            {/* A child's stage — one per child, asked here on the person (never on the care-needs step) */}
+            {isChildRecipient(form.relationship, form.careRecipientCareKind) && (
+              <div>
+                <p className="text-slate-600 text-sm font-medium mb-2">{STAGE_HEADING}</p>
+                <div className="flex flex-wrap gap-2">
+                  {AGE_RANGES.map(a => (
+                    <button key={a.id} type="button" onClick={() => update('careRecipientAgeRange', a.id)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${form.careRecipientAgeRange === a.id ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200 text-slate-600 hover:border-indigo-300'}`}>
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* People count */}
             <div>
@@ -1049,7 +1081,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                 </div>
                 {person.relationship === 'other' && bothKinds && (
                   <div>
-                    <p className="text-slate-600 text-sm mb-1">Is this person an older adult or a child?</p>
+                    <p className="text-slate-600 text-sm mb-1">{OTHER_KIND_QUESTION}</p>
                     <div className="flex gap-2 flex-wrap">
                       {KIND_PICK.map(k => (
                         <button key={k.value} type="button" onClick={() => updateAdditional(idx, 'careKind', k.value)}
@@ -1076,6 +1108,19 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                     className="flex-1 border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent"
                   />
                 </div>
+                {isChildRecipient(person.relationship, person.careKind) && (
+                  <div>
+                    <p className="text-slate-600 text-sm mb-1">{STAGE_HEADING}</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {AGE_RANGES.map(a => (
+                        <button key={a.id} type="button" onClick={() => updateAdditional(idx, 'ageRange', a.id)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${person.ageRange === a.id ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200 text-slate-600 hover:border-indigo-300'}`}>
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
 
@@ -1208,20 +1253,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                   );
                 })}
               </div>
-              {list.kind === 'child' && (
-                <div className="mt-2">
-                  <label className="block text-xs font-semibold text-slate-500 mb-2">Age range</label>
-                  <div className="flex flex-wrap gap-2">
-                    {AGE_RANGES.map(a => (
-                      <button key={a.id} type="button"
-                        onClick={() => setForm(f => ({ ...f, ageRanges: f.ageRanges.includes(a.id) ? f.ageRanges.filter(x => x !== a.id) : [...f.ageRanges, a.id] }))}
-                        className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${form.ageRanges.includes(a.id) ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white border-slate-300 text-slate-700 hover:border-indigo-300'}`}>
-                        {a.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
             ))}
 

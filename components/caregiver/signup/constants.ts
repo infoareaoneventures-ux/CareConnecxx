@@ -89,19 +89,33 @@ export function providerMatchesHousehold(providerKinds: unknown, householdKinds:
 
 // Age ranges for a child — an informational chip beside pets / smoking, never a
 // filter, never a number (the no-age rule stays for everyone else).
+// Labels are STAGE words, never numbers (founder 2026-10-18): the stored ids stay.
 export const AGE_RANGES = [
   { id: 'infant', label: 'Infant' },
   { id: 'toddler', label: 'Toddler' },
-  { id: '3-5', label: 'Ages 3–5' },
-  { id: '6-12', label: 'Ages 6–12' },
+  { id: '3-5', label: 'Preschooler' },
+  { id: '6-12', label: 'School-age' },
   { id: 'teen', label: 'Teen' },
 ] as const;
+/** The heading over the stage chips, both doors. */
+export const STAGE_HEADING = 'Stage';
 export type AgeRangeId = (typeof AGE_RANGES)[number]['id'];
 export const ageRangeLabel = (id: string): string => AGE_RANGES.find((a) => a.id === id)?.label ?? id;
 
-// The relationship list, the same five on both doors (founder, 2026-10-18).
-// Older stored values (Grandparent, Sibling, Spouse) still read back as-is.
-export const RELATIONSHIPS = ['Myself', 'Parent', 'Spouse or Partner', 'Child', 'Other'] as const;
+// The relationship list, the same SIX on both doors (founder, 2026-10-18 late):
+// 'Adult child' = a grown son or daughter — senior side; 'Child' = a minor —
+// child side. Older stored values (Grandparent, Sibling, Spouse) still read back.
+export const RELATIONSHIPS = ['Myself', 'Parent', 'Spouse or Partner', 'Adult child', 'Child', 'Other'] as const;
+
+// The ONE care-type question, asked once at signup and changed in one place —
+// the same sentence on both doors (founder 2026-10-18). Labels stay
+// Senior care / Child care / Both. "Adult or a child" survives only in the
+// follow-up for Other.
+export const CARE_TYPE_QUESTION_FAMILY = 'What kind of care do you need?';
+export const CARE_TYPE_QUESTION_PROVIDER = 'What kind of care do you provide?';
+export const CARE_TYPE_OPTION_LABELS = ['Senior care', 'Child care', 'Both'] as const;
+export const OTHER_KIND_QUESTION = 'Is this person an adult or a child?';
+export const OTHER_KIND_OPTIONS = [{ value: 'senior', label: 'Adult' }, { value: 'child', label: 'Child' }] as const;
 
 // ── Who decides a recipient's kind (founder, 2026-10-18 evening) ────────────
 // The family picks the household's care type ONCE (signup / Account Settings:
@@ -142,6 +156,32 @@ export function rosterCareKinds(recipients: ReadonlyArray<{ relationship?: unkno
 export function careTypeChangeBlockedBy<T extends { relationship?: unknown; careKind?: unknown }>(proposedKinds: unknown, recipients: readonly T[]): T | null {
   const kinds = normalizeCareKinds(proposedKinds);
   return recipients.find((r) => !kinds.includes(recipientCareKind(r.relationship, r.careKind))) ?? null;
+}
+
+// ── One stage per child (founder, 2026-10-18 late) ──────────────────────────
+// The stage is set ON THE CHILD (a single AGE_RANGES id: `ageRange` on the roster
+// entry and on carePlans.recipientPlans.{key}); the post's `ageRanges` is just the
+// picked children's stages. The older multi-select `ageRanges` lists are still READ
+// (first element) but never written again.
+/** A recipient's stage: the single field, else the first of a legacy list. */
+export function recipientStage(r: { ageRange?: unknown; ageRanges?: unknown } | null | undefined): string | undefined {
+  if (!r) return undefined;
+  if (typeof r.ageRange === 'string' && r.ageRange) return r.ageRange;
+  if (Array.isArray(r.ageRanges) && typeof r.ageRanges[0] === 'string' && r.ageRanges[0]) return r.ageRanges[0];
+  return undefined;
+}
+
+/** The children among these recipients (inside the household setting) who still have no stage — one single-choice row each. */
+export function childrenMissingStage<T extends { relationship?: unknown; careKind?: unknown; ageRange?: unknown; ageRanges?: unknown }>(recipients: readonly T[], householdKinds: unknown): T[] {
+  if (!normalizeCareKinds(householdKinds).includes('child')) return [];
+  return recipients.filter((r) => recipientCareKind(r.relationship, r.careKind) === 'child' && !recipientStage(r));
+}
+
+/** The stages of the children among these recipients, deduped, in AGE_RANGES order (what a post carries as `ageRanges`). */
+export function stagesOfRecipients<T extends { relationship?: unknown; careKind?: unknown; ageRange?: unknown; ageRanges?: unknown }>(recipients: readonly T[], householdKinds: unknown): string[] {
+  if (!normalizeCareKinds(householdKinds).includes('child')) return [];
+  const set = new Set(recipients.filter((r) => recipientCareKind(r.relationship, r.careKind) === 'child').map(recipientStage).filter((s): s is string => !!s));
+  return AGE_RANGES.map((a) => a.id as string).filter((id) => set.has(id));
 }
 
 /** The default job title by kind: 'Senior care in {city}' / 'Child care in {city}' / 'Senior and child care in {city}'. */

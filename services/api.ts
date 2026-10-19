@@ -416,7 +416,7 @@ export const dbService = {
             'recipientsCount', 'city', 'state', 'zipCode', 'neighborhood',
             'careTypes', 'careLevel', 'petsInHome', 'smokingHousehold',
             'paymentMethod', 'rateFlexible',
-            'careKinds', 'ageRanges', // child care (2026-10-18): the post's kinds + the child's age-range chips
+            'careKinds', 'ageRanges', // child care (2026-10-18): the post's kinds + the children's stages (one per child)
         ];
 
         const sanitizedPost: any = {};
@@ -2417,17 +2417,19 @@ export interface WizardJobPostingData {
     careRecipientFirstName: string;
     careRecipientLastName: string;
     adultsCount: number;
-    additionalRecipients: { firstName: string; lastName: string; relationship: string; careKind?: string }[];
+    additionalRecipients: { firstName: string; lastName: string; relationship: string; careKind?: string; ageRange?: string }[];
     relationship: string;
     /** Only for relationship Other in a Both household: 'senior' | 'child' (the relationship decides everyone else). */
     careRecipientCareKind?: string;
+    /** The primary recipient's stage (one AGE_RANGES id) when they are a child. */
+    careRecipientAgeRange?: string;
     emergencyFirstName: string;
     emergencyLastName: string;
     emergencyPhone: string;
     careNeeds: string[];
     /** Who the care is for (senior / child / both) — the household's setting on job_postings; written at signup here and from Account Settings afterwards (2026-10-18). */
     careKinds?: string[];
-    /** Age-range chip ids when child care is on. */
+    /** The children's stages (AGE_RANGES ids), derived from the recipients at signup. */
     ageRanges?: string[];
     rate: number;
     rateFlexible: boolean;
@@ -2477,6 +2479,7 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
             lastName:     sanitizePlainText(r.lastName),
             relationship: r.relationship,
             ...(r.careKind === 'child' || r.careKind === 'senior' ? { careKind: r.careKind } : {}),
+            ...(typeof r.ageRange === 'string' && r.ageRange ? { ageRange: r.ageRange } : {}),
         })),
     };
 

@@ -9,6 +9,8 @@ export interface CareRecipientEntry {
   relationship: string;
   /** Only for relationship Other in a Both household: which list this person follows (the relationship decides everyone else). */
   careKind?: CareKind;
+  /** A child's stage (one AGE_RANGES id), set on the child — the post's `ageRanges` are read from these. */
+  ageRange?: string;
   isSelf?: boolean;
 }
 
@@ -48,7 +50,7 @@ export interface JobPostFormData {
   careTypes: string[];
   careNeedDetails: Record<string, string[]>;
   careLevel: JobCareLevel | '';
-  /** Age-range chip ids when child care is on (informational, like pets/smoking). */
+  /** The picked children's stages (AGE_RANGES ids), derived on Step 3 from the recipients — informational on the post, like pets/smoking. */
   ageRanges: string[];
 
   // Step 4: Rate & Payment

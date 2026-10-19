@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
-import { CareKind, normalizeCareKinds, providerMatchesHousehold, serviceListsForKinds } from './caregiver/signup/constants';
+import { CareKind, CARE_KIND_LABEL, normalizeCareKinds, providerMatchesHousehold, serviceListsForKinds } from './caregiver/signup/constants';
 import { formatExperience } from '../utils/experience';
 import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
@@ -44,6 +44,8 @@ interface Caregiver {
   lng?: number;
   photoURL?: string;
   transportationLive: boolean;
+  /** The kinds this provider offers (missing = senior) — the Care type view filter reads it. */
+  careKinds: CareKind[];
   hasValidTransportDocs?: boolean;
   skills?: string[];
   languages?: string[];
@@ -113,6 +115,8 @@ export default function FindCaregivers() {
   const [selectedSpecialties, setSelectedSpecialties] = useState<Set<string>>(new Set());
   // Child care (2026-10-18): the household's answer (job_postings.careKinds; missing = senior) decides who shows and which services the filter lists.
   const [householdKinds, setHouseholdKinds] = useState<CareKind[]>(['senior']);
+  // Care type view filter — Both households only (founder, 2026-10-18 late): none = both kinds; resets with the other filters.
+  const [viewKind, setViewKind] = useState<CareKind | null>(null);
   const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -361,6 +365,7 @@ export default function FindCaregivers() {
           lng: cgLng,
           photoURL: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
           transportationLive: hasValidTransportDocs(data),
+          careKinds: normalizeCareKinds(data.careKinds),
           // Carry the stored flag too: the Find Caregivers popup is handed THIS item (not a re-read of the
           // record), and it recomputes Transportation from it — without the flag it hid Transportation
           // while the full profile page showed it (founder, 2026-10-06). Same as useNearbyCaregiversWithScores.
@@ -456,6 +461,7 @@ export default function FindCaregivers() {
     setMinRating(0);
     setMinExperience(0);
     setSelectedSpecialties(new Set());
+    setViewKind(null);
     setSelectedLanguages(new Set());
     setShowFavoritesOnly(false);
   };
@@ -468,13 +474,18 @@ export default function FindCaregivers() {
     if (minRating > 0) n++;
     if (minExperience > 0) n++;
     n += selectedSpecialties.size;
+    if (viewKind) n++;
     n += selectedLanguages.size;
     return n;
-  }, [nameQuery, maxRate, maxDistance, minRating, minExperience, selectedSpecialties, selectedLanguages]);
+  }, [nameQuery, maxRate, maxDistance, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages]);
 
   const filteredCaregivers = useMemo(() => {
+    // The service checkboxes collapse to the viewed kind; a tick outside it is ignored (Transportation sits under both).
+    const visibleServices = new Set(serviceListsForKinds(viewKind && householdKinds.includes(viewKind) ? [viewKind] : householdKinds).flatMap(l => [...l.services]));
+    const appliedSpecialties = new Set(Array.from(selectedSpecialties).filter(s => visibleServices.has(s)));
     let list = caregivers.filter(cg => {
       if (blockedIds.has(cg.id)) return false;
+      if (viewKind && householdKinds.length === 2 && !providerMatchesHousehold(cg.careKinds, [viewKind])) return false;
       if (showFavoritesOnly && !favorites.includes(cg.id)) return false;
       // Distance filter — only applied when client has locations AND caregiver has coords
       if (cg.distance != null) {
@@ -493,12 +504,12 @@ export default function FindCaregivers() {
       if (maxRate < 100 && cg.hourlyRate > maxRate) return false;
       if (cg.rating < minRating) return false;
       if ((cg.experience || 0) < minExperience) return false;
-      if (selectedSpecialties.size > 0) {
+      if (appliedSpecialties.size > 0) {
         // Transportation counts only while it is live on the record (offered + driving record
         // clear) — the same rule that shows the pill, so the filter and the card agree (2026-10-06).
         const skillSet = new Set((cg.skills || []).filter(s => s !== 'Transportation' || cg.transportationLive).map(s => s.toLowerCase()));
         let hasAny = false;
-        selectedSpecialties.forEach(s => {
+        appliedSpecialties.forEach(s => {
           if (skillSet.has(s.toLowerCase())) hasAny = true;
         });
         if (!hasAny) return false;
@@ -528,7 +539,7 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, selectedLanguages, sortBy]);
+  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, householdKinds, selectedLanguages, sortBy]);
 
   if (loading) {
     return (
@@ -543,6 +554,20 @@ export default function FindCaregivers() {
 
   const FilterPanel = (
     <div className="space-y-5">
+      {/* Care type — Both households only: one kind at a time, none = both */}
+      {householdKinds.length === 2 && (
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care type</label>
+          <div className="flex flex-wrap gap-2">
+            {householdKinds.map(k => (
+              <button key={k} type="button" onClick={() => setViewKind(viewKind === k ? null : k)}
+                className={`px-3 py-1.5 rounded-full border text-sm font-medium transition-all ${viewKind === k ? 'border-teal-600 bg-teal-50 text-teal-700' : 'border-slate-300 bg-white text-slate-700 hover:border-teal-400'}`}>
+                {CARE_KIND_LABEL[k]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {/* Name / Location search */}
       <div>
         <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Search</label>
@@ -630,18 +655,26 @@ export default function FindCaregivers() {
       {/* Specialties */}
       <div>
         <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care services</label>
-        <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-          {Array.from(new Set(serviceListsForKinds(householdKinds).flatMap(l => [...l.services]))).map(key => (
-            <label key={key} className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={selectedSpecialties.has(key)}
-                onChange={() => toggleSetItem(selectedSpecialties, key, setSelectedSpecialties)}
-                className="accent-teal-600 rounded"
-              />
-              {serviceLabel(key)}
-            </label>
-          ))}
+        {/* One plain list for a single kind; two labelled groups for Both (Transportation under each), the view filter collapses to one */}
+        <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+          {(() => { const lists = serviceListsForKinds(viewKind && householdKinds.includes(viewKind) ? [viewKind] : householdKinds); return lists.map(list => (
+            <div key={list.kind}>
+              {lists.length > 1 && <p className="text-xs font-semibold text-slate-700 mb-1.5">{CARE_KIND_LABEL[list.kind]}</p>}
+              <div className="space-y-1.5">
+                {list.services.map(key => (
+                  <label key={`${list.kind}-${key}`} className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={selectedSpecialties.has(key)}
+                      onChange={() => toggleSetItem(selectedSpecialties, key, setSelectedSpecialties)}
+                      className="accent-teal-600 rounded"
+                    />
+                    {serviceLabel(key)}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )); })()}
         </div>
       </div>
 

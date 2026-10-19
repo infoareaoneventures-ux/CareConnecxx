@@ -12,7 +12,7 @@ import {
   missingRequiredFields,
 } from "./onboardingContract";
 import { buildCaregiverOnboardingDirective } from "./caregiverOnboardingDirective";
-import { serviceMenuText, normalizeCareKinds, AGE_RANGES, rosterCareKinds } from "./caregiverServiceLabels";
+import { serviceMenuText, normalizeCareKinds, AGE_RANGES, rosterCareKinds, recipientCareKind, CARE_TYPE_QUESTION_FAMILY_LINE, OTHER_KIND_QUESTION, stageQuestion, STAGE_HEADING } from "./caregiverServiceLabels";
 import { allCareRecipients } from "./careRecipients";
 
 // Human-readable label for each CLIENT field — mirrors the web wizard's 14-step
@@ -48,12 +48,14 @@ const FIELD_LABEL: Record<string, string> = {
   // is "myself"). Ask for the right one.
   careRecipientPhotoURL: "a photo of THEMSELVES — the family member you're texting with, for their own account profile picture. Only mention it doubles as their loved one's photo too if they said the care is for themselves (relationship 'myself'). Completely optional.",
   // Step 9
-  relationship:   "the family member's relationship to the person needing care — parent (they said 'my mom/dad/mother/father' etc.), spouse (wife/husband/partner), or other; save whatever word they used, it gets canonicalized automatically",
+  relationship:   "the family member's relationship to the person needing care — parent (they said 'my mom/dad/mother/father' etc.), spouse (wife/husband/partner), adult child (a GROWN son or daughter they look after), child (a minor), or other; save whatever word they used, it gets canonicalized automatically",
+  // Only for the relationship 'other' in a Both household: the site's two-way pick.
+  careKind:       `ONLY when the relationship is 'other' and the household needs both kinds — "${OTHER_KIND_QUESTION}" (Adult → save 'senior', Child → save 'child')`,
   // Step 10
-  // Child care (2026-10-18): ONE question — who the care is for — asked where the recipient is named.
-  careKinds:      "who the care is for — an older adult (save ['senior']), a child (save ['child']), or both (save ['senior','child']) — ask it in one light line (\"is this for an older adult or a child?\"); never assume",
+  // The ONE care-type question (2026-10-18 late): REQUIRED, its own step, asked before the relationship, word for word.
+  careKinds:      `the kind of care they need — senior care (save ['senior']), child care (save ['child']), or both (save ['senior','child']) — asked as its OWN question, exactly: "${CARE_TYPE_QUESTION_FAMILY_LINE}"; an answer naming who it's for ("my mom", "my two kids") counts — never assume, never re-ask`,
   seniorName:     "the first and last name of the person who needs care",
-  additionalRecipients: "every OTHER person needing care when it's more than one (e.g. both mom and dad) — [{name, relationship}]",
+  additionalRecipients: "every OTHER person needing care when it's more than one (e.g. both mom and dad) — [{name, relationship, ageRange (a child's stage by name — only for a child)}]",
   caregiversNeeded: "how many care providers they think they'll need (most families need 1) — optional, default 1",
   // Step 10
   emergencyContactName:         "the emergency contact's full name",
@@ -61,8 +63,8 @@ const FIELD_LABEL: Record<string, string> = {
   emergencyContactRelationship: "how the emergency contact is related to the person needing care (their son, daughter, sibling, neighbor, friend…) — the family is telling you about their OWN contact; just ask plainly, there is no privacy concern here and no other client involved",
   // Step 11
   careNeeds:      "what type of care is needed — the website's eight, by name (Mobility Assistance, Dementia / Memory Care, Medication Reminders Only, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping); 'help with bathing' is Personal Care",
-  // Child care (2026-10-18): ONLY when careKinds includes child — the age-range chips by name, never a number.
-  ageRanges:      `ONLY when the care is for a child: the child's age range by NAME — ${AGE_RANGES.map((a) => a.label).join(", ")} (one or more; a household with two children picks one per child) — save as a list of those names; never a number, never a birthday`,
+  // ONE stage per child (2026-10-18 late): the first child's stage here; another child's inside additionalRecipients.
+  ageRange:       `ONLY when the person needing care is a child: that child's ${STAGE_HEADING.toLowerCase()} by NAME — ${AGE_RANGES.map((a) => a.label).join(", ")} (ONE per child, asked by the child's name) — never a number, never a birthday`,
   petsInHome:       "whether there are pets in the home",
   smokingHousehold: "whether anyone in the household smokes",
   // Step 12
@@ -115,13 +117,13 @@ const CLIENT_WIZARD_FIELD_ORDER: readonly string[] = [
   "ongoing", "endDate",                                          // Step 5
   "selectedDays", "daysFlexible", "timeOfDay",                  // Step 6
   "careRecipientPhotoURL",                                      // Step 7
-  "relationship",                                                // Step 8
-  "careKinds",                                                   // Step 8b (child care, 2026-10-18)
+  "careKinds",                                                   // Step 8 — the care-type question, its own step (2026-10-18 late)
+  "relationship", "careKind",                                    // Step 9 (careKind only for 'other' in a Both household)
   "seniorName", "additionalRecipients",                         // Step 9
   "caregiversNeeded",                                            // Step 10
   "emergencyContactName", "emergencyContactPhone", "emergencyContactRelationship", // Step 11
   "careNeeds",                                                   // Step 12
-  "ageRanges",                                                   // Step 12b (child only, 2026-10-18)
+  "ageRange",                                                    // Step 12b (a child only — ONE stage per child, 2026-10-18 late)
   "petsInHome", "smokingHousehold",                             // Step 13
   "rate",                                                        // Step 14
   "jobDescription",                                              // Step 15
@@ -172,8 +174,14 @@ export function buildOnboardingDirective(
   // endDate is correctly never filled (not "not yet asked").
   const stillNeeded = CLIENT_WIZARD_FIELD_ORDER.filter((f) => {
     if (f === "endDate" && data.ongoing !== false) return false;
-    // Child care (2026-10-18): the age-range chips exist only for a child — a senior household is never nagged for them.
-    if (f === "ageRanges" && !normalizeCareKinds(data.careKinds).includes("child")) return false;
+    // The stage exists only for a child (the primary's relationship decides; 'other' follows a one-kind household).
+    if (f === "ageRange") {
+      const kinds = normalizeCareKinds(data.careKinds);
+      const soloKind = kinds.length === 1 ? kinds[0] : undefined;
+      const kind = recipientCareKind(data.relationship === "self" ? "Myself" : data.relationship, (data.careKind as string | undefined) ?? soloKind);
+      if (kind !== "child") return false;
+    }
+    if (f === "careKind" && !(data.relationship === "other" && normalizeCareKinds(data.careKinds).length === 2)) return false;
     return data[f] === undefined;
   });
 
@@ -245,11 +253,11 @@ export function buildOnboardingDirective(
     `  5. Whether it's ongoing with no end date, or has a specific end date (optional, but ASK — most families say ongoing)`,
     `  6. Which specific days + whether days are flexible + time of day`,
     `  7. Whether they'd like to add a profile photo of THEMSELVES — the person you're texting with, matching the wizard's own Step 8 (optional, but ASK ONCE) — make clear it's completely optional, accept a texted image directly as careRecipientPhotoURL, move on immediately either way`,
-    `  8. Their relationship to the person needing care, and whether that person is an older adult or a child (or both, when there is more than one)`,
-    `  9. The care recipient's name, and anyone else needing care ("both mom and dad")`,
+    `  8. The kind of care they need — its OWN question, word for word: "${CARE_TYPE_QUESTION_FAMILY_LINE}"`,
+    `  9. Their relationship to the person needing care (parent, spouse or partner, adult child, child, myself, or other), that person's name, and anyone else needing care ("both mom and dad")`,
     ` 10. How many care providers they think they'll need (optional, but ASK — lightly, most people say 1)`,
     ` 11. Emergency contact — name, phone, and their relationship`,
-    ` 12. What kind of help is needed day to day — and, only for a child, the age range by name`,
+    ` 12. What kind of help is needed day to day — and, only for a child, their stage by name`,
     ` 13. Whether there are pets or smoking in the home (optional, but ASK both — not just pets)`,
     ` 14. What they'd like to pay per hour`,
     ` 15. A short description they'd like care providers to see (optional, but ASK)`,
@@ -269,8 +277,9 @@ export function buildOnboardingDirective(
     `  - For selectedDays: save as an array of uppercase 3-letter codes e.g. ['MON','WED','FRI']. If they say "weekdays" save ['MON','TUE','WED','THU','FRI']; "weekends" → ['SAT','SUN']; "every day" → ['SUN','MON','TUE','WED','THU','FRI','SAT'].`,
     `  - For careFrequency: "a few times a month"/"occasionally" → "occasional"; "1-4 days/week"/"part time" → "part_time"; "5+ days"/"full time"/"every day" → "full_time".`,
     `  - PHOTO: ask once, warmly, whether they'd like to add a profile photo of THEMSELVES (the family member you're texting with) — same as their Account Settings profile picture, matching the wizard's own Step 8. Only mention it doubles as their loved one's photo too if they said the care is for themselves (relationship 'myself'). Make clear it's totally optional. If they send an image, that's the photo (save as careRecipientPhotoURL) — never ask again. If they decline or don't send one, move on immediately, don't push.`,
-    `  - WHO THE CARE IS FOR (careKinds, step 8): the website asks it once — "Senior care, child care, or both?" — ask it in one light line where the recipient is named ("is this for an older adult or a child?"). Save it BEFORE care types; the care-types list below depends on it. Words like mom/dad/parent/grandparent/spouse mean senior; son/daughter/kid/baby/toddler/teen mean child.`,
-    `  - AGE RANGE (ageRanges): only when the care is for a child — ask the age range by NAME (${AGE_RANGES.map((a) => a.label).join(", ")}), one per child, right with the care types. Never ask a number or a birthday.`,
+    `  - CARE TYPE (careKinds, step 8): REQUIRED, its OWN question, BEFORE the relationship — ask it word for word: "${CARE_TYPE_QUESTION_FAMILY_LINE}". An answer that names who it's for ("my mom", "my two kids", "my dad and my daughter") IS the answer — save it as careKinds and it canonicalizes (mom/dad/parent/grandparent/spouse/adult child → senior; son/daughter/kid/baby/toddler/teen → child; both kinds → both); never re-ask it. The care-types list below depends on it.`,
+    `  - OTHER (relationship 'other') in a household that needs both kinds: ask "${OTHER_KIND_QUESTION}" (Adult / Child) and save careKind ('senior' for Adult, 'child' for Child). Never ask it anywhere else.`,
+    `  - ${STAGE_HEADING.toUpperCase()} (ageRange): only for a child — ask the ${STAGE_HEADING.toLowerCase()} by NAME, one child at a time, by the child's name when there is more than one ("${stageQuestion("Mahad")}"); the first child's goes in ageRange, another child's inside their additionalRecipients entry. Right with the care types. Never ask a number or a birthday.`,
     `  - CARE TYPES (careNeeds, step 12): the website's step is "What type of care is needed? Select all that apply." with EXACTLY these — no others: ${careTypesLine(data)}. Ask it the same way: one short line in your own voice ("What type of care does ${"${seniorName}"} need? Pick as many as apply:") followed by the eight, one per line, by name — no numbers, no explanation:\n${serviceMenuText()}\n    They can answer by name or in their own words — "help with bathing" is Personal Care, "someone to cook" is Meal Preparation, "rides to the doctor" is Transportation. Save exactly what they said as careNeeds; the save maps it onto the eight and tells you what landed, what fit nothing, and what was medical. READ BACK the names that saved in your acknowledgment ("Got it — Personal Care and Meal Preparation."). Anything that fits none of the eight is NOT saved: say it isn't one of the types of care on the list so you've left it off, then show the list again. All care is NON-MEDICAL — administering or giving medication, injections, insulin, wound care, vitals, nursing: say care providers here don't do that, and that the closest type is Medication Reminders Only (reminding when it's time, not giving them) — ask if that fits BEFORE saving it. Never suggest they put medical details anywhere else. A vague answer → ask which of the names they mean rather than guess. More types named later are ADDED automatically; a correction is saved as careNeeds with {"replace": [the corrected list]}. NO follow-up sweep — once they've answered, move on to pets and smoking.`,
     `  - DESCRIPTION (jobDescription, step 15): ask it the way the website's step does — "What else should care providers know about this job or your loved one?" — and say, in the same line, that care providers browsing jobs can read it, so no contact info, medical details or addresses. It is the job POST's description only — not the care plan (the family adds private care notes later on their Care Plan page). Save their words as typed; never add to or rewrite them. If they ask what to write, offer the website's own example once: "My mom is 78, lives alone, and needs help with morning routines and light housekeeping 3 days a week. She loves gardening and chatting over coffee."`,
     `  - Pets and smoking are their own question (step 13) — ask both together as one light question ("Any pets in the home, or does anyone smoke?"), don't fold it into the care-needs question and don't skip it once care needs are answered.`,
@@ -283,9 +292,9 @@ export function buildOnboardingDirective(
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
     `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time differently, then move on — never ask the same question more than twice.`,
     `  - Figure out WHO is who: if they first name who NEEDS care (e.g. "my mom Jane") before their own name, that name is the senior's — save as seniorName, not firstName.
-  - Never ask anyone's age — the website doesn't collect it (2026-10-17); the ONE exception is a child's age RANGE by name (ageRanges). If they volunteer a number, don't save it and don't comment on it.`,
+  - Never ask anyone's age — the website doesn't collect it (2026-10-17); the ONE exception is a child's STAGE by name (ageRange — Infant, Toddler, Preschooler, School-age, Teen), never a number. If they volunteer a number, don't save it and don't comment on it.`,
     `  - SELF-CARE: if care is for themselves, save relationship as "self" and seniorName the same as firstName — never ask who they're caring for.`,
-    `  - MULTIPLE LOVED ONES: first person → seniorName/relationship; everyone else → save_onboarding_field("additionalRecipients", [{name, relationship}]).`,
+    `  - MULTIPLE LOVED ONES: first person → seniorName/relationship (+ ageRange for a child); everyone else → save_onboarding_field("additionalRecipients", [{name, relationship, ageRange for a child}]).`,
     `  - caregiversNeeded is a light, easy-to-skip question — most families need just one care provider covering their schedule, so frame it that way ("most families just need one care provider — is that right for you, or are you looking to cover more ground with a couple people?"). If they don't have an answer or seem unsure, save 1 and move on — never insist.`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I assist you today", or call yourself an AI assistant.`,
     `  - Voice memos: offer ONCE warmly if their replies look effortful — "if typing is a pain, you can tap-and-hold to send a voice memo." Never repeat the offer.`,

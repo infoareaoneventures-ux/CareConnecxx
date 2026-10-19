@@ -197,6 +197,16 @@ describe("loadAvailableJobs — the Available Jobs tab and the dashboard's Nearb
     expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["both", "kid", "near", "nocoords", "sc"]);
     expect(page.jobs.find((j) => j.jobId === "kid")!.kind).toBe("Child care");
     expect(page.jobs.find((j) => j.jobId === "kid")!.ageRanges).toEqual(["Toddler"]);
+    // The Care type filter at the top of the panel (Both accounts only): one kind's posts; a one-kind provider never sees it.
+    page = (await loadAvailableJobs("cg1", { filters: { careType: "child" } }))!;
+    expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["both", "kid"]);
+    page = (await loadAvailableJobs("cg1", { filters: { careType: "senior" } }))!;
+    expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["both", "near", "nocoords", "sc"]);
+    seedCg({ careKinds: ["senior"] });
+    page = (await loadAvailableJobs("cg1", { filters: { careType: "child" } }))!;
+    expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["near", "nocoords", "sc"]); // ignored: the filter exists only for a Both provider
+    seedCg({ careKinds: ["senior", "child"] });
+    page = (await loadAvailableJobs("cg1"))!;
     expect(page.jobs.find((j) => j.jobId === "both")!.kind).toBe("Senior and child care");
     expect(page.jobs.find((j) => j.jobId === "near")!.kind).toBeNull();
     // a child-care-only provider never sees a senior post, nor a both-post

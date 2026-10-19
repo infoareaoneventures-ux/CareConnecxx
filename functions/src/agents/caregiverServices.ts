@@ -185,7 +185,7 @@ export async function mapCaregiverServices(raw: unknown): Promise<ServiceMapping
       "CHILD CARE: watching / supervising / babysitting children → Supervision. Infants, diapering, bottles, naps → Baby Care. " +
       "Bathing, dressing, potty help for a child → Bathing & Dressing. Kids' meals and snacks → Meals & Snacks. Play, crafts, games, outings with children → Activities & Play. " +
       "School pickup / drop-off, homework help → School & Homework. Tidying up after kids, children's laundry → Tidying & Laundry. " +
-      "When the words clearly concern a CHILD, use the child names; when they concern an older adult, the senior names; a bare 'bathing' with no one named → Personal Care. " +
+      "When the words clearly concern a CHILD, use the child names; when they concern an adult, the senior names; a bare 'bathing' with no one named → Personal Care. " +
       "MEDICAL (never a service): administering or giving medication, injections, insulin, managing dosages, filling pill boxes, wound care, catheter care, vitals, therapy, nursing. " +
       '"All of them" / "everything on the list" → every allowed service. ' +
       "A phrase may fit more than one service; only CLEAR fits go in services — a vague phrase (\"help around the house\") goes in unmapped. No explanations.",

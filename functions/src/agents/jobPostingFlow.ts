@@ -5,7 +5,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { enforceClientGate } from "./clientAccessGate";
 import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
 import { defaultJobTitle } from "./jobPostContract";
-import { normalizeCareKinds, ageRangesFromWords, kindsOfServices, careKindBadge, ageRangeLabel, AGE_RANGES, CareKind, relationshipsForKinds, rosterCareKinds, serviceListsForKinds } from "./caregiverServiceLabels";
+import { normalizeCareKinds, kindsOfServices, careKindBadge, ageRangeLabel, AGE_RANGES, CareKind, relationshipsForKinds, rosterCareKinds, serviceListsForKinds, ageRangeFromWords, stageOf, stageQuestion, recipientCareKind, OTHER_KIND_QUESTION, STAGE_HEADING } from "./caregiverServiceLabels";
 import { careTypeSettingHint } from "./householdCareType";
 import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
@@ -104,7 +104,8 @@ function isDispatchableJobStep(step: string): boolean {
 // address added on the site shows up here too, and vice versa (buildJobPost.ts
 // is what makes the "vice versa" half true — see its own comments).
 
-export interface JobRecipient { firstName: string; lastName: string; relationship: string; isSelf: boolean; /** Only for "Other" in a Both household (child care, 2026-10-18): the family's two-way pick. */ careKind?: "senior" | "child"; }
+export interface JobRecipient { firstName: string; lastName: string; relationship: string; isSelf: boolean; /** Only for "Other" in a Both household (child care, 2026-10-18): the family's two-way pick (adult / child). */ careKind?: "senior" | "child"; /** ONE stage per child (AGE_RANGES id), set on the child (2026-10-18 late). */ ageRange?: string; }
+const isChildRecipient = (r: JobRecipient): boolean => recipientCareKind(r.isSelf ? "Myself" : r.relationship, r.careKind) === "child";
 export interface JobLocation { street: string; city: string; state: string; zipCode: string; petsInHome: boolean; smokingHousehold: boolean; }
 
 // The relationship choices follow the household's ONE care-type setting (child care, 2026-10-18): Child only
@@ -173,7 +174,7 @@ async function fetchRecipientOptions(uid: string, onboardingData: Record<string,
 
   for (const r of allCareRecipients(onboardingData)) {
     const [f, ...rest] = r.name.split(/\s+/).filter(Boolean);
-    addOpt({ firstName: f || r.name, lastName: rest.join(" "), relationship: r.relationship ?? "", isSelf: false });
+    addOpt({ firstName: f || r.name, lastName: rest.join(" "), relationship: r.relationship ?? "", isSelf: false, ...(r.careKind ? { careKind: r.careKind } : {}), ...(r.ageRange ? { ageRange: r.ageRange } : {}) });
   }
 
   const jpSnap = await db.collection("job_postings").doc(uid).get().catch(() => null);
@@ -181,12 +182,13 @@ async function fetchRecipientOptions(uid: string, onboardingData: Record<string,
     const jp = jpSnap.data() as Record<string, unknown>;
     const asKind = (v: unknown): "senior" | "child" | undefined => (v === "child" || v === "senior" ? v : undefined);
     const pFirst = String(jp.careRecipientFirstName ?? "").trim();
-    if (pFirst) addOpt({ firstName: pFirst, lastName: String(jp.careRecipientLastName ?? ""), relationship: String(jp.relationship ?? ""), isSelf: false, ...(asKind(jp.careRecipientCareKind) ? { careKind: asKind(jp.careRecipientCareKind) } : {}) });
+    if (pFirst) addOpt({ firstName: pFirst, lastName: String(jp.careRecipientLastName ?? ""), relationship: String(jp.relationship ?? ""), isSelf: false, ...(asKind(jp.careRecipientCareKind) ? { careKind: asKind(jp.careRecipientCareKind) } : {}), ...(typeof jp.careRecipientAgeRange === "string" ? { ageRange: jp.careRecipientAgeRange } : {}) });
     const extra = Array.isArray(jp.additionalRecipients) ? jp.additionalRecipients as Array<Record<string, unknown>> : [];
     for (const r of extra) {
       const f = String(r.firstName ?? "").trim();
       if (!f) continue;
-      addOpt({ firstName: f, lastName: String(r.lastName ?? ""), relationship: String(r.relationship ?? ""), isSelf: false, ...(asKind(r.careKind) ? { careKind: asKind(r.careKind) } : {}) });
+      const stage = stageOf(r);
+      addOpt({ firstName: f, lastName: String(r.lastName ?? ""), relationship: String(r.relationship ?? ""), isSelf: false, ...(asKind(r.careKind) ? { careKind: asKind(r.careKind) } : {}), ...(stage ? { ageRange: stage } : {}) });
     }
   }
   return options;
@@ -619,7 +621,7 @@ async function handleJpAskRecipients(
 }
 
 // A new person with their relationship known: "Other" in a Both household is the one case the
-// relationship can't settle, so the site's two-way pick (older adult / child) is asked once, here;
+// relationship can't settle, so the site's two-way pick (Adult / Child) is asked once, here;
 // everyone else joins the post straight away (child care, 2026-10-18).
 async function addNewRecipientOrAskKind(
   phone: string, chatId: string, session: AgentSession, chosen: JobRecipient[], first: string, last: string, relationship: string,
@@ -634,7 +636,7 @@ async function addNewRecipientOrAskKind(
       awaitingRecipientKind: true,
     });
     await updateJobStep(phone, "jp_ask_recipient_relationship");
-    await sendMessage(chatId, `Got it — is ${first} an older adult or a child?`);
+    await sendMessage(chatId, `Got it. ${OTHER_KIND_QUESTION} (Adult / Child)`);
     return;
   }
   await finishRecipientSelection(phone, chatId, [...chosen, { firstName: first, lastName: last, relationship, isSelf: false }]);
@@ -659,7 +661,7 @@ async function handleJpAskRecipientRelationship(
   const household = (await householdCareKinds(phone, session)) ?? normalizeCareKinds(undefined);
   const chips = relationshipChipsFor(household);
   const awaitingKind = jobData.awaitingRecipientKind === true;
-  const REASK = awaitingKind ? `Is ${first} an older adult or a child?` : `What's your relationship to ${first}? (${chipsLine(chips)})`;
+  const REASK = awaitingKind ? `${OTHER_KIND_QUESTION} (Adult / Child)` : `What's your relationship to ${first}? (${chipsLine(chips)})`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -672,7 +674,7 @@ async function handleJpAskRecipientRelationship(
   if (awaitingKind) {
     // The site's two-way pick for "Other" in a Both household — the model reads the answer, the enum clamps it.
     const raw = await parseWithClaude(
-      'The family was asked whether a person is an older adult or a child. Reply SENIOR for an older adult, CHILD for a child, or OTHER if the message does not say. Reply with exactly one word.',
+      'The family was asked whether a person is an adult or a child. Reply SENIOR for an adult, CHILD for a child, or OTHER if the message does not say. Reply with exactly one word.',
       text
     );
     const kind = /^child$/i.test(raw.trim()) ? "child" : /^senior$/i.test(raw.trim()) ? "senior" : null;
@@ -684,7 +686,8 @@ async function handleJpAskRecipientRelationship(
   const raw = await parseWithClaude(
     `Map the relationship described to exactly one of: ${chips.join(", ")}. ` +
     '"mom"/"dad"/"mother"/"father"/"parent" = Parent. "husband"/"wife"/"partner"/"spouse" = "Spouse or Partner". ' +
-    (chips.includes("Child") ? '"son"/"daughter"/"kid"/"child"/"grandchild" = Child. ' : "") +
+    (chips.includes("Adult child") ? '"adult son"/"adult daughter"/"grown son"/"grown daughter"/"my son, he is 30" (a grown child) = "Adult child". ' : "") +
+    (chips.includes("Child") ? '"son"/"daughter"/"kid"/"child"/"grandchild" (a minor, or no sign of their age) = Child. ' : (chips.includes("Adult child") ? '"son"/"daughter" with no sign they are a minor = "Adult child". ' : "")) +
     'Anything else relationship-like = Other. Reply with exactly one of those values.',
     text
   );
@@ -899,7 +902,28 @@ async function householdCareKinds(_phone: string, session: AgentSession): Promis
   return null;
 }
 
-const AGE_RANGES_Q = `Which age range? Pick what applies: ${AGE_RANGES.map((a) => a.label).join(", ")}.`;
+// ONE stage per child, set on the child (2026-10-18 late): asked only for a child on THIS post who has none yet,
+// one at a time, by the child's first name when the post names more than one child — never a multi-select.
+const RATE_Q = `What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`;
+const childrenOnPost = (recipients: JobRecipient[]): JobRecipient[] => recipients.filter(isChildRecipient);
+function nextStageQuestion(recipients: JobRecipient[]): { child: JobRecipient; question: string } | null {
+  const children = childrenOnPost(recipients);
+  const child = children.find((r) => !r.ageRange);
+  if (!child) return null;
+  return { child, question: stageQuestion(children.length > 1 ? child.firstName : null) };
+}
+/** After the care needs (and after each stage answer): the next child's stage, or on to the rate. */
+async function askNextStageOrRate(phone: string, chatId: string, recipients: JobRecipient[], prefix: string): Promise<void> {
+  const next = nextStageQuestion(recipients);
+  if (next) {
+    await mergeJobData(phone, { awaitingStageFor: next.child.firstName });
+    await sendMessage(chatId, `${prefix}${next.question}`);
+    return;
+  }
+  await mergeJobData(phone, { awaitingStageFor: admin.firestore.FieldValue.delete() });
+  await updateJobStep(phone, "jp_ask_rate");
+  await sendMessage(chatId, `${prefix}${RATE_Q}`);
+}
 
 async function careNeedsQuestion(phone: string, session: AgentSession): Promise<string> {
   const jobData = await getJobData(phone);
@@ -1094,8 +1118,10 @@ async function handleJpAskCareNeeds(
   const onPost = rosterCareKinds(((jobData0.careRecipients as JobRecipient[] | undefined) ?? []).map((r) => ({ relationship: r.isSelf ? "Myself" : r.relationship, careKind: r.careKind })));
   const gated = onPost.filter((k) => household.includes(k));
   const kinds: CareKind[] = gated.length ? gated : household;
-  const awaitingAges = jobData0.awaitingAgeRanges === true;
-  const REASK = awaitingAges ? AGE_RANGES_Q
+  const recipients0 = (jobData0.careRecipients as JobRecipient[] | undefined) ?? [];
+  const awaitingStageFor = typeof jobData0.awaitingStageFor === "string" ? jobData0.awaitingStageFor : null;
+  const pendingStage = awaitingStageFor ? nextStageQuestion(recipients0) : null;
+  const REASK = pendingStage ? pendingStage.question
     : `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText(kinds)}`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
@@ -1105,20 +1131,19 @@ async function handleJpAskCareNeeds(
     return;
   }
 
-  // Child care (2026-10-18) — the age-range chips, asked only for a child, by name, never a number.
-  if (awaitingAges) {
+  // ONE stage per child (2026-10-18 late): the answer lands on that child; then the next child, or the rate.
+  if (pendingStage) {
     const raw = await parseWithClaude(
-      `The family was asked a child's age range. Map their message onto these names only: ${AGE_RANGES.map((a) => a.label).join(", ")}. ` +
-        'Reply with a JSON array of the matching names (one per child), or [] if none apply.',
+      `The family was asked which stage a child is at. Map their message onto exactly one of these names: ${AGE_RANGES.map((a) => a.label).join(", ")}. ` +
+        'Reply with that one name, or NONE if the message does not say.',
       text,
-    ).catch(() => "[]");
-    let picked: unknown = [];
-    try { picked = JSON.parse(raw); } catch { picked = raw; }
-    const ids = ageRangesFromWords(picked);
-    if (!ids.length) { await sendMessage(chatId, `${JP_DIDNT_CATCH} ${AGE_RANGES_Q}`); return; }
-    await mergeJobData(phone, { ageRanges: ids, awaitingAgeRanges: admin.firestore.FieldValue.delete() });
-    await updateJobStep(phone, "jp_ask_rate");
-    await sendMessage(chatId, `${ids.map(ageRangeLabel).join(", ")} — noted! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`);
+    ).catch(() => "NONE");
+    const id = ageRangeFromWords(raw);
+    if (!id) { await sendMessage(chatId, `${JP_DIDNT_CATCH} ${pendingStage.question}`); return; }
+    const key = recipientPlanKey(pendingStage.child.firstName, pendingStage.child.lastName);
+    const updated = recipients0.map((r) => (recipientPlanKey(r.firstName, r.lastName) === key ? { ...r, ageRange: id } : r));
+    await mergeJobData(phone, { careRecipients: updated });
+    await askNextStageOrRate(phone, chatId, updated, `${pendingStage.child.firstName} · ${ageRangeLabel(id)} — noted! `);
     return;
   }
 
@@ -1153,15 +1178,8 @@ async function handleJpAskCareNeeds(
   const postKinds = kindsOfServices(careNeeds, kinds);
   const city = (jobData0.city as string) || "";
   await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel, jobCareKinds: postKinds, jobTitle: defaultJobTitle(city || null, postKinds) });
-  if (postKinds.includes("child") && !(Array.isArray(jobData0.ageRanges) && jobData0.ageRanges.length)) {
-    await mergeJobData(phone, { awaitingAgeRanges: true });
-    await sendMessage(chatId, `${needsLabel} — noted! ${AGE_RANGES_Q}`);
-    return;
-  }
-  await updateJobStep(phone, "jp_ask_rate");
-  await sendMessage(chatId,
-    `${needsLabel} — noted! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`
-  );
+  // A child on this post with no stage yet is asked for it here, one child at a time; otherwise the rate.
+  await askNextStageOrRate(phone, chatId, recipients0, `${needsLabel} — noted! `);
 }
 
 async function handleJpAskRate(
@@ -1358,7 +1376,9 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
   const times     = (jobData.jobTimeOfDay  as string[]) ?? [];
   const careNeeds = (jobData.jobCareNeeds  as string[]) ?? [];
   const kindBadge = careKindBadge(kindsOfServices(careNeeds, jobData.jobCareKinds));
-  const ages      = (Array.isArray(jobData.ageRanges) ? (jobData.ageRanges as string[]) : []).map(ageRangeLabel);
+  // ONE stage per child (2026-10-18 late): "Mahad · Toddler" per child on the post (a legacy post-level list as a fallback).
+  const stages    = childrenOnPost(recipients).filter((r) => r.ageRange).map((r) => `${r.firstName} · ${ageRangeLabel(r.ageRange as string)}`);
+  const ages      = stages.length ? stages : (Array.isArray(jobData.ageRanges) ? (jobData.ageRanges as string[]) : []).map(ageRangeLabel);
   const rate      = (jobData.jobHourlyRate as number)   ?? 0;
   const payMethod = (jobData.jobPaymentMethod as string) ?? "card";
   const pets      = (jobData.petsInHome       as boolean) ? "yes" : "no";
@@ -1395,7 +1415,7 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
     `Time: ${timesLabel}`,
     `Care needs: ${needsLabel}`,
     kindBadge ? `Care: ${kindBadge}` : "",
-    ages.length ? `Ages: ${ages.join(", ")}` : "",
+    ages.length ? `${STAGE_HEADING}: ${ages.join(", ")}` : "",
     `Rate: ${rateLabel} (${payMethod})`,
     `Pets: ${pets} | Smoking: ${smoking}`,
     desc ? `"${desc}"` : "",

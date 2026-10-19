@@ -18,7 +18,7 @@
 import * as admin from "firebase-admin";
 import { randomUUID } from "crypto";
 import { recipientPlanKey } from "./careRecipients";
-import { CANONICAL_SERVICES, RELATIONSHIPS as CONTRACT_RELATIONSHIPS, AGE_RANGES, ageRangesFromWords, ageRangeLabel, CareKind, normalizeCareKinds, recipientCareKind, relationshipsForKinds, serviceListsForKinds } from "./caregiverServiceLabels";
+import { CANONICAL_SERVICES, RELATIONSHIPS as CONTRACT_RELATIONSHIPS, AGE_RANGES, ageRangeLabel, CareKind, normalizeCareKinds, recipientCareKind, relationshipsForKinds, serviceListsForKinds, ageRangeFromWords, stageOf, OTHER_KIND_QUESTION, STAGE_HEADING } from "./caregiverServiceLabels";
 import { careTypeSettingHint } from "./householdCareType";
 import { geocodeAddress, lookupZipPlace, GeoPrecision } from "../utils/geocode";
 
@@ -86,7 +86,9 @@ export interface TasksData {
 }
 export interface RecipientPlanData {
   careNeeds: string[];
-  /** Child care (2026-10-18): the age-range chips (AGE_RANGES ids) — present only on a child's plan. */
+  /** ONE stage per child (AGE_RANGES id) — present only on a child's plan (2026-10-18 late). */
+  ageRange?: string;
+  /** Legacy (pre 2026-10-18 late): the old multi-select; read as a fallback, never written. */
   ageRanges?: string[];
   careNeedDetails: Record<string, string[]>;
   locations: LocationEntry[];
@@ -123,9 +125,9 @@ export interface CarePlanRecipient {
   /** Which list this person sees: Child → child; Myself / Parent / Spouse or Partner → senior; Other → careKind. */
   kind: CareKind;
   plan: RecipientPlanData;
-  /** The chips under the name on a child's tab ("Child · Ages 3–5"): ids and the labels shown. */
-  ageRanges: string[];
-  ageRangeLabels: string[];
+  /** The stage chip under the name on a child's tab ("Child · Toddler"): the id and the label shown; null for anyone else. */
+  ageRange: string | null;
+  stageLabel: string | null;
   locationLabel: string;
   lifestyleSpecified: boolean;
 }
@@ -138,7 +140,7 @@ export interface CarePlanPage {
   /** The signup-time emergency contact card (job_postings.emergency*), shown alongside the list. */
   setupContact: { firstName: string; lastName: string; phone: string; relationship: string } | null;
   reviewed: boolean;
-  options: { careTypes: string[]; favoriteActivities: string[]; entertainment: string[]; frequencies: string[]; petTypes: string[]; relationships: string[]; ageRanges: string[] };
+  options: { careTypes: string[]; favoriteActivities: string[]; entertainment: string[]; frequencies: string[]; petTypes: string[]; relationships: string[]; stageHeading: string; stages: string[] };
 }
 
 interface LoadedPage extends CarePlanPage {
@@ -175,7 +177,7 @@ async function load(clientId: string): Promise<LoadedPage> {
   const effectivePool = locationPool.length > 0 ? locationPool : wizardLocations;
 
   // roster
-  const list: Array<Omit<CarePlanRecipient, "plan" | "locationLabel" | "lifestyleSpecified" | "ageRanges" | "ageRangeLabels" | "kind">> = [];
+  const list: Array<Omit<CarePlanRecipient, "plan" | "locationLabel" | "lifestyleSpecified" | "ageRange" | "stageLabel" | "kind">> = [];
   const asKind = (v: unknown): "senior" | "child" | undefined => (v === "child" || v === "senior" ? v : undefined);
   const seen = new Set<string>();
   const pFirst = String(wizard.careRecipientFirstName ?? "");
@@ -214,7 +216,7 @@ async function load(clientId: string): Promise<LoadedPage> {
     if (stored) {
       return {
         careNeeds: stored.careNeeds ?? wizardNeeds,
-        ...(Array.isArray(stored.ageRanges) && stored.ageRanges.length ? { ageRanges: stored.ageRanges } : {}),
+        ...(stageOf(stored) ? { ageRange: stageOf(stored) as string } : {}),
         careNeedDetails: stored.careNeedDetails ?? {},
         locations: stored.locations ?? wizardLocations.slice(0, 1),
         notes: stored.notes ?? wizardNotes,
@@ -229,9 +231,9 @@ async function load(clientId: string): Promise<LoadedPage> {
   const recipients: CarePlanRecipient[] = list.map((r) => {
     const plan = getPlan(r.key);
     const kind = recipientCareKind(r.relationship, r.careKind);
-    // The chips exist only on a child's plan.
-    const ageRanges = kind === "child" && Array.isArray(plan.ageRanges) ? plan.ageRanges : [];
-    return { ...r, kind, plan, ageRanges, ageRangeLabels: ageRanges.map(ageRangeLabel), locationLabel: locLabel(plan.locations[0]), lifestyleSpecified: hasLifestyle(plan.lifestyle) };
+    // The stage exists only on a child's plan.
+    const ageRange = kind === "child" ? stageOf(plan) : null;
+    return { ...r, kind, plan, ageRange, stageLabel: ageRange ? ageRangeLabel(ageRange) : null, locationLabel: locLabel(plan.locations[0]), lifestyleSpecified: hasLifestyle(plan.lifestyle) };
   });
 
   const legacy = (legacySnap?.exists ? legacySnap.data() : {}) as Record<string, unknown>;
@@ -245,7 +247,7 @@ async function load(clientId: string): Promise<LoadedPage> {
     recipients, locationPool: effectivePool, emergencyContacts, setupContact,
     reviewed: !!cp.carePlanReviewedAt,
     // The relationship choices the page offers follow the household's care type (Child only with child care, the senior ones only with senior care, Other always).
-    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: relationshipsForKinds(householdKinds), ageRanges: AGE_RANGES.map((a) => a.label) },
+    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: relationshipsForKinds(householdKinds), stageHeading: STAGE_HEADING, stages: AGE_RANGES.map((a) => a.label) },
     wizard, rawPlans, wizardLocations,
   };
 }
@@ -338,10 +340,11 @@ export async function setRecipientLocation(
 // ── saveNewRecipient ────────────────────────────────────────────────────────
 export interface NewRecipientInput {
   firstName: string; lastName?: string; relationship: string;
-  /** Only for the relationship "Other" in a Both household: "senior" | "child" (the page's two-way pick). */
+  /** Only for the relationship "Other" in a Both household: "senior" | "child" (the page's two-way pick, adult or child). */
   careKind?: unknown;
   careNeeds?: string[]; notes?: string;
-  /** Child care (2026-10-18): the age-range chips, names or ids — kept only when given. */
+  /** ONE stage per child (2026-10-18 late): a name or id — kept only for a child. `ageRanges` (legacy) is read as its first entry. */
+  ageRange?: unknown;
   ageRanges?: unknown;
   location: Partial<LocationEntry>;
 }
@@ -374,13 +377,16 @@ export async function addRecipient(clientId: string, input: NewRecipientInput): 
 
   // "Other" in a Both household carries the family's two-way pick; everyone else's kind follows the relationship.
   const careKind = relationship.toLowerCase() === "other" && page.householdKinds.length === 2 && (input.careKind === "child" || input.careKind === "senior") ? input.careKind : undefined;
-  if (relationship.toLowerCase() === "other" && page.householdKinds.length === 2 && !careKind) return { ok: false, message: "For Other, say whether they are an older adult or a child" };
+  if (relationship.toLowerCase() === "other" && page.householdKinds.length === 2 && !careKind) return { ok: false, message: `For Other, say whether they are an adult or a child (${OTHER_KIND_QUESTION})` };
   const kind = recipientCareKind(relationship, careKind ?? (page.householdKinds.length === 1 ? page.householdKinds[0] : undefined));
-  const entry = { firstName, lastName, relationship, ...(careKind ? { careKind } : {}) };
+  const givenStage = ageRangeFromWords(input.ageRange) ?? ageRangeFromWords(input.ageRanges);
+  if (givenStage && kind !== "child") return { ok: false, message: `${STAGE_HEADING} is for a child only — ${firstName} is an adult.` };
+  const entryStage = kind === "child" ? givenStage : null; // the stage exists only on a child's plan
+  const entry = { firstName, lastName, relationship, ...(careKind ? { careKind } : {}), ...(entryStage ? { ageRange: entryStage } : {}) };
   const jpRef = db.collection("job_postings").doc(clientId);
   const isFirstRecipient = !page.wizard.careRecipientFirstName;
   if (isFirstRecipient) {
-    await jpRef.set({ careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careRecipientCareKind: careKind } : {}) }, { merge: true });
+    await jpRef.set({ careRecipientFirstName: entry.firstName, careRecipientLastName: entry.lastName, relationship: entry.relationship, ...(careKind ? { careRecipientCareKind: careKind } : {}), ...(entryStage ? { careRecipientAgeRange: entryStage } : {}) }, { merge: true });
   } else {
     await jpRef.set({ additionalRecipients: FV.arrayUnion(entry) }, { merge: true });
   }
@@ -398,8 +404,8 @@ export async function addRecipient(clientId: string, input: NewRecipientInput): 
     location = await geocodeLocation({ street: input.location.street!.trim(), city: (input.location.city ?? "").trim(), state: (input.location.state ?? "").trim(), zipCode: (input.location.zipCode ?? "").trim() });
     updatedPool = [...currentPool, location];
   }
-  const ageRanges = kind === "child" ? ageRangesFromWords(input.ageRanges) : []; // the chips exist only on a child's plan
-  const blankPlan: RecipientPlanData = { careNeeds, ...(ageRanges.length ? { ageRanges } : {}), careNeedDetails, locations: [location], notes: (input.notes ?? "").trim(), lifestyle: emptyLifestyle(), tasks: emptyTasks() };
+  const ageRange = entryStage;
+  const blankPlan: RecipientPlanData = { careNeeds, ...(ageRange ? { ageRange } : {}), careNeedDetails, locations: [location], notes: (input.notes ?? "").trim(), lifestyle: emptyLifestyle(), tasks: emptyTasks() };
   const cpRef = db.collection("carePlans").doc(clientId);
   const cpPayload: Record<string, unknown> = { [`recipientPlans.${key}`]: blankPlan };
   if (updatedPool !== currentPool) cpPayload.locationPool = updatedPool;

@@ -50,7 +50,7 @@ export async function absorbCaregiverFields(
       `"zipCode":"5-digit US zip code",` +
       `"yearsExperience":number,` +
       `"specialties":["short care specialty like 'dementia', 'mobility assistance' or 'babysitting'"],` +
-      `"careKinds":"who they care for, ONLY when stated: 'senior' (older adults), 'child' (children), or 'both'",` +
+      `"careKinds":"the kind of care they provide, ONLY when stated: 'senior' (senior care — adults), 'child' (child care), or 'both'",` +
       `"availability":{"days":["Monday"],"hours":"9am-5pm"},` +
       `"jobType":"occasional | part_time | full_time — or a list of those when they name more than one",` +
       `"hourlyRate":number,` +

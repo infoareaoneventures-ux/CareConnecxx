@@ -41,7 +41,7 @@ describe("canonical enum parity with the webapp", () => {
     expect(CHILD_SERVICES).toEqual(["Supervision", "Baby Care", "Bathing & Dressing", "Meals & Snacks", "Activities & Play", "School & Homework", "Transportation", "Tidying & Laundry"]);
     expect(CANONICAL_SERVICES).toHaveLength(15);
     expect(CANONICAL_SERVICES.filter((s) => s === "Transportation")).toHaveLength(1);
-    expect(RELATIONSHIPS).toEqual(["Myself", "Parent", "Spouse or Partner", "Child", "Other"]);
+    expect(RELATIONSHIPS).toEqual(["Myself", "Parent", "Spouse or Partner", "Adult child", "Child", "Other"]);
   });
 
   it("the site's constants file holds the same eight and the same display label (byte parity)", () => {

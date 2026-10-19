@@ -1,5 +1,5 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
-import { PRIMARY_SERVICES, serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
+import { PRIMARY_SERVICES, serviceLabel, ageRangeLabel, recipientStage } from '../caregiver/signup/constants';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -189,8 +189,8 @@ export const PostsPage: React.FC = () => {
   const [loadingCarePlan, setLoadingCarePlan] = useState(false);
   const [loadedPost, setLoadedPost] = useState<any>(null);
   const [loadedPlan, setLoadedPlan] = useState<{
-    recipients: Array<{ key: string; name: string; firstName: string; lastName: string; relationship: string; photoURL: string }>;
-    recipientPlans: Record<string, { careNeeds: string[]; ageRanges?: string[]; careNeedDetails: Record<string, string[]>; locations: any[]; notes: string; lifestyle: any; tasks: any }>;
+    recipients: Array<{ key: string; name: string; firstName: string; lastName: string; relationship: string; ageRange?: string; photoURL: string }>;
+    recipientPlans: Record<string, { careNeeds: string[]; ageRange?: string; ageRanges?: string[]; careNeedDetails: Record<string, string[]>; locations: any[]; notes: string; lifestyle: any; tasks: any }>;
     emergencyContacts: Array<{ name: string; relation: string; relationship?: string; phone: string; isPrimary?: boolean }>;
     locationPool: any[];
     primaryAddress: string;
@@ -719,7 +719,7 @@ export const PostsPage: React.FC = () => {
         const lastName = jp.careRecipientLastName || '';
         const key = getRecipientKey(firstName, lastName);
         seenRecipientKeys.add(key);
-        recipients.push({ key, firstName, lastName, name: `${firstName} ${lastName}`.trim(), relationship: jp.relationship || '', photoURL: jp.careRecipientPhotoURL || '' });
+        recipients.push({ key, firstName, lastName, name: `${firstName} ${lastName}`.trim(), relationship: jp.relationship || '', ...(typeof jp.careRecipientAgeRange === 'string' && jp.careRecipientAgeRange ? { ageRange: jp.careRecipientAgeRange } : {}), photoURL: jp.careRecipientPhotoURL || '' });
       }
       (jp.additionalRecipients || []).forEach((r: any) => {
         const firstName = (r.firstName || '').trim();
@@ -728,7 +728,7 @@ export const PostsPage: React.FC = () => {
         const key = getRecipientKey(firstName, lastName);
         if (seenRecipientKeys.has(key)) return;
         seenRecipientKeys.add(key);
-        recipients.push({ key, firstName, lastName, name: `${firstName} ${lastName}`.trim(), relationship: r.relationship || '', photoURL: r.photoURL || '' });
+        recipients.push({ key, firstName, lastName, name: `${firstName} ${lastName}`.trim(), relationship: r.relationship || '', ...(typeof r.ageRange === 'string' && r.ageRange ? { ageRange: r.ageRange } : {}), photoURL: r.photoURL || '' });
       });
 
       const recipientPlans = cp.recipientPlans || {};
@@ -927,7 +927,8 @@ export const PostsPage: React.FC = () => {
             name: r.name, relationship: r.relationship,
             photoURL: r.relationship?.toLowerCase() === 'myself' ? (clientPhotoURL || r.photoURL) : r.photoURL,
             careNeeds: draft?.careNeeds || plan?.careNeeds || [],
-            ...(Array.isArray(plan?.ageRanges) && plan.ageRanges.length ? { ageRanges: plan.ageRanges } : {}),
+            // One stage per child (2026-10-18 late): the single `ageRange`, never the older list.
+            ...((() => { const stage = recipientStage(plan) ?? r.ageRange; return stage ? { ageRange: stage } : {}; })()),
             careNeedDetails: draft?.careNeedDetails || plan?.careNeedDetails || {},
             lifestyle: draft?.lifestyle || null,
             tasks: plan?.tasks || {},
@@ -2220,13 +2221,11 @@ export const PostsPage: React.FC = () => {
                                       )}
                                     </div>
                                   )}
-                                  {(loadedPlan.recipientPlans[r.key]?.ageRanges || []).length > 0 && (
+                                  {(() => { const stage = recipientStage(loadedPlan.recipientPlans[r.key]) ?? r.ageRange; return stage ? (
                                     <div className="flex flex-wrap gap-1 mt-1">
-                                      {(loadedPlan.recipientPlans[r.key].ageRanges as string[]).map(id => (
-                                        <span key={id} className="text-[10px] bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded-full">{ageRangeLabel(id)}</span>
-                                      ))}
+                                      <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded-full">{ageRangeLabel(stage)}</span>
                                     </div>
-                                  )}
+                                  ) : null; })()}
                                 </div>
                                 <div className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${selected ? 'border-primary-500 bg-primary-500' : 'border-slate-300'}`}>
                                   {selected && <CheckCircle className="w-3.5 h-3.5 text-white" />}

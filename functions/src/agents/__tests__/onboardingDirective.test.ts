@@ -45,7 +45,7 @@ describe("buildOnboardingDirective", () => {
   // right before "how many caregivers needed").
   it("nudges additionalRecipients before finishing, ordered right before caregiversNeeded", () => {
     const d = buildOnboardingDirective("client", {
-      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
+      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"], careKinds: ["senior"],
       homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
       city: "Austin", zipCode: "78701", timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
@@ -61,7 +61,7 @@ describe("buildOnboardingDirective", () => {
 
   it("stops nudging additionalRecipients once it's been answered", () => {
     const d = buildOnboardingDirective("client", {
-      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
+      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"], careKinds: ["senior"],
       homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
       city: "Austin", zipCode: "78701", timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
@@ -79,7 +79,7 @@ describe("buildOnboardingDirective", () => {
   // but were never in the tracked list, so they had zero nudge to ever be asked.
   it("nudges emergencyContactRelationship and daysFlexible before finishing — and never age (2026-10-17)", () => {
     const d = buildOnboardingDirective("client", {
-      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
+      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"], careKinds: ["senior"],
       homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
       city: "Austin", zipCode: "78701", timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
@@ -161,6 +161,29 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("not the care plan");
     expect(d).toContain("never add to or rewrite them");
     expect(d).not.toContain("weave two or three natural examples");
+  });
+});
+
+describe("buildOnboardingDirective — the care-type question, the six relationships and a child's stage (2026-10-18 late)", () => {
+  it("asks the care type as its OWN required question, word for word, before the relationship; Other's follow-up is the contract line; a child's stage by name, never 'age range'", () => {
+    const d = buildOnboardingDirective("client", { firstName: "Imran" });
+    expect(d).toContain("8. The kind of care they need — its OWN question, word for word: \"What kind of care do you need — senior care, child care, or both?\"");
+    expect(d).toContain("9. Their relationship to the person needing care (parent, spouse or partner, adult child, child, myself, or other)");
+    expect(d).toContain("Is this person an adult or a child?");
+    expect(d).toContain("Which stage is Mahad at — Infant, Toddler, Preschooler, School-age, or Teen?");
+    expect(d).toContain("STAGE (ageRange)");
+    expect(d.toLowerCase()).not.toContain("older adult");
+    expect(d.toLowerCase()).not.toContain("age range");
+    expect(d).not.toContain("Ages 3");
+    // careKinds is STILL NEEDED and listed before the relationship
+    expect(d.indexOf("the kind of care they need")).toBeLessThan(d.indexOf("the family member's relationship"));
+  });
+  it("the stage is still-needed only for a child recipient; a senior household is never nagged for it", () => {
+    const base = { firstName: "Imran", careKinds: ["senior", "child"], seniorName: "Mahad" };
+    expect(buildOnboardingDirective("client", { ...base, relationship: "child" })).toMatch(/STILL NEEDED[\s\S]*ONLY when the person needing care is a child/);
+    expect(buildOnboardingDirective("client", { ...base, relationship: "parent" })).not.toMatch(/STILL NEEDED[\s\S]*ONLY when the person needing care is a child/);
+    // 'other' follows a one-kind household: senior-only → an adult → no stage.
+    expect(buildOnboardingDirective("client", { firstName: "Imran", careKinds: ["senior"], relationship: "other" })).not.toMatch(/STILL NEEDED[\s\S]*ONLY when the person needing care is a child/);
   });
 });
 

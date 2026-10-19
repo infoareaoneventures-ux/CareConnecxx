@@ -6,6 +6,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import { chatService } from '../../services/chatService';
 import { authService } from '../../services/api';
+import { ageRangeLabel } from './signup/constants';
 
 type FamilyFilter = 'active' | 'past';
 
@@ -380,7 +381,7 @@ export const CaregiverFamiliesPage: React.FC = () => {
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-slate-800">{r.firstName || r.name}</p>
-                          {r.relationship && <p className="text-xs text-slate-400">{r.relationship}</p>}
+                          {(r.relationship || r.ageRange) && <p className="text-xs text-slate-400">{[r.relationship, r.ageRange ? ageRangeLabel(r.ageRange) : ''].filter(Boolean).join(' · ')}</p>}
                         </div>
                       </div>
                       {r.notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{r.notes}"</p>}

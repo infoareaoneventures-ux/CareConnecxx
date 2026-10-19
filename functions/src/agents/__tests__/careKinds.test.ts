@@ -15,7 +15,7 @@ vi.mock("firebase-admin", () => {
 import {
   CARE_KINDS, CHILD_SERVICES, PRIMARY_SERVICES, CANONICAL_SERVICES, AGE_RANGES, RELATIONSHIPS,
   normalizeCareKinds, serviceListsForKinds, kindsOfServices, providerCoversPost, providerMatchesHousehold,
-  careKindsFromWords, ageRangesFromWords, ageRangeLabel, careKindBadge, defaultJobTitleFor, serviceMenuText,
+  careKindsFromWords, ageRangesFromWords, ageRangeFromWords, stageOf, stageQuestion, STAGE_HEADING, ageRangeLabel, careKindBadge, defaultJobTitleFor, serviceMenuText,
   SERVICE_LABELS, CHILD_SERVICE_LABELS,
   recipientCareKind, relationshipsForKinds, rosterCareKinds, careTypeChangeBlockedBy,
 } from "../caregiverServiceLabels";
@@ -34,12 +34,14 @@ describe("who decides a recipient's kind (founder, 2026-10-18 evening): the rela
     expect(recipientCareKind("Other")).toBe("senior");
     expect(recipientCareKind("Other", "child")).toBe("child");
     expect(recipientCareKind("Parent", "child")).toBe("senior"); // careKind only counts for Other
+    expect(recipientCareKind("Adult child")).toBe("senior");       // a grown son or daughter — the senior side (2026-10-18 late)
+    expect(recipientCareKind("adult child", "child")).toBe("senior");
   });
   it("the relationship choices follow the household: Child only with child care, the senior ones only with senior care, Other always", () => {
-    expect(relationshipsForKinds(undefined)).toEqual(["Myself", "Parent", "Spouse or Partner", "Other"]);
+    expect(relationshipsForKinds(undefined)).toEqual(["Myself", "Parent", "Spouse or Partner", "Adult child", "Other"]);
     expect(relationshipsForKinds(["child"])).toEqual(["Child", "Other"]);
-    expect(relationshipsForKinds(["senior", "child"])).toEqual(["Myself", "Parent", "Spouse or Partner", "Child", "Other"]);
-    expect(relationshipsForKinds(["senior", "child"], { includeMyself: false })).toEqual(["Parent", "Spouse or Partner", "Child", "Other"]);
+    expect(relationshipsForKinds(["senior", "child"])).toEqual(["Myself", "Parent", "Spouse or Partner", "Adult child", "Child", "Other"]);
+    expect(relationshipsForKinds(["senior", "child"], { includeMyself: false })).toEqual(["Parent", "Spouse or Partner", "Adult child", "Child", "Other"]);
   });
   it("a roster implies its kinds; a setting that leaves someone uncovered is refused with the page's sentence", () => {
     const roster = [{ name: "H M", relationship: "Parent" }, { name: "S Mahad", relationship: "Child" }];
@@ -111,8 +113,23 @@ describe("care kinds — the contract", () => {
     expect(ageRangesFromWords("3-5")).toEqual(["3-5"]);
     expect(ageRangesFromWords("82")).toEqual([]);
     expect(AGE_RANGES.map((a) => a.id)).toEqual(["infant", "toddler", "3-5", "6-12", "teen"]);
-    expect(ageRangeLabel("3-5")).toBe("Ages 3–5");
-    expect(RELATIONSHIPS).toEqual(["Myself", "Parent", "Spouse or Partner", "Child", "Other"]);
+    // Stage words, never numbers (founder 2026-10-18): the ids stay, the labels are the stages.
+    expect(AGE_RANGES.map((a) => a.label)).toEqual(["Infant", "Toddler", "Preschooler", "School-age", "Teen"]);
+    expect(ageRangeLabel("3-5")).toBe("Preschooler");
+    expect(STAGE_HEADING).toBe("Stage");
+    expect(RELATIONSHIPS).toEqual(["Myself", "Parent", "Spouse or Partner", "Adult child", "Child", "Other"]);
+  });
+
+  it("ONE stage per child (2026-10-18 late): a single id from words; the stored stage reads ageRange first, a legacy ageRanges list as a fallback; the question names the child only when asked", () => {
+    expect(ageRangeFromWords("Preschooler")).toBe("3-5");
+    expect(ageRangeFromWords("she's a toddler, maybe preschool next year")).toBe("toddler"); // the first stage named, one only
+    expect(ageRangeFromWords("82")).toBeNull();
+    expect(stageOf({ ageRange: "teen" })).toBe("teen");
+    expect(stageOf({ ageRanges: ["6-12", "teen"] })).toBe("6-12");
+    expect(stageOf({ ageRange: "teen", ageRanges: ["6-12"] })).toBe("teen");
+    expect(stageOf({})).toBeNull();
+    expect(stageQuestion()).toBe("Which stage — Infant, Toddler, Preschooler, School-age, or Teen?");
+    expect(stageQuestion("Mahad")).toBe("Which stage is Mahad at — Infant, Toddler, Preschooler, School-age, or Teen?");
   });
 
   it("the badge and the title follow the kinds — senior-only stays exactly as before", () => {
@@ -161,8 +178,8 @@ describe("care kinds — the records", () => {
     expect(jobCardLine(seniorCard)).not.toMatch(/seniors/);
     const childCard = buildJobCard({ id: "j2", title: "Child care in San Jose", careTypes: ["Supervision"], careKinds: ["child"], ageRanges: ["toddler", "3-5"], timeOfDay: ["morning"] }, cg, null);
     expect(childCard.kind).toBe("Child care");
-    expect(childCard.ageRanges).toEqual(["Toddler", "Ages 3–5"]);
-    expect(jobCardLine(childCard)).toContain("Child care · Occasional · Daytime · Toddler · Ages 3–5");
+    expect(childCard.ageRanges).toEqual(["Toddler", "Preschooler"]); // the stage chip of each child on the post
+    expect(jobCardLine(childCard)).toContain("Child care · Occasional · Daytime · Toddler · Preschooler");
     expect(JOB_BOARD_CARE_TYPES).toContain("Supervision");
     expect(passesJobBoardFilters({ careTypes: ["Supervision"] }, { careTypes: ["Supervision"] })).toBe(true);
   });

@@ -6,7 +6,6 @@ import { StepIndicator } from '../../ui/StepIndicator';
 import { useCareConnex } from '../../../context/CareConnexContext';
 import { dbService } from '../../../services/api';
 import { db } from '../../../lib/firebase';
-import firebase from '../../../lib/firebase';
 import { geocodeAddress } from '../../../utils/geocode';
 import { Step1Schedule } from './Step1Schedule';
 import { Step2WhoWhere } from './Step2WhoWhere';
@@ -15,7 +14,7 @@ import { Step4Rate } from './Step4Rate';
 import { Step5Describe } from './Step5Describe';
 import { Step6Review } from './Step6Review';
 import { JobPostFormData, INITIAL_FORM_DATA } from './types';
-import { kindsOfServices } from '../../caregiver/signup/constants';
+import { kindsOfServices, recipientCareKind } from '../../caregiver/signup/constants';
 
 const TOTAL_STEPS = 6;
 
@@ -101,6 +100,10 @@ export const PostJobFlow: React.FC = () => {
           const existing = await jpRef.get();
           const existingData = (existing.data() as any) || {};
 
+          const isChild = (r: { relationship?: string; careKind?: string }) => recipientCareKind(r.relationship, r.careKind) === 'child';
+          const sameName = (a: { firstName?: string; lastName?: string }, b: { firstName?: string; lastName?: string }) =>
+            (a.firstName || '').trim().toLowerCase() === (b.firstName || '').trim().toLowerCase() && (a.lastName || '').trim().toLowerCase() === (b.lastName || '').trim().toLowerCase();
+
           // Only set primary recipient if none exists yet
           if (!existingData.careRecipientFirstName) {
             const primary = data.careRecipients[0];
@@ -108,21 +111,35 @@ export const PostJobFlow: React.FC = () => {
               careRecipientFirstName: primary.firstName,
               careRecipientLastName: primary.lastName || '',
               relationship: primary.relationship || '',
+              ...(isChild(primary) && primary.ageRange ? { careRecipientAgeRange: primary.ageRange } : {}),
             }, { merge: true });
+          } else {
+            // A stage picked on Step 3 for the primary child lands on the record (one stage per child).
+            const primary = data.careRecipients.find(r => sameName(r, { firstName: existingData.careRecipientFirstName, lastName: existingData.careRecipientLastName || '' }));
+            if (primary && isChild(primary) && primary.ageRange && existingData.careRecipientAgeRange !== primary.ageRange) {
+              await jpRef.set({ careRecipientAgeRange: primary.ageRange }, { merge: true });
+            }
           }
 
-          // Add additional recipients via arrayUnion (no overwrite)
+          // Additional recipients: add the new ones; a stage picked on Step 3 updates the existing entry (never a duplicate).
+          const existingAdd: any[] = Array.isArray(existingData.additionalRecipients) ? existingData.additionalRecipients : [];
+          const nextAdd = existingAdd.slice();
+          let changed = false;
           for (const r of data.careRecipients) {
-            const entry = { firstName: r.firstName, lastName: r.lastName || '', relationship: r.relationship || '' };
-            if (
-              entry.firstName === existingData.careRecipientFirstName &&
-              entry.lastName === (existingData.careRecipientLastName || '')
-            ) continue;
-            await jpRef.set(
-              { additionalRecipients: firebase.firestore.FieldValue.arrayUnion(entry) },
-              { merge: true }
-            );
+            if (sameName(r, { firstName: existingData.careRecipientFirstName, lastName: existingData.careRecipientLastName || '' })) continue;
+            const idx = nextAdd.findIndex(e => sameName(e, r));
+            if (idx >= 0) {
+              if (isChild(r) && r.ageRange && nextAdd[idx]?.ageRange !== r.ageRange) { nextAdd[idx] = { ...nextAdd[idx], ageRange: r.ageRange }; changed = true; }
+              continue;
+            }
+            nextAdd.push({
+              firstName: r.firstName, lastName: r.lastName || '', relationship: r.relationship || '',
+              ...(r.careKind ? { careKind: r.careKind } : {}),
+              ...(isChild(r) && r.ageRange ? { ageRange: r.ageRange } : {}),
+            });
+            changed = true;
           }
+          if (changed) await jpRef.set({ additionalRecipients: nextAdd }, { merge: true });
 
           // Save per-recipient care needs to carePlans. The job description stays on the job post only —
           // care-plan Notes are the family's private, per-person field, edited on the Care Plan page (founder, 2026-10-09).
@@ -154,7 +171,7 @@ export const PostJobFlow: React.FC = () => {
             const updates: Record<string, any> = {
               [`recipientPlans.${key}.careNeeds`]: data.careTypes,
               [`recipientPlans.${key}.careNeedDetails`]: data.careNeedDetails || {},
-              ...(postKinds.includes('child') ? { [`recipientPlans.${key}.ageRanges`]: data.ageRanges } : {}),
+              ...(recipientCareKind(r.relationship, r.careKind) === 'child' && r.ageRange ? { [`recipientPlans.${key}.ageRange`]: r.ageRange } : {}),
             };
             // Only set location if recipient has none saved yet
             if (!existingLocs?.length) {
@@ -164,7 +181,7 @@ export const PostJobFlow: React.FC = () => {
               await cpRef.update(updates);
             } catch (e: any) {
               if (e.code === 'not-found') {
-                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, careNeedDetails: data.careNeedDetails || {}, locations: locationEntry, ...(postKinds.includes('child') ? { ageRanges: data.ageRanges } : {}) } } });
+                await cpRef.set({ recipientPlans: { [key]: { careNeeds: data.careTypes, careNeedDetails: data.careNeedDetails || {}, locations: locationEntry, ...(recipientCareKind(r.relationship, r.careKind) === 'child' && r.ageRange ? { ageRange: r.ageRange } : {}) } } });
               }
             }
           }

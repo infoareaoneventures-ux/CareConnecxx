@@ -287,7 +287,7 @@ export interface JobPost {
   careTypes?: string[];
   /** Who the care is for, read from the ticked services at save (missing = ['senior']). Child care, 2026-10-18. */
   careKinds?: string[];
-  /** Age-range chip ids (AGE_RANGES) when the post's kinds include child — informational, never a filter. */
+  /** The children's stages (AGE_RANGES ids, one per child on the post) when the kinds include child — informational, never a filter. */
   ageRanges?: string[];
   careLevel?: JobCareLevel;
   petsInHome?: boolean;

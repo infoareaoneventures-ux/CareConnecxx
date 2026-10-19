@@ -14,7 +14,7 @@
 
 import { allCareRecipients, normalizeAdditionalRecipients, toWebsiteRelationship } from "./careRecipients";
 import { coerceClientRate } from "./onboardingContract";
-import { normalizeCareKinds } from "./caregiverServiceLabels";
+import { normalizeCareKinds, recipientCareKind, stageOf } from "./caregiverServiceLabels";
 import { businessTodayStr } from "../utils/scheduledTime";
 import type { GeoPrecision } from "../utils/geocode";
 
@@ -136,7 +136,11 @@ export interface ClientJobPostingsDoc {
   careRecipientPhotoURL?: string;
   careRecipientFirstName?: string; careRecipientLastName?: string;
   adultsCount: number; caregiversNeeded: number;
-  additionalRecipients: Array<{ firstName: string; lastName: string; relationship?: string }>;
+  additionalRecipients: Array<{ firstName: string; lastName: string; relationship?: string; careKind?: "senior" | "child"; ageRange?: string }>;
+  /** ONE stage per child (2026-10-18 late): the primary recipient's stage, a child only. */
+  careRecipientAgeRange?: string;
+  /** Only for the relationship Other in a Both household: the primary's two-way pick (Adult = senior / Child). */
+  careRecipientCareKind?: "senior" | "child";
   relationship?: string;
   emergencyFirstName?: string; emergencyLastName?: string; emergencyPhone?: string; emergencyRelationship?: string;
   careNeeds: string[];
@@ -163,8 +167,12 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
       firstName: first, lastName: last,
       relationship: r.relationship,
       ...(r.careKind ? { careKind: r.careKind } : {}), // Other's two-way pick (child care, 2026-10-18)
+      ...(r.ageRange ? { ageRange: r.ageRange } : {}),   // ONE stage per child, on the child (2026-10-18 late)
     };
   });
+  // The primary recipient's stage (a child only) — job_postings.careRecipientAgeRange.
+  const soloKind = normalizeCareKinds(d.careKinds).length === 1 ? normalizeCareKinds(d.careKinds)[0] : undefined;
+  const primaryStage = recipientCareKind(d.relationship === "self" ? "Myself" : (d.relationship as string | undefined), soloKind) === "child" ? stageOf(d as { ageRange?: unknown; ageRanges?: unknown }) : null;
 
   const { rate, rateFlexible } = parseRate(d.rate);
 
@@ -202,6 +210,8 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     emergencyRelationship: (d.emergencyContactRelationship as string) || undefined,
     careNeeds,
     ...(Array.isArray(d.careKinds) && d.careKinds.length ? { careKinds: normalizeCareKinds(d.careKinds) } : {}),
+    ...(primaryStage ? { careRecipientAgeRange: primaryStage } : {}),
+    ...(d.careKind === "child" || d.careKind === "senior" ? { careRecipientCareKind: d.careKind } : {}),
     petsInHome: d.petsInHome === true,
     smokingHousehold: d.smokingHousehold === true,
     rate,
@@ -369,8 +379,11 @@ export function mapJobPostingsDocToOnboardingData(
       name: joinName(r.firstName as string | undefined, r.lastName as string | undefined),
       relationship: r.relationship,
       ...(r.careKind === "child" || r.careKind === "senior" ? { careKind: r.careKind } : {}),
+      ...(typeof r.ageRange === "string" ? { ageRange: r.ageRange } : {}),
     }));
   }
+  if (typeof d.careRecipientAgeRange === "string") out.ageRange = d.careRecipientAgeRange;
+  if (d.careRecipientCareKind === "child" || d.careRecipientCareKind === "senior") out.careKind = d.careRecipientCareKind;
   if (d.relationship) out.relationship = d.relationship === "myself" ? "self" : d.relationship;
 
   const emergencyContactName = joinName(d.emergencyFirstName as string | undefined, d.emergencyLastName as string | undefined);

@@ -1,4 +1,4 @@
-import { serviceLabel } from '../caregiver/signup/constants';
+import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -82,6 +82,7 @@ interface Shift {
   careRecipients?: Array<{
     name: string;
     relationship?: string;
+    ageRange?: string;
     age?: string;
     photoURL?: string | null;
     careNeeds?: string[];
@@ -441,7 +442,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
                       </div>
                       <div>
                         <p className="font-semibold text-slate-800 text-sm">{r.name}</p>
-                        {r.relationship && <p className="text-xs text-slate-400">{r.relationship}</p>}
+                        {(r.relationship || r.ageRange) && <p className="text-xs text-slate-400">{[r.relationship, r.ageRange ? ageRangeLabel(r.ageRange) : ''].filter(Boolean).join(' · ')}</p>}
                       </div>
                     </div>
                     {(r as any).notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{(r as any).notes}"</p>}
@@ -1143,7 +1144,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                       </div>
                       <div>
                         <p className="font-semibold text-slate-800 text-sm">{r.name}</p>
-                        {r.relationship && <p className="text-xs text-slate-400">{r.relationship}</p>}
+                        {(r.relationship || r.ageRange) && <p className="text-xs text-slate-400">{[r.relationship, r.ageRange ? ageRangeLabel(r.ageRange) : ''].filter(Boolean).join(' · ')}</p>}
                       </div>
                     </div>
                     {(r as any).notes && <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1.5 italic">"{(r as any).notes}"</p>}

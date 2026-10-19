@@ -6,7 +6,7 @@ import {
   normalizeAdditionalRecipients,
   allCareRecipients,
   describeWhoIsWho,
-} from "./careRecipients";
+ toWebsiteRelationship } from "./careRecipients";
 
 describe("recipientPlanKey", () => {
   it("matches the web CarePlan.tsx getKey format byte-for-byte", () => {
@@ -140,5 +140,21 @@ describe("describeWhoIsWho", () => {
     // for Anahi, never for Anahi".
     const line = describeWhoIsWho({ firstName: "Anahi", seniorName: "Anahi" });
     expect(line).toContain("Never assume the care is for Anahi");
+  });
+});
+
+describe("the six relationships + ONE stage per child on the roster (2026-10-18 late)", () => {
+  it("toWebsiteRelationship: 'self' → myself; the lowercase canon 'adult child' → the site's 'Adult child'; everything else passes through", () => {
+    expect(toWebsiteRelationship("self")).toBe("myself");
+    expect(toWebsiteRelationship("adult child")).toBe("Adult child");
+    expect(toWebsiteRelationship("parent")).toBe("parent");
+  });
+  it("allCareRecipients carries each recipient's stage (ageRange, or the first of a legacy ageRanges list) and the primary's careKind", () => {
+    const d = { seniorName: "Sam", relationship: "child", ageRange: "toddler", additionalRecipients: [{ name: "Ali", relationship: "child", ageRanges: ["6-12", "teen"] }, { name: "Lee", relationship: "other", careKind: "child" }] };
+    expect(allCareRecipients(d)).toEqual([
+      { name: "Sam", relationship: "child", ageRange: "toddler" },
+      { name: "Ali", relationship: "child", ageRange: "6-12" },
+      { name: "Lee", relationship: "other", careKind: "child" },
+    ]);
   });
 });

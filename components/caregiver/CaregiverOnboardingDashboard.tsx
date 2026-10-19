@@ -485,8 +485,8 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                         {isDay && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 flex items-center gap-1"><Sun className="w-3 h-3" />Day</span>}
                         {isNight && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 flex items-center gap-1"><Moon className="w-3 h-3" />Night</span>}
                         {seniors > 1 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex items-center gap-1"><UsersIcon className="w-3 h-3" />{seniors} people</span>}
-                        {normalizeCareKinds((job as any).careKinds).includes('child') && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">{normalizeCareKinds((job as any).careKinds).length === 2 ? 'Senior and child care' : 'Child care'}</span>}
-                        {Array.isArray((job as any).ageRanges) && ((job as any).ageRanges as string[]).map(id => <span key={id} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">{ageRangeLabel(id)}</span>)}
+                        {normalizeCareKinds((job as any).careKinds).includes('child') && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">{normalizeCareKinds((job as any).careKinds).length === 2 ? 'Senior and child care' : 'Child care'}</span>}
+                        {Array.isArray((job as any).ageRanges) && ((job as any).ageRanges as string[]).map(id => <span key={id} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">{ageRangeLabel(id)}</span>)}
                         {needsTransport && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 flex items-center gap-1"><Car className="w-3 h-3" />Transport</span>}
                       </div>
 

@@ -1,4 +1,4 @@
-import { serviceLabel } from './signup/constants';
+import { serviceLabel, ageRangeLabel } from './signup/constants';
 import React, { useState, useEffect, useCallback } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { createPortal } from 'react-dom';
@@ -652,6 +652,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                         }
                         <span className="text-xs font-semibold text-slate-700">{r.name || r.firstName}</span>
                         {r.relationship && <span className="text-xs text-slate-400">· {r.relationship}</span>}
+                        {r.ageRange && <span className="text-xs text-slate-400">· {ageRangeLabel(r.ageRange)}</span>}
                       </div>
                       {r.notes && <p className="text-xs text-slate-500 italic mb-1.5">"{r.notes}"</p>}
                       <div className="space-y-1.5">

@@ -75,7 +75,7 @@ describe("browse_job_board — the sidebar filters pass through, validated", () 
   it("the schema offers exactly the page's sidebar (no distance control) plus refine", () => {
     const tool = MCP_TOOLS.find((t) => t.name === "browse_job_board")!;
     const props = (tool.input_schema as any).properties;
-    expect(Object.keys(props.filters.properties).sort()).toEqual(["careTypes", "days", "payMax", "payMin", "search", "seniors", "timeOfDay"]);
+    expect(Object.keys(props.filters.properties).sort()).toEqual(["careType", "careTypes", "days", "payMax", "payMin", "search", "seniors", "timeOfDay"]); // careType = the Care type view filter (Both accounts only, 2026-10-18)
     expect(props.radiusMiles).toBeUndefined();
     expect(props.refine.type).toBe("boolean");
     expect(props.filters.properties.timeOfDay.items.enum).toEqual(["morning", "afternoon", "evening", "overnight"]);

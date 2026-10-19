@@ -11,6 +11,7 @@ import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
   CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds,
+  CARE_TYPE_QUESTION_PROVIDER, CARE_TYPE_OPTION_LABELS,
   serviceLabel,
   EXPERIENCE_LEVELS,
   JOB_TYPES,
@@ -79,7 +80,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       thursday: [], friday: [], saturday: [],
     },
     neverAvailable: [],
-    careKinds: ['senior'],
+    careKinds: [], // starts UNPICKED — the services step requires an answer (founder, 2026-10-18 late)
     selectedServices: [],
     yearsExperience: '',
     hourlyRate: '',
@@ -133,7 +134,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         maxClients:          p.maxClients    ? String(p.maxClients)    : '',
         serviceRadius:       p.serviceRadius ? String(p.serviceRadius) : '10',
         selectedServices:    loadedServices,
-        careKinds:           normalizeCareKinds(p.careKinds),
+        careKinds:           Array.isArray(p.careKinds) && p.careKinds.length ? normalizeCareKinds(p.careKinds) : [],
         yearsExperience:     p.yearsExperience || p.experience || '',
         jobTypes:            Array.isArray(p.jobTypes) ? p.jobTypes : [],
         profilePhoto:        p.photo ? { file: null, preview: p.photo } : prev.profilePhoto,
@@ -258,6 +259,9 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   };
 
   const handleSaveServices = async () => {
+    if (form.careKinds.length === 0) {
+      onShowToast(CARE_TYPE_QUESTION_PROVIDER, 'error'); return;
+    }
     if (form.selectedServices.length === 0) {
       onShowToast('Please select at least one service you offer', 'error'); return;
     }
@@ -841,9 +845,9 @@ const AvailabilityStep: React.FC<{
 // ─── Services Step ─────────────────────────────────────────────────────────────
 
 const CARE_KIND_CHOICES: Array<{ value: CareKind[]; label: string }> = [
-  { value: ['senior'], label: CARE_KIND_LABEL.senior },
-  { value: ['child'], label: CARE_KIND_LABEL.child },
-  { value: ['senior', 'child'], label: 'Both' },
+  { value: ['senior'], label: CARE_TYPE_OPTION_LABELS[0] },
+  { value: ['child'], label: CARE_TYPE_OPTION_LABELS[1] },
+  { value: ['senior', 'child'], label: CARE_TYPE_OPTION_LABELS[2] },
 ];
 const sameKinds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(k => b.includes(k));
 
@@ -864,9 +868,11 @@ const ServicesStep: React.FC<{
     onChange('careKinds', kinds);
     onChange('selectedServices', selectedServices.filter(s => serviceListsForKinds(kinds).some(l => (l.services as readonly string[]).includes(s))));
   };
-  const lists = serviceListsForKinds(careKinds);
+  const picked = careKinds.length > 0;
+  const lists = picked ? serviceListsForKinds(careKinds) : [];
 
   const handleNext = () => {
+    if (!picked) { onShowToast(CARE_TYPE_QUESTION_PROVIDER, 'error'); return; }
     if (selectedServices.length === 0) { onShowToast('Please select at least one service', 'error'); return; }
     if (!yearsExperience) { onShowToast('Please select your years of experience', 'error'); return; }
     onNext();
@@ -874,13 +880,12 @@ const ServicesStep: React.FC<{
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-xl font-bold text-slate-800 text-center">What services do you offer?</h2>
+      <h2 className="text-xl font-bold text-slate-800 text-center">{CARE_TYPE_QUESTION_PROVIDER}</h2>
 
       <div>
-        <p className="text-sm font-semibold text-slate-700 mb-2">What care do you provide?</p>
         <div className="grid grid-cols-3 gap-2 mb-4">
           {CARE_KIND_CHOICES.map(choice => {
-            const on = sameKinds(normalizeCareKinds(careKinds), choice.value);
+            const on = sameKinds(careKinds, choice.value);
             return (
               <button key={choice.label} type="button" onClick={() => pickKinds(choice.value)}
                 className={`px-3 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ${on ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>
@@ -891,9 +896,10 @@ const ServicesStep: React.FC<{
         </div>
       </div>
 
+      {picked && <h3 className="text-base font-bold text-slate-800 text-center">What services do you offer?</h3>}
       {lists.map(list => (
       <div key={list.kind}>
-        <p className="text-sm font-semibold text-slate-700 mb-2">{CARE_KIND_LABEL[list.kind]} — select all that apply</p>
+        <p className="text-sm font-semibold text-slate-700 mb-2">{lists.length > 1 ? `${CARE_KIND_LABEL[list.kind]} — select all that apply` : 'Select all that apply'}</p>
         <div className="flex flex-col gap-2">
           {list.services.map(service => {
             const isOn = selectedServices.includes(service);
@@ -926,7 +932,7 @@ const ServicesStep: React.FC<{
         </select>
       </div>
 
-      <button onClick={handleNext} disabled={isLoading}
+      <button onClick={handleNext} disabled={isLoading || !picked}
         className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
         {isLoading ? <><Loader2 size={16} className="animate-spin" />Saving…</> : 'Continue'}
       </button>

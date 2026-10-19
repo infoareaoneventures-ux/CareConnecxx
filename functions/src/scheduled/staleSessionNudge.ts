@@ -11,7 +11,7 @@ import {
   BIO_MIN_CHARS, CAREGIVER_COLLECTION_STEPS, CLIENT_COLLECTION_STEPS, EXPERIENCE_BUCKETS,
   RATE_EXAMPLE, TRAVEL_RADIUS_OPTIONS, availabilityComplete, isFieldFilled, missingRequiredFields,
 } from "../agents/onboardingContract";
-import { SERVICE_LABELS } from "../agents/caregiverServiceLabels";
+import { SERVICE_LABELS, CARE_TYPE_QUESTION_FAMILY_LINE, CARE_TYPE_QUESTION_PROVIDER_LINE } from "../agents/caregiverServiceLabels";
 
 // The ONE onboarding reminder (caregiver sweep A8, founder 2026-10-11 — the
 // 48h stale nudge, the 7-day stuck-gate resend and the daily re-engagement
@@ -77,6 +77,7 @@ const CAREGIVER_FIELD_QUESTIONS: Record<string, string> = {
   state:          "What's your street address and ZIP code?",
   jobType:        "What kind of work are you looking for — occasional shifts, part-time, or full-time?",
   availability:   "Which days of the week and times of day (morning, afternoon, evening, overnight) are you available?",
+  careKinds:      CARE_TYPE_QUESTION_PROVIDER_LINE,
   specialties:    `Which care services do you offer? ${SERVICE_LABELS.join(", ")}.`,
   yearsExperience: `How many years of care experience do you have? (${EXPERIENCE_BUCKETS.join(", ")})`,
   hourlyRate:     `What's your hourly rate? (for example $${RATE_EXAMPLE})`,
@@ -93,8 +94,9 @@ const CLIENT_FIELD_QUESTIONS: Record<string, string> = {
   zipCode:              "What's the ZIP code where care will take place?",
   startDate:            "When would you like care to start, and which days of the week?",
   selectedDays:         "When would you like care to start, and which days of the week?",
-  relationship:         "Who is the care for? (Their name and your relationship to them — or just say it's for you)",
-  seniorName:           "Who is the care for? (Their name and your relationship to them — or just say it's for you)",
+  careKinds:            CARE_TYPE_QUESTION_FAMILY_LINE,
+  relationship:         "What's your relationship to the person needing care, and their name? (Or just say it's for you)",
+  seniorName:           "What's your relationship to the person needing care, and their name? (Or just say it's for you)",
   emergencyContactName: "Who should we list as the emergency contact? (Name and phone number)",
   emergencyContactPhone: "Who should we list as the emergency contact? (Name and phone number)",
   careNeeds:            "What kind of help do they need day to day?",

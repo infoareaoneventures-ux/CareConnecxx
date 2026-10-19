@@ -8,11 +8,15 @@
  * Evia-written plans become invisible in the web tabs.
  */
 
+import { stageOf } from "./caregiverServiceLabels";
+
 export interface CareRecipient {
   name:          string;   // first name (conversational capture is first-name based)
   relationship?: string;   // account holder's relationship to them (mother, father, ...)
-  /** Only for the relationship "Other" (child care, 2026-10-18): the family's two-way pick, older adult or child. */
+  /** Only for the relationship "Other" (child care, 2026-10-18): the family's two-way pick, adult or child. */
   careKind?: "senior" | "child";
+  /** ONE stage per child (AGE_RANGES id) — set on the child, never on the post (2026-10-18 late). */
+  ageRange?: string;
 }
 
 // Evia's internal "self" sentinel (checked throughout onboardingSteps.client.ts/
@@ -25,7 +29,9 @@ export interface CareRecipient {
 // vocabulary and passes through unchanged.
 export function toWebsiteRelationship(value: string | undefined | null): string | undefined {
   if (!value) return undefined;
-  return value === "self" ? "myself" : value;
+  if (value === "self") return "myself";
+  if (value.trim().toLowerCase() === "adult child") return "Adult child";
+  return value;
 }
 
 // Mirrors components/CarePlan.tsx getKey (and PostJobFlow's key builder):
@@ -97,10 +103,12 @@ export function normalizeAdditionalRecipients(raw: unknown): CareRecipient[] {
     seen.add(key);
     const relationship = (r as Record<string, unknown>).relationship;
     const careKind = (r as Record<string, unknown>).careKind;
+    const ageRange = stageOf(r as { ageRange?: unknown; ageRanges?: unknown });
     out.push({
       name,
       ...(relationship ? { relationship: String(relationship) } : {}),
       ...(careKind === "child" || careKind === "senior" ? { careKind } : {}),
+      ...(ageRange ? { ageRange } : {}),
     });
   }
   return out;
@@ -146,10 +154,14 @@ export function describeWhoIsWho(d: Record<string, unknown>): string {
 export function allCareRecipients(d: Record<string, unknown>): CareRecipient[] {
   const primaryName = String(d.seniorName ?? "").trim();
   const websiteRelationship = toWebsiteRelationship(d.relationship ? String(d.relationship) : undefined);
+  const primaryStage = stageOf(d as { ageRange?: unknown; ageRanges?: unknown });
+  const primaryKind = d.careKind === "child" || d.careKind === "senior" ? d.careKind : undefined;
   const primary: CareRecipient[] = primaryName
     ? [{
         name: primaryName,
         ...(websiteRelationship ? { relationship: websiteRelationship } : {}),
+        ...(primaryKind ? { careKind: primaryKind } : {}),
+        ...(primaryStage ? { ageRange: primaryStage } : {}),
       }]
     : [];
   const primaryKey = primaryName ? recipientPlanKey(primaryName) : "";

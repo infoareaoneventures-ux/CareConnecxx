@@ -12,7 +12,7 @@ import {
   OnboardingStepId,
 } from '../../hooks/useOnboardingProgress';
 import { startIdentityVerification } from '../../services/stripeService';
-import { defaultJobTitle, kindsOfServices } from '../caregiver/signup/constants';
+import { defaultJobTitle, kindsOfServices, stagesOfRecipients } from '../caregiver/signup/constants';
 import { db } from '../../lib/firebase';
 import { dbService } from '../../services/api';
 
@@ -110,7 +110,14 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
           description: w.jobDescription || 'Looking for a caring and reliable care provider.',
           careTypes: w.careNeeds || [],
           careKinds: kindsOfServices(w.careNeeds || [], w.careKinds),
-          ...(Array.isArray(w.ageRanges) && w.ageRanges.length && kindsOfServices(w.careNeeds || [], w.careKinds).includes('child') ? { ageRanges: w.ageRanges } : {}),
+          ...((() => {
+            // One stage per child (2026-10-18): the roster's per-child stages; the older household list only as a fallback.
+            const roster = [{ relationship: w.relationship, careKind: w.careRecipientCareKind, ageRange: w.careRecipientAgeRange }, ...((w.additionalRecipients || []) as any[])];
+            const stages = stagesOfRecipients(roster, w.careKinds);
+            const legacy = Array.isArray(w.ageRanges) ? (w.ageRanges as string[]) : [];
+            const ids = stages.length ? stages : legacy;
+            return ids.length && kindsOfServices(w.careNeeds || [], w.careKinds).includes('child') ? { ageRanges: ids } : {};
+          })()),
           requirements: w.careNeeds || [],
           startDate: w.startDate || new Date().toISOString().split('T')[0],
           city,

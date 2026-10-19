@@ -3,7 +3,7 @@ import { Check } from 'lucide-react';
 import { StepProps, CareRecipientEntry } from './types';
 import {
   serviceLabel, CARE_KIND_LABEL, CareKind, normalizeCareKinds, serviceListsForKinds,
-  AGE_RANGES, kindsOfServices, rosterCareKinds,
+  AGE_RANGES, STAGE_HEADING, kindsOfServices, rosterCareKinds, recipientCareKind, recipientStage, stagesOfRecipients,
 } from '../../caregiver/signup/constants';
 import { useCareConnex } from '../../../context/CareConnexContext';
 import { db } from '../../../lib/firebase';
@@ -14,10 +14,11 @@ import { db } from '../../../lib/firebase';
 // always {}. There is NO question on this step (founder, 2026-10-18 evening):
 // the household picked its care type once (signup / Account Settings →
 // job_postings.careKinds) and the list(s) here follow the RECIPIENTS picked on
-// Step 2 — a senior gets the senior list, a child the child list plus the
-// age-range chips (informational, like pets and smoking — never a filter),
-// both picked together get both lists under their own headings. A senior-care
-// household sees exactly what this step always showed.
+// Step 2 — a senior gets the senior list, a child the child list, both picked
+// together get both lists under their own headings. A senior-care household
+// sees exactly what this step always showed. The stage lives ON THE CHILD
+// (one per child, founder 2026-10-18 late): this step asks it only for a picked
+// child who has none yet, and the post's `ageRanges` = the children's stages.
 
 /** The kinds this post can show: the picked recipients' kinds, kept inside the household's setting; no recipients yet → the setting. */
 export function postCareKinds(recipients: readonly CareRecipientEntry[], householdKinds: unknown): CareKind[] {
@@ -54,7 +55,7 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
       const cp = snap.data() as any;
       const rp = cp?.recipientPlans?.[key];
       if (rp?.careNeeds?.length) {
-        onChange({ careTypes: rp.careNeeds, careNeedDetails: {}, ...(Array.isArray(rp.ageRanges) ? { ageRanges: rp.ageRanges } : {}) });
+        onChange({ careTypes: rp.careNeeds, careNeedDetails: {} });
       }
     }).catch(() => {}).finally(() => setDidPrepopulate(true));
   }, [currentUser?.uid]);
@@ -63,6 +64,17 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
   const lists = serviceListsForKinds(kinds);
   const visible = new Set(lists.flatMap(l => [...l.services]));
   const childOn = kinds.includes('child');
+  const recipientKey = (r: CareRecipientEntry) => `${r.firstName}|${r.lastName || ''}|${r.relationship}`;
+  // The children who arrived here without a stage keep their row while the family is on this step (so a pick can be changed).
+  const [askStageFor] = useState<string[]>(() => {
+    if (!normalizeCareKinds(data.careKinds).includes('child')) return [];
+    return data.careRecipients.filter(r => recipientCareKind(r.relationship, r.careKind) === 'child' && !recipientStage(r)).map(recipientKey);
+  });
+  const stageRows = data.careRecipients.filter(r => askStageFor.includes(recipientKey(r)));
+  const childrenOnPost = data.careRecipients.filter(r => recipientCareKind(r.relationship, r.careKind) === 'child').length;
+  const pickStage = (r: CareRecipientEntry, id: string) => {
+    onChange({ careRecipients: data.careRecipients.map(x => (recipientKey(x) === recipientKey(r) ? { ...x, ageRange: id } : x)) });
+  };
 
   const toggleCareType = (ct: string) => {
     if (data.careTypes.includes(ct)) {
@@ -72,10 +84,6 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
     }
   };
 
-  const toggleAgeRange = (id: string) => {
-    onChange({ ageRanges: data.ageRanges.includes(id) ? data.ageRanges.filter(a => a !== id) : [...data.ageRanges, id] });
-  };
-
   const handleContinue = () => {
     const chosen = data.careTypes.filter(ct => visible.has(ct));
     if (chosen.length === 0) {
@@ -83,12 +91,14 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
       return;
     }
     const postKinds = kindsOfServices(chosen, kinds);
-    if (postKinds.includes('child') && data.ageRanges.length === 0) {
-      onShowToast("Please pick the child's age range", 'error');
+    const missing = childOn ? data.careRecipients.find(r => recipientCareKind(r.relationship, r.careKind) === 'child' && !recipientStage(r)) : undefined;
+    if (missing) {
+      onShowToast(childrenOnPost > 1 ? `Please pick ${missing.firstName}'s stage` : "Please pick the child's stage", 'error');
       return;
     }
-    if (chosen.length !== data.careTypes.length) onChange({ careTypes: chosen });
-    if (!childOn && data.ageRanges.length) onChange({ ageRanges: [] });
+    // The post's `ageRanges` are just the picked children's stages (one per child).
+    const stages = postKinds.includes('child') ? stagesOfRecipients(data.careRecipients, data.careKinds) : [];
+    onChange({ ...(chosen.length !== data.careTypes.length ? { careTypes: chosen } : {}), ageRanges: stages });
     onContinue();
   };
 
@@ -123,14 +133,14 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
                 );
               })}
             </div>
-            {list.kind === 'child' && childOn && (
-              <div className="mt-3">
-                <p className="text-sm font-semibold text-slate-700 mb-2">Age range</p>
+            {list.kind === 'child' && childOn && stageRows.map(r => (
+              <div className="mt-3" key={recipientKey(r)}>
+                <p className="text-sm font-semibold text-slate-700 mb-2">{childrenOnPost > 1 ? `${STAGE_HEADING} — ${r.firstName}` : STAGE_HEADING}</p>
                 <div className="flex flex-wrap gap-2">
                   {AGE_RANGES.map(a => {
-                    const on = data.ageRanges.includes(a.id);
+                    const on = recipientStage(r) === a.id;
                     return (
-                      <button key={a.id} type="button" onClick={() => toggleAgeRange(a.id)}
+                      <button key={a.id} type="button" onClick={() => pickStage(r, a.id)}
                         className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${on ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-300 bg-white text-slate-700 hover:border-primary-400'}`}>
                         {a.label}
                       </button>
@@ -138,7 +148,7 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
                   })}
                 </div>
               </div>
-            )}
+            ))}
           </div>
         ))}
       </div>

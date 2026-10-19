@@ -40,7 +40,7 @@ export interface WebJobPostInput {
   careTypes?:       string[];
   /** Child care (2026-10-18): the household's / flow's answer — the post's kinds are derived from careTypes, this only decides a Transportation-only post. */
   careKinds?:       unknown;
-  /** The age-range chips (AGE_RANGES ids) — kept only when the post's kinds include child. */
+  /** The stages (AGE_RANGES ids) of the children on the post — kept only when the post's kinds include child. */
   ageRanges?:       unknown;
   careLevel?:       string;
   startDate?:       string;                  // "2026-08-01" or "ASAP" or free text

@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { recipientPlanKey, resolveRecipientKey, normalizeAdditionalRecipients, allCareRecipients, CareRecipient } from "./careRecipients";
 import { buildWebJobPostDoc, defaultJobTitle } from "./jobPostContract";
-import { kindsOfServices, ageRangesFromWords } from "./caregiverServiceLabels";
+import { kindsOfServices, recipientCareKind, stageOf } from "./caregiverServiceLabels";
 import { resolveJobPostPoint } from "./jobPostCoords";
 import { buildJobPostingsDoc, buildCarePlanLocationEntry, mapJobPostingsDocToOnboardingData } from "./clientJobPostingContract";
 
@@ -29,12 +29,15 @@ function unionRecipientsByName(base: CareRecipient[], extra: CareRecipient[]): C
   const seen = new Set(base.map((r) => recipientPlanKey(r.name)));
   for (const r of extra) {
     const key = recipientPlanKey(r.name);
-    if (!seen.has(key)) { seen.add(key); out.push(r); }
+    if (!seen.has(key)) { seen.add(key); out.push(r); continue; }
+    // A stage set on this job for a child already on the roster lands on that child (never on the post).
+    const idx = out.findIndex((o) => recipientPlanKey(o.name) === key);
+    if (idx >= 0 && r.ageRange && !out[idx].ageRange) out[idx] = { ...out[idx], ageRange: r.ageRange };
   }
   return out;
 }
 
-type JobDataRecipient = { firstName: string; lastName?: string; relationship?: string; isSelf?: boolean; careKind?: "senior" | "child" };
+type JobDataRecipient = { firstName: string; lastName?: string; relationship?: string; isSelf?: boolean; careKind?: "senior" | "child"; ageRange?: string };
 
 function jobRecipientName(r: JobDataRecipient, onboardingData: Record<string, unknown>): string {
   return r.isSelf
@@ -82,7 +85,7 @@ export async function buildAndSaveJobPost(params: {
     const primaryKey = recipientPlanKey(rosterSeniorName);
     const thisJobExtras: CareRecipient[] = jobRecipients
       .filter((r) => recipientPlanKey(jobRecipientName(r, onboardingData)) !== primaryKey)
-      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? ""), ...(r.careKind ? { careKind: r.careKind } : {}) }));
+      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? ""), ...(r.careKind ? { careKind: r.careKind } : {}), ...(r.ageRange ? { ageRange: r.ageRange } : {}) }));
     rosterAdditional = unionRecipientsByName(
       normalizeAdditionalRecipients(siteState.additionalRecipients),
       thisJobExtras,
@@ -99,7 +102,7 @@ export async function buildAndSaveJobPost(params: {
     rosterRelationship = primary.isSelf ? "self" : (primary.relationship ?? (onboardingData.relationship as string) ?? "");
     rosterAdditional = jobRecipients
       .filter((_, i) => i !== primaryIdx)
-      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? ""), ...(r.careKind ? { careKind: r.careKind } : {}) }));
+      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? ""), ...(r.careKind ? { careKind: r.careKind } : {}), ...(r.ageRange ? { ageRange: r.ageRange } : {}) }));
   } else {
     // Legacy fallback — a session that predates the who/where step, or a
     // direct MCP call that skipped it.
@@ -114,6 +117,9 @@ export async function buildAndSaveJobPost(params: {
     relationship: rosterRelationship,
     additionalRecipients: rosterAdditional,
   };
+  // The primary recipient's stage (a child only) rides on onboardingData.ageRange → job_postings.careRecipientAgeRange.
+  const primaryOnJob = jobRecipients.find((r) => recipientPlanKey(jobRecipientName(r, onboardingData)) === recipientPlanKey(rosterSeniorName));
+  if (primaryOnJob?.ageRange) effectiveOnboarding.ageRange = primaryOnJob.ageRange;
   if (hasJobLocation) {
     effectiveOnboarding.street  = jobData.streetAddress;
     effectiveOnboarding.zipCode = jobData.zipCode;
@@ -135,7 +141,14 @@ export async function buildAndSaveJobPost(params: {
   // Child care (2026-10-18): the post's kinds follow the ticked services; a Transportation-only post
   // falls back to the answer given in the flow, else the household's record, else senior.
   const careKinds      = kindsOfServices(careNeeds, jobData.jobCareKinds ?? onboardingData.careKinds);
-  const ageRanges      = careKinds.includes("child") ? ageRangesFromWords(jobData.ageRanges ?? onboardingData.ageRanges) : [];
+  // ONE stage per child (2026-10-18 late): the post carries the stages of the children on it (set on each child).
+  const postRecipients = Array.isArray(jobData.careRecipients) ? (jobData.careRecipients as Array<Record<string, unknown>>) : [];
+  const childStages = postRecipients
+    .filter((r) => recipientCareKind(r.isSelf ? "Myself" : r.relationship, r.careKind) === "child")
+    .map((r) => stageOf(r as { ageRange?: unknown; ageRanges?: unknown }))
+    .filter((s): s is string => !!s);
+  const legacyStage = stageOf(onboardingData as { ageRange?: unknown; ageRanges?: unknown });
+  const ageRanges      = careKinds.includes("child") ? (childStages.length ? Array.from(new Set(childStages)) : (legacyStage ? [legacyStage] : [])) : [];
   if (Array.isArray(jobData.jobCareKinds) && jobData.jobCareKinds.length) effectiveOnboarding.careKinds = jobData.jobCareKinds;
   const careNeedDetails: Record<string, string[]> = {}; // sub-tasks left the family screens 2026-10-04
   const careLevel      = (jobData.jobCareLevel     ?? "moderate") as string;
@@ -153,7 +166,7 @@ export async function buildAndSaveJobPost(params: {
   // and care-plan writes below — distinct from the account-wide roster
   // computed above, which only ever grows.
   const recipients: CareRecipient[] = jobRecipients.length > 0
-    ? jobRecipients.map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? "") }))
+    ? jobRecipients.map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? ""), ...(r.careKind ? { careKind: r.careKind } : {}), ...(r.ageRange ? { ageRange: r.ageRange } : {}) }))
     : allCareRecipients(onboardingData);
   const recipientsCount = recipients.length || 1;
 
@@ -224,7 +237,7 @@ export async function buildAndSaveJobPost(params: {
       // careNeedDetails stays in the shape (always {}) — the sub-task chips were
       // dropped from every family screen 2026-10-04.
       careNeedDetails,
-      ...(ageRanges.length ? { ageRanges } : {}), // child care (2026-10-18): the chips, on a child's plan only
+      ...((r as CareRecipient).ageRange ? { ageRange: (r as CareRecipient).ageRange } : {}), // ONE stage per child, on the child's plan (2026-10-18 late)
       careLevel,
       // (no `conditions` — diagnoses are out of scope; the site never writes them)
       // No `notes` here (founder, 2026-10-09): the job description is the PUBLIC post's only; the care plan's

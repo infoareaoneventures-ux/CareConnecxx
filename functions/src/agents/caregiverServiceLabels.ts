@@ -117,6 +117,31 @@ export function ageRangesFromWords(value: unknown): string[] {
   return AGE_RANGES.map((a) => a.id).filter((id) => out.includes(id));
 }
 
+/** ONE stage per child (founder 2026-10-18 late): the first stage named, as its id — or null. */
+export function ageRangeFromWords(value: unknown): string | null {
+  const ids = ageRangesFromWords(value);
+  return ids.length ? ids[0] : null;
+}
+
+/** A recipient's stored stage: the single `ageRange` id, else the first of a legacy `ageRanges` array; null when none. */
+export function stageOf(r: { ageRange?: unknown; ageRanges?: unknown } | null | undefined): string | null {
+  if (!r) return null;
+  if (typeof r.ageRange === "string" && AGE_RANGE_IDS.includes(r.ageRange)) return r.ageRange;
+  if (Array.isArray(r.ageRanges)) { const first = r.ageRanges.find((v) => typeof v === "string" && AGE_RANGE_IDS.includes(v)); if (first) return first as string; }
+  return null;
+}
+
+/** The sentence that asks a child's stage, by name when the post names more than one child. */
+export function stageQuestion(firstName?: string | null): string {
+  const names = AGE_RANGES.map((a) => a.label);
+  const list = `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`;
+  return firstName ? `Which stage is ${firstName} at — ${list}?` : `Which stage — ${list}?`;
+}
+
+/** The one care-type line, spoken (the same words as the site's heading, with the three choices). */
+export const CARE_TYPE_QUESTION_FAMILY_LINE = "What kind of care do you need — senior care, child care, or both?";
+export const CARE_TYPE_QUESTION_PROVIDER_LINE = "What kind of care do you provide — senior care, child care, or both?";
+
 /** "Child care" / "Senior and child care" — the badge a card shows only when child care is involved; null for senior-only. */
 export function careKindBadge(kinds: unknown): string | null {
   const k = normalizeCareKinds(kinds);
@@ -138,20 +163,34 @@ export function providerMatchesHousehold(providerKinds: unknown, householdKinds:
 
 // Age ranges for a child — an informational chip beside pets / smoking, never a
 // filter, never a number (the no-age rule stays for everyone else).
+// Labels are STAGE words, never numbers (founder 2026-10-18): the stored ids stay.
 export const AGE_RANGES = [
   { id: "infant", label: "Infant" },
   { id: "toddler", label: "Toddler" },
-  { id: "3-5", label: "Ages 3–5" },
-  { id: "6-12", label: "Ages 6–12" },
+  { id: "3-5", label: "Preschooler" },
+  { id: "6-12", label: "School-age" },
   { id: "teen", label: "Teen" },
 ] as const;
+/** The heading over the stage chips, both doors. */
+export const STAGE_HEADING = "Stage";
 export type AgeRangeId = (typeof AGE_RANGES)[number]["id"];
 export const ageRangeLabel = (id: string): string => AGE_RANGES.find((a) => a.id === id)?.label ?? id;
 export const AGE_RANGE_IDS: readonly string[] = AGE_RANGES.map((a) => a.id);
 
-// The relationship list, the same five on both doors (founder, 2026-10-18).
-// Older stored values (Grandparent, Sibling, Spouse) still read back as-is.
-export const RELATIONSHIPS = ["Myself", "Parent", "Spouse or Partner", "Child", "Other"] as const;
+// The relationship list, the same SIX on both doors (founder, 2026-10-18 late):
+// "Adult child" = a grown son or daughter — senior side; "Child" = a minor —
+// child side. Older stored values (Grandparent, Sibling, Spouse) still read back.
+export const RELATIONSHIPS = ["Myself", "Parent", "Spouse or Partner", "Adult child", "Child", "Other"] as const;
+
+// The ONE care-type question, asked once at signup and changed in one place —
+// the same sentence on both doors (founder 2026-10-18). Labels stay
+// Senior care / Child care / Both. "Adult or a child" survives only in the
+// follow-up for Other.
+export const CARE_TYPE_QUESTION_FAMILY = "What kind of care do you need?";
+export const CARE_TYPE_QUESTION_PROVIDER = "What kind of care do you provide?";
+export const CARE_TYPE_OPTION_LABELS = ["Senior care", "Child care", "Both"] as const;
+export const OTHER_KIND_QUESTION = "Is this person an adult or a child?";
+export const OTHER_KIND_OPTIONS = [{ value: "senior", label: "Adult" }, { value: "child", label: "Child" }] as const;
 
 // ── Who decides a recipient's kind (founder, 2026-10-18 evening) ────────────
 // The family picks the household's care type ONCE (signup / Account Settings:

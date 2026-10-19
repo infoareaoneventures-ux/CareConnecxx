@@ -30,7 +30,7 @@
 
 // Pure helpers only (no I/O) — caregiverAvailability is itself a leaf module.
 import { normalizeDays, hasTimeOfDaySignal } from "./caregiverAvailability";
-import { careKindsFromWords, ageRangesFromWords } from "./caregiverServiceLabels";
+import { careKindsFromWords, ageRangesFromWords, ageRangeFromWords } from "./caregiverServiceLabels";
 
 export type OnboardingRole = "client" | "caregiver";
 
@@ -106,6 +106,8 @@ export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   // NOT required there (still asked; a "not sure" may leave it empty), and
   // flexible-only days satisfy selectedDays (see missingRequiredFields).
   "startDate", "selectedDays",
+  // Step 8 — the ONE care-type question (child care, 2026-10-18 late): required, asked before the relationship
+  "careKinds",
   // Step 8/9 — who
   "relationship", "seniorName",
   // Step 10 — emergency contact (at minimum a name + phone)
@@ -137,6 +139,9 @@ export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
   "street", "zipCode", "city", "state",
   "profilePhoto",
   "jobType", "availability",
+  // The care-type question (child care, 2026-10-18 late): required for a signup still at the services step —
+  // see missingRequiredFields (a finished record without it keeps reading as senior; never re-opened).
+  "careKinds",
   "specialties", "yearsExperience",
   "hourlyRate", "serviceRadius",
   "email", "bio",
@@ -217,8 +222,8 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   // Multi-recipient household
   "additionalRecipients",
   // Child care (2026-10-18): who the care is for — ["senior"] / ["child"] / both — asked once where the
-  // recipient is named; and, only when child is among them, the age-range chips (never a number).
-  "careKinds", "ageRanges",
+  // recipient is named; and, only for a child, that child's stage by name (ageRange — never a number).
+  "careKinds", "ageRanges", "ageRange", "careKind",
   // Home address (account holder's address — distinct from care address).
   // homeZipCode is required (see CLIENT_REQUIRED_FIELDS); the rest are allowed.
   "homeStreet", "homeCity", "homeState",
@@ -309,7 +314,7 @@ const CLIENT_FIELD_ALIASES: Record<string, string> = {
   numberofcaregivers: "caregiversNeeded", caregivercount: "caregiversNeeded",
   recipientname: "seniorName", carerecipientname: "seniorName", lovedonename: "seniorName",
   carekind: "careKinds", carekinds: "careKinds", kindofcare: "careKinds", carefor: "careKinds", whoisthecarefor: "careKinds", caretypekind: "careKinds",
-  agerange: "ageRanges", ageranges: "ageRanges", childage: "ageRanges", childages: "ageRanges", kidsages: "ageRanges",
+  agerange: "ageRange", ageranges: "ageRange", childage: "ageRange", childages: "ageRange", kidsages: "ageRange", stage: "ageRange", childstage: "ageRange",
   emailaddress: "email",
   homeaddress: "homeStreet", homestreetaddress: "homeStreet", homezip: "homeZipCode", homezipcode: "homeZipCode",
   careaddress: "street", carestreet: "street", carezip: "zipCode", carezipcode: "zipCode", zip: "zipCode",
@@ -391,6 +396,9 @@ const RELATIONSHIP_CANON: Record<string, string> = {
   "grandparent": "parent", "grandmother": "parent", "grandfather": "parent", "grandma": "parent", "grandpa": "parent",
   "child": "child", "kid": "child", "son": "child", "daughter": "child", "my son": "child", "my daughter": "child",
   "grandchild": "child", "grandson": "child", "granddaughter": "child", "baby": "child", "toddler": "child",
+  // "Adult child" (senior side, 2026-10-18 late): a grown son or daughter — the senior list, not the child one.
+  "adult child": "adult child", "adult son": "adult child", "adult daughter": "adult child", "grown son": "adult child",
+  "grown daughter": "adult child", "grown child": "adult child", "my adult son": "adult child", "my adult daughter": "adult child",
   "spouse": "spouse", "wife": "spouse", "husband": "spouse", "partner": "spouse", "spouse or partner": "spouse",
   "myself": "self", "me": "self",
 };
@@ -433,7 +441,7 @@ export function normalizeOnboardingFieldValue(fieldName: string, value: unknown)
     if (key === "parent" || key === "spouse" || key === "other" || key === "child") return key;
     return RELATIONSHIP_CANON[key] ?? "other";
   }
-  // Child care (2026-10-18): the kinds question and the age-range chips are constrained answers —
+  // Child care (2026-10-18): the kinds question and a child's stage are constrained answers —
   // canonicalized here so a save_onboarding_field("careKinds", "child care") lands as ["child"].
   if (fieldName === "careKinds") {
     const kinds = careKindsFromWords(value);
@@ -442,6 +450,16 @@ export function normalizeOnboardingFieldValue(fieldName: string, value: unknown)
   if (fieldName === "ageRanges") {
     const ids = ageRangesFromWords(value);
     return ids.length ? ids : value;
+  }
+  // Only for the relationship 'other' in a Both household: the site's two-way pick (Adult → senior, Child → child).
+  if (fieldName === "careKind") {
+    const kinds = careKindsFromWords(value);
+    return kinds && kinds.length === 1 ? kinds[0] : value;
+  }
+  // ONE stage per child (2026-10-18 late): a single id, the first stage named.
+  if (fieldName === "ageRange") {
+    const id = ageRangeFromWords(value);
+    return id ?? value;
   }
   if (fieldName in NUMERIC_FIELD_RANGE) {
     const n = coerceNumericOnboardingField(fieldName, value);
@@ -567,6 +585,9 @@ export function missingRequiredFields(
   return requiredFieldsForRole(role).filter((f) => {
     // Availability needs BOTH days and parts of the day (the wizard's two pickers).
     if (role === "caregiver" && f === "availability") return !availabilityComplete(d.availability);
+    // careKinds is asked right before the services; a session that already finished the services step
+    // without it is a pre-2026-10-18 signup and reads as senior — never re-opened (founder's rule).
+    if (role === "caregiver" && f === "careKinds") return !isFieldFilled(d.careKinds) && !isFieldFilled(d.specialties);
     // Wizard canAdvanceAt(6): `selectedDays.length > 0 || daysFlexible` — a
     // family whose days are flexible with no fixed days is complete.
     if (role === "client" && f === "selectedDays" && d.daysFlexible === true) return false;

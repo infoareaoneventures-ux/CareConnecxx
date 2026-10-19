@@ -1,4 +1,4 @@
-import { serviceLabel } from '../caregiver/signup/constants';
+import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
 import React, { useState } from 'react';
 import { CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -16,7 +16,7 @@ export interface VisitProgressShift {
   tasksCompleted?: string[];
   careNeeds?: string[];
   careRecipients?: Array<{
-    name: string; relationship?: string; age?: string; photoURL?: string | null;
+    name: string; relationship?: string; ageRange?: string; age?: string; photoURL?: string | null;
     careNeeds?: string[]; careNeedDetails?: Record<string, string[]>;
   }>;
   notesLog?: Array<{ at: string; text: string; by?: string }>;
@@ -142,7 +142,7 @@ export const VisitProgressPanel: React.FC<{ shift: VisitProgressShift; live?: bo
                           ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" />
                           : <span className="text-[9px] font-bold text-primary-600">{String(r.name || '').split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase()}</span>}
                       </div>
-                      <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}</p>
+                      <p className="text-xs font-semibold text-slate-600">{r.name}{r.relationship ? ` · ${r.relationship}` : ''}{r.ageRange ? ` · ${ageRangeLabel(r.ageRange)}` : ''}</p>
                     </div>
                     {renderCards(needs, r.careNeedDetails || {}, ri)}
                   </div>

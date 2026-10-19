@@ -28,7 +28,7 @@ export interface CompletedShift {
   loggedManually?: boolean; // true when caregiver self-reported via Log Hours modal
   paymentMethod?: string;
   rate?: number;
-  careRecipients?: Array<{ name: string; relationship?: string; age?: string; photoURL?: string | null }>;
+  careRecipients?: Array<{ name: string; relationship?: string; ageRange?: string; age?: string; photoURL?: string | null }>;
   address?: string;
   notes?: string;
 }

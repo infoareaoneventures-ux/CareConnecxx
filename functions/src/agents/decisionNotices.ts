@@ -104,7 +104,9 @@ export async function classifyDecision(text: string, pd: PendingDecision): Promi
     `If the reply names a DIFFERENT person than ${pd.party ? pd.party : "the one this item is with"} (e.g. "decline Imran" when this item is with Mahad), ` +
     `or answers AND adds a request about someone else ("yes and Imran"), reply SOMEONE_ELSE — never the choice word: a choice must be about this item only. ` +
     `A question ABOUT this same item (its time, place, pay, who it is with, what happens next) or about what those replies do → QUESTION. ` +
-    `Only a request about something else, or an unclear reply, is OTHER. Reply with ONE word only.`,
+    `A question about the person's OWN account or profile — the services or care type they provide, their rates, availability, settings, ` +
+    `"what do I currently provide", "can I change my account" — is NOT about this item even when it uses the same words (live 2026-10-19: a new-job ` +
+    `notice swallowed four such questions): reply OTHER. Only a request about something else, or an unclear reply, is OTHER. Reply with ONE word only.`,
     text,
     { maxTokens: 6 },
   ).catch(() => "OTHER");

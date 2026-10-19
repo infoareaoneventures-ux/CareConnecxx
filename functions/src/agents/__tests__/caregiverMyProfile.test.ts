@@ -68,6 +68,8 @@ describe("Care Services grouped by kind (child care, 2026-10-18)", () => {
     const one = myProfileText(await loadMyProfilePage("cg1"));
     expect(one).toContain("Care Services\nCompanionship, Transportation, Medication Reminders Only");
     expect(one).not.toContain("Senior care:");
+    expect(one).toContain("Care type: Senior care"); // stated for every provider (live 2026-10-19: "do I do senior, child or both?")
+    expect(t).toContain("Care type: Senior and child care");
   });
 });
 

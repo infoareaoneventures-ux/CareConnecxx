@@ -8,7 +8,7 @@ import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
 import { isQuestionOrOther, isBackOutRequest, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { mapCaregiverServices, orderedCanonicalServices, serviceLabels, SERVICE_LABELS, serviceMenuText } from "./caregiverServices";
-import { CHILD_SERVICE_LABELS, normalizeCareKinds, careKindsFromWords, kindsOfServices, careKindBadge, CareKind } from "./caregiverServiceLabels";
+import { CHILD_SERVICE_LABELS, normalizeCareKinds, careKindsFromWords, kindsOfServices, careKindBadge, serviceListsForKinds, CareKind } from "./caregiverServiceLabels";
 import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, BIO_MIN_CHARS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
 import { LANGUAGE_OPTIONS, JOB_TYPE_OPTIONS, MAX_CLIENTS_OPTIONS, TRAVEL_OPTIONS, jobTypeLabel } from "./caregiverMyProfile";
 
@@ -332,7 +332,7 @@ async function handleSkillsUpdate(
     }
     const raw = await parseWithClaude(
       "Parse the care provider's request to change the care services on her profile. Reply JSON: " +
-        '{"action":"add"|"remove"|"replace","skills":["each service or kind of care she named, in her words"],"careKinds":"senior | child | both — ONLY when she says which care she provides (seniors, children, or both)"}. ' +
+        '{"action":"add"|"remove"|"replace","skills":["each SERVICE she named, in her words — NOT the words senior care / child care themselves"],"careKinds":"senior | child | both — the care she names: \"remove child care\" → child with action remove; \"senior care only\" / \"switch to senior care\" → senior with action replace; \"add child care\" → child with action add; omit when she names only services"}. ' +
         "If she hasn't said yet, reply: __none__.",
       text,
       150,
@@ -383,8 +383,16 @@ async function handleSkillsUpdate(
     else proposed = mapping.matched.length ? mapping.matched : current;
     // Child care (2026-10-18): the care she provides — what she said, else what the ticked services imply,
     // always on top of what the record already says (a service from the other list adds that kind).
-    const impliedKinds = kindsOfServices(proposed, currentKinds);
-    const proposedKinds = normalizeCareKinds([...(action === "replace" && kindsSaid ? kindsSaid : [...currentKinds, ...(kindsSaid ?? [])]), ...impliedKinds]);
+    // Live 2026-10-19: "remove child care" / "senior care only" must NARROW the care type and drop that list's own services
+    // (the page's editor unticks them when a kind is switched off); only an added kind widens it.
+    let proposedKinds: CareKind[];
+    if (kindsSaid && action === "remove") proposedKinds = normalizeCareKinds(currentKinds.filter((k) => !kindsSaid!.includes(k)));
+    else if (kindsSaid && action === "replace") proposedKinds = kindsSaid;
+    else proposedKinds = normalizeCareKinds([...currentKinds, ...(kindsSaid ?? []), ...kindsOfServices(proposed, currentKinds)]);
+    if (kindsSaid && action !== "add") {
+      const kept = new Set(serviceListsForKinds(proposedKinds).flatMap((l) => l.services as readonly string[]));
+      proposed = proposed.filter((s) => kept.has(s));
+    }
     const kindsChanged = proposedKinds.join("|") !== currentKinds.join("|");
 
     if (proposed.join("|") === current.join("|") && !kindsChanged) {

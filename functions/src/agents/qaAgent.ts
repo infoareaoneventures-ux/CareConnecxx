@@ -1,4 +1,4 @@
-import { serviceLabel } from "./caregiverServiceLabels";
+import { serviceLabel, normalizeCareKinds, careKindBadge } from "./caregiverServiceLabels";
 import type Anthropic from "@anthropic-ai/sdk";
 import { quickComplete, getOpenAIClient, openAiTokenLimitParam } from "../utils/openaiClient";
 import { businessTodayStr, formatDateWithWeekday, formatHHMMForDisplay } from "../utils/scheduledTime";
@@ -418,7 +418,7 @@ export async function buildClientCoreContext(
   if (loc) parts.push(`LOCATION: ${loc}.`);
 
   const today = businessTodayStr();
-  const [planSnap, userSnap, apptSnap, bookingSnap, shiftSnap, interviewSnap] = await Promise.all([
+  const [planSnap, userSnap, apptSnap, bookingSnap, shiftSnap, interviewSnap, householdSnap] = await Promise.all([
     // carePlans (camelCase) is the real, website-facing collection
     // (components/CarePlan.tsx) — care_plans (snake_case) is a completely
     // different, disconnected collection nothing on the site ever writes to.
@@ -467,7 +467,13 @@ export async function buildClientCoreContext(
       .limit(10)
       .get()
       .catch(() => null),
+    // The household record — its care type (Account Settings › Care type; missing = senior). Child care, 2026-10-19.
+    db.collection("job_postings").doc(userId).get().catch(() => null),
   ]);
+  {
+    const hk = normalizeCareKinds((householdSnap as any)?.data?.()?.careKinds);
+    parts.push(`HOUSEHOLD CARE TYPE: ${careKindBadge(hk) ?? "Senior care"} (the Account Settings › Care type row; they change it with set_household_care_type).`);
+  }
 
   // Account status — high-hit, non-clinical state.
   const u = userSnap?.exists ? (userSnap.data() as Record<string, any>) : null;
@@ -645,6 +651,9 @@ export function buildCaregiverCoreContext(caregiver: any): string {
   if (area) parts.push(`SERVICE AREA: ${area}.`);
 
   const skillsBits: string[] = [];
+  // Child care (2026-10-18): the care they provide — missing = senior (live 2026-10-19: "do I do senior, child or both?" had no answer in context).
+  const hasServices = (Array.isArray(caregiver.skills) && caregiver.skills.length) || (Array.isArray(caregiver.services) && caregiver.services.length) || (Array.isArray(caregiver.specialties) && caregiver.specialties.length);
+  if (hasServices || (Array.isArray(caregiver.careKinds) && caregiver.careKinds.length)) skillsBits.push(`care type: ${careKindBadge(normalizeCareKinds(caregiver.careKinds)) ?? "Senior care"}`);
   const careServices = (Array.isArray(caregiver.skills) && caregiver.skills.length ? caregiver.skills : Array.isArray(caregiver.services) && caregiver.services.length ? caregiver.services : caregiver.specialties) as unknown;
   if (Array.isArray(careServices) && careServices.length) {
     skillsBits.push(`services: ${careServices.map(serviceLabel).join(", ")}`);

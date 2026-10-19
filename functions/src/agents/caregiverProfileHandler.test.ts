@@ -266,6 +266,34 @@ describe("caregiverProfileHandler", () => {
       expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ services: parked.services, skills: parked.services, careKinds: ["senior", "child"] }));
     });
 
+    it("\"remove child care\" narrows the care type to senior and drops the child list's services (live 2026-10-19: it said nothing to change)", async () => {
+      docGetMock.mockResolvedValueOnce({ exists: true, data: () => ({ careKinds: ["senior", "child"], services: ["Companionship", "Transportation", "Bathing & Dressing"], skills: ["Companionship", "Transportation", "Bathing & Dressing"] }) });
+      parseWithClaude
+        .mockResolvedValueOnce("NO")  // isQuestionOrOther
+        .mockResolvedValueOnce('{"action":"remove","skills":[],"careKinds":"child"}');
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "Remove child care", {}, CHAT, "skills");
+      const parkedJson = updateMock.mock.calls.find(c => c[0].profileUpdateValue)?.[0].profileUpdateValue;
+      expect(parkedJson).toBeTruthy();
+      const parked = JSON.parse(parkedJson);
+      expect(parked.careKinds).toEqual(["senior"]);
+      expect(parked.services).toEqual(["Companionship", "Transportation"]); // Bathing & Dressing (child list) dropped; Transportation stays (both lists)
+      const sent = String(sendMessage.mock.calls.at(-1)?.[1]);
+      expect(sent).toContain("Companionship, Transportation");
+      expect(sent).toContain("senior care");
+      expect(sent).not.toContain("nothing to change");
+    });
+
+    it("\"senior care only\" (replace) does the same without naming a service", async () => {
+      docGetMock.mockResolvedValueOnce({ exists: true, data: () => ({ careKinds: ["senior", "child"], services: ["Companionship", "Bathing & Dressing"], skills: ["Companionship", "Bathing & Dressing"] }) });
+      parseWithClaude
+        .mockResolvedValueOnce("NO")
+        .mockResolvedValueOnce('{"action":"replace","skills":[],"careKinds":"senior"}');
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "Can I change my account to senior care only", {}, CHAT, "skills");
+      const parked = JSON.parse(updateMock.mock.calls.find(c => c[0].profileUpdateValue)?.[0].profileUpdateValue);
+      expect(parked.careKinds).toEqual(["senior"]);
+      expect(parked.services).toEqual(["Companionship"]);
+    });
+
     it("an older parked array (pre-2026-10-18) still saves services and leaves careKinds alone", async () => {
       parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("YES");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "yes", { profileUpdateStep: "confirm", profileUpdateField: "skills", profileUpdateValue: JSON.stringify(["Companionship"]) }, CHAT);

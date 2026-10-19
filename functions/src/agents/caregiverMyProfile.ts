@@ -170,7 +170,8 @@ export function myProfileText(page: MyProfilePage): string {
   } else {
     lines.push(page.services.length ? page.services.map(serviceLabel).join(", ") : "No services added yet.");
   }
-  lines.push("Reply SERVICES to add or remove one.");
+  lines.push(`Care type: ${page.careKinds.length === 2 ? "Senior and child care" : CARE_KIND_LABEL[normalizeCareKinds(page.careKinds)[0]]}`);
+  lines.push("Reply SERVICES to add or remove one, or to change the care type.");
 
   lines.push("", "Rates");
   if (page.rates.length) for (const r of page.rates) lines.push(`${r.label}: $${r.rate}/hr`);

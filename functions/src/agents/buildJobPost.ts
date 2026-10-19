@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { recipientPlanKey, resolveRecipientKey, normalizeAdditionalRecipients, allCareRecipients, CareRecipient } from "./careRecipients";
 import { buildWebJobPostDoc, defaultJobTitle } from "./jobPostContract";
-import { kindsOfServices, recipientCareKind, stageOf } from "./caregiverServiceLabels";
+import { kindsOfServices, recipientCareKind, rosterCareKinds, stageOf } from "./caregiverServiceLabels";
 import { resolveJobPostPoint } from "./jobPostCoords";
 import { buildJobPostingsDoc, buildCarePlanLocationEntry, mapJobPostingsDocToOnboardingData } from "./clientJobPostingContract";
 
@@ -138,11 +138,12 @@ export async function buildAndSaveJobPost(params: {
   const zipCode       = hasJobLocation ? ((jobData.zipCode as string) ?? "") : ((onboardingData.zipCode ?? "") as string);
 
   const careNeeds      = (jobData.jobCareNeeds     ?? []) as string[];
-  // Child care (2026-10-18): the post's kinds follow the ticked services; a Transportation-only post
-  // falls back to the answer given in the flow, else the household's record, else senior.
-  const careKinds      = kindsOfServices(careNeeds, jobData.jobCareKinds ?? onboardingData.careKinds);
-  // ONE stage per child (2026-10-18 late): the post carries the stages of the children on it (set on each child).
   const postRecipients = Array.isArray(jobData.careRecipients) ? (jobData.careRecipients as Array<Record<string, unknown>>) : [];
+  // The post's kinds follow the ticked services; a Transportation-only post falls back to the kinds the flow
+  // derived, else the people on the post (a child → child, an adult → senior), else senior. Never asked (2026-10-19).
+  const recipientKinds = rosterCareKinds(postRecipients.map((r) => ({ relationship: r.isSelf ? "Myself" : r.relationship, careKind: r.careKind })));
+  const careKinds      = kindsOfServices(careNeeds, jobData.jobCareKinds ?? (recipientKinds.length ? recipientKinds : undefined));
+  // ONE stage per child (2026-10-18 late): the post carries the stages of the children on it (set on each child).
   const childStages = postRecipients
     .filter((r) => recipientCareKind(r.isSelf ? "Myself" : r.relationship, r.careKind) === "child")
     .map((r) => stageOf(r as { ageRange?: unknown; ageRanges?: unknown }))

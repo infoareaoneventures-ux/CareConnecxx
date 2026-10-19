@@ -2419,7 +2419,7 @@ export interface WizardJobPostingData {
     adultsCount: number;
     additionalRecipients: { firstName: string; lastName: string; relationship: string; careKind?: string; ageRange?: string }[];
     relationship: string;
-    /** Only for relationship Other in a Both household: 'senior' | 'child' (the relationship decides everyone else). */
+    /** Only for relationship Other (adult / child): 'senior' | 'child' (the relationship decides everyone else). */
     careRecipientCareKind?: string;
     /** The primary recipient's stage (one AGE_RANGES id) when they are a child. */
     careRecipientAgeRange?: string;

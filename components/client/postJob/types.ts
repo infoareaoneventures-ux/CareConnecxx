@@ -7,7 +7,7 @@ export interface CareRecipientEntry {
   firstName: string;
   lastName: string;
   relationship: string;
-  /** Only for relationship Other in a Both household: which list this person follows (the relationship decides everyone else). */
+  /** Only for relationship Other: which list this person follows (adult / child) (the relationship decides everyone else). */
   careKind?: CareKind;
   /** A child's stage (one AGE_RANGES id), set on the child — the post's `ageRanges` are read from these. */
   ageRange?: string;
@@ -45,8 +45,6 @@ export interface JobPostFormData {
   smokingHousehold: boolean;
 
   // Step 3: Care Needs
-  /** The household's care-type setting (job_postings.careKinds, read-only here — Account Settings / signup write it); the lists on Step 3 follow the picked recipients inside it, and the post's own kinds are read from careTypes at save. */
-  careKinds: CareKind[];
   careTypes: string[];
   careNeedDetails: Record<string, string[]>;
   careLevel: JobCareLevel | '';
@@ -84,7 +82,6 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
   neighborhood: '',
   locationPoint: null,
 
-  careKinds: ['senior'],
   careTypes: [],
   careNeedDetails: {},
   careLevel: '',

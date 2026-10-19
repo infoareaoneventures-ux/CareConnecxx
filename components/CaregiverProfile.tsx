@@ -13,8 +13,7 @@ import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilitySe
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import {
   PRIMARY_SERVICES,
-  CareKind, CARE_KIND_LABEL, normalizeCareKinds, serviceListsForKinds,
-  CARE_TYPE_QUESTION_PROVIDER, CARE_TYPE_OPTION_LABELS,
+  CARE_KINDS, CARE_KIND_LABEL, serviceListsForKinds, kindsOfServices,
   serviceLabel,
   EXPERIENCE_LEVELS,
   TIME_BLOCKS,
@@ -43,8 +42,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
   const [editBio, setEditBio] = useState('');
   const [editLanguages, setEditLanguages] = useState<string[]>(['English']);
   const [editServices, setEditServices] = useState<string[]>([]);
-  // What care they provide — senior / child / both (caregivers.careKinds; missing = senior). Child care, 2026-10-18.
-  const [editCareKinds, setEditCareKinds] = useState<CareKind[]>(['senior']);
   const [editExperience, setEditExperience] = useState('');
   const [editRate, setEditRate] = useState('');
   const [editRateTwo, setEditRateTwo] = useState('');
@@ -325,10 +322,11 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 <h3 className="font-bold text-slate-900">Care Services</h3>
                 <SectionActions
                   section="services"
-                  onEdit={() => { setEditServices(displayServices); setEditCareKinds(normalizeCareKinds((profile as any).careKinds)); setEditingSection('services'); }}
+                  onEdit={() => { setEditServices(displayServices); setEditingSection('services'); }}
                   onSave={() => {
                     saveSection({
-                      careKinds: editCareKinds,
+                      // Derived from the ticked services (Transportation alone = both) — no care-type question (founder, 2026-10-19).
+                      careKinds: kindsOfServices(editServices, CARE_KINDS),
                       services: editServices,
                       skills: editServices,
                     });
@@ -337,22 +335,10 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
               </div>
               {editingSection === 'services' ? (
                 <div>
-                <p className="text-xs font-semibold text-slate-500 mb-2">{CARE_TYPE_QUESTION_PROVIDER}</p>
-                <div className="grid grid-cols-3 gap-2 mb-4">
-                  {([{ value: ['senior'] as CareKind[], label: CARE_TYPE_OPTION_LABELS[0] }, { value: ['child'] as CareKind[], label: CARE_TYPE_OPTION_LABELS[1] }, { value: ['senior', 'child'] as CareKind[], label: CARE_TYPE_OPTION_LABELS[2] }]).map(choice => {
-                    const on = editCareKinds.length === choice.value.length && choice.value.every(k => editCareKinds.includes(k));
-                    return (
-                      <button key={choice.label} type="button"
-                        onClick={() => { setEditCareKinds(choice.value); setEditServices(prev => prev.filter(s => serviceListsForKinds(choice.value).some(l => (l.services as readonly string[]).includes(s)))); }}
-                        className={`text-sm px-3 py-2.5 rounded-xl border font-medium transition-all ${on ? 'bg-primary-50 border-primary-400 text-primary-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
-                        {choice.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {serviceListsForKinds(editCareKinds).map(list => (
+                {/* Both lists always, under their own headings — tick anything (founder, 2026-10-19) */}
+                {serviceListsForKinds(CARE_KINDS).map(list => (
                 <div key={list.kind} className="mb-3">
-                {serviceListsForKinds(editCareKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-2">{CARE_KIND_LABEL[list.kind]}</p>}
+                <p className="text-xs font-semibold text-slate-500 mb-2">{CARE_KIND_LABEL[list.kind]}</p>
                 <div className="grid grid-cols-2 gap-2">
                   {list.services.map(service => (
                     <button
@@ -379,19 +365,19 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 ))}
                 </div>
               ) : (
-                // Read view grouped by kind when the profile offers both (founder, 2026-10-18): Transportation shows under each.
+                // Read view grouped by the lists the ticked services sit on (Transportation shows under each); one group → no heading.
                 <div className="space-y-3">
                   {displayServices.length > 0
-                    ? serviceListsForKinds((profile as any).careKinds).map(list => ({ kind: list.kind, services: list.services.filter(s => displayServices.includes(s)) })).filter(g => g.services.length > 0).map(g => (
+                    ? (() => { const groups = serviceListsForKinds(CARE_KINDS).map(list => ({ kind: list.kind, services: list.services.filter(s => displayServices.includes(s)) })).filter(g => g.services.length > 0); return groups.map(g => (
                         <div key={g.kind}>
-                          {serviceListsForKinds((profile as any).careKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>}
+                          {groups.length > 1 && <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>}
                           <div className="flex flex-wrap gap-2">
                             {g.services.map((s: string) => (
                               <span key={`${g.kind}-${s}`} className="text-sm bg-primary-50 text-primary-700 px-3 py-1.5 rounded-full font-medium">{serviceLabel(s)}</span>
                             ))}
                           </div>
                         </div>
-                      ))
+                      )); })()
                     : <p className="text-sm text-slate-400 italic">No services added yet. Tap Edit to add.</p>
                   }
                 </div>

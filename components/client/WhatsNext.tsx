@@ -113,7 +113,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
           ...((() => {
             // One stage per child (2026-10-18): the roster's per-child stages; the older household list only as a fallback.
             const roster = [{ relationship: w.relationship, careKind: w.careRecipientCareKind, ageRange: w.careRecipientAgeRange }, ...((w.additionalRecipients || []) as any[])];
-            const stages = stagesOfRecipients(roster, w.careKinds);
+            const stages = stagesOfRecipients(roster);
             const legacy = Array.isArray(w.ageRanges) ? (w.ageRanges as string[]) : [];
             const ids = stages.length ? stages : legacy;
             return ids.length && kindsOfServices(w.careNeeds || [], w.careKinds).includes('child') ? { ageRanges: ids } : {};

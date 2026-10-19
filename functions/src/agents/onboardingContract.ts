@@ -106,8 +106,6 @@ export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   // NOT required there (still asked; a "not sure" may leave it empty), and
   // flexible-only days satisfy selectedDays (see missingRequiredFields).
   "startDate", "selectedDays",
-  // Step 8 — the ONE care-type question (child care, 2026-10-18 late): required, asked before the relationship
-  "careKinds",
   // Step 8/9 — who
   "relationship", "seniorName",
   // Step 10 — emergency contact (at minimum a name + phone)
@@ -139,9 +137,6 @@ export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
   "street", "zipCode", "city", "state",
   "profilePhoto",
   "jobType", "availability",
-  // The care-type question (child care, 2026-10-18 late): required for a signup still at the services step —
-  // see missingRequiredFields (a finished record without it keeps reading as senior; never re-opened).
-  "careKinds",
   "specialties", "yearsExperience",
   "hourlyRate", "serviceRadius",
   "email", "bio",
@@ -585,9 +580,6 @@ export function missingRequiredFields(
   return requiredFieldsForRole(role).filter((f) => {
     // Availability needs BOTH days and parts of the day (the wizard's two pickers).
     if (role === "caregiver" && f === "availability") return !availabilityComplete(d.availability);
-    // careKinds is asked right before the services; a session that already finished the services step
-    // without it is a pre-2026-10-18 signup and reads as senior — never re-opened (founder's rule).
-    if (role === "caregiver" && f === "careKinds") return !isFieldFilled(d.careKinds) && !isFieldFilled(d.specialties);
     // Wizard canAdvanceAt(6): `selectedDays.length > 0 || daysFlexible` — a
     // family whose days are flexible with no fixed days is complete.
     if (role === "client" && f === "selectedDays" && d.daysFlexible === true) return false;

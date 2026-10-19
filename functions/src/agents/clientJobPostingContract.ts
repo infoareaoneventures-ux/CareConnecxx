@@ -14,7 +14,7 @@
 
 import { allCareRecipients, normalizeAdditionalRecipients, toWebsiteRelationship } from "./careRecipients";
 import { coerceClientRate } from "./onboardingContract";
-import { normalizeCareKinds, recipientCareKind, stageOf } from "./caregiverServiceLabels";
+import { rosterCareKinds, recipientCareKind, stageOf } from "./caregiverServiceLabels";
 import { businessTodayStr } from "../utils/scheduledTime";
 import type { GeoPrecision } from "../utils/geocode";
 
@@ -171,8 +171,9 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     };
   });
   // The primary recipient's stage (a child only) — job_postings.careRecipientAgeRange.
-  const soloKind = normalizeCareKinds(d.careKinds).length === 1 ? normalizeCareKinds(d.careKinds)[0] : undefined;
-  const primaryStage = recipientCareKind(d.relationship === "self" ? "Myself" : (d.relationship as string | undefined), soloKind) === "child" ? stageOf(d as { ageRange?: unknown; ageRanges?: unknown }) : null;
+  const primaryStage = recipientCareKind(d.relationship === "self" ? "Myself" : (d.relationship as string | undefined), d.careKind) === "child" ? stageOf(d as { ageRange?: unknown; ageRanges?: unknown }) : null;
+  // careKinds is DERIVED from the people on the record (founder 2026-10-19: never asked): a child → child, an adult → senior.
+  const derivedKinds = rosterCareKinds(allCareRecipients(d));
 
   const { rate, rateFlexible } = parseRate(d.rate);
 
@@ -209,7 +210,7 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     emergencyPhone: formatWizardPhone(d.emergencyContactPhone),
     emergencyRelationship: (d.emergencyContactRelationship as string) || undefined,
     careNeeds,
-    ...(Array.isArray(d.careKinds) && d.careKinds.length ? { careKinds: normalizeCareKinds(d.careKinds) } : {}),
+    ...(derivedKinds.length ? { careKinds: derivedKinds } : {}),
     ...(primaryStage ? { careRecipientAgeRange: primaryStage } : {}),
     ...(d.careKind === "child" || d.careKind === "senior" ? { careRecipientCareKind: d.careKind } : {}),
     petsInHome: d.petsInHome === true,
@@ -392,7 +393,6 @@ export function mapJobPostingsDocToOnboardingData(
   if (d.emergencyRelationship) out.emergencyContactRelationship = d.emergencyRelationship;
 
   if (Array.isArray(d.careNeeds) && d.careNeeds.length) out.careNeeds = d.careNeeds;
-  if (Array.isArray(d.careKinds) && d.careKinds.length) out.careKinds = normalizeCareKinds(d.careKinds);
   if (typeof d.petsInHome === "boolean") out.petsInHome = d.petsInHome;
   if (typeof d.smokingHousehold === "boolean") out.smokingHousehold = d.smokingHousehold;
   // The wizard has no "flexible" rate — only a numeric rate maps back.
@@ -458,7 +458,9 @@ export function buildClientDraftMirror(uid: string, phone: string, d: Record<str
   take("caregiversNeeded", has(d.caregiversNeeded));
   take("emergencyFirstName", has(d.emergencyContactName)); take("emergencyLastName", has(d.emergencyContactName));
   take("emergencyPhone", has(d.emergencyContactPhone)); take("emergencyRelationship", has(d.emergencyContactRelationship));
-  take("careNeeds", has(d.careNeeds)); take("careKinds", has(d.careKinds));
+  take("careNeeds", has(d.careNeeds));
+  // careKinds follows the people on the record — rewritten whenever they change (derived, never asked).
+  if ((has(d.relationship) || has(d.additionalRecipients)) && full.careKinds) out.careKinds = full.careKinds;
   if (d.petsInHome !== undefined) out.petsInHome = d.petsInHome === true;
   if (d.smokingHousehold !== undefined) out.smokingHousehold = d.smokingHousehold === true;
   if (d.rate !== undefined && d.rate !== null && d.rate !== "") { take("rate", true); out.rateFlexible = full.rateFlexible === true; }

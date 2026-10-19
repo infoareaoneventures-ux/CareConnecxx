@@ -21,7 +21,7 @@
 //   TRAVEL                        Location & Travel › Edit (serviceRadius; the address is Account Settings)
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
-import { serviceLabel, normalizeCareKinds, serviceListsForKinds, CARE_KIND_LABEL } from "./caregiverServiceLabels";
+import { serviceLabel, kindsOfServices, serviceListsForKinds, CARE_KIND_LABEL } from "./caregiverServiceLabels";
 import { hasValidTransportDocs } from "./caregiverMatchScoring";
 import { gridFromWeekly, gridText, DAY_KEYS, type Grid } from "./caregiverAvailabilityGrid";
 import { formatExperience } from "./caregiverProfilePage";
@@ -62,7 +62,7 @@ export interface MyProfilePage {
   bio: string;
   languages: string[];
   services: string[];               // stored values (labels applied at render)
-  careKinds: string[];              // child care (2026-10-18): senior / child / both — missing = senior
+  careKinds: string[];              // DERIVED from the ticked services (2026-10-19): the list(s) they span; nothing ticked = []
   rates: Array<{ label: "1 Person" | "2 People" | "3+ People"; rate: number }>;
   experience: string;               // the bucket string as stored
   maxClients: string;
@@ -133,7 +133,7 @@ export async function loadMyProfilePage(caregiverId: string): Promise<MyProfileP
     bio: str(p.bio),
     languages: Array.isArray(p.languages) && p.languages.length ? (p.languages as string[]) : ["English"],
     services,
-    careKinds: normalizeCareKinds(p.careKinds),
+    careKinds: services.length ? kindsOfServices(services, []) : [],
     rates,
     experience: str(p.yearsExperience) || str(p.experience),
     maxClients: str(p.maxClients) || "1",
@@ -162,7 +162,7 @@ export function myProfileText(page: MyProfilePage): string {
 
   lines.push("", "Care Services");
   if (page.careKinds.length === 2) {
-    // Both lists, each under its own name — the editor shows them the same way.
+    // Services from both lists, each under its own name — the editor shows them the same way.
     for (const l of serviceListsForKinds(page.careKinds)) {
       const mine = (l.services as readonly string[]).filter((s) => page.services.includes(s)); // the editor's order; Transportation under both
       lines.push(`${CARE_KIND_LABEL[l.kind]}: ${mine.length ? mine.map(serviceLabel).join(", ") : "none yet"}`);
@@ -170,8 +170,7 @@ export function myProfileText(page: MyProfilePage): string {
   } else {
     lines.push(page.services.length ? page.services.map(serviceLabel).join(", ") : "No services added yet.");
   }
-  lines.push(`Care type: ${page.careKinds.length === 2 ? "Senior and child care" : CARE_KIND_LABEL[normalizeCareKinds(page.careKinds)[0]]}`);
-  lines.push("Reply SERVICES to add or remove one, or to change the care type.");
+  lines.push("Reply SERVICES to add or remove one.");
 
   lines.push("", "Rates");
   if (page.rates.length) for (const r of page.rates) lines.push(`${r.label}: $${r.rate}/hr`);

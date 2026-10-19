@@ -6,13 +6,12 @@ import { dbService } from '../../../services/api';
 import { db } from '../../../lib/firebase';
 import firebase from '../../../lib/firebase';
 import { geocodeAddress, streetPointOf, GeocodedPoint } from '../../../utils/geocode';
-import { relationshipsForKinds, normalizeCareKinds, CareKind, AGE_RANGES, STAGE_HEADING, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS, recipientCareKind, recipientStage } from '../../caregiver/signup/constants';
+import { RELATIONSHIPS, CareKind, AGE_RANGES, STAGE_HEADING, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS, recipientCareKind, recipientStage } from '../../caregiver/signup/constants';
 
-// The relationships this household can offer (the five, both doors, 2026-10-18 — minus
-// Myself, which is its own person here): Child only when the household's care type
-// includes child care, Parent / Spouse or Partner only when it includes senior care.
-// Other is the one relationship that can't settle the list, so in a Both household
-// it asks once: adult or child (stored as `careKind` on that person).
+// The relationships (the contract's six, both doors — minus Myself, which is its own
+// person here); no household care-type setting (founder, 2026-10-19). Other is the one
+// relationship that can't settle the list, so it asks once: adult or child (stored as
+// `careKind` on that person).
 const KIND_PICK: ReadonlyArray<{ value: CareKind; label: string }> = OTHER_KIND_OPTIONS;
 
 interface SavedPerson {
@@ -85,9 +84,8 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const [loadingSaved, setLoadingSaved] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
   const [newPerson, setNewPerson] = useState<{ firstName: string; lastName: string; relationship: string; careKind: CareKind | ''; ageRange: string }>({ firstName: '', lastName: '', relationship: '', careKind: '', ageRange: '' });
-  const newPersonIsChild = recipientCareKind(newPerson.relationship, newPerson.careKind || undefined) === 'child' && normalizeCareKinds(data.careKinds).includes('child');
-  const relationshipChips = relationshipsForKinds(data.careKinds, { includeMyself: false });
-  const bothKinds = normalizeCareKinds(data.careKinds).length === 2;
+  const newPersonIsChild = recipientCareKind(newPerson.relationship, newPerson.careKind || undefined) === 'child';
+  const relationshipChips: string[] = RELATIONSHIPS.filter(r => r !== 'Myself');
 
   // Location state
   const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([]);
@@ -146,10 +144,6 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
         const jpFirst = (jp.careRecipientFirstName || '').trim();
         const jpLast = (jp.careRecipientLastName || '').trim();
         const jpKey = `${jpFirst.toLowerCase()} ${jpLast.toLowerCase()}`.trim();
-        // The household's care-type setting gates this step's relationship chips and Step 3's lists.
-        const storedKinds = normalizeCareKinds(jp.careKinds);
-        const currentKinds = normalizeCareKinds(data.careKinds);
-        if (storedKinds.length !== currentKinds.length || !storedKinds.every(k => currentKinds.includes(k))) onChange({ careKinds: storedKinds });
         if (jpFirst && !seenNames.has(jpKey)) {
           seenNames.add(jpKey);
           people.push({ id: `jp-primary`, firstName: jpFirst, lastName: jpLast, relationship: jp.relationship, ...(jp.careRecipientCareKind === 'child' || jp.careRecipientCareKind === 'senior' ? { careKind: jp.careRecipientCareKind as CareKind } : {}), ...(typeof jp.careRecipientAgeRange === 'string' && jp.careRecipientAgeRange ? { ageRange: jp.careRecipientAgeRange } : {}), photo: jp.careRecipientPhotoURL || undefined });
@@ -280,11 +274,11 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const addNewPerson = () => {
     if (!newPerson.firstName.trim()) { onShowToast('First name is required', 'error'); return; }
     if (!newPerson.relationship) { onShowToast('Please select a relationship', 'error'); return; }
-    if (newPerson.relationship === 'Other' && bothKinds && !newPerson.careKind) { onShowToast(OTHER_KIND_QUESTION, 'error'); return; }
+    if (newPerson.relationship === 'Other' && !newPerson.careKind) { onShowToast(OTHER_KIND_QUESTION, 'error'); return; }
     if (newPersonIsChild && !newPerson.ageRange) { onShowToast("Please pick the child's stage", 'error'); return; }
     if (data.careRecipients.length >= 4) { onShowToast('Maximum 4 care recipients allowed', 'error'); return; }
     const newId = `new-${Date.now()}`;
-    const careKind = newPerson.relationship === 'Other' && bothKinds && newPerson.careKind ? newPerson.careKind : undefined;
+    const careKind = newPerson.relationship === 'Other' && newPerson.careKind ? newPerson.careKind : undefined;
     const ageRange = newPersonIsChild && newPerson.ageRange ? newPerson.ageRange : undefined;
     const entry = { id: newId, firstName: newPerson.firstName.trim(), lastName: newPerson.lastName.trim(), relationship: newPerson.relationship, ...(careKind ? { careKind } : {}), ...(ageRange ? { ageRange } : {}) };
     // Auto-increment count to accommodate the new person
@@ -589,7 +583,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                 ))}
               </div>
             </div>
-          ) : (r.relationship === 'Other' && bothKinds && !r.careKind) ? (
+          ) : (r.relationship === 'Other' && !r.careKind) ? (
             <div key={idx} className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-2">
               <p className="font-semibold text-slate-800 text-sm mb-2">{r.firstName} {r.lastName}</p>
               <p className="text-xs text-amber-600 mb-2">{OTHER_KIND_QUESTION}</p>
@@ -617,7 +611,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                   </button>
                 ))}
               </div>
-              {newPerson.relationship === 'Other' && bothKinds && (
+              {newPerson.relationship === 'Other' && (
                 <div>
                   <p className="text-sm font-semibold text-slate-700 mb-2">{OTHER_KIND_QUESTION}</p>
                   <div className="flex flex-wrap gap-2">

@@ -1,4 +1,4 @@
-import { serviceLabel, providerCoversPost, ageRangeLabel, normalizeCareKinds } from './signup/constants';
+import { serviceLabel, ageRangeLabel, kindsOfPost } from './signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -420,7 +420,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {jobs.filter(job => providerCoversPost((profile as any)?.careKinds, (job as any).careKinds)).map(job => {
+                {jobs.map(job => {
                   const p = profile as any;
                   const cgLat = p.latitude ?? p.lat;
                   const cgLng = p.longitude ?? p.lng;
@@ -485,7 +485,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                         {isDay && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 flex items-center gap-1"><Sun className="w-3 h-3" />Day</span>}
                         {isNight && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 flex items-center gap-1"><Moon className="w-3 h-3" />Night</span>}
                         {seniors > 1 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex items-center gap-1"><UsersIcon className="w-3 h-3" />{seniors} people</span>}
-                        {normalizeCareKinds((job as any).careKinds).includes('child') && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">{normalizeCareKinds((job as any).careKinds).length === 2 ? 'Senior and child care' : 'Child care'}</span>}
+                        {kindsOfPost(job as any).includes('child') && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">{kindsOfPost(job as any).length === 2 ? 'Senior and child care' : 'Child care'}</span>}
                         {Array.isArray((job as any).ageRanges) && ((job as any).ageRanges as string[]).map(id => <span key={id} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">{ageRangeLabel(id)}</span>)}
                         {needsTransport && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 flex items-center gap-1"><Car className="w-3 h-3" />Transport</span>}
                       </div>

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
-import { CareKind, CARE_KIND_LABEL, normalizeCareKinds, providerMatchesHousehold, serviceListsForKinds } from './caregiver/signup/constants';
+import { CareKind, CARE_KINDS, CARE_KIND_LABEL, kindsOfProvider, serviceListsForKinds } from './caregiver/signup/constants';
 import { formatExperience } from '../utils/experience';
 import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
@@ -44,7 +44,7 @@ interface Caregiver {
   lng?: number;
   photoURL?: string;
   transportationLive: boolean;
-  /** The kinds this provider offers (missing = senior) — the Care type view filter reads it. */
+  /** The kinds this provider offers, read from their ticked services — only the Care type view filter reads it; nothing hides by kind. */
   careKinds: CareKind[];
   hasValidTransportDocs?: boolean;
   skills?: string[];
@@ -113,9 +113,7 @@ export default function FindCaregivers() {
   const [minRating, setMinRating] = useState(0);
   const [minExperience, setMinExperience] = useState(0);
   const [selectedSpecialties, setSelectedSpecialties] = useState<Set<string>>(new Set());
-  // Child care (2026-10-18): the household's answer (job_postings.careKinds; missing = senior) decides who shows and which services the filter lists.
-  const [householdKinds, setHouseholdKinds] = useState<CareKind[]>(['senior']);
-  // Care type view filter — Both households only (founder, 2026-10-18 late): none = both kinds; resets with the other filters.
+  // Care type view filter for everyone (founder, 2026-10-19): none = both kinds; derived from the providers' services; resets with the other filters.
   const [viewKind, setViewKind] = useState<CareKind | null>(null);
   const [selectedLanguages, setSelectedLanguages] = useState<Set<string>>(new Set());
 
@@ -324,10 +322,6 @@ export default function FindCaregivers() {
         caregiversSnap?.docs.filter(d => isCaregiverBookable(d.data() as any)).map(d => d.id) ?? []
       );
 
-      const jpKindsSnap = user ? await fdb.collection('job_postings').doc(user.uid).get().catch(() => null) : null;
-      const jpKinds = normalizeCareKinds((jpKindsSnap?.data() as any)?.careKinds);
-      setHouseholdKinds(jpKinds);
-
       const seen = new Set<string>();
       const caregiverList: Caregiver[] = [];
 
@@ -336,8 +330,6 @@ export default function FindCaregivers() {
         // Only show caregivers that have completed their profile wizard (onboardingStatus: profile_complete)
         if (!approvedIds.has(doc.id)) return;
         const data = doc.data() || {};
-        // A family meets care providers who offer ANY kind the household needs (missing = senior on both sides).
-        if (!providerMatchesHousehold(data.careKinds, jpKinds)) return;
         const firstName = data.firstName || data.name?.split(' ')[0] || '';
         const lastName = data.lastName || data.name?.split(' ').slice(1).join(' ') || '';
         if (!firstName && !lastName && !data.name) return;
@@ -365,7 +357,7 @@ export default function FindCaregivers() {
           lng: cgLng,
           photoURL: data.photoURL || data.photo || data.imageUrl || data.profilePhoto,
           transportationLive: hasValidTransportDocs(data),
-          careKinds: normalizeCareKinds(data.careKinds),
+          careKinds: kindsOfProvider(data),
           // Carry the stored flag too: the Find Caregivers popup is handed THIS item (not a re-read of the
           // record), and it recomputes Transportation from it — without the flag it hid Transportation
           // while the full profile page showed it (founder, 2026-10-06). Same as useNearbyCaregiversWithScores.
@@ -481,11 +473,11 @@ export default function FindCaregivers() {
 
   const filteredCaregivers = useMemo(() => {
     // The service checkboxes collapse to the viewed kind; a tick outside it is ignored (Transportation sits under both).
-    const visibleServices = new Set(serviceListsForKinds(viewKind && householdKinds.includes(viewKind) ? [viewKind] : householdKinds).flatMap(l => [...l.services]));
+    const visibleServices = new Set(serviceListsForKinds(viewKind ? [viewKind] : CARE_KINDS).flatMap(l => [...l.services]));
     const appliedSpecialties = new Set(Array.from(selectedSpecialties).filter(s => visibleServices.has(s)));
     let list = caregivers.filter(cg => {
       if (blockedIds.has(cg.id)) return false;
-      if (viewKind && householdKinds.length === 2 && !providerMatchesHousehold(cg.careKinds, [viewKind])) return false;
+      if (viewKind && !cg.careKinds.includes(viewKind)) return false;
       if (showFavoritesOnly && !favorites.includes(cg.id)) return false;
       // Distance filter — only applied when client has locations AND caregiver has coords
       if (cg.distance != null) {
@@ -539,7 +531,7 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, householdKinds, selectedLanguages, sortBy]);
+  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
 
   if (loading) {
     return (
@@ -554,12 +546,12 @@ export default function FindCaregivers() {
 
   const FilterPanel = (
     <div className="space-y-5">
-      {/* Care type — Both households only: one kind at a time, none = both */}
-      {householdKinds.length === 2 && (
+      {/* Care type — for everyone: one kind at a time, none = both (derived from the providers' services) */}
+      {(
         <div>
           <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care type</label>
           <div className="flex flex-wrap gap-2">
-            {householdKinds.map(k => (
+            {CARE_KINDS.map(k => (
               <button key={k} type="button" onClick={() => setViewKind(viewKind === k ? null : k)}
                 className={`px-3 py-1.5 rounded-full border text-sm font-medium transition-all ${viewKind === k ? 'border-teal-600 bg-teal-50 text-teal-700' : 'border-slate-300 bg-white text-slate-700 hover:border-teal-400'}`}>
                 {CARE_KIND_LABEL[k]}
@@ -655,9 +647,9 @@ export default function FindCaregivers() {
       {/* Specialties */}
       <div>
         <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care services</label>
-        {/* One plain list for a single kind; two labelled groups for Both (Transportation under each), the view filter collapses to one */}
+        {/* Two labelled groups (Transportation under each); the view filter collapses to one */}
         <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
-          {(() => { const lists = serviceListsForKinds(viewKind && householdKinds.includes(viewKind) ? [viewKind] : householdKinds); return lists.map(list => (
+          {(() => { const lists = serviceListsForKinds(viewKind ? [viewKind] : CARE_KINDS); return lists.map(list => (
             <div key={list.kind}>
               {lists.length > 1 && <p className="text-xs font-semibold text-slate-700 mb-1.5">{CARE_KIND_LABEL[list.kind]}</p>}
               <div className="space-y-1.5">

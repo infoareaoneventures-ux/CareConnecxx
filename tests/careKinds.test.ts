@@ -1,16 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import {
   PRIMARY_SERVICES, CHILD_SERVICES, ALL_SERVICES, CARE_KINDS, RELATIONSHIPS, AGE_RANGES,
-  normalizeCareKinds, serviceListsForKinds, kindsOfServices, providerCoversPost, providerMatchesHousehold,
+  normalizeCareKinds, serviceListsForKinds, kindsOfServices, kindsOfPost, kindsOfProvider,
   defaultJobTitle, ageRangeLabel, STAGE_HEADING,
-  recipientCareKind, relationshipsForKinds, rosterCareKinds, careTypeChangeBlockedBy,
+  recipientCareKind, rosterCareKinds,
   recipientStage, childrenMissingStage, stagesOfRecipients,
-  CARE_TYPE_QUESTION_FAMILY, CARE_TYPE_QUESTION_PROVIDER, CARE_TYPE_OPTION_LABELS, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS,
+  OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS,
 } from '../components/caregiver/signup/constants';
 
-// Child care (2026-10-18): the one new fact — who the care is for — and the
-// helpers every screen reads it through. A MISSING field means senior care
-// everywhere, so nothing on file changes meaning.
+// Child care (2026-10-18) un-framed (founder, 2026-10-19): no care-type question
+// on either door. A family is recipient-driven (the relationship decides the
+// list), a care provider services-driven (both lists, tick anything), and
+// nothing hides anyone by kind. A MISSING stored field still reads as senior
+// care (titles, badges), so nothing on file changes meaning.
 
 describe('care kinds contract', () => {
   it('two kinds; the child eight by name, nothing underneath, no age in a name; Transportation shared', () => {
@@ -37,10 +39,7 @@ describe('care kinds contract', () => {
     AGE_RANGES.forEach((a) => expect(a.label).not.toMatch(/\d/));
   });
 
-  it('the care-type question is one sentence per door; Other asks adult or child', () => {
-    expect(CARE_TYPE_QUESTION_FAMILY).toBe('What kind of care do you need?');
-    expect(CARE_TYPE_QUESTION_PROVIDER).toBe('What kind of care do you provide?');
-    expect([...CARE_TYPE_OPTION_LABELS]).toEqual(['Senior care', 'Child care', 'Both']);
+  it('no care-type question anywhere; Other asks adult or child', () => {
     expect(OTHER_KIND_QUESTION).toBe('Is this person an adult or a child?');
     expect(OTHER_KIND_OPTIONS.map((o) => `${o.value}:${o.label}`)).toEqual(['senior:Adult', 'child:Child']);
   });
@@ -69,19 +68,17 @@ describe('care kinds contract', () => {
     expect(kindsOfServices([])).toEqual(['senior']);
   });
 
-  it('a care provider sees a post only when they offer every kind it needs', () => {
-    expect(providerCoversPost(undefined, undefined)).toBe(true);        // legacy both sides = senior
-    expect(providerCoversPost(['senior'], ['child'])).toBe(false);
-    expect(providerCoversPost(['child'], ['senior'])).toBe(false);
-    expect(providerCoversPost(['senior', 'child'], ['child'])).toBe(true);
-    expect(providerCoversPost(['child'], ['senior', 'child'])).toBe(false);
-  });
-
-  it('a family sees a care provider who offers any kind the household needs', () => {
-    expect(providerMatchesHousehold(undefined, undefined)).toBe(true);
-    expect(providerMatchesHousehold(['child'], ['senior'])).toBe(false);
-    expect(providerMatchesHousehold(['child'], ['senior', 'child'])).toBe(true);
-    expect(providerMatchesHousehold(['senior', 'child'], ['child'])).toBe(true);
+  it("nothing hides by kind — the view filter reads a post's kinds from its ticked services (stored kinds as the fallback) and a provider's from theirs (Transportation alone, or nothing yet = both)", () => {
+    expect(kindsOfPost({ careTypes: ['Supervision'], careKinds: ['senior'] })).toEqual(['child']);
+    expect(kindsOfPost({ careTypes: ['Companionship', 'Baby Care'] })).toEqual(['senior', 'child']);
+    expect(kindsOfPost({ careTypes: ['Transportation'], careKinds: ['child'] })).toEqual(['child']);
+    expect(kindsOfPost({ careKinds: ['child'] })).toEqual(['child']);
+    expect(kindsOfPost(undefined)).toEqual(['senior']); // a legacy post reads as senior care
+    expect(kindsOfProvider({ services: ['Companionship', 'Baby Care'] })).toEqual(['senior', 'child']);
+    expect(kindsOfProvider({ skills: ['Supervision'] })).toEqual(['child']);
+    expect(kindsOfProvider({ services: ['Companionship'], skills: ['Supervision'] })).toEqual(['senior']); // services first, skills as the fallback
+    expect(kindsOfProvider({ services: ['Transportation'] })).toEqual(['senior', 'child']);
+    expect(kindsOfProvider({})).toEqual(['senior', 'child']);
   });
 
   it('the default title keeps its pattern and swaps one word by kind', () => {
@@ -92,9 +89,8 @@ describe('care kinds contract', () => {
   });
 });
 
-// The follow-up (founder, 2026-10-18 evening): the household picks its care type ONCE
-// (signup / Account Settings) and the RELATIONSHIP decides each recipient's list —
-// no per-step control anywhere else.
+// The RELATIONSHIP decides each recipient's list — no household care-type setting,
+// no per-step control anywhere (founder, 2026-10-19).
 describe('who decides a recipient\'s kind', () => {
   it('Child → child; Myself / Parent / Spouse or Partner and the older stored values → senior; Other → its stored careKind', () => {
     expect(recipientCareKind('Child')).toBe('child');
@@ -112,29 +108,12 @@ describe('who decides a recipient\'s kind', () => {
     expect(recipientCareKind('adult child')).toBe('senior');
   });
 
-  it('the relationships a household can offer follow its care type; Other always', () => {
-    expect(relationshipsForKinds(['senior'])).toEqual(['Myself', 'Parent', 'Spouse or Partner', 'Adult child', 'Other']);
-    expect(relationshipsForKinds(['child'])).toEqual(['Child', 'Other']);
-    expect(relationshipsForKinds(['senior', 'child'])).toEqual(['Myself', 'Parent', 'Spouse or Partner', 'Adult child', 'Child', 'Other']);
-    expect(relationshipsForKinds(undefined)).toEqual(['Myself', 'Parent', 'Spouse or Partner', 'Adult child', 'Other']); // missing = senior
-    expect(relationshipsForKinds(['senior', 'child'], { includeMyself: false })).toEqual(['Parent', 'Spouse or Partner', 'Adult child', 'Child', 'Other']);
-  });
-
   it('a roster implies its kinds: a child on file → child, anyone else → senior', () => {
     expect(rosterCareKinds([])).toEqual([]);
     expect(rosterCareKinds([{ relationship: 'Parent' }])).toEqual(['senior']);
     expect(rosterCareKinds([{ relationship: 'Child' }])).toEqual(['child']);
     expect(rosterCareKinds([{ relationship: 'Myself' }, { relationship: 'Parent' }, { relationship: 'Child' }])).toEqual(['senior', 'child']);
     expect(rosterCareKinds([{ relationship: 'Other', careKind: 'child' }])).toEqual(['child']);
-  });
-
-  it('the roster rule: a care-type change that leaves someone uncovered names the first such person', () => {
-    const roster = [{ name: 'Basra Yousuf', relationship: 'Myself' }, { name: 'H M', relationship: 'Parent' }, { name: 'S Mahad', relationship: 'Child' }];
-    expect(careTypeChangeBlockedBy(['senior', 'child'], roster)).toBeNull();
-    expect(careTypeChangeBlockedBy(['child'], roster)?.name).toBe('Basra Yousuf');
-    expect(careTypeChangeBlockedBy(['senior'], roster)?.name).toBe('S Mahad');
-    expect(careTypeChangeBlockedBy(['child'], [{ name: 'S Mahad', relationship: 'Child' }])).toBeNull();
-    expect(careTypeChangeBlockedBy(['senior'], [])).toBeNull();
   });
 
   // One stage per child, set ON THE CHILD (founder, 2026-10-18 late).
@@ -147,7 +126,7 @@ describe('who decides a recipient\'s kind', () => {
     expect(recipientStage({ ageRange: '', ageRanges: [] })).toBeUndefined();
   });
 
-  it('Step 3 asks a stage only for a picked child who has none; seniors and other kinds never', () => {
+  it('Step 3 asks a stage only for a picked child who has none; seniors never (no household gate)', () => {
     const roster = [
       { firstName: 'H', relationship: 'Parent' },
       { firstName: 'S', relationship: 'Child' },
@@ -155,13 +134,10 @@ describe('who decides a recipient\'s kind', () => {
       { firstName: 'O', relationship: 'Other', careKind: 'child' },
       { firstName: 'G', relationship: 'Adult child' },
     ];
-    expect(childrenMissingStage(roster, ['senior', 'child']).map((r) => r.firstName)).toEqual(['S', 'O']);
-    expect(childrenMissingStage(roster, ['child']).map((r) => r.firstName)).toEqual(['S', 'O']);
-    // A senior-only household never asks — nothing on it is a child.
-    expect(childrenMissingStage(roster, ['senior'])).toEqual([]);
-    expect(childrenMissingStage(roster, undefined)).toEqual([]);
+    expect(childrenMissingStage(roster).map((r) => r.firstName)).toEqual(['S', 'O']);
+    expect(childrenMissingStage([{ relationship: 'Parent' }, { relationship: 'Adult child' }])).toEqual([]);
     // An older list counts as a stage.
-    expect(childrenMissingStage([{ relationship: 'Child', ageRanges: ['teen'] }], ['child'])).toEqual([]);
+    expect(childrenMissingStage([{ relationship: 'Child', ageRanges: ['teen'] }])).toEqual([]);
   });
 
   it('a post\'s ageRanges = the picked children\'s stages, deduped, in stage order', () => {
@@ -172,8 +148,8 @@ describe('who decides a recipient\'s kind', () => {
       { relationship: 'Other', careKind: 'child', ageRange: 'teen' },
       { relationship: 'Child' },
     ];
-    expect(stagesOfRecipients(roster, ['senior', 'child'])).toEqual(['infant', 'teen']);
-    expect(stagesOfRecipients(roster, ['senior'])).toEqual([]);
-    expect(stagesOfRecipients([], ['child'])).toEqual([]);
+    expect(stagesOfRecipients(roster)).toEqual(['infant', 'teen']);
+    expect(stagesOfRecipients([{ relationship: 'Parent', ageRange: 'teen' }])).toEqual([]);
+    expect(stagesOfRecipients([])).toEqual([]);
   });
 });

@@ -8,7 +8,7 @@ import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
 import { isQuestionOrOther, isBackOutRequest, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { mapCaregiverServices, orderedCanonicalServices, serviceLabels, SERVICE_LABELS, serviceMenuText } from "./caregiverServices";
-import { CHILD_SERVICE_LABELS, normalizeCareKinds, careKindsFromWords, kindsOfServices, careKindBadge, serviceListsForKinds, CareKind } from "./caregiverServiceLabels";
+import { CHILD_SERVICE_LABELS, careKindsFromWords, kindsOfServices, serviceListsForKinds, CareKind, CARE_KINDS } from "./caregiverServiceLabels";
 import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, BIO_MIN_CHARS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
 import { LANGUAGE_OPTIONS, JOB_TYPE_OPTIONS, MAX_CLIENTS_OPTIONS, TRAVEL_OPTIONS, jobTypeLabel } from "./caregiverMyProfile";
 
@@ -60,7 +60,7 @@ export const RATES_FACTS = (current: RatesDraft) =>
   `(${EXPERIENCE_BUCKETS.join(", ")}) and how many clients at once (${MAX_CLIENTS_OPTIONS.join(", ")}); YES saves the whole section together, like the page's Save. ` +
   `The Rates section currently reads:\n${ratesRecap(current)}\n${SAVE_RULE}`;
 export const SKILLS_FACTS =
-  `The Care Services editor asks what care she provides (senior care, child care, or both) and offers exactly these services — senior care: ${SERVICE_LABELS.join(", ")}; child care: ${CHILD_SERVICE_LABELS.join(", ")} — nothing else can be added. ` +
+  `The Care Services editor offers exactly these services, tick any from either list — senior care: ${SERVICE_LABELS.join(", ")}; child care: ${CHILD_SERVICE_LABELS.join(", ")} — nothing else can be added. ` +
   "Medication Reminders Only means reminding when it is time, never giving medication; care providers here do not give medication or medical treatment. " +
   `Families see the saved services on the care provider's profile and in matching. ${SAVE_RULE}`;
 export const LANGUAGES_FACTS =
@@ -332,7 +332,7 @@ async function handleSkillsUpdate(
     }
     const raw = await parseWithClaude(
       "Parse the care provider's request to change the care services on her profile. Reply JSON: " +
-        '{"action":"add"|"remove"|"replace","skills":["each SERVICE she named, in her words — NOT the words senior care / child care themselves"],"careKinds":"senior | child | both — the care she names: \"remove child care\" → child with action remove; \"senior care only\" / \"switch to senior care\" → senior with action replace; \"add child care\" → child with action add; omit when she names only services"}. ' +
+        '{"action":"add"|"remove"|"replace","skills":["each SERVICE she named, in her words — NOT the words senior care / child care themselves"],"careKinds":"senior | child | both — ONLY when she names a whole list rather than services: \"remove child care\" / \"drop the child care ones\" → child with action remove; \"senior care only\" / \"just the senior services\" → senior with action replace; \"add child care\" → child with action add; omit when she names only services"}. ' +
         "If she hasn't said yet, reply: __none__.",
       text,
       150,
@@ -365,7 +365,6 @@ async function handleSkillsUpdate(
     const cg = (cgSnap.data() ?? {}) as Record<string, unknown>;
     const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
     const current = orderedCanonicalServices([...arr(cg.skills), ...arr(cg.services), ...arr(cg.specialties)]);
-    const currentKinds = normalizeCareKinds(cg.careKinds);
 
     if (mapping.matched.length === 0 && !kindsSaid) {
       await db.collection("agent_sessions").doc(phone).update({
@@ -377,25 +376,33 @@ async function handleSkillsUpdate(
       return;
     }
 
+    // No care-type setting exists (founder 2026-10-19): the page's editor is the two lists, tick anything.
+    // A whole list named by its kind ("remove child care", "senior care only") acts on THAT list's services:
+    // remove = untick the services only that list holds (Transportation sits on both and stays); replace =
+    // keep only that list's services; "add child care" with no service named = show that list and ask.
+    const listServices = (kinds: readonly CareKind[]): Set<string> => new Set(serviceListsForKinds(kinds).flatMap((l) => l.services as readonly string[]));
+    const onlyOn = (kinds: readonly CareKind[]): Set<string> => {
+      const others = listServices(CARE_KINDS.filter((k) => !kinds.includes(k)));
+      return new Set([...listServices(kinds)].filter((s) => !others.has(s)));
+    };
+    if (kindsSaid && action === "add" && mapping.matched.length === 0) {
+      await db.collection("agent_sessions").doc(phone).update({
+        profileUpdateStep:  "collect",
+        profileUpdateField: "skills",
+        stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      });
+      await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Which of these would you like to add?\n${serviceMenuText(kindsSaid)}`);
+      return;
+    }
     let proposed: string[];
     if (action === "add") proposed = orderedCanonicalServices([...current, ...mapping.matched]);
-    else if (action === "remove") proposed = current.filter((s) => !mapping.matched.includes(s));
+    else if (action === "remove") { const drop = kindsSaid ? onlyOn(kindsSaid) : new Set<string>(); proposed = current.filter((s) => !mapping.matched.includes(s) && !drop.has(s)); }
+    else if (kindsSaid && mapping.matched.length === 0) { const keep = listServices(kindsSaid); proposed = current.filter((s) => keep.has(s)); }
     else proposed = mapping.matched.length ? mapping.matched : current;
-    // Child care (2026-10-18): the care she provides — what she said, else what the ticked services imply,
-    // always on top of what the record already says (a service from the other list adds that kind).
-    // Live 2026-10-19: "remove child care" / "senior care only" must NARROW the care type and drop that list's own services
-    // (the page's editor unticks them when a kind is switched off); only an added kind widens it.
-    let proposedKinds: CareKind[];
-    if (kindsSaid && action === "remove") proposedKinds = normalizeCareKinds(currentKinds.filter((k) => !kindsSaid!.includes(k)));
-    else if (kindsSaid && action === "replace") proposedKinds = kindsSaid;
-    else proposedKinds = normalizeCareKinds([...currentKinds, ...(kindsSaid ?? []), ...kindsOfServices(proposed, currentKinds)]);
-    if (kindsSaid && action !== "add") {
-      const kept = new Set(serviceListsForKinds(proposedKinds).flatMap((l) => l.services as readonly string[]));
-      proposed = proposed.filter((s) => kept.has(s));
-    }
-    const kindsChanged = proposedKinds.join("|") !== currentKinds.join("|");
+    // careKinds stays DERIVED from the services (the site's kindsOfProvider rule; Transportation alone = both).
+    const proposedKinds = kindsOfServices(proposed, CARE_KINDS);
 
-    if (proposed.join("|") === current.join("|") && !kindsChanged) {
+    if (proposed.join("|") === current.join("|")) {
       await clearProfileFlow(phone);
       await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Your services already read: ${serviceLabels(current).join(", ") || "(none)"} — nothing to change.`);
       return;
@@ -407,20 +414,19 @@ async function handleSkillsUpdate(
       profileUpdateValue: JSON.stringify({ services: proposed, careKinds: proposedKinds }),
       stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    const kindLine = kindsChanged ? ` You'd provide ${careKindBadge(proposedKinds)?.toLowerCase() ?? "senior care"}.` : "";
     await sendMessage(chatId,
-      `${notes.join(" ")}${notes.length ? " " : ""}Your services will be: ${serviceLabels(proposed).join(", ") || "(none)"}.${kindLine}\n\n` +
+      `${notes.join(" ")}${notes.length ? " " : ""}Your services will be: ${serviceLabels(proposed).join(", ") || "(none)"}.\n\n` +
       `Reply YES to save that, or NO to leave them as they are.`,
     );
     return;
   }
 
-  // confirm — the parked value is {services, careKinds} (2026-10-18); an older parked array still reads.
+  // confirm — the parked value is {services, careKinds} (careKinds derived from the services); an older parked array still reads.
   const parked = (() => {
     try { return JSON.parse((session.profileUpdateValue as string) ?? "[]") as unknown; } catch { return []; }
   })();
   const proposed = orderedCanonicalServices(Array.isArray(parked) ? parked : ((parked as { services?: unknown[] })?.services ?? []));
-  const parkedKinds = Array.isArray(parked) ? null : normalizeCareKinds((parked as { careKinds?: unknown })?.careKinds);
+  const parkedKinds = Array.isArray(parked) ? kindsOfServices(proposed, CARE_KINDS) : kindsOfServices(proposed, CARE_KINDS);
   const reAskConfirm = `So — save these services: ${serviceLabels(proposed).join(", ") || "(none)"}? Reply YES or NO.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, SKILLS_FACTS));
@@ -434,7 +440,7 @@ async function handleSkillsUpdate(
     await db.collection("caregivers").doc(caregiverId).update({
       services:           proposed,
       skills:             proposed,
-      ...(parkedKinds ? { careKinds: parkedKinds } : {}),
+      careKinds:          parkedKinds, // derived from the services, never asked (2026-10-19)
     });
     await sendMessage(chatId, `Done — your services now read: ${serviceLabels(proposed).join(", ") || "(none)"}.`);
   } else {

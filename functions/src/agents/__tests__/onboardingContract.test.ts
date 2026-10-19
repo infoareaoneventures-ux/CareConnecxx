@@ -25,7 +25,6 @@ describe("onboardingContract", () => {
     expect(CLIENT_REQUIRED_FIELDS).toEqual([
       "careFrequency", "homeStreet", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
       "startDate", "selectedDays",
-      "careKinds", // the ONE care-type question — required, its own step before the relationship (2026-10-18 late)
       "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
       "careNeeds", "rate", "email", "firstName",
     ]);
@@ -40,12 +39,12 @@ describe("onboardingContract", () => {
       "street", "zipCode", "city", "state",
       "profilePhoto",
       "jobType", "availability",
-      "careKinds", // the care-type question, right before the services (2026-10-18 late)
       "specialties", "yearsExperience",
       "hourlyRate", "serviceRadius",
       "email", "bio",
     ]);
-    expect(CAREGIVER_REQUIRED_FIELDS).toContain("careKinds");
+    expect(CAREGIVER_REQUIRED_FIELDS).not.toContain("careKinds"); // no care-type question on either door (2026-10-19)
+    expect(CLIENT_REQUIRED_FIELDS).not.toContain("careKinds");
   });
 
   it("requiredFieldsForRole routes by role", () => {
@@ -58,7 +57,6 @@ describe("onboardingContract", () => {
       expect(missingRequiredFields("client", {})).toEqual([
         "careFrequency", "homeStreet", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
         "startDate", "selectedDays",
-        "careKinds",
         "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
         "careNeeds", "rate", "email", "firstName",
       ]);
@@ -103,7 +101,7 @@ describe("onboardingContract", () => {
     it("partial client data → only the unfilled fields, in flow order", () => {
       const data = { careFrequency: "part_time", homeZipCode: "78701", city: "Austin", relationship: "daughter", seniorName: "Dorothy" };
       expect(missingRequiredFields("client", data)).toEqual([
-        "homeStreet", "sameAsHomeAddress", "zipCode", "startDate", "selectedDays", "careKinds", "emergencyContactName",
+        "homeStreet", "sameAsHomeAddress", "zipCode", "startDate", "selectedDays", "emergencyContactName",
         "emergencyContactPhone", "careNeeds", "rate", "email", "firstName",
       ]);
     });
@@ -116,14 +114,14 @@ describe("onboardingContract", () => {
     it("care provider gate checks the care provider set", () => {
       const data = { name: "Maria", city: "Austin", yearsExperience: "3-5 years" };
       expect(missingRequiredFields("caregiver", data)).toEqual([
-        "street", "zipCode", "state", "profilePhoto", "jobType", "availability", "careKinds", "specialties",
+        "street", "zipCode", "state", "profilePhoto", "jobType", "availability", "specialties",
         "hourlyRate", "serviceRadius", "email", "bio",
       ]);
     });
 
-    it("the provider's care-type question is required only for a signup still at the services step — a finished record without it reads as senior, never re-opened (2026-10-18 late)", () => {
+    it("careKinds is never required or asked of a provider (2026-10-19) — the services step comes straight after availability", () => {
       const inProgress = { name: "Maria", street: "1 Main St", zipCode: "95134", city: "San Jose", state: "CA", profilePhoto: "u", jobType: "part_time", availability: { days: ["Monday"], hours: "mornings" } };
-      expect(missingRequiredFields("caregiver", inProgress)[0]).toBe("careKinds");
+      expect(missingRequiredFields("caregiver", inProgress)[0]).toBe("specialties");
       const legacyDone = { ...inProgress, specialties: ["Companionship"], yearsExperience: "3-5 years", hourlyRate: 25, serviceRadius: 10, email: "m@x.com", bio: "x".repeat(150) };
       expect(missingRequiredFields("caregiver", legacyDone)).toEqual([]);
       expect(missingRequiredFields("caregiver", { ...legacyDone, careKinds: ["senior", "child"] })).toEqual([]);

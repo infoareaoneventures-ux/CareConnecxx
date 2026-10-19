@@ -48,7 +48,7 @@ describe("caregiverCardText — Transportation gated on the badge", () => {
   });
 });
 
-describe("the Care type filter at the top of the panel (Both accounts only, 2026-10-18 late)", () => {
+describe("the Care type filter at the top of the panel (an optional view for everyone since 2026-10-19)", () => {
   it("names the kind in the list header's filter words", () => {
     expect(describeActiveFilters({ careType: "child" })).toEqual(["Child care"]);
     expect(describeActiveFilters({ careType: "senior", specialties: ["Companionship"] })).toEqual(["Companionship", "Senior care"]);

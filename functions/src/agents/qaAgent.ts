@@ -1,4 +1,4 @@
-import { serviceLabel, normalizeCareKinds, careKindBadge } from "./caregiverServiceLabels";
+import { serviceLabel, kindsOfProvider, CARE_KIND_LABEL, OTHER_KIND_QUESTION } from "./caregiverServiceLabels";
 import type Anthropic from "@anthropic-ai/sdk";
 import { quickComplete, getOpenAIClient, openAiTokenLimitParam } from "../utils/openaiClient";
 import { businessTodayStr, formatDateWithWeekday, formatHHMMForDisplay } from "../utils/scheduledTime";
@@ -418,7 +418,7 @@ export async function buildClientCoreContext(
   if (loc) parts.push(`LOCATION: ${loc}.`);
 
   const today = businessTodayStr();
-  const [planSnap, userSnap, apptSnap, bookingSnap, shiftSnap, interviewSnap, householdSnap] = await Promise.all([
+  const [planSnap, userSnap, apptSnap, bookingSnap, shiftSnap, interviewSnap] = await Promise.all([
     // carePlans (camelCase) is the real, website-facing collection
     // (components/CarePlan.tsx) — care_plans (snake_case) is a completely
     // different, disconnected collection nothing on the site ever writes to.
@@ -467,13 +467,7 @@ export async function buildClientCoreContext(
       .limit(10)
       .get()
       .catch(() => null),
-    // The household record — its care type (Account Settings › Care type; missing = senior). Child care, 2026-10-19.
-    db.collection("job_postings").doc(userId).get().catch(() => null),
   ]);
-  {
-    const hk = normalizeCareKinds((householdSnap as any)?.data?.()?.careKinds);
-    parts.push(`HOUSEHOLD CARE TYPE: ${careKindBadge(hk) ?? "Senior care"} (the Account Settings › Care type row; they change it with set_household_care_type).`);
-  }
 
   // Account status — high-hit, non-clinical state.
   const u = userSnap?.exists ? (userSnap.data() as Record<string, any>) : null;
@@ -651,9 +645,10 @@ export function buildCaregiverCoreContext(caregiver: any): string {
   if (area) parts.push(`SERVICE AREA: ${area}.`);
 
   const skillsBits: string[] = [];
-  // Child care (2026-10-18): the care they provide — missing = senior (live 2026-10-19: "do I do senior, child or both?" had no answer in context).
+  // No care-type setting exists (founder 2026-10-19): the lists they cover are READ from the services they ticked
+  // (live 2026-10-19: "do I do senior, child or both?" is answered from the services, never from a setting).
   const hasServices = (Array.isArray(caregiver.skills) && caregiver.skills.length) || (Array.isArray(caregiver.services) && caregiver.services.length) || (Array.isArray(caregiver.specialties) && caregiver.specialties.length);
-  if (hasServices || (Array.isArray(caregiver.careKinds) && caregiver.careKinds.length)) skillsBits.push(`care type: ${careKindBadge(normalizeCareKinds(caregiver.careKinds)) ?? "Senior care"}`);
+  if (hasServices) skillsBits.push(`care lists covered by their services: ${kindsOfProvider({ services: caregiver.services, skills: (Array.isArray(caregiver.skills) && caregiver.skills.length ? caregiver.skills : caregiver.specialties) }).map((k) => CARE_KIND_LABEL[k]).join(" and ")} (not a setting — it follows what they tick; to change it they add or remove services)`);
   const careServices = (Array.isArray(caregiver.skills) && caregiver.skills.length ? caregiver.skills : Array.isArray(caregiver.services) && caregiver.services.length ? caregiver.services : caregiver.specialties) as unknown;
   if (Array.isArray(careServices) && careServices.length) {
     skillsBits.push(`services: ${careServices.map(serviceLabel).join(", ")}`);
@@ -856,10 +851,9 @@ export function buildClientSystemPrompt(
     `  · get_pending_booking_requests — matches the website's My Bookings > Requests tab exactly. Call when a family asks "did they respond yet?" or "what am I still waiting on?", or a care provider asks "what requests do I need to answer?". get_upcoming_appointments and get_pending_tasks do NOT cover this (they never read a pending booking_requests doc) — this is the only tool that does.`,
     `  · get_pending_schedule_amendments — the OTHER card on the Requests tab: schedule changes (a new day/one-off visit) the family asked to add to an accepted booking that the care provider hasn't answered yet. Call alongside get_pending_booking_requests whenever they ask what's pending/waiting; each result's amendmentId is what manage_booking action:"cancel_pending_amendment" needs.`,
     `  · get_past_visits — the website's My Bookings > Past Bookings tab exactly: completed and cancelled visits, newest first (who, when, who cancelled, actual start/end for completed ones). Call for "when was the last visit", "did Tuesday's visit happen", "how many visits has X done", "which visits were cancelled". Never answer those from memory or the snapshot.`,
-    `  · list_household_seniors — the Care Plan page's recipient tabs (name, relationship, age, primary). Use when a family manages care for more than one person and you need to know who's on file.`,
-    `  · create_senior_profile — the Care Plan page's "+ Add" recipient form: needs first name, relationship (the household's care type decides the choices — list_household_seniors returns them; Child only when it includes child care; for Other in a Both household pass careKind) and a care location with a street address (reuse one from get_care_plan's locationPool when it's the same home), plus optional care needs/sub-tasks and a note. Collect what's missing one question at a time, read it back, confirm, then call. Non-medical — no conditions or medications.`,
+    `  · list_household_seniors — the Care Plan page's recipient tabs (name, relationship, a child's stage, primary). Use when a family manages care for more than one person and you need to know who's on file.`,
+    `  · create_senior_profile — the Care Plan page's "+ Add" recipient form: needs first name, relationship (Myself, Parent, Spouse or Partner, Adult child, Child, or Other — the relationship decides which care list that person gets, never a care-type question; for Other ALWAYS ask "${OTHER_KIND_QUESTION}" and pass careKind) and a care location with a street address (reuse one from get_care_plan's locationPool when it's the same home), plus optional care needs/sub-tasks and a note. Collect what's missing one question at a time, read it back, confirm, then call. Non-medical — no conditions or medications.`,
     `  · remove_care_recipient — remove a care recipient from the household (same as the trash icon on the Care Plan page). Confirm before calling — permanent, and can't remove the household's only recipient.`,
-    `  · set_household_care_type — the Account Settings › Care type row: senior care, child care, or both — the household's ONE setting that decides which care lists exist. Use when they ask for child care on a senior household (or the reverse); confirm first. A pick that leaves someone on the Care Plan uncovered is refused — say its sentence verbatim.`,
     `  · set_recipient_photo — the Care Plan page's recipient photo (the tab avatar). When the family sends a picture of a care recipient ("this is Samira"), the photo they just attached IS the file — save it with this. One recipient on file → just save; several and no name → ask which. If photos won't come through on their phone, send the Care Plan page link so they can upload it there.`,
     `  · create_job_post — post a new care provider job so nearby care providers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.`,
     `  · list_client_jobs — the website's Care Requests > Posts tab: each post with exactly what its card shows (type, dates, location, rate or "rate flexible", days, time of day, care types, "N senior(s)", "X of Y hired", pending applicants). status:"open" / "closed" = the two pills. Use for "what jobs do I have posted", "how many applied", "is anyone hired yet", and to read a post back before editing it.`,

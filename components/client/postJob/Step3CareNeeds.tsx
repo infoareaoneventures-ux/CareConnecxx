@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Check } from 'lucide-react';
 import { StepProps, CareRecipientEntry } from './types';
 import {
-  serviceLabel, CARE_KIND_LABEL, CareKind, normalizeCareKinds, serviceListsForKinds,
+  serviceLabel, CARE_KIND_LABEL, CareKind, CARE_KINDS, serviceListsForKinds,
   AGE_RANGES, STAGE_HEADING, kindsOfServices, rosterCareKinds, recipientCareKind, recipientStage, stagesOfRecipients,
 } from '../../caregiver/signup/constants';
 import { useCareConnex } from '../../../context/CareConnexContext';
@@ -11,38 +11,22 @@ import { db } from '../../../lib/firebase';
 // The eight types of care per kind, nothing underneath — the same lists the
 // family's setup wizard and the care provider's services step show (founder
 // 2026-10-04 / 2026-10-18). The careNeedDetails field stays in the data shape,
-// always {}. There is NO question on this step (founder, 2026-10-18 evening):
-// the household picked its care type once (signup / Account Settings →
-// job_postings.careKinds) and the list(s) here follow the RECIPIENTS picked on
+// always {}. There is NO question on this step and NO household care-type
+// setting (founder, 2026-10-19): the list(s) here follow the RECIPIENTS picked on
 // Step 2 — a senior gets the senior list, a child the child list, both picked
-// together get both lists under their own headings. A senior-care household
-// sees exactly what this step always showed. The stage lives ON THE CHILD
+// together get both lists under their own headings. The stage lives ON THE CHILD
 // (one per child, founder 2026-10-18 late): this step asks it only for a picked
 // child who has none yet, and the post's `ageRanges` = the children's stages.
 
-/** The kinds this post can show: the picked recipients' kinds, kept inside the household's setting; no recipients yet → the setting. */
-export function postCareKinds(recipients: readonly CareRecipientEntry[], householdKinds: unknown): CareKind[] {
-  const household = normalizeCareKinds(householdKinds);
-  const fromRoster = rosterCareKinds(recipients).filter(k => household.includes(k));
-  return fromRoster.length ? fromRoster : household;
+/** The kinds this post can show: the picked recipients' kinds (relationship; Other → their careKind); no recipients yet → both. */
+export function postCareKinds(recipients: readonly CareRecipientEntry[]): CareKind[] {
+  const fromRoster = rosterCareKinds(recipients);
+  return fromRoster.length ? fromRoster : [...CARE_KINDS];
 }
 
 export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
   const { currentUser } = useCareConnex();
   const [didPrepopulate, setDidPrepopulate] = useState(false);
-  const [kindsLoaded, setKindsLoaded] = useState(false);
-
-  // The household's setting (job_postings.careKinds; missing = senior) gates
-  // which lists can appear. Read only — Account Settings is the one writer.
-  useEffect(() => {
-    if (kindsLoaded) return;
-    if (!currentUser?.uid || !db) { setKindsLoaded(true); return; }
-    db.collection('job_postings').doc(currentUser.uid).get().then(snap => {
-      const stored = normalizeCareKinds((snap.data() as any)?.careKinds);
-      const current = normalizeCareKinds(data.careKinds);
-      if (stored.length !== current.length || !stored.every(k => current.includes(k))) onChange({ careKinds: stored });
-    }).catch(() => {}).finally(() => setKindsLoaded(true));
-  }, [currentUser?.uid]);
 
   // Pre-populate from care plan for the primary recipient (only if nothing is selected yet)
   useEffect(() => {
@@ -60,14 +44,13 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
     }).catch(() => {}).finally(() => setDidPrepopulate(true));
   }, [currentUser?.uid]);
 
-  const kinds = postCareKinds(data.careRecipients, data.careKinds);
+  const kinds = postCareKinds(data.careRecipients);
   const lists = serviceListsForKinds(kinds);
   const visible = new Set(lists.flatMap(l => [...l.services]));
   const childOn = kinds.includes('child');
   const recipientKey = (r: CareRecipientEntry) => `${r.firstName}|${r.lastName || ''}|${r.relationship}`;
   // The children who arrived here without a stage keep their row while the family is on this step (so a pick can be changed).
   const [askStageFor] = useState<string[]>(() => {
-    if (!normalizeCareKinds(data.careKinds).includes('child')) return [];
     return data.careRecipients.filter(r => recipientCareKind(r.relationship, r.careKind) === 'child' && !recipientStage(r)).map(recipientKey);
   });
   const stageRows = data.careRecipients.filter(r => askStageFor.includes(recipientKey(r)));
@@ -97,7 +80,7 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
       return;
     }
     // The post's `ageRanges` are just the picked children's stages (one per child).
-    const stages = postKinds.includes('child') ? stagesOfRecipients(data.careRecipients, data.careKinds) : [];
+    const stages = postKinds.includes('child') ? stagesOfRecipients(data.careRecipients) : [];
     onChange({ ...(chosen.length !== data.careTypes.length ? { careTypes: chosen } : {}), ageRanges: stages });
     onContinue();
   };

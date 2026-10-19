@@ -2,6 +2,7 @@ import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../.
 import React, { useEffect } from 'react';
 import { StepProps } from './types';
 import { defaultJobTitle, kindsOfServices } from '../../caregiver/signup/constants';
+import { postCareKinds } from './Step3CareNeeds';
 
 const MIN_DESC = 50;
 const MAX_DESC = 2500;
@@ -12,7 +13,7 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
   // Auto-prefill title on first visit when city is set
   useEffect(() => {
     if (!data.title && data.city) {
-      onChange({ title: defaultJobTitle(data.city, kindsOfServices(data.careTypes, data.careKinds)) });
+      onChange({ title: defaultJobTitle(data.city, kindsOfServices(data.careTypes, postCareKinds(data.careRecipients))) });
     }
   }, [data.city, data.title, onChange]);
 

@@ -1,4 +1,4 @@
-import { serviceLabel, providerCoversPost, ageRangeLabel, normalizeCareKinds, serviceListsForKinds, CARE_KIND_LABEL, CareKind } from './signup/constants';
+import { serviceLabel, ageRangeLabel, kindsOfPost, serviceListsForKinds, CARE_KINDS, CARE_KIND_LABEL, CareKind } from './signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -149,10 +149,9 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
     const [filterDays, setFilterDays] = useState<string[]>([]);
     const [filterSeniorsCount, setFilterSeniorsCount] = useState<string[]>([]);
     const [filterCareTypes, setFilterCareTypes] = useState<string[]>([]);
-    // Care type view filter — providers offering Both only (founder, 2026-10-18 late): none = both kinds; resets with the other filters.
+    // Care type view filter for everyone (founder, 2026-10-19): none = both kinds; a post's kinds are read from its ticked services; resets with the other filters.
     const [filterKind, setFilterKind] = useState<CareKind | null>(null);
-    const providerKinds = normalizeCareKinds((caregiverProfile as any)?.careKinds ?? (profile as any)?.careKinds);
-    const careTypeLists = serviceListsForKinds(filterKind && providerKinds.includes(filterKind) ? [filterKind] : providerKinds);
+    const careTypeLists = serviceListsForKinds(filterKind ? [filterKind] : CARE_KINDS);
     const visibleCareTypes = new Set(careTypeLists.flatMap(l => [...l.services]));
 
     // Interviews
@@ -209,8 +208,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                     const allJobs = snapshot.docs.map(doc => normalizeJobPost({ id: doc.id, ...doc.data() }));
                     // Driving jobs are not listed while her driving record is Not approved (utils/transportDocs.ts drivingJobsHiddenFor).
                     const hideDriving = drivingJobsHiddenFor(caregiverProfile as any);
-                    // Child care (2026-10-18): a post shows only when she offers EVERY kind it needs (missing = senior on both sides).
-                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false && !(hideDriving && jobIncludesDriving(job)) && providerCoversPost((caregiverProfile as any)?.careKinds, (job as any).careKinds)));
+                    // Nothing hides a post by kind (founder, 2026-10-19): every care provider sees every post.
+                    setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false && !(hideDriving && jobIncludesDriving(job))));
                     setJobsLoading(false);
                 },
                 (error) => {
@@ -571,7 +570,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
             });
             if (!matches) return false;
         }
-        if (filterKind && providerKinds.length === 2 && !normalizeCareKinds((job as any).careKinds).includes(filterKind)) return false;
+        if (filterKind && !kindsOfPost(job as any).includes(filterKind)) return false;
         // The ticks collapse to the viewed kind (Transportation sits under both).
         const appliedCareTypes = filterCareTypes.filter(ct => visibleCareTypes.has(ct));
         if (appliedCareTypes.length > 0) {
@@ -596,12 +595,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
     // Reusable filter panel content (shared between sidebar and mobile drawer)
     const FilterPanel = (
         <div className="space-y-5">
-            {/* Care type — providers offering Both only: one kind at a time, none = both */}
-            {providerKinds.length === 2 && (
+            {/* Care type — for everyone: one kind at a time, none = both (a post's kinds come from its ticked services) */}
+            {(
                 <div>
                     <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care type</label>
                     <div className="flex flex-wrap gap-2">
-                        {providerKinds.map(k => (
+                        {CARE_KINDS.map(k => (
                             <button key={k} type="button" onClick={() => setFilterKind(filterKind === k ? null : k)}
                                 className={`px-3 py-1.5 rounded-full border text-sm font-medium transition-all ${filterKind === k ? 'border-teal-600 bg-teal-50 text-teal-700' : 'border-slate-300 bg-white text-slate-700 hover:border-teal-400'}`}>
                                 {CARE_KIND_LABEL[k]}
@@ -706,7 +705,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
             {/* Care type */}
             <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care Type</label>
-                {/* The provider's own list(s): one plain list for a single kind; two labelled groups for Both (Transportation under each) */}
+                {/* Both lists (Transportation under each); the view filter collapses to one */}
                 <div className="space-y-3">
                     {careTypeLists.map(list => (
                         <div key={list.kind}>
@@ -891,8 +890,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                 {job.recipientsCount && job.recipientsCount > 1 && (
                                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-medium"><Users className="w-3 h-3" /> {job.recipientsCount} people</span>
                                                 )}
-                                                {normalizeCareKinds((job as any).careKinds).includes('child') && (
-                                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-medium">{normalizeCareKinds((job as any).careKinds).length === 2 ? 'Senior and child care' : 'Child care'}</span>
+                                                {kindsOfPost(job as any).includes('child') && (
+                                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-medium">{kindsOfPost(job as any).length === 2 ? 'Senior and child care' : 'Child care'}</span>
                                                 )}
                                                 {Array.isArray((job as any).ageRanges) && ((job as any).ageRanges as string[]).map(id => (
                                                     <span key={id} className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-medium">{ageRangeLabel(id)}</span>

@@ -248,8 +248,8 @@ describe("caregiverProfileHandler", () => {
   });
 
   // Child care (2026-10-18): the editor asks what care she provides; a child-list service widens it.
-  describe("SKILLS flow — child care", () => {
-    it("\"add child care\" with child-list services parks services + careKinds, says both, and YES writes careKinds too", async () => {
+  describe("SKILLS flow — child care (careKinds derived from the services since 2026-10-19; no care-type line)", () => {
+    it("\"add child care\" with child-list services parks services + derived careKinds, and YES writes careKinds too", async () => {
       parseWithClaude
         .mockResolvedValueOnce("NO")  // isQuestionOrOther
         .mockResolvedValueOnce('{"action":"add","skills":["supervision","homework help"],"careKinds":"child"}'); // direct hits → no mapper call
@@ -257,8 +257,8 @@ describe("caregiverProfileHandler", () => {
       const parkedJson = updateMock.mock.calls.find(c => c[0].profileUpdateValue)?.[0].profileUpdateValue;
       const parked = JSON.parse(parkedJson);
       expect(parked.services).toEqual(["Companionship", "Supervision", "School & Homework"]); // existing senior service kept, menu order
-      expect(parked.careKinds).toEqual(["senior", "child"]);
-      expect(String(sendMessage.mock.calls.at(-1)?.[1])).toContain("senior and child care");
+      expect(parked.careKinds).toEqual(["senior", "child"]); // derived: Companionship (senior) + Supervision (child)
+      expect(String(sendMessage.mock.calls.at(-1)?.[1])).not.toContain("You'd provide");
 
       parseWithClaude.mockReset();
       parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("YES");
@@ -266,7 +266,7 @@ describe("caregiverProfileHandler", () => {
       expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ services: parked.services, skills: parked.services, careKinds: ["senior", "child"] }));
     });
 
-    it("\"remove child care\" narrows the care type to senior and drops the child list's services (live 2026-10-19: it said nothing to change)", async () => {
+    it("\"remove child care\" unticks the child list's own services (Transportation stays — on both lists); careKinds follows (live 2026-10-19: it said nothing to change)", async () => {
       docGetMock.mockResolvedValueOnce({ exists: true, data: () => ({ careKinds: ["senior", "child"], services: ["Companionship", "Transportation", "Bathing & Dressing"], skills: ["Companionship", "Transportation", "Bathing & Dressing"] }) });
       parseWithClaude
         .mockResolvedValueOnce("NO")  // isQuestionOrOther
@@ -279,11 +279,11 @@ describe("caregiverProfileHandler", () => {
       expect(parked.services).toEqual(["Companionship", "Transportation"]); // Bathing & Dressing (child list) dropped; Transportation stays (both lists)
       const sent = String(sendMessage.mock.calls.at(-1)?.[1]);
       expect(sent).toContain("Companionship, Transportation");
-      expect(sent).toContain("senior care");
+      expect(sent).not.toContain("senior care");
       expect(sent).not.toContain("nothing to change");
     });
 
-    it("\"senior care only\" (replace) does the same without naming a service", async () => {
+    it("\"senior care only\" (replace) keeps only the senior list's services without naming one", async () => {
       docGetMock.mockResolvedValueOnce({ exists: true, data: () => ({ careKinds: ["senior", "child"], services: ["Companionship", "Bathing & Dressing"], skills: ["Companionship", "Bathing & Dressing"] }) });
       parseWithClaude
         .mockResolvedValueOnce("NO")
@@ -294,11 +294,22 @@ describe("caregiverProfileHandler", () => {
       expect(parked.services).toEqual(["Companionship"]);
     });
 
-    it("an older parked array (pre-2026-10-18) still saves services and leaves careKinds alone", async () => {
+    it("\"add child care\" with no service named shows the child list and asks which — a kind is never saved on its own", async () => {
+      parseWithClaude
+        .mockResolvedValueOnce("NO")
+        .mockResolvedValueOnce('{"action":"add","skills":[],"careKinds":"child"}');
+      await handleCaregiverProfileUpdate(CG_ID, PHONE, "add child care", {}, CHAT, "skills");
+      expect(updateMock.mock.calls.some(c => c[0].profileUpdateValue)).toBe(false);
+      const sent = String(sendMessage.mock.calls.at(-1)?.[1]);
+      expect(sent).toContain("Which of these would you like to add?\nSupervision\nBaby Care");
+      expect(sent).not.toContain("Mobility Assistance");
+    });
+
+    it("an older parked array (pre-2026-10-18) still saves services, with careKinds derived from them", async () => {
       parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("YES");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "yes", { profileUpdateStep: "confirm", profileUpdateField: "skills", profileUpdateValue: JSON.stringify(["Companionship"]) }, CHAT);
       const call = updateMock.mock.calls.find(c => c[0].services);
-      expect(call?.[0]).toEqual({ services: ["Companionship"], skills: ["Companionship"] });
+      expect(call?.[0]).toEqual({ services: ["Companionship"], skills: ["Companionship"], careKinds: ["senior"] });
     });
   });
 
@@ -324,7 +335,7 @@ describe("caregiverProfileHandler", () => {
       expect(text).toContain("Reply YES");
     });
 
-    it("confirm YES writes the one list to services + skills — the page's write, nothing more", async () => {
+    it("confirm YES writes the one list to services + skills (+ careKinds derived from them, 2026-10-19) — the page's write, nothing more", async () => {
       parseWithClaude
         .mockResolvedValueOnce("NO")   // isQuestionOrOther
         .mockResolvedValueOnce("YES");
@@ -333,7 +344,8 @@ describe("caregiverProfileHandler", () => {
         services: ["Personal Care", "Companionship"], skills: ["Personal Care", "Companionship"],
       }));
       const write = updateMock.mock.calls.find(c => c[0].services)?.[0];
-      expect(Object.keys(write).sort()).toEqual(["services", "skills"]);
+      expect(Object.keys(write).sort()).toEqual(["careKinds", "services", "skills"]);
+      expect(write.careKinds).toEqual(["senior"]);
       expect(sendMessage.mock.calls.at(-1)?.[1]).toContain("Done — your services now read: Personal Care, Companionship");
     });
 

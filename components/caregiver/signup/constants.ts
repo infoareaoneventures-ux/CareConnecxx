@@ -75,16 +75,20 @@ export function kindsOfServices(services: readonly unknown[], fallback: unknown 
   return kinds.length ? kinds : normalizeCareKinds(fallback);
 }
 
-/** A care provider sees a post only when they offer EVERY kind the post needs. */
-export function providerCoversPost(providerKinds: unknown, postKinds: unknown): boolean {
-  const have = normalizeCareKinds(providerKinds);
-  return normalizeCareKinds(postKinds).every((k) => have.includes(k));
+// Nothing hides anyone by kind (founder, 2026-10-19): every provider sees every
+// post, every family every provider. The kinds below only drive the optional
+// "Care type" VIEW filter, the card badge and the default title.
+/** The kinds a post shows under: its ticked services, else its stored kinds (missing = senior). */
+export function kindsOfPost(post: { careTypes?: unknown; careKinds?: unknown } | null | undefined): CareKind[] {
+  const types = Array.isArray(post?.careTypes) ? (post!.careTypes as unknown[]) : [];
+  return kindsOfServices(types, post?.careKinds);
 }
 
-/** A family sees a care provider who offers ANY kind the household needs. */
-export function providerMatchesHousehold(providerKinds: unknown, householdKinds: unknown): boolean {
-  const have = normalizeCareKinds(providerKinds);
-  return normalizeCareKinds(householdKinds).some((k) => have.includes(k));
+/** The kinds a care provider offers, read from the services they ticked (Transportation alone, or nothing yet = both). */
+export function kindsOfProvider(profile: { services?: unknown; skills?: unknown } | null | undefined): CareKind[] {
+  const services = Array.isArray(profile?.services) && (profile!.services as unknown[]).length ? (profile!.services as unknown[])
+    : Array.isArray(profile?.skills) ? (profile!.skills as unknown[]) : [];
+  return kindsOfServices(services, CARE_KINDS);
 }
 
 // Age ranges for a child — an informational chip beside pets / smoking, never a
@@ -107,23 +111,20 @@ export const ageRangeLabel = (id: string): string => AGE_RANGES.find((a) => a.id
 // child side. Older stored values (Grandparent, Sibling, Spouse) still read back.
 export const RELATIONSHIPS = ['Myself', 'Parent', 'Spouse or Partner', 'Adult child', 'Child', 'Other'] as const;
 
-// The ONE care-type question, asked once at signup and changed in one place —
-// the same sentence on both doors (founder 2026-10-18). Labels stay
-// Senior care / Child care / Both. "Adult or a child" survives only in the
-// follow-up for Other.
-export const CARE_TYPE_QUESTION_FAMILY = 'What kind of care do you need?';
-export const CARE_TYPE_QUESTION_PROVIDER = 'What kind of care do you provide?';
-export const CARE_TYPE_OPTION_LABELS = ['Senior care', 'Child care', 'Both'] as const;
+// No care-type question anywhere (founder, 2026-10-19): a family is RECIPIENT-driven
+// (the relationship decides each person's list), a care provider is SERVICES-driven
+// (both lists always shown, tick anything). "Adult or a child" is the one
+// follow-up, asked for every Other.
 export const OTHER_KIND_QUESTION = 'Is this person an adult or a child?';
 export const OTHER_KIND_OPTIONS = [{ value: 'senior', label: 'Adult' }, { value: 'child', label: 'Child' }] as const;
 
-// ── Who decides a recipient's kind (founder, 2026-10-18 evening) ────────────
-// The family picks the household's care type ONCE (signup / Account Settings:
-// job_postings.careKinds). Everywhere else the RELATIONSHIP decides which list a
-// recipient sees: Child → child; Myself / Parent / Spouse or Partner (and the
-// older stored values) → senior; Other → the recipient's own stored `careKind`
-// (a two-way pick shown only for Other in a Both household). No per-recipient
-// control anywhere else.
+// ── Who decides a recipient's kind (founder, 2026-10-19) ─────────────────────
+// The RELATIONSHIP decides which list a recipient sees: Child → child; Myself /
+// Parent / Spouse or Partner / Adult child (and the older stored values) →
+// senior; Other → the recipient's own stored `careKind` (the one follow-up,
+// "adult or a child?", asked for every Other). There is NO household care-type
+// setting: job_postings.careKinds is written as what the roster implies and
+// nothing reads it to gate or hide.
 export const CHILD_RELATIONSHIPS: readonly string[] = ['Child'];
 export const AMBIGUOUS_RELATIONSHIPS: readonly string[] = ['Other'];
 
@@ -135,27 +136,10 @@ export function recipientCareKind(relationship: unknown, careKind: unknown = und
   return 'senior';
 }
 
-/** The relationship choices a household can offer: Child only when it includes child care; the senior ones only when it includes senior care; Other always. */
-export function relationshipsForKinds(householdKinds: unknown, opts: { includeMyself?: boolean } = {}): string[] {
-  const kinds = normalizeCareKinds(householdKinds);
-  return RELATIONSHIPS.filter((r) => {
-    if (r === 'Myself' && opts.includeMyself === false) return false;
-    if (CHILD_RELATIONSHIPS.includes(r)) return kinds.includes('child');
-    if (AMBIGUOUS_RELATIONSHIPS.includes(r)) return true;
-    return kinds.includes('senior');
-  });
-}
-
 /** The kinds a roster implies (a child on file → child, anyone else → senior); empty roster → []. */
 export function rosterCareKinds(recipients: ReadonlyArray<{ relationship?: unknown; careKind?: unknown }>): CareKind[] {
   const set = new Set(recipients.map((r) => recipientCareKind(r.relationship, r.careKind)));
   return CARE_KINDS.filter((k) => set.has(k));
-}
-
-/** The first recipient a proposed household setting would leave uncovered, or null when the setting is allowed. */
-export function careTypeChangeBlockedBy<T extends { relationship?: unknown; careKind?: unknown }>(proposedKinds: unknown, recipients: readonly T[]): T | null {
-  const kinds = normalizeCareKinds(proposedKinds);
-  return recipients.find((r) => !kinds.includes(recipientCareKind(r.relationship, r.careKind))) ?? null;
 }
 
 // ── One stage per child (founder, 2026-10-18 late) ──────────────────────────
@@ -171,15 +155,13 @@ export function recipientStage(r: { ageRange?: unknown; ageRanges?: unknown } | 
   return undefined;
 }
 
-/** The children among these recipients (inside the household setting) who still have no stage — one single-choice row each. */
-export function childrenMissingStage<T extends { relationship?: unknown; careKind?: unknown; ageRange?: unknown; ageRanges?: unknown }>(recipients: readonly T[], householdKinds: unknown): T[] {
-  if (!normalizeCareKinds(householdKinds).includes('child')) return [];
+/** The children among these recipients who still have no stage — one single-choice row each. */
+export function childrenMissingStage<T extends { relationship?: unknown; careKind?: unknown; ageRange?: unknown; ageRanges?: unknown }>(recipients: readonly T[]): T[] {
   return recipients.filter((r) => recipientCareKind(r.relationship, r.careKind) === 'child' && !recipientStage(r));
 }
 
 /** The stages of the children among these recipients, deduped, in AGE_RANGES order (what a post carries as `ageRanges`). */
-export function stagesOfRecipients<T extends { relationship?: unknown; careKind?: unknown; ageRange?: unknown; ageRanges?: unknown }>(recipients: readonly T[], householdKinds: unknown): string[] {
-  if (!normalizeCareKinds(householdKinds).includes('child')) return [];
+export function stagesOfRecipients<T extends { relationship?: unknown; careKind?: unknown; ageRange?: unknown; ageRanges?: unknown }>(recipients: readonly T[]): string[] {
   const set = new Set(recipients.filter((r) => recipientCareKind(r.relationship, r.careKind) === 'child').map(recipientStage).filter((s): s is string => !!s));
   return AGE_RANGES.map((a) => a.id as string).filter((id) => set.has(id));
 }

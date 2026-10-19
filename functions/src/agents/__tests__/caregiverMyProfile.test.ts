@@ -58,9 +58,9 @@ describe("the page's option lists are the site's (byte parity)", () => {
   });
 });
 
-describe("Care Services grouped by kind (child care, 2026-10-18)", () => {
-  it("a Both provider reads two labelled groups with Transportation under both; one kind stays the plain list", async () => {
-    hoisted.docs.set("caregivers/cg1", { ...RECORD, careKinds: ["senior", "child"], services: ["Companionship", "Transportation", "Bathing & Dressing"], skills: ["Companionship", "Transportation", "Bathing & Dressing"] });
+describe("Care Services grouped by kind — derived from the ticked services (2026-10-19: no care-type line, no setting)", () => {
+  it("services from both lists read as two labelled groups with Transportation under both; one list stays plain; never a 'Care type:' line", async () => {
+    hoisted.docs.set("caregivers/cg1", { ...RECORD, services: ["Companionship", "Transportation", "Bathing & Dressing"], skills: ["Companionship", "Transportation", "Bathing & Dressing"] });
     const t = myProfileText(await loadMyProfilePage("cg1"));
     expect(t).toContain("Senior care: Companionship, Transportation");
     expect(t).toContain("Child care: Bathing & Dressing, Transportation");
@@ -68,8 +68,10 @@ describe("Care Services grouped by kind (child care, 2026-10-18)", () => {
     const one = myProfileText(await loadMyProfilePage("cg1"));
     expect(one).toContain("Care Services\nCompanionship, Transportation, Medication Reminders Only");
     expect(one).not.toContain("Senior care:");
-    expect(one).toContain("Care type: Senior care"); // stated for every provider (live 2026-10-19: "do I do senior, child or both?")
-    expect(t).toContain("Care type: Senior and child care");
+    expect(one).not.toContain("Care type:");
+    expect(t).not.toContain("Care type:");
+    expect(t).toContain("Reply SERVICES to add or remove one.");
+    expect(t).not.toContain("change the care type");
   });
 });
 

@@ -185,34 +185,26 @@ describe("loadAvailableJobs — the Available Jobs tab and the dashboard's Nearb
     expect(nocoords.distanceMiles).toBeNull();
   });
 
-  it("child care (2026-10-18): a provider sees a post only when they offer every kind it needs — missing careKinds = senior on both sides", async () => {
-    seedJob("kid", { lat: 37.3382, lng: -121.8863, createdAt: "2026-09-27T00:00:00Z", careTypes: ["Supervision"], careKinds: ["child"], ageRanges: ["toddler"] });
-    seedJob("both", { lat: 37.3382, lng: -121.8863, createdAt: "2026-09-28T00:00:00Z", careTypes: ["Companionship", "Baby Care"], careKinds: ["senior", "child"] });
-    // today's provider (no careKinds on the record) never sees a child post
+  it("un-framed (2026-10-19): every provider sees every post whatever they tick; the Care type filter is an optional view for anyone; the badge reads the post's services", async () => {
+    seedJob("kid", { lat: 37.3382, lng: -121.8863, createdAt: "2026-09-27T00:00:00Z", careTypes: ["Supervision"], ageRanges: ["toddler"] });
+    seedJob("both", { lat: 37.3382, lng: -121.8863, createdAt: "2026-09-28T00:00:00Z", careTypes: ["Companionship", "Baby Care"] });
+    // a senior-only provider (senior services, no careKinds on the record) STILL sees the child post and the both-post
+    seedCg({ services: ["Companionship"], skills: ["Companionship"] });
     let page = (await loadAvailableJobs("cg1"))!;
-    expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["near", "nocoords", "sc"]);
-    // a both-provider sees everything, the child posts badged
-    seedCg({ careKinds: ["senior", "child"] });
-    page = (await loadAvailableJobs("cg1"))!;
     expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["both", "kid", "near", "nocoords", "sc"]);
-    expect(page.jobs.find((j) => j.jobId === "kid")!.kind).toBe("Child care");
+    expect(page.jobs.find((j) => j.jobId === "kid")!.kind).toBe("Child care");              // derived from the services on the post
     expect(page.jobs.find((j) => j.jobId === "kid")!.ageRanges).toEqual(["Toddler"]);
-    // The Care type filter at the top of the panel (Both accounts only): one kind's posts; a one-kind provider never sees it.
+    expect(page.jobs.find((j) => j.jobId === "both")!.kind).toBe("Senior and child care");
+    expect(page.jobs.find((j) => j.jobId === "near")!.kind).toBeNull();
+    // The Care type VIEW filter narrows for ANY provider — a senior-only provider can look at child posts alone
     page = (await loadAvailableJobs("cg1", { filters: { careType: "child" } }))!;
     expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["both", "kid"]);
     page = (await loadAvailableJobs("cg1", { filters: { careType: "senior" } }))!;
     expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["both", "near", "nocoords", "sc"]);
-    seedCg({ careKinds: ["senior"] });
-    page = (await loadAvailableJobs("cg1", { filters: { careType: "child" } }))!;
-    expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["near", "nocoords", "sc"]); // ignored: the filter exists only for a Both provider
-    seedCg({ careKinds: ["senior", "child"] });
+    // a child-services-only provider sees the senior posts too — nothing is hidden by kind
+    seedCg({ services: ["Supervision"], skills: ["Supervision"], careKinds: ["child"] });
     page = (await loadAvailableJobs("cg1"))!;
-    expect(page.jobs.find((j) => j.jobId === "both")!.kind).toBe("Senior and child care");
-    expect(page.jobs.find((j) => j.jobId === "near")!.kind).toBeNull();
-    // a child-care-only provider never sees a senior post, nor a both-post
-    seedCg({ careKinds: ["child"] });
-    page = (await loadAvailableJobs("cg1"))!;
-    expect(page.jobs.map((j) => j.jobId)).toEqual(["kid"]);
+    expect(page.jobs.map((j) => j.jobId).sort()).toEqual(["both", "kid", "near", "nocoords", "sc"]);
   });
 
   it("no travel distance set → every open job shows, including the far one (site rule)", async () => {

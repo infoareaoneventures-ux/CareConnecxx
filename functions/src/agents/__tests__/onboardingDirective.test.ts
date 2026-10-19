@@ -164,26 +164,36 @@ describe("buildOnboardingDirective", () => {
   });
 });
 
-describe("buildOnboardingDirective — the care-type question, the six relationships and a child's stage (2026-10-18 late)", () => {
-  it("asks the care type as its OWN required question, word for word, before the relationship; Other's follow-up is the contract line; a child's stage by name, never 'age range'", () => {
+describe("buildOnboardingDirective — no care-type question (founder 2026-10-19): the relationship decides, Other gets the adult-or-child follow-up, a child's stage by name", () => {
+  it("never asks 'senior care, child care or both'; the relationship is step 8; Other ALWAYS gets the contract line; a child's stage by name, never 'age range'", () => {
     const d = buildOnboardingDirective("client", { firstName: "Imran" });
-    expect(d).toContain("8. The kind of care they need — its OWN question, word for word: \"What kind of care do you need — senior care, child care, or both?\"");
-    expect(d).toContain("9. Their relationship to the person needing care (parent, spouse or partner, adult child, child, myself, or other)");
+    expect(d).not.toContain("What kind of care do you need");
+    expect(d).not.toContain("the kind of care they need");
+    expect(d).toContain("8. Their relationship to the person needing care (parent, spouse or partner, adult child, child, myself, or other)");
+    expect(d).toContain("never ask \"senior care, child care or both\"");
+    expect(d).toContain("For the relationship 'other' ALWAYS ask \"Is this person an adult or a child?\"");
+    expect(d).toContain("\"my son\" / \"my daughter\" leaves it unclear");
     expect(d).toContain("Is this person an adult or a child?");
     expect(d).toContain("Which stage is Mahad at — Infant, Toddler, Preschooler, School-age, or Teen?");
     expect(d).toContain("STAGE (ageRange)");
     expect(d.toLowerCase()).not.toContain("older adult");
     expect(d.toLowerCase()).not.toContain("age range");
     expect(d).not.toContain("Ages 3");
-    // careKinds is STILL NEEDED and listed before the relationship
-    expect(d.indexOf("the kind of care they need")).toBeLessThan(d.indexOf("the family member's relationship"));
   });
-  it("the stage is still-needed only for a child recipient; a senior household is never nagged for it", () => {
-    const base = { firstName: "Imran", careKinds: ["senior", "child"], seniorName: "Mahad" };
+  it("the stage is still-needed only for a child recipient; Other's follow-up is still-needed for every Other (and only Other); the care-types menu follows who is named", () => {
+    const base = { firstName: "Imran", seniorName: "Mahad" };
     expect(buildOnboardingDirective("client", { ...base, relationship: "child" })).toMatch(/STILL NEEDED[\s\S]*ONLY when the person needing care is a child/);
     expect(buildOnboardingDirective("client", { ...base, relationship: "parent" })).not.toMatch(/STILL NEEDED[\s\S]*ONLY when the person needing care is a child/);
-    // 'other' follows a one-kind household: senior-only → an adult → no stage.
-    expect(buildOnboardingDirective("client", { firstName: "Imran", careKinds: ["senior"], relationship: "other" })).not.toMatch(/STILL NEEDED[\s\S]*ONLY when the person needing care is a child/);
+    // Other: the adult-or-child answer is owed until given; once "child", the stage is owed too.
+    expect(buildOnboardingDirective("client", { ...base, relationship: "other" })).toMatch(/STILL NEEDED[\s\S]*ONLY when the relationship is 'other'/);
+    expect(buildOnboardingDirective("client", { ...base, relationship: "other" })).not.toMatch(/STILL NEEDED[\s\S]*ONLY when the person needing care is a child/);
+    expect(buildOnboardingDirective("client", { ...base, relationship: "other", careKind: "child" })).toMatch(/STILL NEEDED[\s\S]*ONLY when the person needing care is a child/);
+    expect(buildOnboardingDirective("client", { ...base, relationship: "parent" })).not.toMatch(/STILL NEEDED[\s\S]*ONLY when the relationship is 'other'/);
+    // The care-types menu: a child named → the child list; a parent → the senior list; both named → both lists under their names; nobody yet → senior.
+    expect(buildOnboardingDirective("client", { ...base, relationship: "child" })).toContain("no others: Supervision, Baby Care");
+    expect(buildOnboardingDirective("client", { ...base, relationship: "parent" })).toContain("no others: Mobility Assistance, Dementia / Memory Care");
+    expect(buildOnboardingDirective("client", { ...base, relationship: "parent", additionalRecipients: [{ name: "Ali", relationship: "child" }] })).toContain("Senior care: Mobility Assistance");
+    expect(buildOnboardingDirective("client", { firstName: "Imran" })).toContain("no others: Mobility Assistance, Dementia / Memory Care");
   });
 });
 

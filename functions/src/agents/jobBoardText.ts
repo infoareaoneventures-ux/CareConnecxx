@@ -25,7 +25,7 @@ import { parseWithClaude } from "../utils/parseWithClaude";
 import {
   loadAvailableJobs, loadJobDetails, jobCardLine, setJobHidden,
   normalizeJobBoardFilters, hasJobBoardFilters, jobBoardFiltersLabel,
-  jobBoardCareTypesByKind, loadCaregiverForBoard,
+  jobBoardCareTypesByKind,
   type AvailableJobsResult, type JobBoardFilters, type JobDetails,
 } from "./jobBoardPage";
 
@@ -203,8 +203,8 @@ const extractPrompt = (providerKinds: unknown) =>
   "timeOfDay (any of: morning = 6am–12pm, afternoon = 12pm–6pm, evening = 6pm–12am, overnight = 12am–6am — use those four words), " +
   "days (any of Mon, Tue, Wed, Thu, Fri, Sat, Sun — 'weekends' = Sat and Sun, 'weekdays' = Mon to Fri), " +
   "seniors (any of \"1\", \"2\", \"3+\" — how many people need care), " +
-  `careTypes (exact names from the list(s) she offers — ${jobBoardCareTypesByKind(providerKinds)}), ` +
-  `careType ("senior" or "child" — the Care type filter at the top of the panel, Both accounts only: only senior-care posts or only child-care posts). ` +
+  `careTypes (exact names from either list — ${jobBoardCareTypesByKind(providerKinds)}), ` +
+  `careType ("senior" or "child" — the Care type filter at the top of the panel: only senior-care posts or only child-care posts; "senior jobs" / "child care only"). ` +
   "There is NO distance control — ignore any distance or radius she mentions. " +
   "Reply with ONLY a JSON object using those keys, each present only when she asked for it; " +
   "add \"clear\": true when she wants the filters removed / everything shown. " +
@@ -217,7 +217,7 @@ const refinePrompt = (providerKinds: unknown) =>
   "Otherwise reply with ONLY a JSON object of the sidebar controls she is setting: " +
   "search (free text), payMin / payMax (dollars per hour), timeOfDay (morning, afternoon, evening, overnight), " +
   "days (Mon, Tue, Wed, Thu, Fri, Sat, Sun — 'weekends' = Sat and Sun, 'weekdays' = Mon to Fri), seniors (\"1\", \"2\", \"3+\"), " +
-  `careTypes (exact names from the list(s) she offers — ${jobBoardCareTypesByKind(providerKinds)}), careType ("senior" or "child" — the Care type filter at the top of the panel, Both accounts only); add "clear": true when she wants the filters removed. ` +
+  `careTypes (exact names from either list — ${jobBoardCareTypesByKind(providerKinds)}), careType ("senior" or "child" — the Care type filter at the top of the panel); add "clear": true when she wants the filters removed. ` +
   "There is NO distance control — ignore distances. Only the controls she mentions; nothing invented.";
 
 export type ExtractedJobBoardFilters = { filters: JobBoardFilters; clear: boolean };
@@ -251,8 +251,7 @@ export async function handleJobsKeyword(
   const upper = raw.toUpperCase().replace(/\s+/g, " ");
   if (JOBS_WORDS.has(upper)) { await sendJobList(phone, chatId, caregiverId); return "handled"; }
   if (upper.startsWith("JOBS ")) {
-    const cg = await loadCaregiverForBoard(caregiverId).catch(() => null);
-    const { filters, clear } = await extractJobBoardFilters(raw.slice(5), "jobs", cg?.careKinds);
+    const { filters, clear } = await extractJobBoardFilters(raw.slice(5), "jobs");
     // Nothing the sidebar can do with those words → the page as it opens, no claim made.
     await sendJobList(phone, chatId, caregiverId, clear ? {} : { filters });
     return "handled";
@@ -291,8 +290,7 @@ export async function handleJobsFilterFollowUp(
 ): Promise<"handled" | "passthrough"> {
   const raw = text.trim();
   if (!raw || /^\d+$/.test(raw) || !jobListIsLatest(session)) return "passthrough";
-  const cg = await loadCaregiverForBoard(caregiverId).catch(() => null);
-  const { filters, clear } = await extractJobBoardFilters(raw, "refine", cg?.careKinds);
+  const { filters, clear } = await extractJobBoardFilters(raw, "refine");
   if (clear) { await sendJobList(phone, chatId, caregiverId); return "handled"; }
   if (!hasJobBoardFilters(filters)) return "passthrough";
   await sendJobList(phone, chatId, caregiverId, { filters, refine: true });

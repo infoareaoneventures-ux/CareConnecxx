@@ -49,8 +49,8 @@ export const PostJobFlow: React.FC = () => {
       // through jobPostCoords.ts): the selected Care Plan location's saved
       // street-level point, else the street geocoded once here. The street
       // itself is never sent to the post; only lat/lng (+ geoPrecision) are.
-      // Transportation alone defers to the picked recipients' kinds (Step 3's lists), inside the household's setting.
-      const postKinds = kindsOfServices(data.careTypes, postCareKinds(data.careRecipients, data.careKinds));
+      // Transportation alone defers to the picked recipients' kinds (Step 3's lists).
+      const postKinds = kindsOfServices(data.careTypes, postCareKinds(data.careRecipients));
       const point = data.locationPoint?.geoPrecision === 'street'
         ? data.locationPoint
         : await geocodeAddress({ street: data.streetAddress, city: data.city, state: data.state, zipCode: data.zipCode }).catch(() => null);
@@ -81,7 +81,7 @@ export const PostJobFlow: React.FC = () => {
         petsInHome: data.petsInHome,
         smokingHousehold: data.smokingHousehold,
         // Who the care is for, read from the ticked services (Transportation alone
-        // falls back to the household's answer); the age chips ride along for child care.
+        // falls back to the picked recipients); the age chips ride along for child care.
         careKinds: postKinds,
         ...(postKinds.includes('child') && data.ageRanges.length ? { ageRanges: data.ageRanges } : {}),
       };

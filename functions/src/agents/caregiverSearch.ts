@@ -23,7 +23,7 @@
 // The former matchingAgent.ts (Claude-scored top-3 with its own message) and
 // the tool's own extras (never re-show, hide hired/declined, widen when
 // empty, care-needs ranking) had no page equivalent and were removed.
-import { serviceLabel, providerMatchesHousehold, normalizeCareKinds, CARE_KIND_LABEL } from "./caregiverServiceLabels";
+import { serviceLabel, kindsOfProvider, CARE_KIND_LABEL } from "./caregiverServiceLabels";
 import * as admin from "firebase-admin";
 import { isCaregiverBookable, type CaregiverEligibilityFields } from "../utils/caregiverEligibility";
 import { haversineDistanceMiles, hasValidTransportDocs } from "./caregiverMatchScoring";
@@ -49,7 +49,7 @@ export interface CaregiverSearchFilters {
   transportationOnly?: boolean;
   /** Care services (senior or child names) — a caregiver matches if they have ANY selected one. */
   specialties?: string[];
-  /** The Care type filter at the top of the panel (Both accounts only): providers offering that kind. Ignored otherwise. */
+  /** The optional Care type VIEW filter at the top of the panel, for everyone: only providers whose ticked services include that list (kindsOfProvider). None = everyone. */
   careType?: "senior" | "child";
   /** Languages — ANY selected one. */
   languages?: string[];
@@ -133,18 +133,15 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
     sortBy:             (input.sortBy ?? "rating") as CaregiverSortOption,
   };
 
-  const [poolSnap, userDoc, bookingsSnap, shiftsSnap, interviewsSnap, locs, householdDoc] = await Promise.all([
+  const [poolSnap, userDoc, bookingsSnap, shiftsSnap, interviewsSnap, locs] = await Promise.all([
     db.collection("publicCaregiverProfiles").where("onboardingStatus", "==", "profile_complete").limit(100).get(),
     db.collection("users").doc(clientId).get().catch(() => null),
     db.collection("booking_requests").where("clientId", "==", clientId).where("status", "==", "accepted").get().catch(() => null),
     db.collection("shifts").where("clientId", "==", clientId).where("status", "in", ["scheduled", "in-progress"]).get().catch(() => null),
     db.collection("video_interviews").where("clientId", "==", clientId).get().catch(() => null),
     gatherClientLocations(clientId),
-    db.collection("job_postings").doc(clientId).get().catch(() => null),
   ]);
   const user = (userDoc?.exists ? userDoc.data() : {}) as Record<string, unknown>;
-  // Child care (2026-10-18): the page shows providers who offer what this household needs (missing = senior).
-  const householdKinds = householdDoc?.exists ? (householdDoc.data() as Record<string, unknown>).careKinds : undefined;
   const blocked = new Set<string>(Array.isArray(user.blockedUsers) ? (user.blockedUsers as string[]) : []);
   const favorites = new Set<string>(Array.isArray(user.savedCaregiverIds) ? (user.savedCaregiverIds as string[]) : []);
 
@@ -215,20 +212,20 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
       actions: ["message", ...(state === "request_interview" ? ["request_interview" as const] : state === "rebook" ? ["rebook" as const] : [])],
       profileUrl: `${appUrl}/p/${doc.id}`,
       // kept for the filter below
-      ...({ _lat: cgLat, _lng: cgLng, _serviceRadius: serviceRadius, _careKinds: data.careKinds } as Record<string, unknown>),
+      ...({ _lat: cgLat, _lng: cgLng, _serviceRadius: serviceRadius, _kinds: kindsOfProvider(data) } as Record<string, unknown>),
     } as CaregiverCard);
   }
 
   const q = (filters.query ?? "").trim().toLowerCase();
   const wantedSpecialties = (filters.specialties ?? []).map((s) => s.toLowerCase());
-  // The Care type filter exists only on a Both household (the panel shows it there alone).
-  const careTypeView = normalizeCareKinds(householdKinds).length === 2 ? filters.careType : undefined;
+  // Nothing hides a provider by kind (founder 2026-10-19): the Care type filter is an optional VIEW for everyone,
+  // read from the services each provider ticked (Transportation alone or nothing = both).
+  const careTypeView = filters.careType;
   const wantedLanguages = (filters.languages ?? []).map((l) => l.toLowerCase());
   const list = cards.filter((cg) => {
     const raw = cg as unknown as Record<string, unknown>;
     if (blocked.has(cg.id)) return false;
-    if (!providerMatchesHousehold(raw._careKinds, householdKinds)) return false;
-    if (careTypeView && !normalizeCareKinds(raw._careKinds).includes(careTypeView)) return false;
+    if (careTypeView && !(raw._kinds as string[]).includes(careTypeView)) return false;
     if (filters.favoritesOnly && !cg.isFavorite) return false;
     if (cg.distance != null) {
       if (cg.distance > filters.maxDistanceMiles) return false;

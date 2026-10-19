@@ -21,7 +21,7 @@
 import * as admin from "firebase-admin";
 import { haversineMiles } from "../ai/scoring";
 import { caregiverBlockReason, jobRequiresTransport, CaregiverGateReason } from "./caregiverAccessGate";
-import { providerCoversPost, careKindBadge, ageRangeLabel, CANONICAL_SERVICES, normalizeCareKinds, CARE_KIND_LABEL, serviceListsForKinds } from "./caregiverServiceLabels";
+import { careKindBadge, kindsOfPost, ageRangeLabel, CANONICAL_SERVICES, CARE_KIND_LABEL, serviceListsForKinds, CARE_KINDS } from "./caregiverServiceLabels";
 
 const db = admin.firestore();
 
@@ -154,7 +154,7 @@ export function buildJobCard(job: Doc, cg: Doc, coords: { lat: number; lng: numb
     day:           tod.some((t) => t === "morning" || t === "afternoon"),
     night:         tod.some((t) => t === "evening" || t === "overnight"),
     seniors:       recipients && recipients > 1 ? recipients : null,
-    kind:          careKindBadge(job.careKinds),
+    kind:          careKindBadge(kindsOfPost(job)),   // derived from the services on the post
     ageRanges:     (Array.isArray(job.ageRanges) ? (job.ageRanges as string[]) : []).map(ageRangeLabel),
     transportation: jobRequiresTransport(job),
     date:          dateLabel(job.date),
@@ -184,7 +184,7 @@ export interface JobBoardFilters {
   days?: string[];                 // Mon..Sun — any job day starting with the chip
   seniors?: Array<"1" | "2" | "3+">;
   careTypes?: string[];            // exact overlap with job.careTypes
-  careType?: "senior" | "child";   // the Care type filter at the top of the panel (Both accounts only)
+  careType?: "senior" | "child";   // the optional Care type VIEW filter at the top of the panel, for everyone (kindsOfPost)
 }
 
 // The sidebar's option sets, verbatim (JobBoard.tsx FilterPanel): Time of Day
@@ -197,8 +197,8 @@ export const JOB_BOARD_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] 
 export const JOB_BOARD_SENIORS = ["1", "2", "3+"] as const;
 // Child care (2026-10-18): the senior eight + the child eight (Transportation once).
 export const JOB_BOARD_CARE_TYPES: readonly string[] = CANONICAL_SERVICES;
-/** The Care Type checkboxes grouped by kind — the list(s) on the provider's profile (missing = senior); both when asked for both. */
-export function jobBoardCareTypesByKind(providerKinds: unknown = ["senior", "child"]): string {
+/** The Care Type checkboxes grouped by kind — BOTH lists for everyone (founder 2026-10-19: no care-type question). */
+export function jobBoardCareTypesByKind(providerKinds: unknown = CARE_KINDS): string {
   return serviceListsForKinds(providerKinds).map((l) => `${CARE_KIND_LABEL[l.kind]}: ${l.services.join(", ")}`).join("; ");
 }
 // components/caregiver/signup/constants.ts serviceLabel: the one care type whose
@@ -311,7 +311,7 @@ export function passesJobBoardFilters(job: Doc, f: JobBoardFilters | undefined):
     const jct = Array.isArray(job.careTypes) ? (job.careTypes as string[]) : [];
     if (!f.careTypes.some((ct) => jct.includes(ct))) return false;
   }
-  if (f.careType && !normalizeCareKinds(job.careKinds).includes(f.careType)) return false;
+  if (f.careType && !kindsOfPost(job).includes(f.careType)) return false;
   return true;
 }
 
@@ -334,9 +334,8 @@ export function withinCaregiverRadius(job: Doc, coords: { lat: number; lng: numb
 export function applyJobBoardFilters(jobs: Doc[], filters: JobBoardFilters | undefined, caregiver: Doc): Doc[] {
   const coords = caregiverCoords(caregiver);
   const radius = caregiverRadiusMiles(caregiver);
-  // The Care type filter exists only for a provider who offers both kinds — anyone else never sees it.
-  const f = filters?.careType && normalizeCareKinds(caregiver.careKinds).length !== 2 ? { ...filters, careType: undefined } : filters;
-  return jobs.filter((j) => passesJobBoardFilters(j, f) && withinCaregiverRadius(j, coords, radius));
+  // The Care type filter is an optional VIEW for every provider (founder 2026-10-19) — none = every post.
+  return jobs.filter((j) => passesJobBoardFilters(j, filters) && withinCaregiverRadius(j, coords, radius));
 }
 
 async function caregiverBlockedIds(caregiverId: string): Promise<Set<string>> {
@@ -385,9 +384,8 @@ export async function loadAvailableJobs(
     .map((d) => normalizeJobPost({ id: d.id, ...(d.data() as Doc) }))
     .filter((j) => !applied.has(j.id as string) && !hidden.has(j.id as string) && j.clientActive !== false)
     .filter((j) => !blocked.has(j.clientId as string))
-    .filter((j) => !(drivingJobsHiddenFor(cg) && jobRequiresTransport(j)))
-    // Child care (2026-10-18): a provider sees a post only when they offer every kind it needs (missing = senior).
-    .filter((j) => providerCoversPost(cg.careKinds, j.careKinds));
+    .filter((j) => !(drivingJobsHiddenFor(cg) && jobRequiresTransport(j)));
+  // Nothing hides a post by kind (founder 2026-10-19): every provider sees every post; Care type is a view filter only.
   let jobs = applyJobBoardFilters(listed, opts.filters, cg);
   if (opts.sort === "nearest" && coords) {
     jobs = jobs

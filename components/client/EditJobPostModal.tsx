@@ -1,5 +1,5 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
-import { serviceLabel, PRIMARY_SERVICES, serviceListsForKinds, kindsOfServices } from '../caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, CARE_KINDS, serviceListsForKinds, kindsOfServices } from '../caregiver/signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2, Check, Calendar, DollarSign, Heart, Home } from 'lucide-react';
@@ -264,7 +264,8 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
           <section>
             <SectionHead icon={<Heart className="w-4 h-4" />} label="Care Needs" />
             <div className="flex flex-wrap gap-2">
-              {Array.from(new Set(serviceListsForKinds(post.careKinds).flatMap(l => [...l.services]))).map(ct => (
+              {/* Both lists, always (founder, 2026-10-19) — the post's kinds are re-read from the ticks at save */}
+              {Array.from(new Set(serviceListsForKinds(CARE_KINDS).flatMap(l => [...l.services]))).map(ct => (
                 <button key={ct} type="button" onClick={() => toggleArr('careTypes', ct)} className={chip(form.careTypes.includes(ct))}>
                   {serviceLabel(ct)}
                 </button>

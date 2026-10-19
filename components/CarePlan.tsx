@@ -1,6 +1,6 @@
 
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../utils/medicationInstruction';
-import { serviceLabel, PRIMARY_SERVICES, CareKind, normalizeCareKinds, serviceListsForKinds, AGE_RANGES, STAGE_HEADING, ageRangeLabel, recipientCareKind, relationshipsForKinds, recipientStage, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS } from './caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, CareKind, RELATIONSHIPS, serviceListsForKinds, AGE_RANGES, STAGE_HEADING, ageRangeLabel, recipientCareKind, recipientStage, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS } from './caregiver/signup/constants';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Phone, FileText, ChevronLeft, Plus, Trash2, Loader2, User,
@@ -75,10 +75,9 @@ interface RecipientEntry { firstName: string; lastName: string; name: string; re
 
 
 // ── Child care (2026-10-18): the one question + the chips, shared by the Add form and the editor ──
-// No care-type control on this page (founder, 2026-10-18 evening): the household
-// picked its care type once (signup / Account Settings → job_postings.careKinds)
-// and each recipient's RELATIONSHIP decides which list they see — Child → the
-// child list + ONE stage chip row; Myself / Parent / Spouse or Partner / Adult child → the senior list;
+// No care-type control anywhere (founder, 2026-10-19): each recipient's RELATIONSHIP
+// decides which list they see — Child → the child list + ONE stage chip row;
+// Myself / Parent / Spouse or Partner / Adult child → the senior list;
 // Other → a two-way pick (adult / child) stored as `careKind` on that person.
 const KIND_PICK: ReadonlyArray<{ value: CareKind; label: string }> = OTHER_KIND_OPTIONS;
 const StageChips: React.FC<{ value?: string; onPick: (id: string) => void }> = ({ value, onPick }) => (
@@ -460,17 +459,12 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     );
   }, [carePlanDocLoaded, recipients, wizardData]);
 
-  // The household's care-type setting (job_postings.careKinds; missing = senior) gates the lists;
-  // Account Settings is the one writer. Each recipient's relationship picks their list inside it.
-  const householdKinds = normalizeCareKinds(wizardData?.careKinds);
-  const bothKinds = householdKinds.length === 2;
-  const listsForRecipient = (relationship: unknown, careKind?: unknown) => {
-    const k = recipientCareKind(relationship, careKind);
-    return serviceListsForKinds(householdKinds.includes(k) ? [k] : householdKinds);
-  };
-  const relationshipOptions = relationshipsForKinds(householdKinds, { includeMyself: !recipients.some(r => r.relationship?.toLowerCase() === 'myself') });
-  // A child (by relationship, inside a household that includes child care) must have a stage — one per child.
-  const needsStage = (relationship: unknown, careKind: unknown, ageRange?: string) => householdKinds.includes('child') && recipientCareKind(relationship, careKind) === 'child' && !ageRange;
+  // Each recipient's relationship picks their list (Other → their stored careKind); no household setting.
+  const listsForRecipient = (relationship: unknown, careKind?: unknown) => serviceListsForKinds([recipientCareKind(relationship, careKind)]);
+  const hasMyself = recipients.some(r => r.relationship?.toLowerCase() === 'myself');
+  const relationshipOptions: string[] = RELATIONSHIPS.filter(r => r !== 'Myself' || !hasMyself);
+  // A child (by relationship) must have a stage — one per child.
+  const needsStage = (relationship: unknown, careKind: unknown, ageRange?: string) => recipientCareKind(relationship, careKind) === 'child' && !ageRange;
   // Keep the roster entry's stage in step with the plan (job_postings: careRecipientAgeRange for the primary, additionalRecipients[].ageRange otherwise).
   const syncRosterStage = async (r: RecipientEntry, ageRange: string) => {
     if (!db || !currentPlanId || !wizardData || !ageRange || r.ageRange === ageRange) return; // never write an empty stage (Firestore rejects undefined)
@@ -723,7 +717,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       onShowToast('Names cannot contain special characters like / * [ ]', 'error'); return;
     }
     if (!newRecipient.relationship) { onShowToast('Please select a relationship', 'error'); return; }
-    if (newRecipient.relationship === 'Other' && bothKinds && !newRecipient.careKind) { onShowToast(OTHER_KIND_QUESTION, 'error'); return; }
+    if (newRecipient.relationship === 'Other' && !newRecipient.careKind) { onShowToast(OTHER_KIND_QUESTION, 'error'); return; }
     if (needsStage(newRecipient.relationship, newRecipient.careKind || undefined, newRecipient.ageRange)) { onShowToast("Please pick the child's stage", 'error'); return; }
     if (newRecipient.relationship.toLowerCase() === 'myself' && recipients.some(r => r.relationship?.toLowerCase() === 'myself')) {
       onShowToast('You can only add yourself once', 'error'); return;
@@ -734,8 +728,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     if (!currentPlanId || !db) return;
     setSavingRecipient(true);
     try {
-      const careKind = newRecipient.relationship === 'Other' && bothKinds && newRecipient.careKind ? newRecipient.careKind : undefined;
-      const ageRange = householdKinds.includes('child') && recipientCareKind(newRecipient.relationship, careKind) === 'child' && newRecipient.ageRange ? newRecipient.ageRange : undefined;
+      const careKind = newRecipient.relationship === 'Other' && newRecipient.careKind ? newRecipient.careKind : undefined;
+      const ageRange = recipientCareKind(newRecipient.relationship, careKind) === 'child' && newRecipient.ageRange ? newRecipient.ageRange : undefined;
       const entry = { firstName: newRecipient.firstName.trim(), lastName: newRecipient.lastName.trim(), relationship: newRecipient.relationship, ...(careKind ? { careKind } : {}), ...(ageRange ? { ageRange } : {}) };
 
       const isFirstRecipient = !wizardData?.careRecipientFirstName;
@@ -1066,7 +1060,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                       <option value="" disabled>Relationship *</option>
                       {relationshipOptions.map(r => <option key={r} value={r}>{r}</option>)}
                     </select>
-                    {newRecipient.relationship === 'Other' && bothKinds && (
+                    {newRecipient.relationship === 'Other' && (
                       <div className="col-span-2">
                         <p className="text-xs font-semibold text-slate-500 mb-2">{OTHER_KIND_QUESTION}</p>
                         <div className="flex gap-2">

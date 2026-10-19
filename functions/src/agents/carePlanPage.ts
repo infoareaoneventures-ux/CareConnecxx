@@ -18,8 +18,7 @@
 import * as admin from "firebase-admin";
 import { randomUUID } from "crypto";
 import { recipientPlanKey } from "./careRecipients";
-import { CANONICAL_SERVICES, RELATIONSHIPS as CONTRACT_RELATIONSHIPS, AGE_RANGES, ageRangeLabel, CareKind, normalizeCareKinds, recipientCareKind, relationshipsForKinds, serviceListsForKinds, ageRangeFromWords, stageOf, OTHER_KIND_QUESTION, STAGE_HEADING } from "./caregiverServiceLabels";
-import { careTypeSettingHint } from "./householdCareType";
+import { CANONICAL_SERVICES, RELATIONSHIPS as CONTRACT_RELATIONSHIPS, AGE_RANGES, ageRangeLabel, CareKind, CARE_KINDS, recipientCareKind, serviceListsForKinds, ageRangeFromWords, stageOf, OTHER_KIND_QUESTION, STAGE_HEADING } from "./caregiverServiceLabels";
 import { geocodeAddress, lookupZipPlace, GeoPrecision } from "../utils/geocode";
 
 const db = admin.firestore();
@@ -227,7 +226,8 @@ async function load(clientId: string): Promise<LoadedPage> {
     return { careNeeds: wizardNeeds, careNeedDetails: {}, locations: wizardLocations.slice(0, 1), notes: wizardNotes, lifestyle: emptyLifestyle(), tasks: emptyTasks() };
   };
 
-  const householdKinds = normalizeCareKinds(wizard.careKinds);
+  // No household care-type setting exists (founder 2026-10-19): every household can hold both kinds of recipient.
+  const householdKinds: CareKind[] = [...CARE_KINDS];
   const recipients: CarePlanRecipient[] = list.map((r) => {
     const plan = getPlan(r.key);
     const kind = recipientCareKind(r.relationship, r.careKind);
@@ -246,8 +246,8 @@ async function load(clientId: string): Promise<LoadedPage> {
     householdKinds,
     recipients, locationPool: effectivePool, emergencyContacts, setupContact,
     reviewed: !!cp.carePlanReviewedAt,
-    // The relationship choices the page offers follow the household's care type (Child only with child care, the senior ones only with senior care, Other always).
-    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: relationshipsForKinds(householdKinds), stageHeading: STAGE_HEADING, stages: AGE_RANGES.map((a) => a.label) },
+    // The relationship choices are the same six for every household (founder 2026-10-19: the relationship decides the list, never a setting).
+    options: { careTypes: [...CARE_TYPES], favoriteActivities: FAV_ACTIVITIES, entertainment: ENTERTAINMENT, frequencies: FREQ_OPTIONS, petTypes: PET_TYPES, relationships: [...CONTRACT_RELATIONSHIPS], stageHeading: STAGE_HEADING, stages: AGE_RANGES.map((a) => a.label) },
     wizard, rawPlans, wizardLocations,
   };
 }
@@ -360,25 +360,19 @@ export async function addRecipient(clientId: string, input: NewRecipientInput): 
   const relationship = (input.relationship ?? "").trim();
   if (!relationship) return { ok: false, message: "Please select a relationship" };
   const page = await load(clientId);
-  // The relationship choices follow the household's ONE care-type setting (child care, 2026-10-18):
-  // Child only when the household includes child care, the senior ones only with senior care, Other always.
-  const allowedRelationships = relationshipsForKinds(page.householdKinds);
+  // The same six relationships for every household (founder 2026-10-19): the relationship decides the list.
+  const allowedRelationships: readonly string[] = CONTRACT_RELATIONSHIPS;
   const relationshipOk = allowedRelationships.some((a) => a.toLowerCase() === relationship.toLowerCase());
-  if (!relationshipOk) {
-    const wantsChild = relationship.toLowerCase() === "child";
-    const known = CONTRACT_RELATIONSHIPS.some((a) => a.toLowerCase() === relationship.toLowerCase());
-    if (known) return { ok: false, message: careTypeSettingHint(wantsChild ? "child" : "senior") };
-    return { ok: false, message: `Please select a relationship: ${allowedRelationships.join(", ")}` };
-  }
+  if (!relationshipOk) return { ok: false, message: `Please select a relationship: ${allowedRelationships.join(", ")}` };
   if (relationship.toLowerCase() === "myself" && page.recipients.some((r) => r.relationship.toLowerCase() === "myself")) {
     return { ok: false, message: "You can only add yourself once" };
   }
   if (!input.location?.street?.trim()) return { ok: false, message: "Please select or enter a care location with a street address" };
 
-  // "Other" in a Both household carries the family's two-way pick; everyone else's kind follows the relationship.
-  const careKind = relationship.toLowerCase() === "other" && page.householdKinds.length === 2 && (input.careKind === "child" || input.careKind === "senior") ? input.careKind : undefined;
-  if (relationship.toLowerCase() === "other" && page.householdKinds.length === 2 && !careKind) return { ok: false, message: `For Other, say whether they are an adult or a child (${OTHER_KIND_QUESTION})` };
-  const kind = recipientCareKind(relationship, careKind ?? (page.householdKinds.length === 1 ? page.householdKinds[0] : undefined));
+  // "Other" ALWAYS carries the family's adult-or-child answer; everyone else's kind follows the relationship.
+  const careKind = relationship.toLowerCase() === "other" && (input.careKind === "child" || input.careKind === "senior") ? input.careKind : undefined;
+  if (relationship.toLowerCase() === "other" && !careKind) return { ok: false, message: `For Other, say whether they are an adult or a child (${OTHER_KIND_QUESTION})` };
+  const kind = recipientCareKind(relationship, careKind);
   const givenStage = ageRangeFromWords(input.ageRange) ?? ageRangeFromWords(input.ageRanges);
   if (givenStage && kind !== "child") return { ok: false, message: `${STAGE_HEADING} is for a child only — ${firstName} is an adult.` };
   const entryStage = kind === "child" ? givenStage : null; // the stage exists only on a child's plan

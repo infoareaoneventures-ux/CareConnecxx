@@ -406,7 +406,7 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
   });
 });
 
-describe("handleJpAskCareNeeds — child care (2026-10-18): the list follows who the care is for, the chips only for a child", () => {
+describe("handleJpAskCareNeeds — child care (2026-10-18, un-framed 2026-10-19): the list follows who is on the post (no household setting), the chips only for a child", () => {
   beforeEach(() => { process.env.CONVERGENCE_UNFLIPPED = "job_posting"; });
   afterEach(() => { delete process.env.CONVERGENCE_UNFLIPPED; });
 
@@ -475,7 +475,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18): the list follows who
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ jobPostingData: {} }) });
   });
 
-  it("a child service on a senior-only household is left off with the one-line pointer to Account Settings — nothing saved, the flow never changes the setting", async () => {
+  it("a child service for a post with no child on it is left off and said so (no pointer to any setting) — nothing saved, the senior list re-asked", async () => {
     modelReplies("NO"); // isQuestionOrOther
     mapper.mapperReply.mockResolvedValueOnce("NO") // back-out check
       .mockResolvedValueOnce(JSON.stringify({ services: ["Supervision"], medical: [], unmapped: [] }));
@@ -484,12 +484,14 @@ describe("handleJpAskCareNeeds — child care (2026-10-18): the list follows who
     });
     expect(hoisted.updateMock.mock.calls.some(([arg]) => arg?.jobPostingData?.jobCareNeeds || arg?.jobPostingData?.jobCareKinds || arg?.careKinds)).toBe(false);
     const sent = String(sendMessage.mock.calls.at(-1)?.[1]);
-    expect(sent).toContain("Child care isn't on this household yet — change the care type to Both in Account Settings, or tell me to and I'll do it.");
+    expect(sent).toContain("\"Supervision\" isn't on");
+    expect(sent).toContain("so I've left it off.");
+    expect(sent).not.toContain("Account Settings");
     expect(sent).toContain("Mobility Assistance\nDementia / Memory Care"); // re-asks with the senior list
     expect(sent).not.toContain("Supervision\nBaby Care");
   });
 
-  it("in a Both household the list follows the recipients on the post: a child recipient gets the child list, a parent the senior list", async () => {
+  it("the list follows the recipients on the post: a child recipient gets the child list, a parent the senior list — no household record is read", async () => {
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: { jobFrequency: "occasional", careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }] } }) });
     modelReplies("NO"); // isQuestionOrOther
     mapper.mapperReply.mockResolvedValueOnce("NO") // back-out check
@@ -503,7 +505,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18): the list follows who
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ jobPostingData: {} }) });
   });
 
-  it("a new person who is \"Other\" in a Both household is asked once whether they are an adult or a child; the answer rides on the recipient", async () => {
+  it("a new person who is \"Other\" is ALWAYS asked once whether they are an adult or a child; the answer rides on the recipient", async () => {
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: { jobFrequency: "occasional", careRecipients: [], pendingNewRecipientFirstName: "Lee", pendingNewRecipientLastName: "", pendingNewRecipientRelationship: "Other", awaitingRecipientKind: true } }) });
     modelReplies("NO", "CHILD"); // isQuestionOrOther, then the two-way read (the model, never a keyword match)
     mapper.mapperReply.mockResolvedValueOnce("NO"); // back-out check
@@ -516,7 +518,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18): the list follows who
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ jobPostingData: {} }) });
   });
 
-  it("a senior household (nothing on record) sees exactly today's menu — the senior eight, no chips, no new question", async () => {
+  it("nobody on the post yet → exactly today's menu — the senior eight, no chips, no new question", async () => {
     modelReplies("NO");
     mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: ["Companionship"], medical: [], unmapped: [] }));
     await handleJobPostingStep(PHONE, CHAT, "company during the day", {

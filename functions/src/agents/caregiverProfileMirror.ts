@@ -32,7 +32,7 @@ import {
   toExperienceBucket,
 } from "./onboardingContract";
 import { MAX_CLIENTS_OPTIONS } from "./onboardingContract";
-import { normalizeCareKinds } from "./caregiverServiceLabels";
+import { kindsOfServices, CARE_KINDS } from "./caregiverServiceLabels";
 
 /** The site wizard's step ids in order (CaregiverOnboardingWizard.tsx stepsArr; email is skipped when on file). */
 export const WIZARD_STEP_ORDER: readonly string[] = ["welcome", "location", "email", "photo", "availability", "services", "rates", "bio", "done"];
@@ -89,8 +89,6 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   copy("state",   d.state);
   copy("city",    d.city);
   copy("zipCode", d.zipCode);
-  // Child care (2026-10-18): the kinds they provide — only when answered; a missing field reads as senior.
-  if (Array.isArray(d.careKinds) && d.careKinds.length) out.careKinds = normalizeCareKinds(d.careKinds);
   // No coords: triggers/caregiverGeocode.ts derives lat/lng/latitude/longitude
   // (+ geoPrecision) from the street fields above on this very write. NEVER
   // write `location` as a {lat,lng} OBJECT either: the webapp renders caregiver
@@ -122,6 +120,9 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   if (skills.length) {
     out.skills = skills;
     out.services = skills;
+    // careKinds is DERIVED from the services ticked (founder 2026-10-19: no care-type question) — the same
+    // kindsOfProvider rule the site uses; Transportation alone = both. Never asked, never required.
+    out.careKinds = kindsOfServices(skills, CARE_KINDS);
     // The wizard's services step also writes primaryServices [{name, yearsExperience}].
     if (expBucket) out.primaryServices = skills.map((name) => ({ name, yearsExperience: expBucket }));
   }

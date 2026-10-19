@@ -19,13 +19,15 @@ export const PRIMARY_SERVICES = [
   "Light Housekeeping",
 ] as const;
 
-// ── Care kinds (child care, 2026-10-18) ────────────────────────────────────
-// ONE new fact on both doors: who the care is for. It lives on each care
-// provider profile (`careKinds`, one or both) and on the family's household
-// record (`job_postings/{uid}.careKinds`); a job post carries the kinds its
-// ticked services imply (`job_posts.careKinds`). A MISSING field means
-// ["senior"] everywhere — no backfill. Mirrored byte-for-byte in
-// components/caregiver/signup/constants.ts (parity test).
+// ── Care kinds (child care, 2026-10-18; un-framed 2026-10-19) ──────────────
+// Nobody is asked "senior, child or both" anywhere (founder 2026-10-19). The
+// kinds are DERIVED: a family's from the RELATIONSHIP of each person on the
+// record (recipientCareKind), a provider's and a post's from the services ticked
+// (kindsOfServices). Stored `careKinds` fields stay where they are cheap to keep
+// derived; a MISSING value still reads ["senior"] (legacy records keep their
+// senior titles), but nothing is ever hidden by kind — the view filters read
+// kindsOfPost / kindsOfProvider, whose fallback is BOTH. Mirrored byte-for-byte
+// in components/caregiver/signup/constants.ts (parity test).
 export const CARE_KINDS = ["senior", "child"] as const;
 export type CareKind = (typeof CARE_KINDS)[number];
 export const CARE_KIND_LABEL: Record<CareKind, string> = { senior: "Senior care", child: "Child care" };
@@ -53,7 +55,7 @@ export const CHILD_SERVICES = [
 export const CANONICAL_SERVICES: readonly string[] = [...PRIMARY_SERVICES, ...CHILD_SERVICES.filter((s) => !(PRIMARY_SERVICES as readonly string[]).includes(s))];
 export const ALL_SERVICES: readonly string[] = CANONICAL_SERVICES;
 
-/** Normalize a stored/absent value to the kinds it means: missing or empty = ["senior"]. */
+/** Normalize a stored/absent value to the kinds it means: missing or empty = ["senior"] (legacy records; never used to hide anyone). */
 export function normalizeCareKinds(value: unknown): CareKind[] {
   const arr = Array.isArray(value) ? value : [];
   const kinds = CARE_KINDS.filter((k) => arr.includes(k));
@@ -69,13 +71,26 @@ export function serviceListsForKinds(value: unknown): Array<{ kind: CareKind; se
   ];
 }
 
-/** The kinds a set of ticked services implies. Transportation alone implies nothing; `fallback` (the household's or provider's answer) decides then. */
+/** The kinds a set of ticked services implies. Transportation alone implies nothing; `fallback` (the stored kinds, or CARE_KINDS for "both") decides then. */
 export function kindsOfServices(services: readonly unknown[], fallback: unknown = undefined): CareKind[] {
   const names = services.filter((s): s is string => typeof s === "string");
   const senior = names.some((s) => s !== "Transportation" && (PRIMARY_SERVICES as readonly string[]).includes(s));
   const child = names.some((s) => s !== "Transportation" && (CHILD_SERVICES as readonly string[]).includes(s));
   const kinds = CARE_KINDS.filter((k) => (k === "senior" ? senior : child));
   return kinds.length ? kinds : normalizeCareKinds(fallback);
+}
+
+/** The kinds a job post needs, read from the services on it (careTypes); the stored kinds, else senior, when the services say nothing. */
+export function kindsOfPost(post: { careTypes?: unknown; careKinds?: unknown } | null | undefined): CareKind[] {
+  const types = Array.isArray(post?.careTypes) ? (post!.careTypes as unknown[]) : [];
+  return kindsOfServices(types, post?.careKinds);
+}
+
+/** The kinds a care provider offers, read from the services they ticked (Transportation alone, or nothing yet = both). */
+export function kindsOfProvider(profile: { services?: unknown; skills?: unknown } | null | undefined): CareKind[] {
+  const services = Array.isArray(profile?.services) && (profile!.services as unknown[]).length ? (profile!.services as unknown[])
+    : Array.isArray(profile?.skills) ? (profile!.skills as unknown[]) : [];
+  return kindsOfServices(services, CARE_KINDS);
 }
 
 /**
@@ -138,27 +153,11 @@ export function stageQuestion(firstName?: string | null): string {
   return firstName ? `Which stage is ${firstName} at — ${list}?` : `Which stage — ${list}?`;
 }
 
-/** The one care-type line, spoken (the same words as the site's heading, with the three choices). */
-export const CARE_TYPE_QUESTION_FAMILY_LINE = "What kind of care do you need — senior care, child care, or both?";
-export const CARE_TYPE_QUESTION_PROVIDER_LINE = "What kind of care do you provide — senior care, child care, or both?";
-
-/** "Child care" / "Senior and child care" — the badge a card shows only when child care is involved; null for senior-only. */
+/** "Child care" / "Senior and child care" — the badge a card shows only when the kinds (derived from the services ticked) include child care; null for senior-only. */
 export function careKindBadge(kinds: unknown): string | null {
   const k = normalizeCareKinds(kinds);
   if (!k.includes("child")) return null;
   return k.length === 2 ? "Senior and child care" : "Child care";
-}
-
-/** A care provider sees a post only when they offer EVERY kind the post needs. */
-export function providerCoversPost(providerKinds: unknown, postKinds: unknown): boolean {
-  const have = normalizeCareKinds(providerKinds);
-  return normalizeCareKinds(postKinds).every((k) => have.includes(k));
-}
-
-/** A family sees a care provider who offers ANY kind the household needs. */
-export function providerMatchesHousehold(providerKinds: unknown, householdKinds: unknown): boolean {
-  const have = normalizeCareKinds(providerKinds);
-  return normalizeCareKinds(householdKinds).some((k) => have.includes(k));
 }
 
 // Age ranges for a child — an informational chip beside pets / smoking, never a
@@ -182,23 +181,17 @@ export const AGE_RANGE_IDS: readonly string[] = AGE_RANGES.map((a) => a.id);
 // child side. Older stored values (Grandparent, Sibling, Spouse) still read back.
 export const RELATIONSHIPS = ["Myself", "Parent", "Spouse or Partner", "Adult child", "Child", "Other"] as const;
 
-// The ONE care-type question, asked once at signup and changed in one place —
-// the same sentence on both doors (founder 2026-10-18). Labels stay
-// Senior care / Child care / Both. "Adult or a child" survives only in the
-// follow-up for Other.
-export const CARE_TYPE_QUESTION_FAMILY = "What kind of care do you need?";
-export const CARE_TYPE_QUESTION_PROVIDER = "What kind of care do you provide?";
-export const CARE_TYPE_OPTION_LABELS = ["Senior care", "Child care", "Both"] as const;
+// No care-type question exists on either door (founder 2026-10-19). The only
+// adult-or-child question left is the follow-up for the relationship Other (and
+// for an ambiguous "my son / my daughter" by text).
 export const OTHER_KIND_QUESTION = "Is this person an adult or a child?";
 export const OTHER_KIND_OPTIONS = [{ value: "senior", label: "Adult" }, { value: "child", label: "Child" }] as const;
 
-// ── Who decides a recipient's kind (founder, 2026-10-18 evening) ────────────
-// The family picks the household's care type ONCE (signup / Account Settings:
-// job_postings.careKinds). Everywhere else the RELATIONSHIP decides which list a
-// recipient sees: Child → child; Myself / Parent / Spouse or Partner (and the
-// older stored values) → senior; Other → the recipient's own stored `careKind`
-// (a two-way pick shown only for Other in a Both household). No per-recipient
-// control anywhere else.
+// ── Who decides a recipient's kind (founder, 2026-10-19) ─────────────────────
+// The RELATIONSHIP decides which list a recipient sees: Child → child; Myself /
+// Parent / Spouse or Partner / Adult child (and the older stored values) →
+// senior; Other → the recipient's own stored `careKind` (the adult-or-child
+// follow-up, asked for every Other). The account holds nothing.
 export const CHILD_RELATIONSHIPS: readonly string[] = ["Child"];
 export const AMBIGUOUS_RELATIONSHIPS: readonly string[] = ["Other"];
 
@@ -210,7 +203,7 @@ export function recipientCareKind(relationship: unknown, careKind: unknown = und
   return "senior";
 }
 
-/** The relationship choices a household can offer: Child only when it includes child care; the senior ones only when it includes senior care; Other always. */
+/** The relationship choices: all six for everyone (missing kinds = both); the kinds argument survives only for callers that narrow a derived set. */
 export function relationshipsForKinds(householdKinds: unknown, opts: { includeMyself?: boolean } = {}): string[] {
   const kinds = normalizeCareKinds(householdKinds);
   return RELATIONSHIPS.filter((r) => {
@@ -227,13 +220,7 @@ export function rosterCareKinds(recipients: ReadonlyArray<{ relationship?: unkno
   return CARE_KINDS.filter((k) => set.has(k));
 }
 
-/** The first recipient a proposed household setting would leave uncovered, or null when the setting is allowed. */
-export function careTypeChangeBlockedBy<T extends { relationship?: unknown; careKind?: unknown }>(proposedKinds: unknown, recipients: readonly T[]): T | null {
-  const kinds = normalizeCareKinds(proposedKinds);
-  return recipients.find((r) => !kinds.includes(recipientCareKind(r.relationship, r.careKind))) ?? null;
-}
-
-/** The default job title by kind: 'Senior care in {city}' / 'Child care in {city}' / 'Senior and child care in {city}'. */
+/** The default job title by kind (derived from the ticked services): 'Senior care in {city}' / 'Child care in {city}' / 'Senior and child care in {city}'. */
 export function defaultJobTitleFor(city: string | null | undefined, kinds: unknown = undefined): string {
   const k = normalizeCareKinds(kinds);
   const what = k.length === 2 ? "Senior and child care" : k[0] === "child" ? "Child care" : "Senior care";

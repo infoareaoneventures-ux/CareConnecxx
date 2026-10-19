@@ -317,12 +317,8 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     expect(geocodeStreetAddress).not.toHaveBeenCalled();
   });
 
-  it("the relationship choices follow the household's ONE care-type setting: Child is refused on a senior household with the Account Settings line; allowed on Both; Other in a Both household carries its two-way pick (child care, 2026-10-18)", async () => {
+  it("the same six relationships for every household (2026-10-19: no care-type setting): Child is allowed anywhere; Other ALWAYS carries its adult-or-child answer", async () => {
     seedRoster();
-    const refused = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "S", lastName: "Mahad", relationship: "Child", location: { street: "1 Elm St" } }) as any;
-    expect(refused._toolError).toBe(true);
-    expect(refused.message).toBe("Child care isn't on this household yet — change the care type to Both in Account Settings, or tell me to and I'll do it.");
-    seedRoster({ careKinds: ["senior", "child"] });
     // ONE stage per child, set on the child (2026-10-18 late): a single `ageRange` id on the plan AND on the roster entry; refused for an adult.
     const stagedAdult = await handleToolCall("create_senior_profile", { clientId: CLIENT, firstName: "Omar", relationship: "Adult child", ageRange: "Teen", location: { street: "1 Elm St" } }) as any;
     expect(stagedAdult._toolError).toBe(true);
@@ -341,7 +337,7 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     expect(otherOk.success).toBe(true);
     expect(hoisted.docState.get(`job_postings/${CLIENT}`).additionalRecipients).toContainEqual({ firstName: "Lee", lastName: "", relationship: "Other", careKind: "child" });
     const list = await handleToolCall("list_household_seniors", { clientId: CLIENT }) as any;
-    expect(list.careType).toBe("Both");
+    expect(list.careType).toBeUndefined(); // no household care type exists (2026-10-19)
     expect(list.relationships).toEqual(["Myself", "Parent", "Spouse or Partner", "Adult child", "Child", "Other"]);
     expect(list.results.map((r: any) => [r.name, r.kind, r.stage])).toEqual([["Jane Doe", "Senior care", null], ["S Mahad", "Child care", "Toddler"], ["Lee", "Child care", null]]);
     // update_care_plan › ageRange: one stage name, a child only.
@@ -352,23 +348,6 @@ describe("create_senior_profile — the Care Plan page's '+ Add' form", () => {
     const adultStage = await handleToolCall("update_care_plan", { clientId: CLIENT, field: "ageRange", value: "Teen", action: "set", recipientFirstName: "Jane" }) as any;
     expect(adultStage._toolError).toBe(true);
     expect(adultStage.message).toBe("Stage is for a child only — Jane Doe is an adult.");
-  });
-
-  it("set_household_care_type — the Account Settings › Care type row with the roster rule: refused with the page's sentence when someone would be uncovered, otherwise written once", async () => {
-    seedRoster({ additionalRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child" }], careKinds: ["senior", "child"] });
-    const refused = await handleToolCall("set_household_care_type", { clientId: CLIENT, careType: "child" }) as any;
-    expect(refused.success).toBe(false);
-    expect(refused.error).toBe("Jane Doe is a Parent. Choose Both, or remove Jane Doe first.");
-    expect(refused.sayVerbatim).toBe(true);
-    const refused2 = await handleToolCall("set_household_care_type", { clientId: CLIENT, careType: "senior" }) as any;
-    expect(refused2.error).toBe("S Mahad is a Child. Choose Both, or remove S Mahad first.");
-    seedRoster();
-    const ok = await handleToolCall("set_household_care_type", { clientId: CLIENT, careType: "both" }) as any;
-    expect(ok.success).toBe(true);
-    expect(ok.careType).toBe("Both");
-    expect(hoisted.docState.get(`job_postings/${CLIENT}`).careKinds).toEqual(["senior", "child"]);
-    const same = await handleToolCall("set_household_care_type", { clientId: CLIENT, careType: "both" }) as any;
-    expect(same.unchanged).toBe(true);
   });
 
   it("enforces the form's rules: relationship required, a street address required, 'Myself' only once, no special characters", async () => {

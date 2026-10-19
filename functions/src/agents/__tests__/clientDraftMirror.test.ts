@@ -5,7 +5,8 @@ import { buildClientDraftMirror, mapJobPostingsDocToOnboardingData } from "../cl
 describe("buildClientDraftMirror", () => {
   it("writes only what the family answered, in the wizard's field names", () => {
     const out = buildClientDraftMirror("u1", "+1", { seniorName: "Samira M", relationship: "parent", careNeeds: ["Bathing"] });
-    expect(out).toEqual({ careRecipientFirstName: "Samira", careRecipientLastName: "M", relationship: "parent", careNeeds: ["Bathing"] });
+    // careKinds is DERIVED from the roster (relationship parent → senior) — written, never asked (un-framing, 2026-10-19).
+    expect(out).toEqual({ careRecipientFirstName: "Samira", careRecipientLastName: "M", relationship: "parent", careNeeds: ["Bathing"], careKinds: ["senior"] });
     // Nothing defaulted: no startDate "today", no adultsCount, no ongoing:false, no status.
     expect(out).not.toHaveProperty("startDate");
     expect(out).not.toHaveProperty("adultsCount");

@@ -28,8 +28,7 @@ import {
   readCarePlanPage, resolveRecipient, savePlanSection, setRecipientLocation, addRecipient, removeRecipient,
   saveEmergencyContacts, confirmCarePlanReviewed, toCareType,
 } from "../agents/carePlanPage";
-import { SERVICE_LABELS as CARE_TYPE_LABELS, CHILD_SERVICE_LABELS, AGE_RANGES, CANONICAL_SERVICES, serviceListsForKinds, serviceLabel as careServiceLabel, CARE_KIND_LABEL, ageRangeFromWords, ageRangeLabel, STAGE_HEADING, CARE_TYPE_QUESTION_FAMILY, OTHER_KIND_QUESTION } from "../agents/caregiverServiceLabels";
-import { setHouseholdCareType, careTypeLabel } from "../agents/householdCareType";
+import { SERVICE_LABELS as CARE_TYPE_LABELS, CHILD_SERVICE_LABELS, AGE_RANGES, CANONICAL_SERVICES, serviceListsForKinds, serviceLabel as careServiceLabel, CARE_KIND_LABEL, ageRangeFromWords, ageRangeLabel, STAGE_HEADING, OTHER_KIND_QUESTION } from "../agents/caregiverServiceLabels";
 import { cancelVisit, cancelWholeBooking, cancelPendingRequest, cancelPendingAmendment, withdrawReplacementRequest } from "../agents/bookingCancel";
 import { createScheduleAmendment, loadCaregiverAvailability, checkVisitBlock, normDayAbbr, blockToRange, describeBlock, describeRange, ABBR_TO_FULL as VISIT_DAY_FULL, type TimeBlock as VisitTimeBlock } from "../agents/visitRequest";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
@@ -172,8 +171,8 @@ export const MCP_TOOLS: McpTool[] = [
         minRating:          { type: "number", description: "Rating pills: 3, 4 or 4.5 (omit for Any)." },
         minExperienceYears: { type: "number", description: "Experience: 1, 3, 5 or 10 (omit for Any)." },
         transportationOnly: { type: "boolean", description: "Transportation only — care providers offering it with a cleared driving record (the page's Specialties › Transportation box)." },
-        specialties:        { type: "array", items: { type: "string" }, description: `Care services — any of the household's list(s), by kind. Senior care: ${CARE_TYPE_LABELS.join(", ")}. Child care: ${CHILD_SERVICE_LABELS.join(", ")}.` },
-        careType:           { type: "string", enum: ["senior", "child"], description: "The Care type filter at the top of the panel (Both accounts only): only care providers offering senior care, or only those offering child care. Ignored on a senior-only or child-only household." },
+        specialties:        { type: "array", items: { type: "string" }, description: `Care services — any from either list. Senior care: ${CARE_TYPE_LABELS.join(", ")}. Child care: ${CHILD_SERVICE_LABELS.join(", ")}.` },
+        careType:           { type: "string", enum: ["senior", "child"], description: "The optional Care type view filter at the top of the panel, for anyone: only care providers whose services cover senior care, or only those whose services cover child care. Leave it out to see everyone (the default)." },
         languages:          { type: "array", items: { type: "string" }, description: "Languages — any of." },
         sortBy:             { type: "string", enum: ["rating", "price-low", "price-high"], description: "Sort by: Highest rated (default), Price: Low to High, Price: High to Low." },
         favoritesOnly:      { type: "boolean", description: "The Favorites tab — only care providers the family has hearted." },
@@ -756,10 +755,9 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Add a care recipient — the website's Care Plan page '+ Add' form, exactly. Use when a family says they care for someone " +
       "else too (\"I also look after my dad\"). The form REQUIRES first name, relationship and a care location with a street address. " +
-      "The relationship choices follow the household's ONE care-type setting (get_care_plan's options.relationships lists them): Child only when the " +
-      "household includes child care, Myself / Parent / Spouse or Partner / Adult child (a grown son or daughter) only when it includes senior care, Other always — for Other in a Both " +
-      `household ask "${OTHER_KIND_QUESTION}" (Adult / Child) and pass careKind ('senior' for an adult, 'child'). A relationship the setting doesn't allow is refused with the one line to change the care ` +
-      "type in Account Settings (or set_household_care_type). The relationship decides which care list applies — never ask which list. A care location with a street address (pick one already on file from get_care_plan's locationPool, or " +
+      "The relationship is one of Myself, Parent, Spouse or Partner, Adult child (a grown son or daughter), Child (a minor), Other — the same six for every household; " +
+      "there is NO care-type question or setting anywhere. The RELATIONSHIP decides which care list that person gets (Child → the child list; the rest → the senior list) — never ask which list. " +
+      `For Other ALWAYS ask "${OTHER_KIND_QUESTION}" (Adult / Child) and pass careKind ('senior' for an adult, 'child' for a child) — the call is refused without it. A care location with a street address (pick one already on file from get_care_plan's locationPool, or ` +
       "give a new street/city/state/zip); it also takes care needs (the page's fixed pills — senior care: Mobility Assistance, Dementia / Memory " +
       "Care, Medication Reminders Only, Personal Care, Companionship, Transportation, Meal Preparation, Light Housekeeping; child care: Supervision, Baby Care, " +
       "Bathing & Dressing, Meals & Snacks, Activities & Play, School & Homework, Transportation, Tidying & Laundry — nothing underneath), " +
@@ -773,30 +771,14 @@ export const MCP_TOOLS: McpTool[] = [
         firstName:       { type: "string", description: "The recipient's first name." },
         lastName:        { type: "string", description: "Last name (optional)." },
         name:            { type: "string", description: "Full name — alternative to firstName/lastName." },
-        relationship:    { type: "string", description: "One of get_care_plan's options.relationships for this household (required)." },
-        careKind:        { type: "string", enum: ["senior", "child"], description: `Only for relationship Other in a Both household — "${OTHER_KIND_QUESTION}": senior = Adult, child = Child.` },
+        relationship:    { type: "string", description: "One of Myself, Parent, Spouse or Partner, Adult child, Child, Other (required)." },
+        careKind:        { type: "string", enum: ["senior", "child"], description: `Required for relationship Other — "${OTHER_KIND_QUESTION}": senior = Adult, child = Child. Ignored for any other relationship.` },
         careNeeds:       { type: "array", items: { type: "string" }, description: "Care needs from the page's lists (senior or child names)." },
         ageRange:        { type: "string", description: `For a child only: their ${STAGE_HEADING.toLowerCase()} by name — ${AGE_RANGES.map((a) => a.label).join(", ")} (one per child).` },
         notes:           { type: "string", description: "The Notes section, if the family gave one." },
         location:        { type: "object", description: "Care location: { street, city, state, zipCode } — street is required.", properties: { street: { type: "string" }, city: { type: "string" }, state: { type: "string" }, zipCode: { type: "string" } } },
       },
       required: ["clientId", "relationship", "location"],
-    },
-  },
-  {
-    name: "set_household_care_type",
-    description:
-      `The website's Account Settings › Care type row, exactly: the household's ONE care-type setting ("${CARE_TYPE_QUESTION_FAMILY}" — senior care, child care, or both) ` +
-      "(job_postings.careKinds; missing = senior). Picked once at signup; this is the only place it changes. The same roster rule as the page: a pick " +
-      "that would leave a care recipient on the Care Plan uncovered is refused with the page's sentence (e.g. \"H M is a Parent. Choose Both, or remove H M first.\") — " +
-      "say it verbatim. Use when a family asks for child care on a senior household (or the reverse) or says to change the care type. Read the change back and confirm before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId: { type: "string", description: "Injected automatically — the owning family account." },
-        careType: { type: "string", enum: ["senior", "child", "both"], description: "Senior care, Child care, or Both." },
-      },
-      required: ["clientId", "careType"],
     },
   },
   {
@@ -1683,8 +1665,8 @@ export const MCP_TOOLS: McpTool[] = [
             timeOfDay: { type: "array", items: { type: "string", enum: ["morning", "afternoon", "evening", "overnight"] }, description: "Morning 6am–12pm, Afternoon 12pm–6pm, Evening 6pm–12am, Overnight 12am–6am" },
             days:      { type: "array", items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }, description: "weekends = Sat, Sun; weekdays = Mon–Fri" },
             seniors:   { type: "array", items: { type: "string", enum: ["1", "2", "3+"] }, description: "People in the home" },
-            careTypes: { type: "array", items: { type: "string", enum: [...CANONICAL_SERVICES] }, description: `Care Type — exact names from the list(s) the care provider offers. Senior care: ${CARE_TYPE_LABELS.join(", ")}. Child care: ${CHILD_SERVICE_LABELS.join(", ")}.` },
-            careType:  { type: "string", enum: ["senior", "child"], description: "The Care type filter at the top of the panel (Both accounts only): only senior-care posts, or only child-care posts. Ignored for a provider who offers one kind." },
+            careTypes: { type: "array", items: { type: "string", enum: [...CANONICAL_SERVICES] }, description: `Care Type — exact names from either list. Senior care: ${CARE_TYPE_LABELS.join(", ")}. Child care: ${CHILD_SERVICE_LABELS.join(", ")}.` },
+            careType:  { type: "string", enum: ["senior", "child"], description: "The optional Care type view filter at the top of the panel, for any provider: only senior-care posts, or only child-care posts (read from the services on each post). Leave it out to see every post (the default)." },
           },
         },
       },
@@ -3263,7 +3245,6 @@ async function executeToolCall(
         const page = await readCarePlanPage(clientId);
         return {
           success: true,
-          careType: careTypeLabel(page.householdKinds),
           relationships: page.options.relationships,
           results: page.recipients.map((r) => ({ key: r.key, name: r.name, firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, kind: CARE_KIND_LABEL[r.kind], stage: r.stageLabel, isPrimary: r.isPrimary })),
           hasMore: false,
@@ -4863,17 +4844,6 @@ async function executeToolCall(
       if (!r.ok) return toolError("INVALID_INPUT", r.message);
       logAudit({ eventType: "senior_profile_created", userId: clientId as string, data: { source: "mcp:create_senior_profile", key: r.key } }).catch(() => {});
       return { success: true, key: r.key, name: r.name, message: `Added ${r.name} to the Care Plan.` };
-    }
-
-    if (name === "set_household_care_type") {
-      const { clientId, careType } = input as Record<string, unknown>;
-      if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-      const kinds = careType === "both" ? ["senior", "child"] : careType === "child" ? ["child"] : careType === "senior" ? ["senior"] : null;
-      if (!kinds) return toolError("INVALID_INPUT", "careType must be senior, child, or both");
-      const r = await setHouseholdCareType(clientId as string, kinds);
-      if (!r.ok) return { success: false, error: r.message, sayVerbatim: true };
-      logAudit({ eventType: "senior_profile_updated", userId: clientId as string, data: { source: "mcp:set_household_care_type", careType } }).catch(() => {});
-      return { success: true, careType: r.label, careKinds: r.kinds, unchanged: r.unchanged, message: r.unchanged ? `Care type is already ${r.label}.` : `Care type set to ${r.label}.` };
     }
 
     if (name === "remove_care_recipient") {

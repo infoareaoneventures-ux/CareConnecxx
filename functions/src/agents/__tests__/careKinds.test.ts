@@ -8,23 +8,23 @@ vi.mock("firebase-admin", () => {
   return { __esModule: true, default: { firestore }, firestore };
 });
 
-// Child care (2026-10-18): the ONE new fact on both doors — who the care is for — and everything
-// that reads it. These are the contract helpers in caregiverServiceLabels.ts and the two post
-// contracts; the site mirrors the data arrays byte-for-byte (caregiverServices.test.ts parity).
+// Child care (2026-10-18), un-framed 2026-10-19: nobody is asked "senior, child or both" on either door.
+// The kinds are DERIVED — a family's from each recipient's relationship, a provider's and a post's from the
+// services ticked — and nothing is hidden by kind. These are the contract helpers in caregiverServiceLabels.ts
+// and the two post contracts; the site mirrors the data arrays byte-for-byte (caregiverServices.test.ts parity).
 
 import {
   CARE_KINDS, CHILD_SERVICES, PRIMARY_SERVICES, CANONICAL_SERVICES, AGE_RANGES, RELATIONSHIPS,
-  normalizeCareKinds, serviceListsForKinds, kindsOfServices, providerCoversPost, providerMatchesHousehold,
+  normalizeCareKinds, serviceListsForKinds, kindsOfServices, kindsOfPost, kindsOfProvider,
   careKindsFromWords, ageRangesFromWords, ageRangeFromWords, stageOf, stageQuestion, STAGE_HEADING, ageRangeLabel, careKindBadge, defaultJobTitleFor, serviceMenuText,
   SERVICE_LABELS, CHILD_SERVICE_LABELS,
-  recipientCareKind, relationshipsForKinds, rosterCareKinds, careTypeChangeBlockedBy,
+  recipientCareKind, relationshipsForKinds, rosterCareKinds,
 } from "../caregiverServiceLabels";
-import { careTypeRefusalLine, careTypeSettingHint, rosterFromJobPostings, careTypeLabel } from "../householdCareType";
 import { buildWebJobPostDoc, defaultJobTitle } from "../jobPostContract";
 import { buildJobPostingsDoc, mapJobPostingsDocToOnboardingData } from "../clientJobPostingContract";
-import { buildJobCard, jobCardLine, passesJobBoardFilters, JOB_BOARD_CARE_TYPES } from "../jobBoardPage";
+import { buildJobCard, jobCardLine, passesJobBoardFilters, applyJobBoardFilters, JOB_BOARD_CARE_TYPES } from "../jobBoardPage";
 
-describe("who decides a recipient's kind (founder, 2026-10-18 evening): the relationship, gated by the household's ONE setting", () => {
+describe("who decides a recipient's kind (founder, 2026-10-19): the relationship, nothing else — no household setting", () => {
   it("Child → child; Myself / Parent / Spouse or Partner (and the older stored values) → senior; Other → its own careKind", () => {
     expect(recipientCareKind("Child")).toBe("child");
     expect(recipientCareKind("child")).toBe("child");
@@ -37,33 +37,22 @@ describe("who decides a recipient's kind (founder, 2026-10-18 evening): the rela
     expect(recipientCareKind("Adult child")).toBe("senior");       // a grown son or daughter — the senior side (2026-10-18 late)
     expect(recipientCareKind("adult child", "child")).toBe("senior");
   });
-  it("the relationship choices follow the household: Child only with child care, the senior ones only with senior care, Other always", () => {
+  it("relationshipsForKinds is only a derivation helper now — every caller passes both kinds and gets all six", () => {
     expect(relationshipsForKinds(undefined)).toEqual(["Myself", "Parent", "Spouse or Partner", "Adult child", "Other"]);
     expect(relationshipsForKinds(["child"])).toEqual(["Child", "Other"]);
     expect(relationshipsForKinds(["senior", "child"])).toEqual(["Myself", "Parent", "Spouse or Partner", "Adult child", "Child", "Other"]);
     expect(relationshipsForKinds(["senior", "child"], { includeMyself: false })).toEqual(["Parent", "Spouse or Partner", "Adult child", "Child", "Other"]);
   });
-  it("a roster implies its kinds; a setting that leaves someone uncovered is refused with the page's sentence", () => {
+  it("a roster implies its kinds (a child → child, anyone else → senior; Other by its own answer)", () => {
     const roster = [{ name: "H M", relationship: "Parent" }, { name: "S Mahad", relationship: "Child" }];
     expect(rosterCareKinds(roster)).toEqual(["senior", "child"]);
+    expect(rosterCareKinds([{ relationship: "Other", careKind: "child" }])).toEqual(["child"]);
     expect(rosterCareKinds([])).toEqual([]);
-    expect(careTypeChangeBlockedBy(["senior", "child"], roster)).toBeNull();
-    expect(careTypeChangeBlockedBy(["child"], roster)?.name).toBe("H M");
-    expect(careTypeChangeBlockedBy(["senior"], roster)?.name).toBe("S Mahad");
-    expect(careTypeRefusalLine({ name: "H M", relationship: "Parent" })).toBe("H M is a Parent. Choose Both, or remove H M first.");
-    expect(careTypeSettingHint("child")).toBe("Child care isn't on this household yet — change the care type to Both in Account Settings, or tell me to and I'll do it.");
-    expect(careTypeLabel(["senior", "child"])).toBe("Both");
-    expect(careTypeLabel(undefined)).toBe("Senior care");
-  });
-  it("the roster read off job_postings carries the primary, the additional people, and Other's two-way pick", () => {
-    const roster = rosterFromJobPostings({ careRecipientFirstName: "H", careRecipientLastName: "M", relationship: "Parent", additionalRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child" }, { firstName: "Lee", relationship: "Other", careKind: "child" }, { firstName: "" }] });
-    expect(roster.map((r) => [r.name, r.kind, r.isPrimary])).toEqual([["H M", "senior", true], ["S Mahad", "child", false], ["Lee", "child", false]]);
-    expect(rosterFromJobPostings(undefined)).toEqual([]);
   });
 });
 
 describe("care kinds — the contract", () => {
-  it("a missing or empty value means senior care; only the two kinds survive", () => {
+  it("a missing or empty value still reads senior (legacy records keep their titles); only the two kinds survive", () => {
     expect(CARE_KINDS).toEqual(["senior", "child"]);
     expect(normalizeCareKinds(undefined)).toEqual(["senior"]);
     expect(normalizeCareKinds([])).toEqual(["senior"]);
@@ -90,15 +79,24 @@ describe("care kinds — the contract", () => {
     expect(kindsOfServices([], ["senior", "child"])).toEqual(["senior", "child"]);
   });
 
-  it("a provider sees a post only when they offer EVERY kind it needs; a family sees a provider who offers ANY kind they need", () => {
-    expect(providerCoversPost(undefined, undefined)).toBe(true);              // senior-only provider, senior post (today)
-    expect(providerCoversPost(undefined, ["child"])).toBe(false);             // never a child post
-    expect(providerCoversPost(["child"], undefined)).toBe(false);             // a child-care-only provider never sees a senior post
-    expect(providerCoversPost(["senior", "child"], ["senior", "child"])).toBe(true);
-    expect(providerCoversPost(["senior"], ["senior", "child"])).toBe(false);  // a both-post needs a both-provider
-    expect(providerMatchesHousehold(["child"], ["senior", "child"])).toBe(true);
-    expect(providerMatchesHousehold(undefined, ["child"])).toBe(false);
-    expect(providerMatchesHousehold(undefined, undefined)).toBe(true);
+  it("nothing hides anyone by kind (2026-10-19): kindsOfPost / kindsOfProvider only feed the optional view filter — both mirror the site's helpers", () => {
+    expect(kindsOfPost({ careTypes: ["Supervision"] })).toEqual(["child"]);
+    expect(kindsOfPost({ careTypes: ["Companionship", "Baby Care"] })).toEqual(["senior", "child"]);
+    expect(kindsOfPost({ careTypes: ["Transportation"], careKinds: ["child"] })).toEqual(["child"]); // the stored kinds decide a ride-only post
+    expect(kindsOfPost({ careTypes: ["Transportation"] })).toEqual(["senior"]);                      // a legacy ride-only post stays senior
+    expect(kindsOfPost(undefined)).toEqual(["senior"]);
+    expect(kindsOfProvider({ services: ["Companionship"] })).toEqual(["senior"]);
+    expect(kindsOfProvider({ services: [], skills: ["Supervision"] })).toEqual(["child"]);              // skills when services is empty
+    expect(kindsOfProvider({ services: ["Transportation"] })).toEqual(["senior", "child"]);            // Transportation alone = both
+    expect(kindsOfProvider({})).toEqual(["senior", "child"]);                                           // nothing ticked yet = both
+    expect(kindsOfProvider(null)).toEqual(["senior", "child"]);
+    // The Care type VIEW filter narrows for ANY provider; no filter = every post (the hiding is gone).
+    const seniorPost = { id: "s", careTypes: ["Companionship"] };
+    const childPost = { id: "c", careTypes: ["Supervision"] };
+    const seniorOnlyProvider = { services: ["Companionship"] };
+    expect(applyJobBoardFilters([seniorPost, childPost], undefined, seniorOnlyProvider).map((j) => j.id)).toEqual(["s", "c"]);
+    expect(applyJobBoardFilters([seniorPost, childPost], { careType: "child" }, seniorOnlyProvider).map((j) => j.id)).toEqual(["c"]);
+    expect(applyJobBoardFilters([seniorPost, childPost], { careType: "senior" }, { services: ["Supervision"] }).map((j) => j.id)).toEqual(["s"]);
   });
 
   it("the kinds question's answer and the age-range chips canonicalize from words; never a number is kept", () => {
@@ -160,13 +158,16 @@ describe("care kinds — the records", () => {
     expect(rideOnly.careKinds).toEqual(["child"]);
   });
 
-  it("job_postings carries the household's answer only when answered, and reads it back", () => {
-    const none = buildJobPostingsDoc("u1", "+1", { seniorName: "Ann Lee", careNeeds: ["Companionship"] });
-    expect("careKinds" in none).toBe(false);
-    const child = buildJobPostingsDoc("u1", "+1", { seniorName: "Ann Lee", careNeeds: ["Supervision"], careKinds: ["child", "nope"] });
-    expect(child.careKinds).toEqual(["child"]);
-    expect(mapJobPostingsDocToOnboardingData({ careKinds: ["senior", "child"] }).careKinds).toEqual(["senior", "child"]);
-    expect(mapJobPostingsDocToOnboardingData({}).careKinds).toBeUndefined();
+  it("job_postings.careKinds is DERIVED from the people on the record (2026-10-19) — never asked, never read back into the intake", () => {
+    const none = buildJobPostingsDoc("u1", "+1", { careNeeds: ["Companionship"] });
+    expect("careKinds" in none).toBe(false);                                          // nobody named yet
+    const senior = buildJobPostingsDoc("u1", "+1", { seniorName: "Ann Lee", relationship: "parent", careNeeds: ["Companionship"] });
+    expect(senior.careKinds).toEqual(["senior"]);
+    const child = buildJobPostingsDoc("u1", "+1", { seniorName: "S Mahad", relationship: "child", careNeeds: ["Supervision"], careKinds: ["senior"] });
+    expect(child.careKinds).toEqual(["child"]);                                        // the relationship wins over any stale stored value
+    const both = buildJobPostingsDoc("u1", "+1", { seniorName: "Ann Lee", relationship: "parent", additionalRecipients: [{ name: "Lee", relationship: "other", careKind: "child" }], careNeeds: ["Companionship"] });
+    expect(both.careKinds).toEqual(["senior", "child"]);
+    expect(mapJobPostingsDocToOnboardingData({ careKinds: ["senior", "child"] }).careKinds).toBeUndefined();
   });
 
   it("the Jobs board card: a kind badge only when child care is involved, 'people' never 'seniors', the chips beside the pills", () => {

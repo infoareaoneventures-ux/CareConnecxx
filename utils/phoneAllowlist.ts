@@ -9,6 +9,10 @@ const ALLOWED_PHONES = new Set([
   '+16505633842',
 ]);
 
+// OPEN TO ALL NUMBERS (founder, 2026-10-19): the list above is kept untouched so the
+// allowlist can be put back by restoring the one line below and redeploying
+// (hosting + v1-linqWebhook + v1-createWebOnboardingSession).
 export function isPhoneAllowed(e164: string): boolean {
-  return ALLOWED_PHONES.has(e164);
+  void e164; void ALLOWED_PHONES;
+  return true; // was: return ALLOWED_PHONES.has(e164);
 }

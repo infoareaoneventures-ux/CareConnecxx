@@ -2510,7 +2510,11 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
     // per-recipient upload. Excluded from the generic `clean` spread below so
     // it never lands under the ambiguous raw `photoURL` key on job_postings
     // (Hamse, 2026-08-23).
-    const { photoURL, ...cleanForJobPosting } = clean;
+    const { photoURL, ...cleanWithUndefined } = clean;
+    // Firestore rejects a field whose value is undefined ("Unsupported field value: undefined"). The
+    // wizard hands optional fields over as undefined (e.g. careRecipientAgeRange for a non-child
+    // recipient, 2026-10-19 live-caught), so drop them here instead of writing them.
+    const cleanForJobPosting = Object.fromEntries(Object.entries(cleanWithUndefined).filter(([, v]) => v !== undefined));
 
     // Critical write — throw if this fails
     await db.collection('job_postings').doc(uid).set({

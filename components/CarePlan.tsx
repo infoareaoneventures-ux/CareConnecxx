@@ -473,7 +473,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const needsStage = (relationship: unknown, careKind: unknown, ageRange?: string) => householdKinds.includes('child') && recipientCareKind(relationship, careKind) === 'child' && !ageRange;
   // Keep the roster entry's stage in step with the plan (job_postings: careRecipientAgeRange for the primary, additionalRecipients[].ageRange otherwise).
   const syncRosterStage = async (r: RecipientEntry, ageRange: string) => {
-    if (!db || !currentPlanId || !wizardData || r.ageRange === ageRange) return;
+    if (!db || !currentPlanId || !wizardData || !ageRange || r.ageRange === ageRange) return; // never write an empty stage (Firestore rejects undefined)
     const jpRef = db.collection('job_postings').doc(currentPlanId);
     const isPrimary = getKey(wizardData.careRecipientFirstName || '', wizardData.careRecipientLastName || '') === getKey(r.firstName, r.lastName);
     if (isPrimary) {

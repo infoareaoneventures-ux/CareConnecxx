@@ -38,6 +38,13 @@ try {
   }
   auth = firebase.auth();
   db = firebase.firestore();
+  // Firestore rejects a field whose value is undefined ("Unsupported field value: undefined") and the
+  // save fails as a whole. The server has had ignoreUndefinedProperties on since 2026-08; the site gets
+  // the same net (2026-10-19, after the first-login wizard broke on an undefined stage): an undefined
+  // field is dropped instead of killing the write. Must run before any other Firestore call.
+  if (typeof (db as any).settings === "function") {
+    try { db.settings({ ignoreUndefinedProperties: true }); } catch { /* settings already applied (hot reload) */ }
+  }
   functions = firebase.functions();
   isConfigured = true;
   try {

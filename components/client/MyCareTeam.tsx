@@ -1,3 +1,4 @@
+import { safeErrorMessage } from '../../utils/safeErrorMessage';
 import { serviceLabel } from '../caregiver/signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -185,7 +186,8 @@ export const MyCareTeam: React.FC = () => {
         setPastCaregivers(pastList);
       } catch (err: any) {
         console.error('MyCareTeam: error loading care team:', err?.message || err);
-        if (isMounted) addToast(`Could not load your care team: ${err?.message || 'unknown error'}`, 'error');
+        console.error('care team load failed:', err);
+        if (isMounted) addToast(safeErrorMessage(err, 'Could not load your care team. Please refresh the page.'), 'error');
       } finally {
         if (isMounted) setIsLoading(false);
       }

@@ -1,3 +1,4 @@
+import { safeErrorMessage } from '../../utils/safeErrorMessage';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   ChevronLeft, Loader2, Upload, Sparkles,
@@ -234,7 +235,8 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       await dbService.updateUser('caregivers', uid, { ...CAREGIVER_PHOTO_FIELDS(url), wizardStep: 'availability' } as any);
       next();
     } catch (err: any) {
-      onShowToast(err?.message || 'Failed to upload photo. Please try again.', 'error');
+      console.error('photo upload failed:', err);
+      onShowToast(safeErrorMessage(err, 'Failed to upload photo. Please try again.'), 'error');
     } finally { setIsLoading(false); }
   };
 

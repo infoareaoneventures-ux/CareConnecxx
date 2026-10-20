@@ -409,8 +409,9 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
       } catch { setNearbyCount(null); }
       next();
     } catch (e: any) {
+      // The detail (a raw Firestore message with the record path) goes to the console, never to the family (live 2026-10-19).
       console.error('createJobPosting failed:', e);
-      const msg = e?.message || 'Failed to save. Please try again.';
+      const msg = 'We could not save your post. Please try again.';
       setSaveError(msg);
       addToast(msg, 'error');
     } finally {

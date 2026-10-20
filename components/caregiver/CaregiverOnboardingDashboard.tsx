@@ -1,3 +1,4 @@
+import { safeErrorMessage } from '../../utils/safeErrorMessage';
 import { serviceLabel, ageRangeLabel, kindsOfPost } from './signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -363,7 +364,8 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
         setApplyingJob(null);
         if (!(await gateFresh({ transport: needsDriver }))) return;
       }
-      onShowToast?.(err instanceof Error ? err.message : 'Failed to submit application.', 'error');
+      console.error('applyToJob failed:', err);
+      onShowToast?.(safeErrorMessage(err, 'Failed to submit application. Please try again.'), 'error');
     } finally {
       setSubmitting(false);
     }

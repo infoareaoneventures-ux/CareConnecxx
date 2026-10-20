@@ -1,3 +1,4 @@
+import { safeErrorMessage } from '../../utils/safeErrorMessage';
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
 import { PRIMARY_SERVICES, serviceLabel, ageRangeLabel, recipientStage } from '../caregiver/signup/constants';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -419,7 +420,8 @@ export const PostsPage: React.FC = () => {
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, status: 'cancelled' } : p));
       addToast('Job post cancelled', 'info');
     } catch (err: any) {
-      addToast(err?.message || 'Failed to cancel post', 'error');
+      console.error('cancel post failed:', err);
+      addToast(safeErrorMessage(err, 'We could not cancel the post. Please try again.'), 'error');
     }
   };
 

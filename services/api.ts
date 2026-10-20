@@ -2526,7 +2526,10 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         ...(lat !== null && lng !== null ? { lat, lng } : {}),
         ...(photoURL && clean.relationship === 'myself' ? { careRecipientPhotoURL: photoURL } : {}),
-    });
+    // merge: the draft fields are DELETED (FieldValue.delete() is only legal with merge — live 2026-10-19:
+    // 'FieldValue.delete() cannot be used with set() unless you pass {merge:true}' at the last wizard step),
+    // and the roster the Care Plan page keeps on this same record (additionalRecipients…) survives a re-run.
+    }, { merge: true });
 
     if (photoURL) {
         await db.collection('users').doc(uid).set({ photoURL }, { merge: true }).catch(() => {});

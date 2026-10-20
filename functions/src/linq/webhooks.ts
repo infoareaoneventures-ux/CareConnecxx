@@ -2551,7 +2551,20 @@ export const linqWebhook = functions
     const signature = req.headers["x-webhook-signature"] as string ?? "";
     const rawBody   = (req as any).rawBody as Buffer ?? Buffer.from(JSON.stringify(req.body));
     if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
-      console.warn("linqWebhook: invalid signature — ignoring");
+      // Diagnostic (2026-10-19): what kind of event fails the check — shape only, never the text, phone or headers' values.
+      // (The founder's voice memos never reached transcription; bursts of rejected events line up with the attempts.)
+      const bodyAny = (req.body ?? {}) as Record<string, any>;
+      const partTypes = Array.isArray(bodyAny?.data?.parts) ? bodyAny.data.parts.map((x: any) => String(x?.type ?? "?")) : Array.isArray(bodyAny?.parts) ? bodyAny.parts.map((x: any) => String(x?.type ?? "?")) : [];
+      console.warn("linqWebhook: invalid signature — ignoring", {
+        eventType: String(bodyAny?.type ?? bodyAny?.event ?? bodyAny?.event_type ?? "?").slice(0, 60),
+        contentType: String(req.headers["content-type"] ?? "").slice(0, 60),
+        bodyBytes: rawBody.length,
+        hasRawBody: Boolean((req as any).rawBody),
+        hasTimestamp: timestamp.length > 0,
+        hasSignature: signature.length > 0,
+        topKeys: Object.keys(bodyAny).slice(0, 12),
+        partTypes: partTypes.slice(0, 6),
+      });
       sendOk();
       return;
     }

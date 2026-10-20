@@ -188,8 +188,8 @@ export const PostJobFlow: React.FC = () => {
         } catch { /* non-critical */ }
       }
     } catch (err: any) {
-      console.error('Failed to post job:', err);
-      addToast(err?.message || 'Failed to post job. Please try again.', 'error');
+      console.error('Failed to post job:', err); // the detail stays in the console, never shown to the family
+      addToast('We could not post your job. Please try again.', 'error');
     } finally {
       setIsSubmitting(false);
     }

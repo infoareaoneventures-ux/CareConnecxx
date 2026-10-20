@@ -123,7 +123,8 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
       onShowToast('Post updated', 'success');
       onClose();
     } catch (err: any) {
-      onShowToast(err?.message || 'Failed to save changes', 'error');
+      console.error('EditJobPostModal save failed:', err); // the detail stays in the console, never shown to the family
+      onShowToast('We could not save your changes. Please try again.', 'error');
     } finally {
       setSaving(false);
     }

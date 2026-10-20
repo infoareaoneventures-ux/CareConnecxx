@@ -1,3 +1,4 @@
+import { safeErrorMessage } from '../utils/safeErrorMessage';
 import { billedHourlyRate } from '../utils/pricing';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -134,7 +135,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
             } else if (error?.code === 'permission-denied') {
                 errorMessage = 'Permission denied. Please check your account permissions.';
             } else if (error?.message) {
-                errorMessage = `Error: ${error.message}`;
+                errorMessage = safeErrorMessage(error, 'Failed to request interview. Please try again.');
             }
 
             onShowToast(errorMessage, 'error');

@@ -317,8 +317,10 @@ export async function createChat(
 // `text` parts in one message (returns error 1004), so URL-bearing strings
 // are split into a text-only message followed by one dedicated link-part
 // message per URL — iMessage/RCS then render each as a rich preview card.
+// A bare domain is a link only when it is NOT the tail of an email address or a longer host
+// (live 2026-10-19: "hm***@angelicare.com" lost its domain to a link card).
 const FULL_URL_RE =
-  /\b(?:https?:\/\/[^\s<>"'`)\]]+|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|app|net|org|io|co|us|web\.app|dev|ai)(?:\/[^\s<>"'`)\]]*)?)/gi;
+  /\b(?:https?:\/\/[^\s<>"'`)\]]+|(?<![@\w.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|app|net|org|io|co|us|web\.app|dev|ai)(?:\/[^\s<>"'`)\]]*)?)/gi;
 
 const URL_TRAILING_PUNCT = /[.,;:!?)\]}>'"]+$/;
 

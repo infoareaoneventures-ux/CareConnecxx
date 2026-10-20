@@ -136,25 +136,23 @@ function clientWelcomeHtml(name: string): string {
     <h1 style="margin:0 0 8px;font-size:28px;font-weight:800;color:#0f172a;
                line-height:1.2;">Welcome to Evia, ${name}!</h1>
     <p style="margin:0 0 24px;font-size:16px;color:#64748b;line-height:1.6;">
-      You're one step closer to finding trusted, vetted care for your loved ones.
+      You're one step closer to finding care for your loved ones.
     </p>
 
     ${stepsList([
-      { icon: "👤", text: "<strong>Complete your profile</strong> — Tell us about the person who needs care so we can find the best match." },
-      { icon: "🔍", text: "<strong>Browse care providers</strong> — Search by availability, distance, certifications, and ratings." },
-      { icon: "📅", text: "<strong>Book your first visit</strong> — Schedule a meet-and-greet or a full care session." },
+      { icon: "👤", text: "<strong>Complete your profile</strong> — Tell us about the person who needs care so we can show you care providers nearby." },
+      { icon: "🔍", text: "<strong>Browse care providers</strong> — Search by availability, distance, services, and rate." },
+      { icon: "📅", text: "<strong>Interview or book</strong> — Meet on a quick video call first, or send a booking right away." },
     ])}
 
     <p style="font-size:15px;color:#475569;line-height:1.6;margin:0 0 8px;">
-      Every care provider on Evia is background-checked and reviewed by our Trust &amp; Safety team —
-      so you can focus on what matters most.
+      Every care provider completes a Checkr background check before families can book them.
     </p>
 
     ${ctaButton("Browse Care Providers", `${APP_URL}/client`)}
 
     <p style="margin:24px 0 0;font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;">
-      Questions? Reply to this email or reach us at
-      <a href="mailto:support@eviacares.com" style="color:#0d9488;text-decoration:none;">support@eviacares.com</a>
+      Questions? Text Evia anytime, or use <strong>Message our team</strong> on the site.
     </p>
   `;
 
@@ -174,21 +172,20 @@ function caregiverWelcomeHtml(name: string): string {
     </p>
 
     ${stepsList([
-      { icon: "📝", text: "<strong>Finish your profile</strong> — Add your photo, bio, certifications, and availability." },
-      { icon: "✅", text: "<strong>Pass your background check</strong> — Required to go live. Powered by Checkr, fast results." },
-      { icon: "💰", text: "<strong>Connect your payout account</strong> — Set up Stripe to get paid directly after every visit." },
+      { icon: "📝", text: "<strong>Finish your profile</strong> — Add your photo, services, rate, availability, and a short bio." },
+      { icon: "💳", text: "<strong>Start your membership</strong> — $69.99 a year. It covers your background check." },
+      { icon: "✅", text: "<strong>Authorize your background check</strong> — Run by Checkr. Checkr emails you a link to finish it." },
+      { icon: "💰", text: "<strong>Connect your payout account</strong> — Set up Stripe to get paid after every visit." },
     ])}
 
     <p style="font-size:15px;color:#475569;line-height:1.6;margin:0 0 8px;">
-      Once your profile is complete and verified, you'll appear in family searches and start receiving
-      booking requests.
+      Once those are done, families can find you, request interviews, and book you.
     </p>
 
     ${ctaButton("Complete Your Profile", `${APP_URL}/care-provider/dashboard`, "#7c3aed")}
 
     <p style="margin:24px 0 0;font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;">
-      Questions? Reply to this email or reach us at
-      <a href="mailto:support@eviacares.com" style="color:#7c3aed;text-decoration:none;">support@eviacares.com</a>
+      Questions? Text Evia anytime, or use <strong>Message our team</strong> on the site.
     </p>
   `;
 
@@ -559,8 +556,8 @@ export const sendWelcomeEmail = functions.firestore
       ? caregiverWelcomeHtml(firstName)
       : clientWelcomeHtml(firstName);
 
-    const textClient = `Welcome to Evia, ${firstName}!\n\nYou're one step closer to finding trusted care for your loved ones.\n\nNext steps:\n1. Complete your profile\n2. Browse care providers\n3. Book your first visit\n\nGet started: ${APP_URL}/client\n\n— The Evia Team`;
-    const textCaregiver = `Welcome aboard, ${firstName}!\n\nFamilies in your area are looking for someone like you.\n\nNext steps:\n1. Complete your profile\n2. Pass your background check\n3. Connect your payout account\n\nGet started: ${APP_URL}/care-provider/dashboard\n\n— The Evia Team`;
+    const textClient = `Welcome to Evia, ${firstName}!\n\nYou're one step closer to finding care for your loved ones.\n\nNext steps:\n1. Complete your profile\n2. Browse care providers\n3. Interview or book\n\nGet started: ${APP_URL}/client\n\nQuestions? Text Evia anytime, or use Message our team on the site.\n\n— The Evia Team`;
+    const textCaregiver = `Welcome aboard, ${firstName}!\n\nFamilies in your area are looking for someone like you.\n\nNext steps:\n1. Finish your profile\n2. Start your membership ($69.99 a year — it covers your background check)\n3. Authorize your background check (Checkr emails you a link to finish it)\n4. Connect your payout account\n\nGet started: ${APP_URL}/care-provider/dashboard\n\nQuestions? Text Evia anytime, or use Message our team on the site.\n\n— The Evia Team`;
 
     try {
       const { error } = await resend.emails.send({

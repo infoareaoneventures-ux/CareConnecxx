@@ -1,4 +1,4 @@
-import { serviceLabel, serviceListsForKinds, CARE_KIND_LABEL } from './caregiver/signup/constants';
+import { serviceLabel, CARE_KIND_LABEL, serviceGroupsOf } from './caregiver/signup/constants';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
@@ -442,11 +442,11 @@ export default function ClientCaregiverProfile({
             {/* Care Services — Transportation only shown once it is live (offered + driving record clear) */}
             {caregiver.skills.length > 0 && (
               <Section title="Care Services">
-                {/* Grouped by kind when the provider offers both (2026-10-18); Transportation shows under each. */}
+                {/* Grouped under the list name (always named, 2026-10-19); Transportation shows under each. */}
                 <div className="space-y-3">
-                  {serviceListsForKinds(caregiver.careKinds).map(list => ({ kind: list.kind, services: list.services.filter(s => caregiver.skills.includes(s) && (s !== 'Transportation' || caregiver.hasTransportation)) })).filter(g => g.services.length > 0).map(g => (
+                  {serviceGroupsOf(caregiver.skills.filter(s => s !== 'Transportation' || caregiver.hasTransportation)).map(g => (
                     <div key={g.kind}>
-                      {serviceListsForKinds(caregiver.careKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>}
+                      <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>
                       <div className="flex flex-wrap gap-2">
                         {g.services.map(s => (
                           <span key={`${g.kind}-${s}`} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-medium">

@@ -13,14 +13,13 @@ import { blocksToWeeklySlots, weeklySlotsToBl } from '../services/availabilitySe
 import { CaregiverTopNav } from './caregiver/CaregiverTopNav';
 import {
   PRIMARY_SERVICES,
-  CARE_KINDS, CARE_KIND_LABEL, serviceListsForKinds, kindsOfServices,
+  CARE_KINDS, CARE_KIND_LABEL, serviceGroupsOf, serviceListsForKinds, kindsOfServices,
   serviceLabel,
   EXPERIENCE_LEVELS,
   TIME_BLOCKS,
   DAYS,
   JOB_TYPES,
   MAX_CLIENTS_OPTIONS,
-  BIO_MIN_CHARS,
   BIO_MAX_CHARS,
 } from './caregiver/signup/constants';
 
@@ -252,11 +251,8 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                   section="about"
                   onEdit={() => { setEditBio(profile.bio || ''); setEditLanguages(displayLanguages); setEditingSection('about'); }}
                   onSave={() => {
-                    // ONE bio rule (sweep C7, 2026-10-11): the wizard's — at least 150 characters, same words.
-                    if (editBio.trim().length < BIO_MIN_CHARS) {
-                      onShowToast(`Please write at least ${BIO_MIN_CHARS} characters (${BIO_MIN_CHARS - editBio.trim().length} more needed)`, 'error');
-                      return;
-                    }
+                    // ONE bio rule with the wizard and Evia (founder, 2026-10-19): required, no minimum, the box's cap.
+                    if (!editBio.trim()) { onShowToast('Please write a few words about yourself', 'error'); return; }
                     saveSection({ bio: editBio.trim(), languages: editLanguages });
                   }}
                 />
@@ -264,17 +260,15 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
               {editingSection === 'about' ? (
                 <div className="space-y-4">
                   <p className="text-xs text-slate-500">
-                    Highlight your experience, personality, and what makes you a great care provider. Min {BIO_MIN_CHARS} characters.
+                    Highlight your experience, personality, and what makes you a great care provider.
                   </p>
                   <textarea
                     className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-400 min-h-[110px] resize-none"
                     value={editBio}
                     onChange={e => { if (e.target.value.length <= BIO_MAX_CHARS) setEditBio(e.target.value); }}
-                    placeholder={`Describe your care background... at least ${BIO_MIN_CHARS} characters required.`}
                   />
                   <div className="flex justify-between -mt-3">
-                    <span className={`text-xs ${editBio.length < BIO_MIN_CHARS ? 'text-indigo-500' : 'text-slate-400'}`}>{BIO_MAX_CHARS - editBio.length} left</span>
-                    <span className={`text-xs font-medium ${editBio.length < BIO_MIN_CHARS ? 'text-indigo-500' : 'text-teal-600'}`}>{editBio.length}/{BIO_MIN_CHARS} min</span>
+                    <span className="text-xs text-slate-400">{BIO_MAX_CHARS - editBio.length} left</span>
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-600 mb-2">Languages spoken</p>
@@ -368,9 +362,9 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 // Read view grouped by the lists the ticked services sit on (Transportation shows under each); one group → no heading.
                 <div className="space-y-3">
                   {displayServices.length > 0
-                    ? (() => { const groups = serviceListsForKinds(CARE_KINDS).map(list => ({ kind: list.kind, services: list.services.filter(s => displayServices.includes(s)) })).filter(g => g.services.length > 0); return groups.map(g => (
+                    ? (() => { const groups = serviceGroupsOf(displayServices); return groups.map(g => (
                         <div key={g.kind}>
-                          {groups.length > 1 && <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>}
+                          <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>
                           <div className="flex flex-wrap gap-2">
                             {g.services.map((s: string) => (
                               <span key={`${g.kind}-${s}`} className="text-sm bg-primary-50 text-primary-700 px-3 py-1.5 rounded-full font-medium">{serviceLabel(s)}</span>

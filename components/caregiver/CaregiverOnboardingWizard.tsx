@@ -15,7 +15,6 @@ import {
   EXPERIENCE_LEVELS,
   JOB_TYPES,
   MAX_CLIENTS_OPTIONS,
-  BIO_MIN_CHARS,
   BIO_MAX_CHARS,
 } from './signup/constants';
 
@@ -301,9 +300,8 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   };
 
   const handleSaveBio = async () => {
-    if (form.bio.length < BIO_MIN_CHARS) {
-      onShowToast(`Please write at least ${BIO_MIN_CHARS} characters (${BIO_MIN_CHARS - form.bio.length} more needed)`, 'error'); return;
-    }
+    // Required, no minimum (founder, 2026-10-19) — the cap is the box's maxLength.
+    if (!form.bio.trim()) { onShowToast('Please write a few words about yourself', 'error'); return; }
     setIsLoading(true);
     try {
       await dbService.updateUser('caregivers', uid, cleanData({
@@ -1017,29 +1015,26 @@ const BioStep: React.FC<{
   isLoading: boolean;
   onShowToast: AddToastFunction;
 }> = ({ bio, onChange, onNext, isLoading }) => {
-  const minChars = BIO_MIN_CHARS; // one bio rule with the profile editor (sweep C7, 2026-10-11)
-  const maxChars = BIO_MAX_CHARS;
+  const maxChars = BIO_MAX_CHARS; // ONE bio rule with the profile editor and Evia: required, no minimum, 1,000 cap (founder, 2026-10-19)
   const count = bio.length;
 
   return (
     <div className="flex flex-col gap-4">
       <h2 className="text-xl font-bold text-slate-800 text-center">Tell families about yourself</h2>
       <p className="text-sm text-slate-500 text-center">
-        Highlight your experience, personality, and what makes you a great care provider. Min {minChars} characters.
+        Highlight your experience, personality, and what makes you a great care provider.
       </p>
 
       <div>
         <textarea value={bio} onChange={e => { if (e.target.value.length <= maxChars) onChange('bio', e.target.value); }}
-          placeholder={`Describe your care background... at least ${minChars} characters required.`}
           rows={7}
           className="w-full px-4 py-3 rounded-2xl border-2 border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-none transition-all" />
         <div className="flex justify-between mt-1">
-          <span className={`text-xs ${count < minChars ? 'text-indigo-500' : 'text-slate-400'}`}>{maxChars - count} left</span>
-          <span className={`text-xs font-medium ${count < minChars ? 'text-indigo-500' : 'text-teal-600'}`}>{count}/{minChars} min</span>
+          <span className="text-xs text-slate-400">{maxChars - count} left</span>
         </div>
       </div>
 
-      <button onClick={onNext} disabled={isLoading || count < minChars}
+      <button onClick={onNext} disabled={isLoading || !bio.trim()}
         className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
         {isLoading ? <><Loader2 size={16} className="animate-spin" />Finishing up…</> : 'Continue'}
       </button>

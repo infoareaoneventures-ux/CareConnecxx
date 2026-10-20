@@ -754,7 +754,7 @@ describe("save_onboarding_field client care needs + field-name aliases (2026-09-
 
 // ── Caregiver sweep C3 / C7 (2026-10-11): every text-saved field lands on the
 // record at save time (the site's wizard saves per step), under the site's
-// names; the bio keeps the wizard's 150-character rule; the email is checked
+// names; the bio has no minimum and a 1,000-character cap; the email is checked
 // for caregivers too.
 describe("save_onboarding_field mirrors each care provider field to caregivers/{uid} at save time (C3)", () => {
   const PHONE = "+15555550090";
@@ -790,12 +790,15 @@ describe("save_onboarding_field mirrors each care provider field to caregivers/{
     expect(record()).not.toHaveProperty("rateForTwo");
   });
 
-  it("a bio under 150 characters is NOT saved — the wizard's minimum on both doors (C7)", async () => {
+  it("a short bio IS saved (no minimum, founder 2026-10-19); one over the 1,000 cap is NOT saved and never cut", async () => {
     const r = await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "bio", fieldValue: "I love helping seniors." }) as any;
-    expect(r.saved).toBe(false);
-    expect(r.invalidValue).toBe(true);
-    expect(r.guidance).toMatch(/at least 150/);
-    expect(record().bio).toBe("");
+    expect(r.invalidValue).toBeFalsy();
+    expect(record().bio).toBe("I love helping seniors.");
+    const r2 = await handleToolCall("save_onboarding_field", { phone: PHONE, role: "caregiver", fieldName: "bio", fieldValue: "x".repeat(1001) }) as any;
+    expect(r2.saved).toBe(false);
+    expect(r2.invalidValue).toBe(true);
+    expect(r2.guidance).toMatch(/1,001 characters.*1,000/);
+    expect(record().bio).toBe("I love helping seniors.");
   });
 
   it("a care provider's email is format-checked like a family's (C7)", async () => {

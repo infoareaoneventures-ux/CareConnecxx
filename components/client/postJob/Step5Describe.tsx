@@ -1,11 +1,11 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../../utils/medicationInstruction';
 import React, { useEffect } from 'react';
 import { StepProps } from './types';
-import { defaultJobTitle, kindsOfServices } from '../../caregiver/signup/constants';
+import { defaultJobTitle, kindsOfServices, JOB_DESCRIPTION_MAX_CHARS } from '../../caregiver/signup/constants';
 import { postCareKinds } from './Step3CareNeeds';
 
 const MIN_DESC = 50;
-const MAX_DESC = 2500;
+const MAX_DESC = JOB_DESCRIPTION_MAX_CHARS;
 const MIN_TITLE = 10;
 const MAX_TITLE = 80;
 

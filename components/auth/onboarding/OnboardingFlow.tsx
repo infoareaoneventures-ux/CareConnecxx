@@ -500,7 +500,8 @@ const NameEntry: React.FC<{
   // keyboard autocomplete (Gboard's "@" suggestion strip especially) can
   // insert a stray space mid-address that .trim() alone never catches.
   const cleanEmail = email.replace(/\s+/g, '');
-  const isValid = trimmed.length > 0 && EMAIL_RE.test(cleanEmail);
+  // 2026-10-19: the last name is required (founder caught Continue enabled without one) — Evia's cold-text path asks "first and last name" too.
+  const isValid = trimmed.length > 0 && lastName.trim().length > 0 && EMAIL_RE.test(cleanEmail);
   const onSubmitForm = (e: React.FormEvent) => { e.preventDefault(); if (isValid) onSubmit(); };
   const emailField = (rounded: string, padding: string, textSize: string) => (
     <input

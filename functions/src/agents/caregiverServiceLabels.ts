@@ -93,6 +93,15 @@ export function kindsOfProvider(profile: { services?: unknown; skills?: unknown 
   return kindsOfServices(services, CARE_KINDS);
 }
 
+/** A provider's ticked services grouped under the list name(s) they imply — ALWAYS named (founder, 2026-10-19), only the
+ *  lists with any of their services; Transportation (on both lists) shows under each list shown, and alone = both. */
+export function serviceGroupsOf(services: readonly unknown[]): Array<{ kind: CareKind; services: string[] }> {
+  const ticked = services.filter((s): s is string => typeof s === "string");
+  return serviceListsForKinds(kindsOfServices(ticked, CARE_KINDS))
+    .map((l) => ({ kind: l.kind, services: l.services.filter((s) => ticked.includes(s)) }))
+    .filter((g) => g.services.length > 0);
+}
+
 /**
  * An already-extracted answer to the kinds question ("child care", "both", "my mom", ["senior"]) → the
  * canonical kinds, or null when nothing in it names a kind. Value-shape canonicalization of a constrained
@@ -268,3 +277,6 @@ export function serviceFromNameOrLabel(text: string): string | null {
   }
   return null;
 }
+
+/** Job post Details cap (founder, 2026-10-19: a limit, never a silent cut) — the site's counter and Evia's text step hold the same; over it, Evia asks for a shorter version. */
+export const JOB_DESCRIPTION_MAX_CHARS = 1000;

@@ -28,7 +28,7 @@ import {
   readCarePlanPage, resolveRecipient, savePlanSection, setRecipientLocation, addRecipient, removeRecipient,
   saveEmergencyContacts, confirmCarePlanReviewed, toCareType,
 } from "../agents/carePlanPage";
-import { SERVICE_LABELS as CARE_TYPE_LABELS, CHILD_SERVICE_LABELS, AGE_RANGES, CANONICAL_SERVICES, serviceListsForKinds, serviceLabel as careServiceLabel, CARE_KIND_LABEL, ageRangeFromWords, ageRangeLabel, STAGE_HEADING, OTHER_KIND_QUESTION } from "../agents/caregiverServiceLabels";
+import { SERVICE_LABELS as CARE_TYPE_LABELS, CHILD_SERVICE_LABELS, AGE_RANGES, CANONICAL_SERVICES, serviceListsForKinds, serviceLabel as careServiceLabel, CARE_KIND_LABEL, ageRangeFromWords, ageRangeLabel, STAGE_HEADING, OTHER_KIND_QUESTION, JOB_DESCRIPTION_MAX_CHARS } from "../agents/caregiverServiceLabels";
 import { cancelVisit, cancelWholeBooking, cancelPendingRequest, cancelPendingAmendment, withdrawReplacementRequest } from "../agents/bookingCancel";
 import { createScheduleAmendment, loadCaregiverAvailability, checkVisitBlock, normDayAbbr, blockToRange, describeBlock, describeRange, ABBR_TO_FULL as VISIT_DAY_FULL, type TimeBlock as VisitTimeBlock } from "../agents/visitRequest";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
@@ -825,7 +825,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         clientId:      { type: "string", description: "Injected automatically." },
         title:         { type: "string", description: "Job title shown to care providers, 10-80 characters — same field as the website's 'Job title' box." },
-        notes:         { type: "string", description: "Description of the job, 50-2500 characters — what a care provider should know (responsibilities, tasks, etc.). Same as the website's required 'Details' field; never accept phone numbers or emails here." },
+        notes:         { type: "string", description: `Description of the job, 50-${JOB_DESCRIPTION_MAX_CHARS} characters — what a care provider should know (responsibilities, tasks, etc.). Same as the website's required 'Details' field; never accept phone numbers or emails here.` },
         careTypes:     { type: "array", items: { type: "string" } },
         frequency:     { type: "string", description: "e.g. 'weekly', 'one-time'" },
         days:          { type: "array", items: { type: "string" } },
@@ -4893,7 +4893,7 @@ async function executeToolCall(
         if (jpGateError) return jpGateError;
       }
       // 2026-09-07: title/notes brought up to full parity with the website's
-      // required 'Job title' (10-80 chars) and 'Details' (50-2500 chars)
+      // required 'Job title' (10-80 chars) and 'Details' (50-JOB_DESCRIPTION_MAX_CHARS chars)
       // fields — this tool previously had no way to collect either at all, so
       // every SMS-posted job got a generic auto-title and no description.
       // hourlyRate is now genuinely optional (omit for a flexible rate,
@@ -4902,8 +4902,8 @@ async function executeToolCall(
       if (!clientId || typeof title !== "string" || title.trim().length < 10 || title.trim().length > 80) {
         return toolError("INVALID_INPUT", "title is required, 10-80 characters");
       }
-      if (typeof notes !== "string" || notes.trim().length < 50 || notes.trim().length > 2500) {
-        return toolError("INVALID_INPUT", "notes (job description) is required, 50-2500 characters");
+      if (typeof notes !== "string" || notes.trim().length < 50 || notes.trim().length > JOB_DESCRIPTION_MAX_CHARS) {
+        return toolError("INVALID_INPUT", `notes (job description) is required, 50-${JOB_DESCRIPTION_MAX_CHARS} characters`);
       }
       if (isMedicationInstruction(notes)) return { success: false, error: MEDICATION_INSTRUCTION_MESSAGE, sayVerbatim: true };
       if (!Array.isArray(careTypes) || careTypes.length === 0 || !zipCode) {
@@ -6141,7 +6141,7 @@ async function executeToolCall(
         }
         // The bio is a required wizard step on both doors (≥150 characters, no skip — 2026-10-11).
         if (!filled(cg.bio)) {
-          missing.push({ item: "profile: bio", detail: "Their bio is empty — the wizard needs at least 150 characters, in their own words.", fix: "ask for it and save with update_caregiver_profile" });
+          missing.push({ item: "profile: bio", detail: "Their bio is empty — a few words in their own words, any length up to 1,000 characters.", fix: "ask for it and save with update_caregiver_profile" });
         }
         if (!filled(cg.photo) && !filled(cg.profilePhoto) && !filled(cg.photoURL)) {
           missing.push({
@@ -6883,18 +6883,22 @@ async function executeToolCall(
       }
       // Wizard value rules for the caregiver profile (CaregiverOnboardingWizard.tsx,
       // 2026-09-25): experience is one of five buckets; travel distance one of
-      // five options; photo never typed. The bio is the wizard's BioStep rule on
-      // BOTH doors (founder, 2026-10-11): at least BIO_MIN_CHARS characters, no
-      // skip — a shorter one is not saved and the model asks for a little more.
+      // five options; photo never typed. The bio on BOTH doors (founder,
+      // 2026-10-19): required, NO minimum — one honest sentence saves; ONE cap
+      // (BIO_MAX_CHARS) and never a silent cut — over it is not saved and the
+      // model asks for a shorter version.
       if (role === "caregiver" && fieldName === "bio") {
-        const { BIO_MIN_CHARS } = await import("../agents/onboardingContract");
+        const { BIO_MAX_CHARS } = await import("../agents/onboardingContract");
         const bioText = typeof fieldValue === "string" ? fieldValue.trim() : "";
-        if (bioText.length < BIO_MIN_CHARS) {
+        if (!bioText) {
+          return { ok: true, saved: false, invalidValue: true, guidance: "Their bio is empty — ask for a few words about themselves, in their own words, any length. Never write it for them." };
+        }
+        if (bioText.length > BIO_MAX_CHARS) {
           return {
             ok: true,
             saved: false,
             invalidValue: true,
-            guidance: `Their bio is ${bioText.length} characters; the profile needs at least ${BIO_MIN_CHARS} (the same rule as the website's bio step). Warmly ask them to add a bit more — a line or two about their experience and what families can expect — then save the whole bio again. Never write it for them.`,
+            guidance: `Their bio is ${bioText.length.toLocaleString("en-US")} characters; the profile holds up to ${BIO_MAX_CHARS.toLocaleString("en-US")} (the same cap as the website's bio box). Tell them the count and the limit and ask for a shorter version — never cut it, never write it for them.`,
           };
         }
         onboardingDataPatch = { bio: bioText };

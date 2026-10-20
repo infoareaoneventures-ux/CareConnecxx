@@ -10,6 +10,7 @@ import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../u
 import { resumeStepForDraft } from '../../utils/jobPostingDraftResume';
 import { dbService, createJobPosting, loadJobPostingDraft, saveJobPostingDraft } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
+import { JOB_DESCRIPTION_MAX_CHARS } from '../caregiver/signup/constants';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -920,6 +921,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                       ...(opt.val === 'myself' ? {
                         careRecipientFirstName: clientFirstName,
                         careRecipientLastName:  clientLastName,
+                      } : (f.careRecipientFirstName === clientFirstName && f.careRecipientLastName === clientLastName) ? {
+                        // Leaving Myself: the auto-filled account name must not stick to another person.
+                        careRecipientFirstName: '',
+                        careRecipientLastName:  '',
                       } : {}),
                     }));
                     // Other needs one more answer (adult / child) before moving on.
@@ -1304,13 +1309,13 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             </h2>
             <textarea
               value={form.jobDescription}
-              onChange={e => update('jobDescription', e.target.value.slice(0, 2500))}
+              onChange={e => update('jobDescription', e.target.value.slice(0, JOB_DESCRIPTION_MAX_CHARS))}
               rows={4}
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 resize-none"
             />
             <div className="flex justify-between text-xs text-slate-400">
               <span>Care providers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.</span>
-              <span>{2500 - form.jobDescription.length} chars left</span>
+              <span>{JOB_DESCRIPTION_MAX_CHARS - form.jobDescription.length} chars left</span>
             </div>
             {saveError && (
               <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-3 py-2">

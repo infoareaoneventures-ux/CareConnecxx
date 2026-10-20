@@ -8,7 +8,7 @@ import { writeUserNotification } from "../notifications/userNotification";
 import { humanLabelForStep } from "./onboardingStepLabels";
 import { decideNudge, MAX_NUDGES } from "./onboardingNudgeCadence";
 import {
-  BIO_MIN_CHARS, CAREGIVER_COLLECTION_STEPS, CLIENT_COLLECTION_STEPS, EXPERIENCE_BUCKETS,
+  CAREGIVER_COLLECTION_STEPS, CLIENT_COLLECTION_STEPS, EXPERIENCE_BUCKETS,
   RATE_EXAMPLE, TRAVEL_RADIUS_OPTIONS, availabilityComplete, isFieldFilled, missingRequiredFields,
 } from "../agents/onboardingContract";
 import { SERVICE_LABELS } from "../agents/caregiverServiceLabels";
@@ -82,7 +82,7 @@ const CAREGIVER_FIELD_QUESTIONS: Record<string, string> = {
   hourlyRate:     `What's your hourly rate? (for example $${RATE_EXAMPLE})`,
   serviceRadius:  `How far are you willing to travel for work? (${TRAVEL_RADIUS_OPTIONS.join(", ")} miles)`,
   email:          "What's your email address?",
-  bio:            `Tell families a bit about yourself — at least ${BIO_MIN_CHARS} characters about your experience and how you care for people.`,
+  bio:            "Tell families a bit about yourself — a few lines about your experience and how you care for people.",
 };
 const CLIENT_FIELD_QUESTIONS: Record<string, string> = {
   careFrequency:        "How often do you need care — occasional, part-time, or full-time?",

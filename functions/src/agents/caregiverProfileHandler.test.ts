@@ -495,12 +495,12 @@ describe("caregiverProfileHandler", () => {
       expect(briefing()).toContain("The Rates section currently reads:\nNo rate set yet.\nUp to 1 client at once");
       expect(briefing()).toContain("YES saves the whole section together, like the page's Save");
     });
-    it("bio confirm — this editor has no minimum (the signup questionnaire's 150 is named as such); the proposed bio is the screen", async () => {
+    it("bio confirm — no minimum on either door, 1,000 cap (founder 2026-10-19); the proposed bio is the screen", async () => {
       parseWithClaude.mockResolvedValueOnce("YES");
       hoisted.quickComplete.mockResolvedValueOnce("No minimum here — it's saved as written.");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "is it long enough?", { profileUpdateStep: "confirm", profileUpdateField: "bio", profileUpdateValue: "Warm and patient." }, CHAT, "bio");
       expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No minimum here — it's saved as written.\n\nSo — want me to save this bio?\n\n\"Warm and patient.\"");
-      expect(briefing()).toContain("This editor has no minimum length (the signup questionnaire asked for at least 150 characters)");
+      expect(briefing()).toContain("There is no minimum length on either door (founder, 2026-10-19) and a cap of 1,000 characters");
       expect(briefing()).toContain("\"Warm and patient.\"");
       expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ bio: expect.anything() }));
     });

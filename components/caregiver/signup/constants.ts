@@ -91,6 +91,15 @@ export function kindsOfProvider(profile: { services?: unknown; skills?: unknown 
   return kindsOfServices(services, CARE_KINDS);
 }
 
+/** A provider's ticked services grouped under the list name(s) they imply — ALWAYS named (founder, 2026-10-19), only the
+ *  lists with any of their services; Transportation (on both lists) shows under each list shown, and alone = both. */
+export function serviceGroupsOf(services: readonly unknown[]): Array<{ kind: CareKind; services: string[] }> {
+  const ticked = services.filter((s): s is string => typeof s === 'string');
+  return serviceListsForKinds(kindsOfServices(ticked, CARE_KINDS))
+    .map((l) => ({ kind: l.kind, services: l.services.filter((s) => ticked.includes(s)) }))
+    .filter((g) => g.services.length > 0);
+}
+
 // Age ranges for a child — an informational chip beside pets / smoking, never a
 // filter, never a number (the no-age rule stays for everyone else).
 // Labels are STAGE words, never numbers (founder 2026-10-18): the stored ids stay.
@@ -224,6 +233,8 @@ export const US_STATES = [
 export const MAX_CLIENTS_OPTIONS = ['1', '2', '3+'] as const;
 
 // ONE bio rule for the caregiver (sweep C7, 2026-10-11): the onboarding wizard's
-// 150-character minimum is also the profile editor's; Evia's text step holds the same.
-export const BIO_MIN_CHARS = 150;
-export const BIO_MAX_CHARS = 2500;
+// Bio (founder, 2026-10-19): required, NO minimum — one honest sentence passes; ONE cap on both doors, never a silent cut.
+export const BIO_MAX_CHARS = 1000;
+
+/** Job post Details cap (founder, 2026-10-19: a limit, never a silent cut) — the site's counter and Evia's text step hold the same; over it, Evia asks for a shorter version. */
+export const JOB_DESCRIPTION_MAX_CHARS = 1000;

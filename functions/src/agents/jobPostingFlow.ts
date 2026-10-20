@@ -14,7 +14,7 @@ import { describeSharedProfile } from "./profileBriefing";
 import { deriveCareLevel } from "./clientJobPostingContract";
 import { lookupZipPlace } from "../utils/geocode";
 import { canonicalizeCareNeeds } from "./careNeedsTaxonomy";
-import { serviceLabel, serviceLabels, serviceMenuText } from "./caregiverServiceLabels";
+import { serviceLabel, serviceLabels, serviceMenuText, JOB_DESCRIPTION_MAX_CHARS } from "./caregiverServiceLabels";
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
 import { formatDateForDisplay } from "../utils/scheduledTime";
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from "../utils/medicationInstruction";
@@ -1217,7 +1217,12 @@ async function handleJpAskDescription(
     await sendMessage(chatId, REASK);
     return;
   }
-  const description = text.trim().slice(0, 500);
+  const description = text.trim();
+  // A limit, never a silent cut (founder, 2026-10-19) — the site's Details box stops at the same count.
+  if (description.length > JOB_DESCRIPTION_MAX_CHARS) {
+    await sendMessage(chatId, `That's ${description.length.toLocaleString("en-US")} characters and the job details hold up to ${JOB_DESCRIPTION_MAX_CHARS.toLocaleString("en-US")}. Could you send a shorter version?`);
+    return;
+  }
   if (isMedicationInstruction(description)) {
     await sendMessage(chatId, `${MEDICATION_INSTRUCTION_MESSAGE} ${REASK}`);
     return;

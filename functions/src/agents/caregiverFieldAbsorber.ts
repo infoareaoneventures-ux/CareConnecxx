@@ -49,7 +49,7 @@ export async function absorbCaregiverFields(
       `"state":"2-letter US state code",` +
       `"zipCode":"5-digit US zip code",` +
       `"yearsExperience":number,` +
-      `"specialties":["short care specialty like 'dementia', 'mobility assistance' or 'babysitting'"],` +
+      `"specialties":["short care specialty like 'dementia', 'mobility assistance' or 'babysitting' — ONLY when the message answers which services they offer; never from a bio, a self-description, or who they care for (seniors, kids, both)"],` +
       `"availability":{"days":["Monday"],"hours":"9am-5pm"},` +
       `"jobType":"occasional | part_time | full_time — or a list of those when they name more than one",` +
       `"hourlyRate":number,` +
@@ -82,7 +82,11 @@ export async function absorbCaregiverFields(
   // are mapped onto PRIMARY_SERVICES before anything is kept — never a raw word
   // on the record. What fits nothing is dropped here; the loop's save tool (not
   // the absorber) is where Evia tells her what was left off.
-  const specialtyWords = cleanStringArray(parsed.specialties);
+  // Mined ONLY while the services step is still open (live 2026-10-19: the bio
+  // "helping both seniors and kids" was mined after the step and mapped to every
+  // service on both lists). Services named later are added by the loop's save tool.
+  const servicesOpen = !isFieldFilled(existing.specialties) && !isFieldFilled(existing.skills) && !isFieldFilled(existing.services);
+  const specialtyWords = servicesOpen ? cleanStringArray(parsed.specialties) : [];
   if (specialtyWords.length) {
     try {
       const { mapCaregiverServices } = await import("./caregiverServices");

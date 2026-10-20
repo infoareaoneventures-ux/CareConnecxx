@@ -187,7 +187,7 @@ export async function mapCaregiverServices(raw: unknown): Promise<ServiceMapping
       "School pickup / drop-off, homework help → School & Homework. Tidying up after kids, children's laundry → Tidying & Laundry. " +
       "When the words clearly concern a CHILD, use the child names; when they concern an adult, the senior names; a bare 'bathing' with no one named → Personal Care. " +
       "MEDICAL (never a service): administering or giving medication, injections, insulin, managing dosages, filling pill boxes, wound care, catheter care, vitals, therapy, nursing. " +
-      '"All of them" / "everything on the list" → every allowed service. ' +
+      'ONLY the literal words "all of them" / "everything on the list" mean every allowed service. Saying WHO she cares for (seniors, kids, children, both, families, loved ones) names NO service — it goes nowhere, not in services, not in unmapped. Never return more services than the phrases she gave, except for that literal "all". ' +
       "A phrase may fit more than one service; only CLEAR fits go in services — a vague phrase (\"help around the house\") goes in unmapped. No explanations.",
     rest.join("; "),
   ).catch(() => "__parse_error__");

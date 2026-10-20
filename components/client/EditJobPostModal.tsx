@@ -1,5 +1,5 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
-import { serviceLabel, PRIMARY_SERVICES, CARE_KINDS, serviceListsForKinds, kindsOfServices } from '../caregiver/signup/constants';
+import { serviceLabel, PRIMARY_SERVICES, CARE_KINDS, serviceListsForKinds, kindsOfServices, JOB_DESCRIPTION_MAX_CHARS } from '../caregiver/signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2, Check, Calendar, DollarSign, Heart, Home } from 'lucide-react';
@@ -154,7 +154,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
               value={form.description}
               onChange={e => set({ description: e.target.value })}
               rows={4}
-              maxLength={2500}
+              maxLength={JOB_DESCRIPTION_MAX_CHARS}
               className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-primary-400 resize-none"
             />
             <p className="mt-2 text-xs text-slate-500">Care providers browsing jobs can read this. Leave out medical details, addresses, phone numbers, email addresses, and anything private.</p>

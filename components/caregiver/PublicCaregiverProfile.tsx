@@ -1,4 +1,4 @@
-import { serviceLabel, serviceListsForKinds, CARE_KIND_LABEL } from './signup/constants';
+import { serviceLabel, CARE_KIND_LABEL, serviceGroupsOf } from './signup/constants';
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Star, MapPin, ShieldCheck, Calendar, Loader2 } from 'lucide-react';
@@ -157,11 +157,11 @@ export const PublicCaregiverProfile: React.FC = () => {
         {profile.skills && profile.skills.length > 0 && (
           <div className="bg-white border border-slate-200 rounded-2xl p-5 mt-4">
             <p className="font-bold text-slate-900 mb-3">Skills &amp; Services</p>
-            {/* Grouped by kind when the provider offers both (2026-10-18); Transportation shows under each. */}
+            {/* Grouped under the list name (always named, 2026-10-19); Transportation shows under each. */}
             <div className="space-y-3">
-              {serviceListsForKinds(profile.careKinds).map(list => ({ kind: list.kind, services: list.services.filter(s => (profile.skills || []).includes(s)) })).filter(g => g.services.length > 0).map(g => (
+              {serviceGroupsOf(profile.skills || []).map(g => (
                 <div key={g.kind}>
-                  {serviceListsForKinds(profile.careKinds).length > 1 && <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>}
+                  <p className="text-xs font-semibold text-slate-500 mb-1.5">{CARE_KIND_LABEL[g.kind]}</p>
                   <div className="flex flex-wrap gap-2">
                     {g.services.map(s => (
                       <span key={`${g.kind}-${s}`} className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">{serviceLabel(s)}</span>

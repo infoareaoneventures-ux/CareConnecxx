@@ -21,7 +21,7 @@
 //   TRAVEL                        Location & Travel › Edit (serviceRadius; the address is Account Settings)
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
-import { serviceLabel, kindsOfServices, serviceListsForKinds, CARE_KIND_LABEL } from "./caregiverServiceLabels";
+import { serviceLabel, kindsOfServices, CARE_KIND_LABEL, serviceGroupsOf } from "./caregiverServiceLabels";
 import { hasValidTransportDocs } from "./caregiverMatchScoring";
 import { gridFromWeekly, gridText, DAY_KEYS, type Grid } from "./caregiverAvailabilityGrid";
 import { formatExperience } from "./caregiverProfilePage";
@@ -161,14 +161,13 @@ export function myProfileText(page: MyProfilePage): string {
   lines.push("Reply BIO to edit your bio, or LANGUAGES to change your languages.");
 
   lines.push("", "Care Services");
-  if (page.careKinds.length === 2) {
-    // Services from both lists, each under its own name — the editor shows them the same way.
-    for (const l of serviceListsForKinds(page.careKinds)) {
-      const mine = (l.services as readonly string[]).filter((s) => page.services.includes(s)); // the editor's order; Transportation under both
-      lines.push(`${CARE_KIND_LABEL[l.kind]}: ${mine.length ? mine.map(serviceLabel).join(", ") : "none yet"}`);
-    }
+  // Each list that has any of their services, under its own name — ALWAYS named, even when only one list has
+  // services (founder, 2026-10-19: the page kept the "Senior care" / "Child care" name only when both had selections).
+  const named = serviceGroupsOf(page.services); // the site's grouping: the editor's order, Transportation under each list shown
+  if (named.length) {
+    for (const g of named) lines.push(`${CARE_KIND_LABEL[g.kind]}: ${g.services.map(serviceLabel).join(", ")}`);
   } else {
-    lines.push(page.services.length ? page.services.map(serviceLabel).join(", ") : "No services added yet.");
+    lines.push("No services added yet.");
   }
   lines.push("Reply SERVICES to add or remove one.");
 

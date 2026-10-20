@@ -66,8 +66,8 @@ describe("Care Services grouped by kind — derived from the ticked services (20
     expect(t).toContain("Child care: Bathing & Dressing, Transportation");
     hoisted.docs.set("caregivers/cg1", RECORD);
     const one = myProfileText(await loadMyProfilePage("cg1"));
-    expect(one).toContain("Care Services\nCompanionship, Transportation, Medication Reminders Only");
-    expect(one).not.toContain("Senior care:");
+    expect(one).toContain("Care Services\nSenior care: Medication Reminders Only, Companionship, Transportation"); // one list is still NAMED, in the editor's order (founder, 2026-10-19)
+    expect(one).not.toContain("Child care:");
     expect(one).not.toContain("Care type:");
     expect(t).not.toContain("Care type:");
     expect(t).toContain("Reply SERVICES to add or remove one.");
@@ -88,7 +88,7 @@ describe("loadMyProfilePage + myProfileText — the page's sections in order", (
     const t = myProfileText(page);
     const order = ["My Profile", "Mahad · Background check complete", "4.5 (2 reviews)", "san jose, CA · $25/hr", "Photo: on file (reply PHOTO to change it)",
       "About Mahad", "I'm a great care provider and happy to help anyone", "Languages: English", "Reply BIO to edit your bio, or LANGUAGES",
-      "Care Services", "Companionship, Transportation, Medication Reminders Only", "Reply SERVICES",
+      "Care Services", "Senior care: Medication Reminders Only, Companionship, Transportation", "Reply SERVICES",
       "Rates", "1 Person: $25/hr", "2 People: $30/hr", "3-5 years experience · Up to 1 client at once", "Reply RATES",
       "Weekly Availability", "Looking for: Occasional", "Mon", "Reply LOOKING FOR to change the job type, or AVAILABILITY",
       "Location & Travel", "Lives in san jose, CA", "Willing to travel within 25 miles", "Reply TRAVEL",

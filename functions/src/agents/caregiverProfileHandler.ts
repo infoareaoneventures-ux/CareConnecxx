@@ -9,7 +9,7 @@ import { isQuestionOrOther, isBackOutRequest, answerMidFlow as answerMidFlowShar
 import { businessTodayStr } from "../utils/scheduledTime";
 import { mapCaregiverServices, orderedCanonicalServices, serviceLabels, SERVICE_LABELS, serviceMenuText } from "./caregiverServices";
 import { CHILD_SERVICE_LABELS, careKindsFromWords, kindsOfServices, serviceListsForKinds, CareKind, CARE_KINDS } from "./caregiverServiceLabels";
-import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, BIO_MIN_CHARS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
+import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, BIO_MAX_CHARS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
 import { LANGUAGE_OPTIONS, JOB_TYPE_OPTIONS, MAX_CLIENTS_OPTIONS, TRAVEL_OPTIONS, jobTypeLabel } from "./caregiverMyProfile";
 
 const db = admin.firestore();
@@ -70,7 +70,7 @@ export const JOB_TYPE_FACTS =
 export const TRAVEL_FACTS =
   `The travel distance is one of ${TRAVEL_OPTIONS.join(", ")} miles, measured from the address in Account Settings; families further away are not matched. ${SAVE_RULE}`;
 export const BIO_FACTS =
-  `The bio is what families see on the profile, in the care provider's own words. This editor has no minimum length (the signup questionnaire asked for at least ${BIO_MIN_CHARS} characters); ` +
+  `The bio is what families see on the profile, in the care provider's own words. There is no minimum length on either door (founder, 2026-10-19) and a cap of ${BIO_MAX_CHARS.toLocaleString("en-US")} characters; ` +
   `the new bio replaces the old one. ${SAVE_RULE}`;
 // The Account Settings page's own words: "Stop showing up for new matches without deleting your profile. Reversible anytime."
 export const PAUSE_FACTS =
@@ -608,7 +608,17 @@ async function handleBioUpdate(
       await sendMessage(chatId, reAsk);
       return;
     }
-    const bio = trimmed.slice(0, 2500);
+    // A cap, never a silent cut (founder, 2026-10-19) — the page's box stops at the same count.
+    if (trimmed.length > BIO_MAX_CHARS) {
+      await db.collection("agent_sessions").doc(phone).update({
+        profileUpdateStep:  "collect",
+        profileUpdateField: "bio",
+        stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      });
+      await sendMessage(chatId, `That's ${trimmed.length.toLocaleString("en-US")} characters and the bio holds up to ${BIO_MAX_CHARS.toLocaleString("en-US")}. Could you send a shorter version?`);
+      return;
+    }
+    const bio = trimmed;
     await db.collection("agent_sessions").doc(phone).update({
       profileUpdateStep:  "confirm",
       profileUpdateField: "bio",

@@ -147,8 +147,8 @@ export const EXPERIENCE_BUCKETS: readonly string[] = ["< 1 year", "1-2 years", "
 /** The wizard's travel-distance options in miles (TRAVEL_OPTIONS); default 10. */
 export const TRAVEL_RADIUS_OPTIONS: readonly number[] = [5, 10, 15, 25, 50];
 export const DEFAULT_TRAVEL_RADIUS = 10;
-/** The wizard's bio minimum (BioStep minChars). */
-export const BIO_MIN_CHARS = 150;
+/** The bio cap on both doors (= the site's BIO_MAX_CHARS). No minimum (founder, 2026-10-19); over the cap Evia asks for a shorter version, never cuts. */
+export const BIO_MAX_CHARS = 1000;
 
 /** Does the collected data say the caregiver offers Transportation? (canonical skills/services, or raw specialties) */
 export function offersTransportation(d: Record<string, unknown> | undefined): boolean {

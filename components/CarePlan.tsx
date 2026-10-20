@@ -417,13 +417,18 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
   const getPlan = (r: RecipientEntry): RecipientPlanData => {
     const key = getKey(r.firstName, r.lastName);
     const stored = recipientPlans[key];
+    // The relationship decides this person's list; needs off their list and a stage on a non-child never show or seed
+    // (live 2026-10-19: a Parent promoted to primary inherited the removed child's needs and "Infant" through the seed).
+    const kind = recipientCareKind(r.relationship, r.careKind);
+    const ownList = new Set<string>(serviceListsForKinds([kind]).flatMap(l => l.services as readonly string[]));
+    const onOwnList = (needs: unknown) => (Array.isArray(needs) ? needs : []).filter((n): n is string => typeof n === 'string' && ownList.has(n));
     if (stored) {
       // One stage per child: the single field, else the first of an older list, else the roster entry — the list itself is never written back.
       const { ageRanges: _legacyStages, ...rest } = stored;
-      const stage = recipientStage(stored) ?? r.ageRange;
+      const stage = kind === 'child' ? (recipientStage(stored) ?? r.ageRange) : undefined;
       return {
         ...rest,
-        careNeeds: stored.careNeeds ?? wizardData?.careNeeds ?? [],
+        careNeeds: onOwnList(stored.careNeeds ?? wizardData?.careNeeds ?? []),
         ...(stage ? { ageRange: stage } : {}),
         locations: stored.locations ?? wizardLocations.slice(0, 1),
         notes: stored.notes ?? '', // never the job post's description (founder, 2026-10-09: the two are separate)
@@ -433,8 +438,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       };
     }
     return {
-      careNeeds: wizardData?.careNeeds || [],
-      ...(r.ageRange ? { ageRange: r.ageRange } : {}),
+      careNeeds: onOwnList(wizardData?.careNeeds || []),
+      ...(kind === 'child' && r.ageRange ? { ageRange: r.ageRange } : {}),
       careNeedDetails: {},
       locations: wizardLocations.slice(0, 1),
       notes: '',
@@ -829,27 +834,34 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         const next = additionals[0];
         const remainingAdditionals = additionals.slice(1);
         if (next) {
+          // The promoted person's own stage / adult-or-child answer moves with them (never the removed person's).
+          const promotedKind = next.careKind || null;
+          const promotedStage = next.ageRange || null;
           await db.collection('job_postings').doc(currentPlanId).update({
             careRecipientFirstName: next.firstName,
             careRecipientLastName: next.lastName || '',
             relationship: next.relationship || '',
+            careRecipientCareKind: promotedKind ?? firebase.firestore.FieldValue.delete(),
+            careRecipientAgeRange: promotedStage ?? firebase.firestore.FieldValue.delete(),
             careRecipientAge: firebase.firestore.FieldValue.delete(),
             additionalRecipients: remainingAdditionals,
             deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
           });
-          setWizardData((prev: any) => { const u = { ...prev, careRecipientFirstName: next.firstName, careRecipientLastName: next.lastName || '', relationship: next.relationship || '', additionalRecipients: remainingAdditionals, deletedRecipients: withArchive(prev) }; delete u.careRecipientAge; return u; });
+          setWizardData((prev: any) => { const u = { ...prev, careRecipientFirstName: next.firstName, careRecipientLastName: next.lastName || '', relationship: next.relationship || '', additionalRecipients: remainingAdditionals, deletedRecipients: withArchive(prev) }; delete u.careRecipientAge; if (promotedKind) u.careRecipientCareKind = promotedKind; else delete u.careRecipientCareKind; if (promotedStage) u.careRecipientAgeRange = promotedStage; else delete u.careRecipientAgeRange; return u; });
         } else {
           await db.collection('job_postings').doc(currentPlanId).update({
             careRecipientFirstName: firebase.firestore.FieldValue.delete(),
             careRecipientLastName: firebase.firestore.FieldValue.delete(),
             relationship: firebase.firestore.FieldValue.delete(),
+            careRecipientCareKind: firebase.firestore.FieldValue.delete(),
+            careRecipientAgeRange: firebase.firestore.FieldValue.delete(),
             careRecipientAge: firebase.firestore.FieldValue.delete(),
             deletedRecipients: firebase.firestore.FieldValue.arrayUnion(archived),
           });
           setWizardData((prev: any) => {
             const u = { ...prev };
             delete u.careRecipientFirstName; delete u.careRecipientLastName;
-            delete u.relationship; delete u.careRecipientAge;
+            delete u.relationship; delete u.careRecipientAge; delete u.careRecipientCareKind; delete u.careRecipientAgeRange;
             u.deletedRecipients = withArchive(prev);
             return u;
           });
@@ -1012,7 +1024,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
                           {r.relationship && <span className={`text-xs capitalize ${active ? 'text-white/75' : 'text-slate-400'}`}>{r.relationship}</span>}
-                          {(() => { const stage = recipientStage(recipientPlans[getKey(r.firstName, r.lastName)]) ?? r.ageRange; return stage ? <span className={`text-xs ${active ? 'text-white/75' : 'text-slate-400'}`}>· {ageRangeLabel(stage)}</span> : null; })()}
+                          {(() => { const stage = recipientCareKind(r.relationship, r.careKind) === 'child' ? (recipientStage(recipientPlans[getKey(r.firstName, r.lastName)]) ?? r.ageRange) : undefined; return stage ? <span className={`text-xs ${active ? 'text-white/75' : 'text-slate-400'}`}>· {ageRangeLabel(stage)}</span> : null; })()}
                         </div>
                       </div>
                       {!isReadOnly && recipients.length > 1 && (
@@ -1049,12 +1061,18 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                       value={newRecipient.relationship}
                       onChange={e => {
                         const rel = e.target.value;
+                        const dn = currentUser?.displayName || '';
+                        const parts = dn.trim().split(/\s+/);
+                        const selfFirst = parts[0] || '';
+                        const selfLast = parts.slice(1).join(' ') || '';
                         if (rel === 'Myself') {
-                          const dn = currentUser?.displayName || '';
-                          const parts = dn.trim().split(/\s+/);
-                          setNewRecipient(p => ({ ...p, relationship: rel, firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' }));
+                          setNewRecipient(p => ({ ...p, relationship: rel, firstName: selfFirst, lastName: selfLast }));
                         } else {
-                          setNewRecipient(p => ({ ...p, relationship: rel }));
+                          // Leaving Myself: the auto-filled account name must not stick to another person
+                          // (live 2026-10-19: the account holder was saved as a "Child · Toddler" recipient).
+                          setNewRecipient(p => (p.firstName === selfFirst && p.lastName === selfLast)
+                            ? { ...p, relationship: rel, firstName: '', lastName: '' }
+                            : { ...p, relationship: rel });
                         }
                       }}>
                       <option value="" disabled>Relationship *</option>

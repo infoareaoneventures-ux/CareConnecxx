@@ -139,12 +139,12 @@ describe("absorbCaregiverFields", () => {
     expect(out).toEqual({});
   });
 
-  it("adds onto the services the model already saved — select all that apply, never removes", async () => {
+  it("never mines services once the step is answered (live 2026-10-19: the bio \"helping both seniors and kids\" ticked every service) — later additions come from the save tool", async () => {
     parseWithClaude.mockResolvedValueOnce(JSON.stringify({ specialties: ["dementia"] }));
     const out = await absorbCaregiverFields("msg", { skills: ["Companionship"], services: ["Companionship"], specialties: ["Companionship"] });
-    expect(out.specialties).toEqual(["Dementia / Memory Care", "Companionship"]);
-    expect(out.skills).toEqual(["Dementia / Memory Care", "Companionship"]);
-    expect(out.services).toEqual(["Dementia / Memory Care", "Companionship"]);
+    expect(out.specialties).toBeUndefined();
+    expect(out.skills).toBeUndefined();
+    expect(out.services).toBeUndefined();
   });
 });
 

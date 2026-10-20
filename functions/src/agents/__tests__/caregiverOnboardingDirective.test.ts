@@ -146,11 +146,12 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).not.toContain("motor vehicle record");
   });
 
-  it("bio = the website's BioStep rule on both doors: at least 150 characters, no skip (2026-10-11)", () => {
+  it("bio = required, no minimum, 1,000 cap on both doors, never cut (founder 2026-10-19)", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
-    expect(d).toContain("at least 150 characters");
+    expect(d).toContain("no minimum length on either door");
+    expect(d).toContain("1,000 characters");
     expect(d).toContain("no skip");
-    expect(d).not.toContain("no minimum length");
+    expect(d).not.toContain("at least 150");
   });
 
   it("job type = the wizard's multi-select (one or more); the optional rates-step boxes are never their own question (2026-10-11)", () => {

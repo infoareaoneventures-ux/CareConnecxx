@@ -7097,7 +7097,27 @@ async function executeToolCall(
       const { missingRequiredFields, firstGateStep } = await import("../agents/onboardingContract");
       const ref  = db.collection("agent_sessions").doc(phone as string);
       const snap = await ref.get();
-      const data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+      let data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+      // A family may have answered on the site (job_postings / users carry the same
+      // questionnaire) — those answers count here too, and the ones the text draft
+      // lacks are persisted onto it so the later intake steps see them (2026-10-19,
+      // live: "Not yet, I'm still missing a few setup details" after the site wizard).
+      if (role === "client") {
+        const clientUid = (snap.data()?.userId ?? snap.data()?.webOnboardingUid) as string | undefined;
+        if (clientUid) {
+          try {
+            const { mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData } = await import("../agents/clientJobPostingContract");
+            const [jpSnap, uSnap] = await Promise.all([db.collection("job_postings").doc(clientUid).get(), db.collection("users").doc(clientUid).get()]);
+            const live = { ...mapJobPostingsDocToOnboardingData(jpSnap.exists ? jpSnap.data() : undefined), ...mapUsersDocToOnboardingData(uSnap.exists ? uSnap.data() : undefined) };
+            const fill: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(live)) if (data[k] === undefined || data[k] === null || data[k] === "") fill[k] = v;
+            if (Object.keys(fill).length) {
+              await ref.set({ onboardingData: fill }, { merge: true });
+              data = { ...fill, ...data };
+            }
+          } catch (err) { console.error("complete_collection: site read-back failed (non-fatal):", err); }
+        }
+      }
       const missing = missingRequiredFields(role, data);
       if (missing.length > 0) {
         // ok:true so the model does NOT read this as a tool error (the error

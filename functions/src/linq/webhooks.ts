@@ -930,6 +930,61 @@ const handleInboundInner = traceable(
       // need a "(Reply yes...)" instruction in the copy.
       const welcomeAudience: "caregiver" | "family" = webRole === "caregiver" ? "caregiver" : "family";
       const welcomeLanguage: "en" | "es" = preferredLanguage === "es" ? "es" : "en";
+      // The family finished the site wizard BEFORE their first text (2026-10-19):
+      // the next thing they hear is the next card (identity check), never the
+      // first question again. The session was just written above.
+      if (!isReturning && webRole === "client" && webUid) {
+        const { reconcileClientOnboardingWithSite } = await import("../agents/siteWizardSync");
+        const freshSess = (await db.collection("agent_sessions").doc(phone).get()).data() as Record<string, any> | undefined;
+        if (freshSess && await reconcileClientOnboardingWithSite(phone, freshSess, `bridge:${Date.now()}`)) {
+          if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
+          return;
+        }
+      }
+
+      // Site-first families (2026-10-19): the first greeting asks the FIRST MISSING
+      // question, never one the site already answered — it reads the same record
+      // every later turn reads (the fixed greeting below predates that read-back).
+      if (!isReturning && webRole === "client" && webUid) {
+        try {
+          const { mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData } = await import("../agents/clientJobPostingContract");
+          const { missingRequiredFields, CLIENT_REQUIRED_FIELDS } = await import("../agents/onboardingContract");
+          const [jpSnap, uSnap] = await Promise.all([
+            db.collection("job_postings").doc(webUid).get(),
+            db.collection("users").doc(webUid).get(),
+          ]);
+          const live: Record<string, unknown> = {
+            ...mapJobPostingsDocToOnboardingData(jpSnap.exists ? jpSnap.data() : undefined),
+            ...mapUsersDocToOnboardingData(uSnap.exists ? uSnap.data() : undefined),
+          };
+          const answeredOnSite = CLIENT_REQUIRED_FIELDS.some((k) => live[k] !== undefined && live[k] !== null && live[k] !== "");
+          if (answeredOnSite) {
+            const sessDraft = ((await db.collection("agent_sessions").doc(phone).get()).data()?.onboardingData ?? {}) as Record<string, unknown>;
+            const missing = missingRequiredFields("client", { ...live, ...sessDraft });
+            if (missing.length === 0) {
+              await sendMessage(chatId, `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. I've got everything you entered on the site, so let's finish up.`);
+              await drivePostCollectionHandoff(phone, chatId, "client");
+            } else {
+              const welcomeSite = await generateCaraMessage({
+                audience: "family",
+                language: welcomeLanguage,
+                context: `You're meeting ${webGreetName} for the very first time over text (${webGreetName} is the PERSON's first name — never a company or place; the company is Evia). ` +
+                  `They started their care setup on the website and you already have some of their answers. Introduce yourself warmly as Evia, their care coordinator, ` +
+                  `say you have what they entered on the site, and ask for the FIRST missing item only — you still need: ${missing.join(", ")}. ` +
+                  `One or two short lines, no list, never re-ask anything they answered.`,
+                fallback: `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. I've got what you entered on the site; let's pick up from there.`,
+                maxTokens: 120,
+              });
+              await sendMessage(chatId, welcomeSite);
+            }
+            if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
+            return;
+          }
+        } catch (err) {
+          console.error("web bridge: site-draft greeting failed (non-fatal, fixed greeting):", err);
+        }
+      }
+
       let welcome: string;
       if (isReturning) {
         welcome = await generateCaraMessage({
@@ -954,6 +1009,7 @@ const handleInboundInner = traceable(
               `Introduce yourself warmly as Evia, mention that setting up their profile takes about 3 minutes and happens right here by text, ` +
               `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "how often they need care — occasional, part-time, or full-time (the wizard's first question; the person needing care comes later)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`
             : `You're meeting ${webName} for the very first time over text. They're looking for care for a loved one. ` +
+              `(${webName} is the PERSON's first name — use it only to greet them; it is never a company, team or place — the company is Evia, so never say "here at ${webName}".) ` +
               `Introduce yourself warmly as Evia, their care coordinator, ` +
               `then ask the first question — ${webRole === "caregiver" ? "their street address, city, and zip code (families only ever see the city)" : "how often they need care — occasional, part-time, or full-time (the wizard's first question; the person needing care comes later)"} — woven in naturally. Call them ${webGreetName}. Sound like a real person, not a form.`,
           fallback: webRole === "caregiver"
@@ -1550,6 +1606,15 @@ const handleInboundInner = traceable(
     const { reconcileCaregiverOnboardingWithSite } = await import("../agents/caregiverSiteSync");
     const reconciled = await reconcileCaregiverOnboardingWithSite(phone, session);
     if (reconciled.onboardingStep !== session.onboardingStep) (session as any).onboardingStep = reconciled.onboardingStep;
+  }
+  // The family twin (2026-10-19, live: the site wizard was finished, Evia still asked
+  // the first question and said "still missing a few setup details"): a posting
+  // the site already activated while the cursor sits on a collection step → the
+  // next gate (identity check) is sent now and the cursor parked there. Handled
+  // once per session; this turn ends here.
+  if (session.userType !== "caregiver" && session.onboardingStep && session.onboardingStep !== "complete" && text.trim() !== "") {
+    const { reconcileClientOnboardingWithSite } = await import("../agents/siteWizardSync");
+    if (await reconcileClientOnboardingWithSite(phone, session as any, `inbound:${Date.now()}`)) return;
   }
 
   let step = session.onboardingStep ?? "";

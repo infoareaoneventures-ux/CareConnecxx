@@ -36,6 +36,8 @@ export * from './stripe';
 // comment. Reached via the account_action_requests Firestore-trigger queue
 // below, or directly by Evia's MCP tools.
 export { processAccountActionQueue } from './triggers/accountActionQueue';
+// The questionnaire finished on the site → Evia texts the next gate (2026-10-19)
+export { onFamilyWizardFinishedOnSite, onProviderWizardFinishedOnSite } from './triggers/siteWizardCompletion';
 // Recovery email confirmed at first entry — one write trigger per profile collection (2026-09-20).
 export { onUserEmailWrite, onCaregiverEmailWrite } from './triggers/emailConfirmation';
 

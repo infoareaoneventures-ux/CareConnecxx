@@ -5251,3 +5251,32 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
     { maxTokens: 90 },
   )).trim();
 }
+
+// ── The questionnaire finished ON THE SITE (2026-10-19) ──────────────────────
+// Called by triggers/siteWizardCompletion.ts when the site's wizard finished
+// while the text cursor still sat on a collection step. The dashboard shows the
+// next card at once; by text the person hears the same thing as it happens —
+// ONE text, through the same gate senders Evia's own flow uses, parked where
+// Evia's flow would park it.
+export async function advanceClientAfterSiteWizard(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  const uid = session.userId as string | undefined;
+  let identityVerified = false;
+  if (uid) {
+    const u = await db.collection("users").doc(uid).get().catch(() => null);
+    identityVerified = u?.data()?.identityCheckStatus === "verified";
+  }
+  await sendMessage(chatId, "Your care plan is saved — nice work.");
+  if (identityVerified) {
+    // Identity already done on the site: the next card is the membership.
+    await updateSession(phone, { onboardingStep: "client_ask_plan" });
+    await handleClientPresentPlan(phone, chatId, session);
+    return;
+  }
+  await sendIdentityCheckLink(phone, chatId, session); // texts the link, parks client_awaiting_identity
+}
+
+export async function advanceCaregiverAfterSiteWizard(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  await updateSession(phone, { onboardingStep: "caregiver_send_membership" });
+  // handleCaregiverSendMembership says the profile is set up and texts the membership link, then parks awaiting_membership.
+  await handleCaregiverSendMembership(phone, chatId, session);
+}

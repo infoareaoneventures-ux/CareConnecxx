@@ -50,6 +50,7 @@
 import {
   AGE_RANGES, STAGE_HEADING, OTHER_KIND_QUESTION, ageRangeFromWords, ageRangeLabel, stageQuestion,
   recipientCareKind, rosterCareKinds, serviceMenuText, serviceLabel, JOB_DESCRIPTION_MAX_CHARS,
+  CARE_KIND_LABEL, type CareKind,
 } from "./caregiverServiceLabels";
 import { coerceClientRate, isFieldFilled, FAMILY_STEP_ORDER, FAMILY_STEP_IDS } from "./onboardingContract";
 import { normalizeStartDateToISO, formatWizardPhone, mapTimeOfDayToWizardValues } from "./clientJobPostingContract";
@@ -201,26 +202,45 @@ export function nextFamilyStep(d: Data): FamilyStep | null {
   if (!isFieldFilled(d.careRecipientPhotoURL) && d.photoSkipped !== true) return "family_ask_photo";
   const roster = rosterFromData(d);
   if (!roster.length) return "family_ask_recipients";
-  // The first person is completed before the count is asked (the site's step 10 order).
-  const firstPending = rosterPending([roster[0]]);
-  if (firstPending) return stepForPending(firstPending);
-  // The site's counter: asked only when ONE person is on the record and nothing confirmed the count
-  // (naming several at once, a number, "no", or the site's own adultsCount all count as answered).
-  const countConfirmed = d.rosterCountConfirmed === true || Number(d.adultsCount) >= 1;
-  if (roster.length === 1 && !countConfirmed) return "family_ask_more_people";
+  // Each person is completed (relationship → adult/child → name → stage) before the next question.
   const pending = rosterPending(roster);
   if (pending) return stepForPending(pending);
+  // The site's counter, by text: "Is there anyone else who needs care?" — asked after each person
+  // until NO, a number, or four people (naming several at once, a number, "no", or the site's own
+  // adultsCount all count as the count being answered). Founder, 2026-10-21: cycle back for the next person.
+  const countConfirmed = d.rosterCountConfirmed === true || Number(d.adultsCount) >= 1;
+  if (roster.length < MAX_RECIPIENTS && !countConfirmed) return "family_ask_more_people";
   const providers = Number(d.caregiversNeeded);
   if (!(providers >= 1 && providers <= MAX_PROVIDERS)) return "family_ask_providers_count";
   if (!isFieldFilled(d.emergencyContactName)) return "family_ask_emergency";
   if (!isFieldFilled(d.emergencyContactPhone)) return "family_ask_emergency_phone";
   if (!isFieldFilled(d.emergencyContactRelationship)) return "family_ask_emergency_relationship";
   if (!(Array.isArray(d.careNeeds) && (d.careNeeds as unknown[]).length)) return "family_ask_needs";
+  if (careListsNotYetOffered(d).length) return "family_ask_needs"; // a person added later: their list, once
   if (d.householdAsked !== true) return "family_ask_pets_smoking";
   if (coerceClientRate(d.rate) === null) return "family_ask_rate";
   if (!isFieldFilled(d.jobDescription) && d.descriptionSkipped !== true) return "family_ask_description";
   if (!isFieldFilled(d.email)) return "family_ask_email";
   return null;
+}
+
+/** The care lists the people on the roster imply (a still-unknown person implies nothing yet). */
+export function rosterKinds(d: Data): CareKind[] {
+  const roster = rosterFromData(d).filter((p) => p.relationship !== "unknown" && !p.kindUnknown);
+  return rosterCareKinds(roster.map((p) => ({ relationship: p.relationship === "self" ? "Myself" : p.relationship === "adult child" ? "Adult child" : p.relationship, careKind: p.careKind })));
+}
+
+/**
+ * The lists whose services were never offered for this post: the site shows the
+ * lists for everyone on the post, so a person added AFTER the care types were
+ * picked (an adult joining a child-only post, or the reverse) gets their list
+ * offered once. Care types that came from the site count as offered for everyone.
+ */
+export function careListsNotYetOffered(d: Data): CareKind[] {
+  if (!(Array.isArray(d.careNeeds) && (d.careNeeds as unknown[]).length)) return [];
+  if (!Array.isArray(d.careNeedsKindsOffered)) return []; // saved on the site (or before this rule): every list counts as offered
+  const offered = new Set((d.careNeedsKindsOffered as unknown[]).map(String));
+  return rosterKinds(d).filter((k) => !offered.has(k));
 }
 
 function stepForPending(p: RosterPending): FamilyStep {
@@ -279,7 +299,14 @@ export function familyQuestion(step: FamilyStep, d: Data): string {
       return `How is ${String(d.emergencyContactName ?? "that person")} related to ${who}? (e.g. Mother, Sibling, Friend)`;
     }
     case "family_ask_needs": {
-      const kinds = rosterCareKinds(roster.filter((p) => p.relationship !== "unknown" && !p.kindUnknown).map((p) => ({ relationship: p.relationship === "self" ? "Myself" : p.relationship === "adult child" ? "Adult child" : p.relationship, careKind: p.careKind })));
+      const missing = careListsNotYetOffered(d);
+      if (missing.length) {
+        const who = roster.filter((p) => missing.includes(recipientCareKind(p.relationship === "self" ? "Myself" : p.relationship === "adult child" ? "Adult child" : p.relationship, p.careKind))).map((p) => (p.relationship === "self" ? "you" : p.name || personPhrase(p)));
+        const whoText = who.length === 1 ? who[0] : `${who.slice(0, -1).join(", ")} and ${who[who.length - 1]}`;
+        const listName = missing.map((k) => CARE_KIND_LABEL[k].toLowerCase()).join(" and ");
+        return `Now that ${whoText || "they"} ${who.length === 1 && who[0] !== "you" ? "is" : "are"} on the post too, anything from the ${listName} list? Pick as many as apply, or say none:\n${serviceMenuText(missing)}`;
+      }
+      const kinds = rosterKinds(d);
       return `What type of care is needed? Pick as many as apply:\n${serviceMenuText(kinds.length ? kinds : ["senior"])}`;
     }
     case "family_ask_pets_smoking": return "Two quick ones: are there pets in the home, and does anyone in the household smoke?";
@@ -595,12 +622,13 @@ async function readMorePeople(deps: FamilyIntakeDeps, text: string, d: Data, acc
   if (norm === "YES" || norm === "YES." || norm === "YEAH" || norm === "YEP") {
     return { fields: { rosterAddPending: true }, ack: "" };
   }
-  // People named ("myself", "my dad too", "adult child too") are ADDED — read first, never judged as chit-chat.
+  // People named ("myself", "my dad too", "adult child too") are ADDED — read first, never judged as
+  // chit-chat. The cycle stays open: after this person's details, "anyone else?" is asked again.
   const named = await readRoster(deps, text, accountName).catch(() => null);
   if (named) {
     const added = named.roster.filter((x) => !(x.relationship === "self" && roster.some((q) => q.relationship === "self")));
     const next = [...roster, ...added].slice(0, MAX_RECIPIENTS);
-    return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true, rosterAddPending: null }, ack: rosterAck(next) };
+    return { fields: { ...dataFromRoster(next), rosterCountConfirmed: next.length >= MAX_RECIPIENTS ? true : null, rosterAddPending: null }, ack: rosterAck(next) };
   }
   const raw = await deps.parseWithClaude(
     `The family was asked "Is there anyone else who needs care? Reply NO, or tell me who." Reply with raw JSON {"count":0,"others":"the OTHER people named, copied from their words, or empty"} — a plain NO / "just her" / "only me" means nobody else: reply {"count":1,"others":""}; if they gave a total number of people (1 to ${MAX_RECIPIENTS}) put it in count; if they named who else, put that phrase in others.`,
@@ -614,7 +642,7 @@ async function readMorePeople(deps: FamilyIntakeDeps, text: string, d: Data, acc
     if (!r) return null;
     const added = r.roster.filter((x) => !(x.relationship === "self" && roster.some((q) => q.relationship === "self")));
     const next = [...roster, ...added].slice(0, MAX_RECIPIENTS);
-    return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true, rosterAddPending: null }, ack: rosterAck(next) };
+    return { fields: { ...dataFromRoster(next), rosterCountConfirmed: next.length >= MAX_RECIPIENTS ? true : null, rosterAddPending: null }, ack: rosterAck(next) };
   }
   const count = smallCount(p.count, MAX_RECIPIENTS);
   if (count === null) return null;
@@ -660,20 +688,27 @@ async function readEmergencyRelationship(deps: FamilyIntakeDeps, text: string): 
   return { fields: { emergencyContactRelationship: v }, ack: `${v.charAt(0).toUpperCase() + v.slice(1)}, got it.` };
 }
 
-async function readNeeds(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
+async function readNeeds(deps: FamilyIntakeDeps, text: string, d: Data): Promise<StepResult | null> {
+  const existing = Array.isArray(d.careNeeds) ? (d.careNeeds as unknown[]).filter((x): x is string => typeof x === "string") : [];
+  const offeredNow = rosterKinds(d);
+  const followUp = careListsNotYetOffered(d).length > 0;
   const raw = await deps.parseWithClaude(
-    'The family was asked what type of care is needed and may name several things. Reply with raw JSON {"needs":["each thing they named, in their words"]} — or {"needs":[]} if none.',
+    'The family was asked what type of care is needed and may name several things. Reply with raw JSON {"needs":["each thing they named, in their words"],"none":false} — none true when they said none / nothing / no (on a follow-up list); {"needs":[]} if nothing is named.',
     text,
   );
-  let needsWords: string[] = [];
-  try { const p = JSON.parse(raw) as { needs?: unknown }; needsWords = Array.isArray(p.needs) ? (p.needs as unknown[]).map(String) : []; } catch { needsWords = [text]; }
+  let needsWords: string[] = []; let none = false;
+  try { const p = JSON.parse(raw) as { needs?: unknown; none?: unknown }; needsWords = Array.isArray(p.needs) ? (p.needs as unknown[]).map(String) : []; none = p.none === true; } catch { needsWords = [text]; }
+  if (followUp && none && !needsWords.length) {
+    return { fields: { careNeedsKindsOffered: offeredNow }, ack: "Nothing more, got it." };
+  }
   if (!needsWords.length) needsWords = [text];
   const c = await deps.canonicalizeCareNeeds(needsWords);
   if (!c.careNeeds.length) return null;
+  const merged = followUp ? Array.from(new Set([...existing, ...c.careNeeds])) : c.careNeeds;
   const notes: string[] = [];
   if (c.medical.length) notes.push(`${c.medical.join(", ")} is medical care, which care providers here don't do, so I left it off — the closest service is Medication Reminders Only (reminding when it's time, not giving them).`);
   if (c.unmapped.length) notes.push(`${c.unmapped.join(", ")} isn't one of the services on the list, so I left it off.`);
-  return { fields: { careNeeds: c.careNeeds }, ack: `${c.careNeeds.map(serviceLabel).join(", ")}, got it.${notes.length ? " " + notes.join(" ") : ""}` };
+  return { fields: { careNeeds: merged, careNeedsKindsOffered: offeredNow }, ack: `${c.careNeeds.map(serviceLabel).join(", ")}, got it.${notes.length ? " " + notes.join(" ") : ""}` };
 }
 
 /** The site's two checkboxes under the care types (optional, default unchecked). */
@@ -780,7 +815,7 @@ export function fieldsOwnedBy(step: FamilyStep): string[] {
     case "family_ask_emergency": return ["emergencyContactName", "emergencyContactPhone", "emergencyContactRelationship"];
     case "family_ask_emergency_phone": return ["emergencyContactPhone"];
     case "family_ask_emergency_relationship": return ["emergencyContactRelationship"];
-    case "family_ask_needs": return ["careNeeds"];
+    case "family_ask_needs": return ["careNeeds", "careNeedsKindsOffered"];
     case "family_ask_pets_smoking": return ["petsInHome", "smokingHousehold"];
     case "family_ask_rate": return ["rate"];
     case "family_ask_description": return ["jobDescription"];
@@ -873,7 +908,7 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
     case "family_ask_emergency": result = await readEmergency(deps, text); break;
     case "family_ask_emergency_phone": result = await readEmergencyPhone(deps, text); break;
     case "family_ask_emergency_relationship": result = await readEmergencyRelationship(deps, text); break;
-    case "family_ask_needs": result = await readNeeds(deps, text); break;
+    case "family_ask_needs": result = await readNeeds(deps, text, d); break;
     case "family_ask_pets_smoking": result = await readPetsSmoking(deps, text); break;
     case "family_ask_rate": result = await readRate(deps, text); break;
     case "family_ask_description": result = await readDescription(deps, text); break;

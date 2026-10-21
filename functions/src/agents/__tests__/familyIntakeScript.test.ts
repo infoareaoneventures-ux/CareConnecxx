@@ -74,10 +74,14 @@ describe("the family intake follows the site: one step list, first unanswered st
     const named = { ...base, ...dataFromRoster([{ relationship: "self", name: "Hamse" }, { relationship: "child", name: "Mahad K" }]) };
     expect(nextFamilyStep(named)).toBe("family_ask_recipient_stage");
     expect(familyQuestion("family_ask_recipient_stage", named)).toContain("Mahad K");
+    const stagedOpen = { ...base, ...dataFromRoster([{ relationship: "self", name: "Hamse" }, { relationship: "child", name: "Mahad K", ageRange: "toddler" }]) };
+    expect(nextFamilyStep(stagedOpen)).toBe("family_ask_more_people"); // the cycle: asked again after each person until NO / a number / four
     const staged = { ...base, ...dataFromRoster([{ relationship: "self", name: "Hamse" }, { relationship: "child", name: "Mahad K", ageRange: "toddler" }]), rosterCountConfirmed: true };
     expect(nextFamilyStep(staged)).toBe("family_ask_providers_count"); // the site's "How many care providers do you need?"
     expect(nextFamilyStep({ ...staged, caregiversNeeded: 1 })).toBe("family_ask_emergency");
     // ONE person named → the site's "How many people need care?" counter is asked before moving on
+    const four = { ...base, ...dataFromRoster([{ relationship: "self", name: "H" }, { relationship: "parent", name: "A" }, { relationship: "parent", name: "B" }, { relationship: "spouse", name: "C" }]) };
+    expect(nextFamilyStep(four)).toBe("family_ask_providers_count"); // four people: no further "anyone else?"
     const onlyMom = { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) };
     expect(nextFamilyStep(onlyMom)).toBe("family_ask_more_people");
     expect(familyQuestion("family_ask_more_people", onlyMom)).toBe("Is there anyone else who needs care? Reply NO, or tell me who.");
@@ -260,7 +264,9 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     expect(sent.at(-1)).toBe("Who else needs care? Your relationship to them — Myself, Parent, Spouse or Partner, Adult child, Child, or Other.");
     expect(deps.isQuestionOrOther).not.toHaveBeenCalled();
     await say("myself");
-    expect(sent.at(-1)).toContain("Care for Hamse MM and you, got it. How many care providers do you need?");
+    expect(sent.at(-1)).toBe("Care for Hamse MM and you, got it. Is there anyone else who needs care? Reply NO, or tell me who.");
+    await say("no");
+    expect(sent.at(-1)).toContain("Nobody else, got it. How many care providers do you need?");
     // adding another later, at the providers step, still works through the side reader; here: a fresh session at the count step
     const { deps: d2, sent: s2, merged: m2 } = makeDeps(['{"people":[{"relationship":"adult child","name":""}]}'], base);
     await runFamilyIntakeTurn(d2, { phone: "+1", chatId: "c", text: "adult child too", session: { onboardingData: {} } });
@@ -272,6 +278,31 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     const { deps: d3, sent: s3 } = makeDeps(['{"pets":false,"smoking":false}'], petsBase);
     await runFamilyIntakeTurn(d3, { phone: "+1", chatId: "c", text: "no", session: { onboardingData: {} } });
     expect(s3.at(-1)).toContain("No pets, no smoking, got it. What would you like to pay per hour?");
+  });
+
+  it("a person added after the care types were picked gets their list offered once, and the picks are ADDED", async () => {
+    // child-only post, care types picked from the child list; then the account holder is added
+    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true,
+      ...dataFromRoster([{ relationship: "child", name: "Hamse MM", ageRange: "toddler" }, { relationship: "self", name: "Hamse" }]), rosterCountConfirmed: true, caregiversNeeded: 1,
+      emergencyContactName: "M M", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "son", careNeeds: ["Baby Care", "School & Homework"], careNeedsKindsOffered: ["child"], householdAsked: true, rate: 40, descriptionSkipped: true, email: "h@x.com" };
+    const { deps, sent, merged } = makeDeps(['{"needs":["light housekeeping"],"none":false}'], site);
+    await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text: "__RESUME__", session: { onboardingData: {} } });
+    expect(sent.at(-1)).toContain("Now that you are on the post too, anything from the senior care list? Pick as many as apply, or say none:");
+    expect(sent.at(-1)).toContain("Companionship");
+    expect(sent.at(-1)).not.toContain("Baby Care");
+    await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text: "light housekeeping", session: { onboardingData: {} } });
+    const all = Object.assign({}, ...merged);
+    expect(all.careNeeds).toEqual(["Baby Care", "School & Homework", "Light Housekeeping"]);
+    expect(all.careNeedsKindsOffered).toEqual(["senior", "child"]);
+    // care types saved on the site (no offered record) are never re-asked
+    const fromSite = { ...site, careNeedsKindsOffered: undefined };
+    delete (fromSite as any).careNeedsKindsOffered;
+    expect(nextFamilyStep(fromSite)).toBeNull();
+    // "none" on the follow-up closes it without adding
+    const { deps: d2, sent: s2, merged: m2 } = makeDeps(['{"needs":[],"none":true}'], site);
+    await runFamilyIntakeTurn(d2, { phone: "+1", chatId: "c", text: "none", session: { onboardingData: {} } });
+    expect(s2.at(-1)).toContain("Nothing more, got it.");
+    expect(Object.assign({}, ...m2).careNeedsKindsOffered).toEqual(["senior", "child"]);
   });
 
   it("the last ack and the recap go out as ONE message", async () => {

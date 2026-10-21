@@ -35,7 +35,7 @@ import { lookupZipPlace } from "../utils/geocode";
 import { isMedicationInstruction as isMedicationInstructionText, MEDICATION_INSTRUCTION_MESSAGE as MEDICATION_INSTRUCTION_TEXT } from "../utils/medicationInstruction";
 import {
   runFamilyIntakeTurn, nextFamilyStep, familyQuestion, effectiveFamilyData, isFamilyScriptStep,
-  readRoster, dataFromRoster, rosterFromData, rosterPending, describeRoster, type FamilyIntakeDeps,
+  readRoster, dataFromRoster, rosterFromData, describeRoster, type FamilyIntakeDeps,
 } from "./familyIntakeScript";
 import { LEGACY_CLIENT_COLLECTION_STEPS } from "./onboardingContract";
 import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
@@ -2122,13 +2122,10 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     const merged = [...existing, ...added].slice(0, 4);
     await mergeOnboardingData(phone, { ...dataFromRoster(merged), rosterCountConfirmed: true });
     const refreshedAdd = await db.collection("agent_sessions").doc(phone).get();
-    if (rosterPending(rosterFromData((refreshedAdd.data()?.onboardingData ?? {}) as Record<string, unknown>))) {
-      await sendMessage(chatId, "Got it — added.");
-      await runFamilyIntake(phone, chatId, "__RESUME__", refreshedAdd.data() as AgentSession);
-      return;
-    }
+    // The script finishes the new person (name / adult-or-child / stage) and offers their care list
+    // if it was never shown, then sends the recap itself when nothing is left.
     await sendMessage(chatId, "Got it — added.");
-    await sendClientIntakeSummary(chatId, refreshedAdd.data() as AgentSession);
+    await runFamilyIntake(phone, chatId, "__RESUME__", refreshedAdd.data() as AgentSession);
     return;
   }
   // One classification for the reply to "Did I get that right?": confirm, a
@@ -2217,9 +2214,8 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
   if (Object.keys(corrections).length > 0) {
     await mergeOnboardingData(phone, corrections);
     const refreshed = await db.collection("agent_sessions").doc(phone).get();
-    const rd = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
-    if (rosterRead && rosterPending(rosterFromData(rd))) {
-      // Finish the roster first (name / adult-or-child / stage), then the recap.
+    if (rosterRead) {
+      // Finish the roster first (name / adult-or-child / stage, and a newly needed care list), then the recap.
       await sendMessage(chatId, "Got it — updated.");
       await runFamilyIntake(phone, chatId, "__RESUME__", refreshed.data() as AgentSession);
       return;

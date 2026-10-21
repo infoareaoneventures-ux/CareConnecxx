@@ -205,8 +205,10 @@ export async function buildLiveClientPaymentFact(phone: string, session: AgentSe
       return "LIVE STATUS RIGHT NOW: their membership payment WENT THROUGH — do NOT ask them to pay again or tap " +
         "the link; confirm it's active and that Evia is already finding care providers.";
     }
+    // Same as the site's dashboard (Care Plan → Identity → Membership → care providers): the job post goes live
+    // and care providers appear the moment the membership starts — nothing is reviewed or verified in between.
     return "LIVE STATUS RIGHT NOW: their membership payment hasn't come through yet — the checkout link Evia sent " +
-      "is the way (it takes about 30 seconds).";
+      "is the way (it takes about 30 seconds). THE JOB POST AND CARE PROVIDERS: their care request becomes their job post and care providers appear the moment the membership starts — nothing about the job is reviewed or verified, no waiting period; if they ask to post a job or see care providers, the answer is to start the membership.";
   } catch (e) {
     console.warn("[buildLiveClientPaymentFact] failed (fail-soft to static facts):", e);
     return "";
@@ -226,12 +228,17 @@ export async function buildLiveClientIdentityFact(phone: string, session: AgentS
       const u = await db.collection("users").doc(s.userId).get();
       if (u.exists && u.data()?.identityCheckStatus === "verified") verified = true;
     }
+    // The job post: their care request becomes the job post AUTOMATICALLY once the identity check and the
+    // membership are done — nothing about the job is being "verified", and there is no waiting period
+    // (live 2026-10-21: "I want to post a new job" was answered with an invented "still being verified,
+    // within 24 hours"). Posting a job = finishing these steps.
+    const jobFact = " THE JOB POST: their care request becomes their job post automatically as soon as the identity check and the membership are done — nothing about the job is being reviewed or verified, and there is no 24-hour wait; if they ask to post a job or see care providers, the answer is to finish these steps.";
     if (verified) {
       return "LIVE STATUS RIGHT NOW: their identity check is VERIFIED — do NOT ask them to redo it; confirm it's " +
-        "done (next is the membership/payment step).";
+        "done (next is the membership/payment step)." + jobFact;
     }
     return "LIVE STATUS RIGHT NOW: their identity check hasn't cleared yet — the secure Stripe Identity link Evia " +
-      "sent is the way (about 30 seconds).";
+      "sent is the way (about 30 seconds)." + jobFact;
   } catch (e) {
     console.warn("[buildLiveClientIdentityFact] failed (fail-soft to static facts):", e);
     return "";

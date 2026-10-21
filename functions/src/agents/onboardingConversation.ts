@@ -226,13 +226,22 @@ export async function mergeOnboardingData(phone: string, data: Record<string, un
     recordSideEffect("firestore.update:agent_sessions.onboardingData", { phone, keys: Object.keys(data) });
     return;
   }
+  // Atomic per field (2026-10-21): this used to read the whole draft, merge in memory and write
+  // the whole map back — two turns in flight at once (a redelivered inbound while a slow turn is
+  // still running) could each write a stale map and erase the other's answers (live: the care
+  // address answer vanished between turns). Dotted-path updates touch only the keys given.
+  const dotted: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) dotted[`onboardingData.${k}`] = v === undefined ? null : v;
+  if (Object.keys(dotted).length) {
+    await db.collection("agent_sessions").doc(phone).update(dotted).catch(async (err) => {
+      // A session with no onboardingData map yet (or none at all): fall back to a merge-set.
+      console.warn("mergeOnboardingData: dotted update failed, falling back to merge-set:", err instanceof Error ? err.message : err);
+      await db.collection("agent_sessions").doc(phone).set({ onboardingData: data }, { merge: true });
+    });
+  }
   const snap = await db.collection("agent_sessions").doc(phone).get();
   const sess     = (snap.data() ?? {}) as Record<string, unknown>;
-  const existing = (sess.onboardingData ?? {}) as Record<string, unknown>;
-  const merged   = { ...existing, ...data };
-  await db.collection("agent_sessions").doc(phone).update({
-    onboardingData: merged,
-  });
+  const merged   = (sess.onboardingData ?? {}) as Record<string, unknown>;
 
   // Incremental profile persistence: once the uid-keyed caregivers doc exists
   // (created at /start's OTP or the gate handoff), every onboarding merge lands
@@ -2128,30 +2137,45 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     await runFamilyIntake(phone, chatId, "__RESUME__", refreshedAdd.data() as AgentSession);
     return;
   }
-  // One classification for the reply to "Did I get that right?": confirm, a
-  // correction, a NOTE for caregivers (the wizard's "What would you like
-  // caregivers to know" answer often lands here — live 2026-09-20 "my son is
-  // amazing" was treated as chit-chat and never saved), or a question.
+  // One classification for the reply to "Did I get that right?" — every outcome below is handled
+  // deterministically (2026-10-21: "who the care is for" and "I want to add additional person" were
+  // classed as edits with nothing to extract and fell to the generic fallback twice).
   const kind = await parseWithClaude(
     'Evia sent the family a summary of their care request and asked "Did I get that right?". Classify their reply with exactly one word: ' +
     'confirm — yes / correct / looks good / go ahead. ' +
-    'edit — they correct or change a detail that is IN the summary (a day, time, rate, name, address, care need), or WHO the care is for (the people, a relationship, a child\'s stage — e.g. "it\'s for me and my child", "the care recipient needs to be updated"). ' +
+    'add_person — they want to ADD another person who needs care ("can I add one more person", "I want to add an additional person", "also my dad"), whether or not they say who. ' +
+    'change_people — they want to change WHO the care is for without saying who ("who the care is for", "the care recipient needs to be updated", "change the person"). ' +
+    'edit — they correct or change a detail that is IN the summary (a day, time, rate, name, address, care need), or RESTATE who the care is for with the people named ("it\'s for me and my child"). ' +
     'fix_note — they want the note / description for care providers changed, rewritten, replaced or removed ("fix the note", "change the note to …", "remove the note"), with or without giving the new text. ' +
     'note — they ADD something for the care providers to know rather than correcting anything (e.g. "my son is amazing", "she loves gardening", "please be patient with him", "he is hard of hearing"). ' +
-    'question — they ask something, or say something unrelated. Reply with one word: confirm, edit, fix_note, note, or question.',
+    'question — they ask something, or say something unrelated. Reply with one word: confirm, add_person, change_people, edit, fix_note, note, or question.',
     text,
   );
-  if (kind === "question") {
-    // "Can I add one more person?" is a request to add to the roster, not a question to answer (live 2026-10-21).
-    const rosterAsk = await parseWithClaude(
-      "The family was shown a summary of their care request. Is this message asking to ADD another person who needs care (e.g. \"can I add one more person\", \"I also need care for my dad\")? Reply ADD, or NO.",
-      text,
-    ).catch(() => "NO");
-    if (rosterAsk.trim().toUpperCase() === "ADD") {
-      await db.collection("agent_sessions").doc(phone).set({ confirmRosterAddPending: true }, { merge: true }).catch(() => {});
-      await sendMessage(chatId, "Sure — who else needs care? Your relationship to them (Myself, Parent, Spouse or Partner, Adult child, Child, or Other) and their name.");
+  if (kind === "add_person") {
+    // If they named the person already, add them now; otherwise ask who.
+    const dAddNow = (session.onboardingData ?? {}) as Record<string, unknown>;
+    const nameAddNow = { first: String(dAddNow.firstName ?? "").trim(), last: String(dAddNow.lastName ?? "").trim() };
+    const whoNow = await readRoster(familyIntakeDeps(), text, nameAddNow).catch(() => null);
+    if (whoNow) {
+      const existingNow = rosterFromData(dAddNow);
+      const addedNow = whoNow.roster.filter((x) => !(x.relationship === "self" && existingNow.some((q) => q.relationship === "self")));
+      await mergeOnboardingData(phone, { ...dataFromRoster([...existingNow, ...addedNow].slice(0, 4)), rosterCountConfirmed: true });
+      const refreshedNow = await db.collection("agent_sessions").doc(phone).get();
+      await sendMessage(chatId, "Got it — added.");
+      await runFamilyIntake(phone, chatId, "__RESUME__", refreshedNow.data() as AgentSession);
       return;
     }
+    await db.collection("agent_sessions").doc(phone).set({ confirmRosterAddPending: true }, { merge: true }).catch(() => {});
+    await sendMessage(chatId, "Sure — who else needs care? Your relationship to them (Myself, Parent, Spouse or Partner, Adult child, Child, or Other) and their name.");
+    return;
+  }
+  if (kind === "change_people") {
+    await mergeOnboardingData(phone, { relationship: null, seniorName: null, careKind: null, ageRange: null, primaryKindUnknown: null, additionalRecipients: [], rosterCountConfirmed: null });
+    await updateSession(phone, { onboardingStep: "family_ask_recipients" });
+    await sendMessage(chatId, "Sure. What is your relationship to the person needing care? Myself, Parent, Spouse or Partner, Adult child, Child, or Other. (If care is for more than one person, you can name them all.)");
+    return;
+  }
+  if (kind === "question") {
     const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, `${answer}\n\nDoes that all look right? Say yes and I'll show you who can help, or tell me what to fix.`);
     return;
@@ -2224,18 +2248,7 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
     return;
   }
-  // They want the people changed but didn't say who: ask the roster question fresh.
-  const wantsRosterChange = await parseWithClaude(
-    "The family was shown a summary of their care request. Does this message ask to change WHO the care is for (the care recipient / the people) without saying who? Reply YES or NO.",
-    text,
-  ).catch(() => "NO");
-  if (wantsRosterChange.trim().toUpperCase() === "YES") {
-    await mergeOnboardingData(phone, { relationship: null, seniorName: null, careKind: null, ageRange: null, additionalRecipients: [] });
-    await updateSession(phone, { onboardingStep: "family_ask_recipients" });
-    await sendMessage(chatId, "Sure. Who is the care for? For example: my mom, me and my child, or my parents — up to 4 people.");
-    return;
-  }
-  await sendMessage(chatId, "No problem — tell me what to change (the days, time of day, start date, address, rate, a care need, or who the care is for) and I'll fix it. If it looks right, just say yes and I'll show you who can help.");
+  await sendMessage(chatId, "No problem — tell me what to change (the days, time of day, start date, address, rate, a care need, who the care is for, or say \"add a person\") and I'll fix it. If it looks right, just say yes and I'll show you who can help.");
 }
 
 async function createClientIdentitySession(phone: string): Promise<string> {

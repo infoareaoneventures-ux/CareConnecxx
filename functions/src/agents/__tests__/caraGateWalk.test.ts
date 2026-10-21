@@ -201,7 +201,8 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes("warm human-feeling care coordinator")) return "Here's a helpful answer."; // answerQuestionMidFlow
     if (prompt.includes("confirm or edit")) return intakeConfirmIntent;
     // 2026-09-20: handleClientConfirmIntake classifies confirm / edit / note / question in one call.
-    if (prompt.includes("confirm, edit, fix_note, note, or question")) return questionMode ? "question" : intakeConfirmIntent;
+    // 2026-10-21: add_person / change_people joined the one classification.
+    if (prompt.includes("confirm, add_person, change_people, edit, fix_note, note, or question")) return questionMode ? "question" : intakeConfirmIntent;
     if (prompt.includes("asked to change the short note")) return noteReplacement;
     if (prompt.includes("The family is correcting their care intake")) return intakeCorrectionJson;
     return stepAnswer;

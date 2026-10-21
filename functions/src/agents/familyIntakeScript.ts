@@ -934,6 +934,7 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
   //    question re-asked (no write); anything else gets a plain re-ask.
   if (!Object.keys(fields).length) {
     const isQuestion = (result && "question" in result) || await deps.isQuestionOrOther(text, question);
+    console.info("familyIntake turn", { step, read: "none", question: isQuestion });
     if (isQuestion) {
       const answer = await deps.answerQuestionMidFlow(text, session, phone);
       await deps.sendMessage(chatId, `${answer}\n\n${question}`);
@@ -945,6 +946,7 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
   }
 
   // 4. Save (mirrors to the site record) and gate the service area on an address.
+  console.info("familyIntake turn", { step, read: stepRead ? "answer" : "side", keys: Object.keys(fields) });
   await deps.mergeOnboardingData(phone, fields);
   d = { ...d, ...fields };
   if (fields.zipCode !== undefined || fields.homeZipCode !== undefined || fields.sameAsHomeAddress === true) {

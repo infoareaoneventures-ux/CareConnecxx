@@ -80,7 +80,7 @@ describe("the family intake follows the site: one step list, first unanswered st
     // ONE person named → the site's "How many people need care?" counter is asked before moving on
     const onlyMom = { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) };
     expect(nextFamilyStep(onlyMom)).toBe("family_ask_more_people");
-    expect(familyQuestion("family_ask_more_people", onlyMom)).toContain("just Rosa Diaz, or more? Reply 1, 2, 3, or 4");
+    expect(familyQuestion("family_ask_more_people", onlyMom)).toBe("Is there anyone else who needs care? Reply NO, or tell me who.");
     expect(nextFamilyStep({ ...onlyMom, rosterCountConfirmed: true })).toBe("family_ask_providers_count");
     // a person the counter added, relationship still to be asked, in the site's words
     const placeholder = { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }, { relationship: "unknown", name: "" }]), rosterCountConfirmed: true };
@@ -258,7 +258,7 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     const session: any = { onboardingData: {} };
     const say = async (text: string) => { await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text, session }); session.onboardingData = Object.assign({}, session.onboardingData, ...merged); };
     await say("my mom Rosa Diaz");
-    expect(sent.at(-1)).toContain("Care for Rosa Diaz, got it. How many people need care in total — just Rosa Diaz, or more?");
+    expect(sent.at(-1)).toContain("Care for Rosa Diaz, got it. Is there anyone else who needs care? Reply NO, or tell me who.");
     await say("2");
     expect(sent.at(-1)).toContain("2 people, got it. What is your relationship to care recipient 2? Myself, Parent, Spouse or Partner, Adult child, Child, or Other.");
     await say("my son");
@@ -272,7 +272,7 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     // "no" at the count question confirms a single person
     const { deps: d2, sent: s2 } = makeDeps(['{"count":1,"others":""}'], { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) });
     await runFamilyIntakeTurn(d2, { phone: "+1", chatId: "c", text: "no, just her", session: { onboardingData: {} } });
-    expect(s2.at(-1)).toContain("Just the one person, got it. How many care providers do you need?");
+    expect(s2.at(-1)).toContain("Nobody else, got it. How many care providers do you need?");
   });
 
   it("a correction at any step changes the roster instead of becoming job text", async () => {

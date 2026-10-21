@@ -29,7 +29,7 @@ export function humanLabelForStep(step: string): string {
     family_ask_recipient_name:          "a care recipient's name",
     family_ask_recipient_kind:          "whether the person is an adult or a child",
     family_ask_recipient_stage:         "a child's stage",
-    family_ask_more_people:             "how many people need care",
+    family_ask_more_people:             "whether anyone else needs care",
     family_ask_providers_count:         "how many care providers you need",
     family_ask_emergency:               "the emergency contact",
     family_ask_emergency_phone:         "the emergency contact's phone",

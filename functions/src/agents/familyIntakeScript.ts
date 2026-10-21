@@ -267,10 +267,8 @@ export function familyQuestion(step: FamilyStep, d: Data): string {
     }
     case "family_ask_recipient_name": return pending?.kind === "name" ? `What's ${personPhrase(pending.person)}'s name? First and last is best.` : "Who is the care for?";
     case "family_ask_recipient_stage": return pending?.kind === "stage" ? stageQuestion(pending.person.name || personPhrase(pending.person)) : stageQuestion(null);
-    case "family_ask_more_people": {
-      const first = roster[0] ? (roster[0].relationship === "self" ? "you" : roster[0].name || personPhrase(roster[0])) : "that person";
-      return `How many people need care in total — just ${first}, or more? Reply 1, 2, 3, or 4, or tell me who else.`;
-    }
+    // The site's counter, in text form (founder, 2026-10-20: a yes/no beats "how many in total"); a number still works.
+    case "family_ask_more_people": return "Is there anyone else who needs care? Reply NO, or tell me who.";
     case "family_ask_providers_count": return `How many care providers do you need? Reply 1, 2, 3, or 4. (Most families need 1.)`;
     case "family_ask_emergency": return "Who should we contact in case of an emergency? Their name and phone number.";
     case "family_ask_emergency_phone": return `What's ${String(d.emergencyContactName ?? "their")}'s phone number?`;
@@ -588,7 +586,7 @@ async function readRecipientStage(deps: FamilyIntakeDeps, text: string, d: Data)
 async function readMorePeople(deps: FamilyIntakeDeps, text: string, d: Data, accountName: { first: string; last: string }): Promise<StepResult | null> {
   const roster = rosterFromData(d);
   const raw = await deps.parseWithClaude(
-    `The family was asked how many people need care in total (1 to ${MAX_RECIPIENTS}), or who else. Reply with raw JSON {"count":0,"others":"the OTHER people named, copied from their words, or empty"} — count is the total number if they gave one (a plain "no" / "just her" / "only me" means the count stays as it is: reply 1); others is the phrase naming additional people when they named them instead of a number.`,
+    `The family was asked "Is there anyone else who needs care? Reply NO, or tell me who." Reply with raw JSON {"count":0,"others":"the OTHER people named, copied from their words, or empty"} — a plain NO / "just her" / "only me" means nobody else: reply {"count":1,"others":""}; if they gave a total number of people (1 to ${MAX_RECIPIENTS}) put it in count; if they named who else, put that phrase in others.`,
     text,
   );
   let p: { count?: unknown; others?: unknown };
@@ -605,7 +603,7 @@ async function readMorePeople(deps: FamilyIntakeDeps, text: string, d: Data, acc
   if (count === null) return null;
   const next = [...roster];
   while (next.length < count) next.push({ relationship: "unknown", name: "" });
-  return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true }, ack: count === 1 ? "Just the one person, got it." : `${count} people, got it.` };
+  return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true }, ack: count === 1 ? "Nobody else, got it." : `${count} people, got it.` };
 }
 
 async function readProvidersCount(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
@@ -788,7 +786,7 @@ export function familyQuestionLabel(step: FamilyStep): string {
     case "family_ask_recipient_name": return "a care recipient's name";
     case "family_ask_recipient_kind": return "whether the person is a child or an adult";
     case "family_ask_recipient_stage": return "a child's stage";
-    case "family_ask_more_people": return "how many people need care";
+    case "family_ask_more_people": return "whether anyone else needs care";
     case "family_ask_providers_count": return "how many care providers they need";
     case "family_ask_emergency": return "the emergency contact's name and phone";
     case "family_ask_emergency_phone": return "the emergency contact's phone";

@@ -415,7 +415,7 @@ async function handlePendingConsentReply(
     userType:  (userData.userType as string | undefined) ?? "client",
     onboardingStep: isReturning
       ? "complete"
-      : (firstName ? "client_ask_senior" : "client_ask_name"),
+      : "family_ask_frequency", // the script asks the name first when it's missing (2026-10-20)
     ...(isReturning
       ? { seniorId }
       : { seniorId: admin.firestore.FieldValue.delete() }),
@@ -444,6 +444,18 @@ async function handlePendingConsentReply(
     console.error("Zep init failed (pending consent opt-in):", err)
   );
 
+  // A new family's first question is the site's first step, fixed text (2026-10-20):
+  // never model prose, never "who are you looking for care for" ahead of the site's order.
+  if (!isReturning) {
+    const { familyFirstQuestion } = await import("../agents/onboardingConversation");
+    const fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as AgentSession | undefined;
+    const firstQ = (fresh && await familyFirstQuestion(fresh)) ?? "How often do you need care — occasional, part-time, or full-time?";
+    const hello = lang === "es"
+      ? `¡Perfecto${firstName ? `, ${firstName}` : ""}! Soy Evia, tu coordinadora de cuidados. `
+      : `Perfect — thanks${firstName ? `, ${firstName}` : ""}! I'm Evia, your care coordinator. `;
+    await sendMessage(chatId, hello + firstQ);
+    return;
+  }
   // First impressions matter — route the handoff through Evia's actual voice,
   // mirroring the web bridge's welcome (frozen fallbacks if the LLM fails).
   const welcome = await generateCaraMessage({
@@ -822,8 +834,8 @@ const handleInboundInner = traceable(
       // by …?" step (the site never asks it, and that step could rewrite the name).
       // A known name starts at the first real question; no name → ask it once.
       const firstStep = webName
-        ? (webRole === "caregiver" ? "caregiver_ask_location" : "client_ask_senior")
-        : (webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name");
+        ? (webRole === "caregiver" ? "caregiver_ask_location" : "family_ask_frequency")
+        : (webRole === "caregiver" ? "caregiver_ask_name" : "family_ask_name");
       const webGreetName = webFirstName || webName.split(/\s+/)[0] || "";
       // Caregiver flow keys the name as `name`; client flow keys firstName (and
       // lastName when present) — matches the fields the ask-name handlers write.
@@ -942,49 +954,23 @@ const handleInboundInner = traceable(
         }
       }
 
-      // Site-first families (2026-10-19): the first greeting asks the FIRST MISSING
-      // question, never one the site already answered — it reads the same record
-      // every later turn reads (the fixed greeting below predates that read-back).
-      if (!isReturning && webRole === "client" && webUid) {
-        try {
-          const { mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData } = await import("../agents/clientJobPostingContract");
-          const { missingRequiredFields, CLIENT_REQUIRED_FIELDS } = await import("../agents/onboardingContract");
-          const [jpSnap, uSnap] = await Promise.all([
-            db.collection("job_postings").doc(webUid).get(),
-            db.collection("users").doc(webUid).get(),
-          ]);
-          const live: Record<string, unknown> = {
-            ...mapJobPostingsDocToOnboardingData(jpSnap.exists ? jpSnap.data() : undefined),
-            ...mapUsersDocToOnboardingData(uSnap.exists ? uSnap.data() : undefined),
-          };
-          const answeredOnSite = CLIENT_REQUIRED_FIELDS.some((k) => live[k] !== undefined && live[k] !== null && live[k] !== "");
-          if (answeredOnSite) {
-            const sessDraft = ((await db.collection("agent_sessions").doc(phone).get()).data()?.onboardingData ?? {}) as Record<string, unknown>;
-            const missing = missingRequiredFields("client", { ...live, ...sessDraft });
-            if (missing.length === 0) {
-              await sendMessage(chatId, `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. I've got everything you entered on the site, so let's finish up.`);
-              await drivePostCollectionHandoff(phone, chatId, "client");
-            } else {
-              const welcomeSite = await generateCaraMessage({
-                audience: "family",
-                language: welcomeLanguage,
-                context: `You're meeting ${webGreetName} for the very first time over text (${webGreetName} is the PERSON's first name — never a company or place; the company is Evia). ` +
-                  `They started their care setup on the website and you already have some of their answers. Introduce yourself warmly as Evia, their care coordinator, ` +
-                  `say you have what they entered on the site, and ask for the FIRST missing item only — you still need: ${missing.join(", ")}. ` +
-                  `One or two short lines, no list, never re-ask anything they answered.`,
-                fallback: `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. I've got what you entered on the site; let's pick up from there.`,
-                maxTokens: 120,
-              });
-              await sendMessage(chatId, welcomeSite);
-            }
-            if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
-            return;
-          }
-        } catch (err) {
-          console.error("web bridge: site-draft greeting failed (non-fatal, fixed greeting):", err);
+      // A new family (2026-10-20): the first greeting is fixed text plus the site's
+      // first unanswered question — the script reads the same record every later
+      // turn reads, so a site-first family is never re-asked anything.
+      if (!isReturning && webRole === "client") {
+        const { familyFirstQuestion } = await import("../agents/onboardingConversation");
+        const freshSess = (await db.collection("agent_sessions").doc(phone).get()).data() as AgentSession | undefined;
+        const firstQ = (freshSess && await familyFirstQuestion(freshSess)) ?? null;
+        if (firstQ) {
+          await sendMessage(chatId, `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. ${firstQ}`);
+        } else {
+          // Everything already answered on the site: straight to the recap.
+          await sendMessage(chatId, `Hi ${webGreetName}, I'm Evia — I'll be your care coordinator. I've got everything you entered on the site, so let's finish up.`);
+          await drivePostCollectionHandoff(phone, chatId, "client");
         }
+        if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
+        return;
       }
-
       let welcome: string;
       if (isReturning) {
         welcome = await generateCaraMessage({
@@ -1279,7 +1265,10 @@ const handleInboundInner = traceable(
         // next inbound routes to the loop. Gate/awaiting checkpoints (e.g. the
         // caregiver_send_photo gate) still resume through the scripted runner.
         const cpRole: OnboardingRole = resumedSession.userType === "caregiver" ? "caregiver" : "client";
-        if (collectionStepsForRole(cpRole).includes(checkpoint.step)) {
+        if (cpRole === "client" && collectionStepsForRole("client").includes(checkpoint.step)) {
+          // The family script re-asks the first unanswered question itself (2026-10-20).
+          await handleOnboardingStep(phone, chatId, "__RESUME__", resumedSession);
+        } else if (collectionStepsForRole(cpRole).includes(checkpoint.step)) {
           const missing = missingRequiredFields(cpRole, checkpoint.onboardingData);
           if (missing.length === 0) {
             // Everything's already collected. Don't just promise to "take it from
@@ -1484,8 +1473,8 @@ const handleInboundInner = traceable(
         const firstStep = midFlow
           ? session.onboardingStep
           : seededName
-            ? (role === "caregiver" ? "caregiver_ask_location" : "client_ask_senior")
-            : (role === "caregiver" ? "caregiver_ask_name" : "client_ask_name");
+            ? (role === "caregiver" ? "caregiver_ask_location" : "family_ask_frequency")
+            : (role === "caregiver" ? "caregiver_ask_name" : "family_ask_name");
         const nameKey  = role === "caregiver" ? "name" : "firstName";
         const mergedOnboardingData = seededName && !midFlow
           ? { ...((session.onboardingData as Record<string, unknown> | undefined) ?? {}), [nameKey]: seededName }

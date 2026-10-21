@@ -176,6 +176,9 @@ const drivePostCollectionHandoff = vi.fn(async (..._a: any[]) => {});
 const createFirebaseAuthAccount = vi.fn(async (..._a: any[]) => null as string | null);
 vi.mock("../../agents/onboardingConversation", () => ({
   handleOnboardingStep:   (...a: any[]) => handleOnboardingStep(...a),
+  // The family intake script (2026-10-20): the openings ask the site's first question.
+  familyFirstQuestion:    vi.fn(async () => "How often do you need care — occasional, part-time, or full-time?"),
+  runFamilyIntake:        vi.fn(async () => {}),
   continueAfterClientCollection: (...a: any[]) => continueAfterClientCollection(...a),
   absorbClientFields:     (...a: any[]) => absorbClientFields(...a),
   drivePostCollectionHandoff: (...a: any[]) => drivePostCollectionHandoff(...a),
@@ -432,7 +435,7 @@ describe("pending TCPA consent (optedIn:false, web-signup auth trigger)", () => 
     });
   }
 
-  it("YES records consent and routes a fresh client into name-first onboarding", async () => {
+  it("YES records consent and starts a fresh family on the scripted intake at the site's first question (2026-10-20)", async () => {
     seedPendingConsentSession();
     hoisted.docState.set("users/u1", { firstName: "Basra Yousuf", userType: "client" });
     parseWithClaude.mockResolvedValueOnce("yes");
@@ -442,11 +445,12 @@ describe("pending TCPA consent (optedIn:false, web-signup auth trigger)", () => 
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
       optedIn:        true,
       userType:       "client",
-      onboardingStep: "client_ask_senior",
+      onboardingStep: "family_ask_frequency",
       onboardingData: { firstName: "Basra" },
     });
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(String(sendMessage.mock.calls[0][1])).toContain("Basra");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("How often do you need care");
     expect(classifyIntentDetailed).not.toHaveBeenCalled();
     expect(runQaAgent).not.toHaveBeenCalled();
   });
@@ -877,13 +881,14 @@ describe("web-onboarding name bridge", () => {
   const session = () => hoisted.docState.get(`agent_sessions/${PHONE}`);
   const greeting = () => (sendMessage.mock.calls.find((c) => typeof c[1] === "string")?.[1] ?? "") as string;
 
-  it("client with a name → first real question, seeded firstName, greeted by name, account linked", async () => {
+  it("client with a name → the site's first question (fixed text), seeded firstName, greeted by name, account linked", async () => {
     seedWebSession({ role: "client", name: "Sarah" });
     await handleInbound(makeEvent("Hey Evia"));
-    expect(session()?.onboardingStep).toBe("client_ask_senior");
+    expect(session()?.onboardingStep).toBe("family_ask_frequency");
     expect(session()?.userId).toBe("web-uid");
     expect(session()?.onboardingData?.firstName).toBe("Sarah");
-    expect(greeting()).toContain("Sarah");
+    expect(greeting()).toContain("Hi Sarah, I'm Evia");
+    expect(greeting()).toContain("How often do you need care");
   });
 
   it("care provider with a name → first real question (address), seeded FULL name, greeted by FIRST name, account linked", async () => {
@@ -896,10 +901,10 @@ describe("web-onboarding name bridge", () => {
     expect(greeting()).not.toContain("go by");
   });
 
-  it("no name on the bridge doc → legacy ask-name step, no seeded onboardingData", async () => {
+  it("no name on the bridge doc → the script's name step, no seeded onboardingData", async () => {
     seedWebSession({ role: "client" });
     await handleInbound(makeEvent("Hey Evia"));
-    expect(session()?.onboardingStep).toBe("client_ask_name");
+    expect(session()?.onboardingStep).toBe("family_ask_name");
     expect(session()?.onboardingData).toBeUndefined();
   });
 
@@ -910,7 +915,7 @@ describe("web-onboarding name bridge", () => {
     it("client with a name AND email → both seeded onto onboardingData", async () => {
       seedWebSession({ role: "client", name: "Sarah", email: "sarah@example.com" });
       await handleInbound(makeEvent("Hey Evia"));
-      expect(session()?.onboardingStep).toBe("client_ask_senior");
+      expect(session()?.onboardingStep).toBe("family_ask_frequency");
       expect(session()?.onboardingData?.firstName).toBe("Sarah");
       expect(session()?.onboardingData?.email).toBe("sarah@example.com");
     });
@@ -923,10 +928,10 @@ describe("web-onboarding name bridge", () => {
       expect(session()?.onboardingData?.email).toBe("maria@example.com");
     });
 
-    it("email present but NO name → still seeds email, routes to ask-name (not confirm)", async () => {
+    it("email present but NO name → still seeds email, routes to the script's name step (not confirm)", async () => {
       seedWebSession({ role: "client", email: "noname@example.com" });
       await handleInbound(makeEvent("Hey Evia"));
-      expect(session()?.onboardingStep).toBe("client_ask_name");
+      expect(session()?.onboardingStep).toBe("family_ask_name");
       expect(session()?.onboardingData?.email).toBe("noname@example.com");
       expect(session()?.onboardingData?.firstName).toBeUndefined();
     });
@@ -946,43 +951,32 @@ describe("onboarding agent-loop flag routing", () => {
     delete process.env.CONVERGENCE_FLIPPED;
   });
 
-  // Loop-only (2026-07-08): there is no flag and no scripted collection runner —
-  // a client collection step ALWAYS routes to the loop.
-  it("loop-only: client collection step routes to the loop, scripted runner NOT called", async () => {
-    seedSession({ onboardingStep: "client_ask_name" });
-    await handleInbound(makeEvent("Sarah"));
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(runQaAgent.mock.calls[0][0]).toMatchObject({
-      onboardingMode: true,
-      onboardingRole: "client",
-      userType: "client",
-    });
-    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  // The family intake is ONE scripted process that follows the site (2026-10-20,
+  // familyIntakeScript.ts): a family collection step NEVER routes to the loop —
+  // the step handler runs the script. A legacy loop cursor (client_ask_*) goes
+  // the same way; the script recomputes the next unanswered step itself.
+  it("a family collection step routes to the scripted intake (handleOnboardingStep), never the loop", async () => {
+    seedSession({ onboardingStep: "family_ask_frequency", onboardingData: { firstName: "Sarah" } });
+    await handleInbound(makeEvent("part time"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("part time");
   });
 
-  it("both flags on: loop wins and handleOnboardingStep never runs — no double cursor resolve", async () => {
+  it("a legacy family cursor (client_ask_senior) also routes to the scripted intake, never the loop", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client";
     process.env.CONVERGENCE_FLIPPED   = "onboarding";
     seedSession({ onboardingStep: "client_ask_senior" });
     await handleInbound(makeEvent("My mom Jane"));
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
   });
 
   // Persistence safety net: the live bug — the loop chats an answer but the model
   // never calls save_onboarding_field, so the field is lost and the cursor sticks.
   // The deterministic extractor must capture it server-side regardless.
-  it("persistence net: loop saves nothing → user's answer is still captured", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
-    // runQaAgent mock does no Firestore write → onboardingData unchanged this turn.
-    absorbClientFields.mockResolvedValueOnce({ seniorName: "Jane" });
-    await handleInbound(makeEvent("it's for my mom Jane"));
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(absorbClientFields).toHaveBeenCalled();
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData)
-      .toMatchObject({ seniorName: "Jane" });
-  });
+  // (The family persistence net is gone with the family loop — the scripted intake
+  // saves every answer itself; see familyIntakeScript.test.ts.)
 
   // U6 (review-validated partial-save gap): the model saved ONE of the three
   // fields present in a front-loaded message (e.g. it called
@@ -993,34 +987,6 @@ describe("onboarding agent-loop flag routing", () => {
   // whether the model saved zero or some fields, and absorbClientFields already
   // returns only fields not already in curData, so the model-saved field is
   // never touched/double-written by the net.
-  it("persistence net: model saves ONE of three fields present in the text → net persists the rest, none re-asked next turn", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    // Front-loaded "I'm Sarah, my mom Dorothy is 82". With Fix 1 the PRE-turn
-    // absorber recovers the two fields the model skips (seniorName/age) and merges
-    // them BEFORE the model turn; the model then saves firstName via
-    // save_onboarding_field (a MERGE write — the mock must merge onboardingData,
-    // not overwrite it, or it would clobber the pre-turn recovery). Either way the
-    // final data has all three and nothing is re-asked next turn.
-    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
-    runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
-      const prev = hoisted.docState.get(`agent_sessions/${PHONE}`);
-      hoisted.docState.set(`agent_sessions/${PHONE}`, {
-        ...prev,
-        onboardingData: { ...(prev?.onboardingData ?? {}), firstName: "Sarah" },
-      });
-      return "qa reply";
-    });
-    // The absorber (pre-turn Fix 1) fills in the two fields the model skipped.
-    absorbClientFields.mockResolvedValueOnce({ seniorName: "Dorothy", age: 82 });
-
-    await handleInbound(makeEvent("I'm Sarah, my mom Dorothy is 82"));
-
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
-    expect(absorbClientFields).toHaveBeenCalled();
-    const finalData = hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData;
-    // The model-saved field is untouched AND the recovered fields are present.
-    expect(finalData).toMatchObject({ firstName: "Sarah", seniorName: "Dorothy", age: 82 });
-  });
 
   // §0.2 pre-turn service-area gate: at the location step, an unrecognized city
   // with no zip (evaluateServiceArea → "need_zip") must ask for the ZIP and
@@ -1028,58 +994,17 @@ describe("onboarding agent-loop flag routing", () => {
   // that works!" acknowledgment that the gate then contradicts. runQaAgent must
   // therefore NOT run, and the cursor must not advance past collection on an
   // unconfirmed service area.
-  it("pre-turn gate: need_zip at the location step asks for ZIP before the model turn and does not advance the cursor", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({
-      onboardingStep: "client_ask_location",
-      onboardingData: { firstName: "Sarah", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"] },
-    });
-    // Unrecognized city, no zip → evaluateServiceArea returns "need_zip".
-    absorbClientFields.mockResolvedValueOnce({ city: "Nowhereville" });
-
-    await handleInbound(makeEvent("we're in Nowhereville"));
-
-    // Gated BEFORE the model turn — no premature acknowledgment.
-    expect(runQaAgent).not.toHaveBeenCalled();
-    expect(absorbClientFields).toHaveBeenCalled();
-    // Asked for the ZIP.
-    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("ZIP"));
-    // Cursor did NOT advance past collection to the post-collection gate.
-    const finalStep = hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingStep;
-    expect(finalStep).not.toBe("client_ask_start");
-    // No second (contradictory) reply from the scripted runner.
-    expect(handleOnboardingStep).not.toHaveBeenCalled();
-  });
 
   // 2d (loop-only): the scripted collection runner no longer exists, so a loop
   // that throws before replying is RETRIED once. On retry success the turn is
   // handled entirely by the loop — the scripted runner is never called.
-  it("loop throws before replying → retries the loop once, no scripted fallback", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({ onboardingStep: "client_ask_name" });
-    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // first attempt throws; retry succeeds
-    await handleInbound(makeEvent("Sarah"));
-    expect(runQaAgent).toHaveBeenCalledTimes(2);
-    expect(handleOnboardingStep).not.toHaveBeenCalled();
-  });
 
-  it("loop throws BOTH times → apology sent + admin_alert paged, never silent, never scripted", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({ onboardingStep: "client_ask_name" });
-    runQaAgent.mockRejectedValue(new Error("sonnet down")); // both attempts throw
-    await handleInbound(makeEvent("Sarah"));
-    expect(runQaAgent).toHaveBeenCalledTimes(2);
-    expect(handleOnboardingStep).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("snag"));
-    expect(hoisted.docState.get("admin_alerts/auto-add")?.type).toBe("onboarding_loop_failed_after_retry");
-  });
 
   // 2a: a location PIN at a collection step is reverse-geocoded to text and fed to
   // the loop as a normal text turn (works at ANY collection step). The scripted
   // location handler is not involved.
-  it("location pin at a collection step is converted to text and routed to the loop", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({ onboardingStep: "client_ask_needs", onboardingData: { firstName: "Sarah" } });
+  it("location pin at a care provider collection step is converted to text and routed to the loop", async () => {
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
     extractLocationPart.mockReturnValue({ lat: 37.33, lng: -121.88 });
     reverseGeocode.mockResolvedValue({ city: "San Jose", zipCode: "95112", region: "CA" });
 
@@ -1093,9 +1018,8 @@ describe("onboarding agent-loop flag routing", () => {
   // 2c: a truly empty turn (no text, no parts) at a collection step gets a
   // deterministic "type it out" nudge — the loop never runs on nothing and the
   // scripted runner is not called.
-  it("empty turn at a collection step gets a type-it-out nudge, not the loop", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({ onboardingStep: "client_ask_needs", onboardingData: { firstName: "Sarah" } });
+  it("empty turn at a care provider collection step gets a type-it-out nudge, not the loop", async () => {
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
 
     await handleInbound(makeEvent("", { parts: [] }));
 
@@ -1245,22 +1169,22 @@ describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
     });
   }
 
-  it("RESUME at a collection step with everything collected → drives the handoff, no 'what's left' nudge", async () => {
+  // The family intake script (2026-10-20) re-asks the first unanswered question
+  // itself: a family checkpoint resumes through the step handler's __RESUME__.
+  it("RESUME at a family collection step (everything collected) → the script resumes; no nudge, no direct handoff", async () => {
     seedCheckpoint("client_ask_schedule", COMPLETE_CLIENT, "client");
     await handleInbound(makeEvent("RESUME"));
-    expect(drivePostCollectionHandoff).toHaveBeenCalledTimes(1);
-    expect(drivePostCollectionHandoff.mock.calls[0].slice(0, 3)).toEqual([PHONE, CHAT, "client"]);
-    // Did NOT fall to the scripted runner for a (deleted) collection handler.
-    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(drivePostCollectionHandoff).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
   });
 
-  it("RESUME at a collection step with fields still missing → sends a nudge, does NOT drive the handoff", async () => {
-    seedCheckpoint("client_ask_needs", { firstName: "Sarah", seniorName: "Dorothy" }, "client");
+  it("RESUME at a family collection step with fields still missing → the script resumes (re-asks the next question)", async () => {
+    seedCheckpoint("family_ask_days", { firstName: "Sarah", seniorName: "Dorothy" }, "client");
     await handleInbound(makeEvent("RESUME"));
     expect(drivePostCollectionHandoff).not.toHaveBeenCalled();
-    // The welcome-back nudge went out (generateCaraMessage → fallback in the mock).
-    expect(sendMessage).toHaveBeenCalled();
-    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
   });
 
   it("RESUME at a GATE step still resumes through the scripted runner", async () => {
@@ -1287,8 +1211,7 @@ describe("onboarding agent-loop double-send guard (U9)", () => {
   });
 
   it("persistence-net write throws after runQaAgent resolves → exactly one send, admin_alerts written, handleOnboardingStep NOT called", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_name", onboardingData: {} });
 
     // runQaAgent resolves — its own reply already went out via the mocked
     // client — then the FIRST post-send read (`db.collection("agent_sessions")
@@ -1335,8 +1258,7 @@ describe("onboarding agent-loop double-send guard (U9)", () => {
   });
 
   it("agent loop throws before replying → loop is retried, handleOnboardingStep is NOT called (2d)", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
-    seedSession({ onboardingStep: "client_ask_name" });
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_name" });
     runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // retry succeeds
 
     await handleInbound(makeEvent("Sarah"));

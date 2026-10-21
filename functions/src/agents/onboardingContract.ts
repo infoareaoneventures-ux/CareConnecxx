@@ -38,10 +38,36 @@ export type OnboardingRole = "client" | "caregiver";
 // collection steps the agent loop owns (client-first). Kept here so the routing
 // predicate stays in this pure leaf module. Must stay in sync with the legacy
 // CLIENT_STEP_ORDER.
-export const CLIENT_COLLECTION_STEPS: readonly string[] = [
+// The family intake is ONE scripted process that follows the site (2026-10-20,
+// agents/familyIntakeScript.ts): these are its step ids, in the site's order.
+export const FAMILY_STEP_ORDER = [
+  "family_ask_name",
+  "family_ask_frequency",
+  "family_ask_home_address",
+  "family_ask_care_address",
+  "family_ask_start",
+  "family_ask_ongoing",
+  "family_ask_days",
+  "family_ask_photo",
+  "family_ask_recipients",
+  "family_ask_recipient_name",
+  "family_ask_recipient_kind",
+  "family_ask_recipient_stage",
+  "family_ask_emergency",
+  "family_ask_emergency_phone",
+  "family_ask_emergency_relationship",
+  "family_ask_needs",
+  "family_ask_rate",
+  "family_ask_description",
+  "family_ask_email",
+] as const;
+export const FAMILY_STEP_IDS: readonly string[] = FAMILY_STEP_ORDER;
+/** The cursor ids a family session may still carry from the retired loop — routed to the script too. */
+export const LEGACY_CLIENT_COLLECTION_STEPS: readonly string[] = [
   "client_ask_name", "client_ask_senior", "client_ask_needs",
   "client_ask_location", "client_ask_schedule",
 ];
+export const CLIENT_COLLECTION_STEPS: readonly string[] = [...LEGACY_CLIENT_COLLECTION_STEPS, ...FAMILY_STEP_IDS];
 
 // The conversational caregiver collection steps the agent loop owns, in the
 // historical caregiver_ask_* cursor order (the scripted handlers behind those
@@ -637,6 +663,8 @@ export function shouldRouteOnboardingToLoop(args: {
 }): boolean {
   const { role, step, hasText, hasMedia } = args;
   if (role !== "client" && role !== "caregiver") return false;
+  // The family intake is scripted (familyIntakeScript.ts, 2026-10-20) — never the loop.
+  if (role === "client") return false;
   if (!collectionStepsForRole(role).includes(step)) return false;
   if (!hasText || hasMedia) return false;
   return true;

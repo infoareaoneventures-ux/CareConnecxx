@@ -354,8 +354,10 @@ describe("onboardingContract", () => {
     // flag, no cohort narrowing. Any text turn at a collection step routes here.
     const base = { role: "client", step: "client_ask_needs", hasText: true, hasMedia: false };
 
-    it("routes a client collection step unconditionally (no flag)", () => {
-      expect(shouldRouteOnboardingToLoop(base)).toBe(true);
+    it("NEVER routes a family collection step to the loop — the family intake is the scripted process that follows the site (2026-10-20)", () => {
+      expect(shouldRouteOnboardingToLoop(base)).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, step: "family_ask_frequency" })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, role: "caregiver", step: "caregiver_ask_experience" })).toBe(true);
     });
 
     it("does NOT route a transactional/gate/confirm-name step (not a collection step)", () => {

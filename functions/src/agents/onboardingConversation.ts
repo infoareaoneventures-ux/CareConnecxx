@@ -29,7 +29,15 @@ import { getMarketRateText } from "../utils/marketRateRange";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
 import { languageFromSession, t as tr } from "../utils/language";
 import { SharedLocation } from "../utils/locationShare";
-import { WAITLISTED_STEP } from "./serviceAreaGate";
+import { WAITLISTED_STEP, parkOutOfArea } from "./serviceAreaGate";
+import { evaluateServiceArea } from "../config/serviceArea";
+import { lookupZipPlace } from "../utils/geocode";
+import { isMedicationInstruction as isMedicationInstructionText, MEDICATION_INSTRUCTION_MESSAGE as MEDICATION_INSTRUCTION_TEXT } from "../utils/medicationInstruction";
+import {
+  runFamilyIntakeTurn, nextFamilyStep, familyQuestion, effectiveFamilyData, isFamilyScriptStep,
+  readRoster, dataFromRoster, rosterFromData, rosterPending, describeRoster, type FamilyIntakeDeps,
+} from "./familyIntakeScript";
+import { LEGACY_CLIENT_COLLECTION_STEPS } from "./onboardingContract";
 import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/mediaIntake";
 import { addKnownNames } from "../utils/knownNames";
 import { getAppUrl } from "../config/appUrl";
@@ -47,7 +55,7 @@ import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboard
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { recipientPlanKeyForFullName, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
 import {
-  buildClientDraftMirror, buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields,
+  buildClientDraftMirror, buildJobPostingsDoc, mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData, buildCarePlanLocationEntry, buildSeniorProfileWizardFields,
   upsertCarePlanLocationPool, formatWizardPhone, normalizeStartDateToISO, deriveCareLevel,
 } from "./clientJobPostingContract";
 import { coerceClientRate } from "./onboardingContract";
@@ -847,6 +855,57 @@ function currentStepQuestion(step: string, session: AgentSession): string {
   return awaiting[step] ?? "right where we left off";
 }
 
+// ── The family intake script (2026-10-20): deps + entry points ─────────────────
+// One process that follows the site — agents/familyIntakeScript.ts. Every side
+// effect it needs is wired here from the same helpers the rest of this file uses.
+function familyIntakeDeps(): FamilyIntakeDeps {
+  return {
+    parseWithClaude: (prompt, text) => parseWithClaude(prompt, text),
+    isQuestionOrOther: (text, q) => isQuestionOrOther(text, q),
+    answerQuestionMidFlow: (text, session, phone) => answerQuestionMidFlow(text, session as AgentSession, phone),
+    canonicalizeCareNeeds: async (terms) => { const c = await canonicalizeCareNeeds(terms); return { careNeeds: c.careNeeds, medical: c.medical, unmapped: c.unmapped }; },
+    lookupZipPlace: async (zip) => { const p = await lookupZipPlace(zip); return p ? { city: p.city, state: p.state } : null; },
+    evaluateServiceArea: (args) => evaluateServiceArea(args),
+    parkOutOfArea: (args) => parkOutOfArea(args),
+    loadSiteData: async (session) => {
+      const uid = (session?.userId ?? session?.webOnboardingUid) as string | undefined;
+      if (!uid) return {};
+      const [jp, u] = await Promise.all([
+        db.collection("job_postings").doc(uid).get().catch(() => null),
+        db.collection("users").doc(uid).get().catch(() => null),
+      ]);
+      return {
+        ...mapJobPostingsDocToOnboardingData(jp?.exists ? jp.data() : undefined),
+        ...mapUsersDocToOnboardingData(u?.exists ? u.data() : undefined),
+      };
+    },
+    mergeOnboardingData: (phone, fields) => mergeOnboardingData(phone, fields),
+    updateSession: (phone, updates) => updateSession(phone, updates),
+    sendMessage: (chatId, text) => sendMessage(chatId, text),
+    sendRecap: async (phone, chatId) => {
+      await updateSession(phone, { onboardingStep: "client_confirm_intake" });
+      const snap = await db.collection("agent_sessions").doc(phone).get();
+      await sendClientIntakeSummary(chatId, (snap.data() ?? {}) as AgentSession);
+    },
+    isMedicationInstruction: (t) => isMedicationInstructionText(t),
+    medicationMessage: MEDICATION_INSTRUCTION_TEXT,
+    today: () => ({ iso: businessTodayStr(), weekday: new Date().toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "long" }) }),
+  };
+}
+
+/** Run one family-intake turn (text, or "__RESUME__" to re-ask the current question). */
+export async function runFamilyIntake(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  return runFamilyIntakeTurn(familyIntakeDeps(), { phone, chatId, text, session });
+}
+
+/** The first thing to ask a family — the first step the site record and the draft leave unanswered; null when nothing is left. */
+export async function familyFirstQuestion(session: AgentSession): Promise<string | null> {
+  const deps = familyIntakeDeps();
+  const d = await effectiveFamilyData(deps, session);
+  const step = nextFamilyStep(d);
+  return step ? familyQuestion(step, d) : null;
+}
+
 export async function handleOnboardingStep(
   phone:   string,
   chatId:  string,
@@ -962,6 +1021,14 @@ export async function handleOnboardingStep(
     }
     (session as any)._emotionalDirective =
       buildEmotionalContextDirective(blended.value, classifyEmotionalTopic(text));
+  }
+
+  // ── The family intake script (2026-10-20): every family collection turn ─────
+  // One process that follows the site. A legacy loop cursor (client_ask_*) is
+  // routed here too — the script recomputes the next unanswered step itself.
+  if (session.userType !== "caregiver" && (isFamilyScriptStep(step) || LEGACY_CLIENT_COLLECTION_STEPS.includes(step))
+      && !(inboundMedia && text === "")) {
+    return runFamilyIntake(phone, chatId, text, session);
   }
 
   // ── Bare greeting mid-onboarding ("hey cara") ───────────────────────────────
@@ -1508,7 +1575,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       await sendMessage(chatId, msgSelf);
       return;
     }
-    await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
+    await updateSession(phone, { onboardingStep: "family_ask_name", userType: "client" });
     const msgSelfName = await generateCaraMessage({
       audience: "family",
       context: "Someone just said they're looking for care for THEMSELVES. You ALREADY introduced yourself in the " +
@@ -1528,7 +1595,12 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     // question, the next step in the client flow.
     const knownName = (session?.onboardingData?.firstName as string | undefined)?.trim();
     if (knownName) {
-      await updateSession(phone, { onboardingStep: "client_ask_senior", userType: "client" });
+      await updateSession(phone, { onboardingStep: "family_ask_frequency", userType: "client" });
+      // The first question is the site's first step (fixed text), never model prose (2026-10-20).
+      const firstQ = await familyFirstQuestion({ ...session, userType: "client" } as AgentSession);
+      await sendMessage(chatId, `Thanks, ${knownName}. ${firstQ ?? "How often do you need care — occasional, part-time, or full-time?"}`);
+      return;
+      // (unreachable — kept so the surrounding block's shape is unchanged)
       const msgKnown = await generateCaraMessage({
         audience: "family",
         context: `${knownName} just said they're looking for care for a loved one, and you already know their name is ${knownName}. ` +
@@ -1543,7 +1615,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       await sendMessage(chatId, msgKnown);
       return;
     }
-    await updateSession(phone, { onboardingStep: "client_ask_name", userType: "client" });
+    await updateSession(phone, { onboardingStep: "family_ask_name", userType: "client" });
     const msg1 = await generateCaraMessage({
       audience: "family",
       context: "A new family member just said they're looking for care for a loved one. You ALREADY introduced " +
@@ -1918,11 +1990,12 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   const pieces: string[] = [];
   // Multi-recipient household: name everyone so the family can catch a missed
   // person at the confirmation gate.
+  // Everyone on the roster, with relationship and a child's stage (2026-10-20); the
+  // care types are the post's one list, after the people.
   const extraRecipients = normalizeAdditionalRecipients(d.additionalRecipients);
-  const recipientLabel = extraRecipients.length
-    ? [seniorName, ...extraRecipients.map((r) => r.name)].join(" and ")
-    : `${seniorName}${conditions ? ` (${conditions})` : ""}`;
-  pieces.push(`care for ${recipientLabel}${extraRecipients.length && conditions ? ` — ${conditions}` : ""}`);
+  const recipientLabel = rosterFromData(d).length ? describeRoster(d) : seniorName;
+  pieces.push(`care for ${recipientLabel}${conditions ? ` — ${conditions}` : ""}`);
+  void extraRecipients;
   if (loc) pieces.push(`in ${loc}`);
   if (sched) pieces.push(sched);
   if (start) pieces.push(`starting ${start}`);
@@ -2034,7 +2107,7 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
   const kind = await parseWithClaude(
     'Evia sent the family a summary of their care request and asked "Did I get that right?". Classify their reply with exactly one word: ' +
     'confirm — yes / correct / looks good / go ahead. ' +
-    'edit — they correct or change a detail that is IN the summary (a day, time, rate, name, age, address, care need). ' +
+    'edit — they correct or change a detail that is IN the summary (a day, time, rate, name, address, care need), or WHO the care is for (the people, a relationship, a child\'s stage — e.g. "it\'s for me and my child", "the care recipient needs to be updated"). ' +
     'fix_note — they want the note / description for care providers changed, rewritten, replaced or removed ("fix the note", "change the note to …", "remove the note"), with or without giving the new text. ' +
     'note — they ADD something for the care providers to know rather than correcting anything (e.g. "my son is amazing", "she loves gardening", "please be patient with him", "he is hard of hearing"). ' +
     'question — they ask something, or say something unrelated. Reply with one word: confirm, edit, fix_note, note, or question.',
@@ -2079,14 +2152,42 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     return;
   }
   const corrections = await extractIntakeCorrections(text);
+  // WHO the care is for goes through the same roster reader the intake uses
+  // (2026-10-20): "it's for me and my child" replaces the roster; a child without
+  // a name or stage is then asked for, by name, before the recap comes back.
+  const d0 = (session.onboardingData ?? {}) as Record<string, unknown>;
+  const accountName = { first: String(d0.firstName ?? "").trim(), last: String(d0.lastName ?? "").trim() };
+  const rosterRead = await readRoster(familyIntakeDeps(), text, accountName).catch(() => null);
+  if (rosterRead) {
+    for (const k of ["seniorName", "relationship", "ageRange"]) delete corrections[k];
+    Object.assign(corrections, dataFromRoster(rosterRead.roster));
+  }
   if (Object.keys(corrections).length > 0) {
     await mergeOnboardingData(phone, corrections);
     const refreshed = await db.collection("agent_sessions").doc(phone).get();
+    const rd = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
+    if (rosterRead && rosterPending(rosterFromData(rd))) {
+      // Finish the roster first (name / adult-or-child / stage), then the recap.
+      await sendMessage(chatId, "Got it — updated.");
+      await runFamilyIntake(phone, chatId, "__RESUME__", refreshed.data() as AgentSession);
+      return;
+    }
     await sendMessage(chatId, "Got it — updated.");
     await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
-  } else {
-    await sendMessage(chatId, "No problem — tell me what to change and I'll fix it. If it looks right, just say yes and I'll show you who can help.");
+    return;
   }
+  // They want the people changed but didn't say who: ask the roster question fresh.
+  const wantsRosterChange = await parseWithClaude(
+    "The family was shown a summary of their care request. Does this message ask to change WHO the care is for (the care recipient / the people) without saying who? Reply YES or NO.",
+    text,
+  ).catch(() => "NO");
+  if (wantsRosterChange.trim().toUpperCase() === "YES") {
+    await mergeOnboardingData(phone, { relationship: null, seniorName: null, careKind: null, ageRange: null, additionalRecipients: [] });
+    await updateSession(phone, { onboardingStep: "family_ask_recipients" });
+    await sendMessage(chatId, "Sure. Who is the care for? For example: my mom, me and my child, or my parents — up to 4 people.");
+    return;
+  }
+  await sendMessage(chatId, "No problem — tell me what to change (the days, time of day, start date, address, rate, a care need, or who the care is for) and I'll fix it. If it looks right, just say yes and I'll show you who can help.");
 }
 
 async function createClientIdentitySession(phone: string): Promise<string> {
@@ -3280,7 +3381,10 @@ async function handleInboundMedia(
     return;
   }
   if (collectionStepsForRole("client").includes(step)) {
-    return handleInboundClientRecipientPhoto(phone, chatId, media);
+    await handleInboundClientRecipientPhoto(phone, chatId, media);
+    // Continue the script: the photo step is answered, ask the next question.
+    const snap = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
+    return runFamilyIntake(phone, chatId, "__RESUME__", (snap?.data() ?? session) as AgentSession);
   }
   // Not a file-collecting step. Acknowledge warmly and steer back to the task.
   if (step === "client_awaiting_identity") {

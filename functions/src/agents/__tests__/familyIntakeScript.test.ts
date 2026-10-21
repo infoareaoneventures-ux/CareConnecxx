@@ -30,7 +30,7 @@ function makeDeps(parseQueue: string[] = [], site: Record<string, unknown> = {})
     mergeOnboardingData: vi.fn(async (_phone, fields) => { merged.push(fields); }),
     updateSession: vi.fn(async (_phone, u) => { sessionUpdates.push(u); }),
     sendMessage: vi.fn(async (_chat, text) => { sent.push(text); }),
-    sendRecap: vi.fn(async () => { recapSent++; }),
+    sendRecap: vi.fn(async (_p: string, _c: string, prefix?: string) => { recapSent++; sent.push(prefix ? `${prefix}\n\n[recap]` : "[recap]"); }),
     isMedicationInstruction: (t) => /insulin|dosage/i.test(t),
     medicationMessage: "Care providers here don't give medication.",
     today: () => ({ iso: "2026-10-20", weekday: "Tuesday" }),
@@ -251,10 +251,41 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     expect(all.smokingHousehold).toBe(false);
   });
 
+  it('"anyone else?": YES asks who, "myself" / "adult child too" are ADDED (read before any chit-chat judgment), NO confirms, "no" to pets/smoking means no to both', async () => {
+    const base = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, ...dataFromRoster([{ relationship: "child", name: "Hamse MM", ageRange: "toddler" }]) };
+    const { deps, sent, merged } = makeDeps(['{"people":[{"relationship":"self","name":""}]}', '{"people":[{"relationship":"adult child","name":""}]}'], base);
+    const session: any = { onboardingData: {} };
+    const say = async (text: string) => { await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text, session }); session.onboardingData = Object.assign({}, session.onboardingData, ...merged); };
+    await say("yes");
+    expect(sent.at(-1)).toBe("Who else needs care? Your relationship to them — Myself, Parent, Spouse or Partner, Adult child, Child, or Other.");
+    expect(deps.isQuestionOrOther).not.toHaveBeenCalled();
+    await say("myself");
+    expect(sent.at(-1)).toContain("Care for Hamse MM and you, got it. How many care providers do you need?");
+    // adding another later, at the providers step, still works through the side reader; here: a fresh session at the count step
+    const { deps: d2, sent: s2, merged: m2 } = makeDeps(['{"people":[{"relationship":"adult child","name":""}]}'], base);
+    await runFamilyIntakeTurn(d2, { phone: "+1", chatId: "c", text: "adult child too", session: { onboardingData: {} } });
+    expect(s2.at(-1)).toContain("Care for Hamse MM and your adult child, got it. What's your adult child's name?");
+    expect(Object.assign({}, ...m2).additionalRecipients).toEqual([{ name: "", relationship: "adult child" }]);
+    expect(d2.isQuestionOrOther).not.toHaveBeenCalled();
+    // pets / smoking: a plain "no"
+    const petsBase = { ...base, rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "M M", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "son", careNeeds: ["Baby Care"] };
+    const { deps: d3, sent: s3 } = makeDeps(['{"pets":false,"smoking":false}'], petsBase);
+    await runFamilyIntakeTurn(d3, { phone: "+1", chatId: "c", text: "no", session: { onboardingData: {} } });
+    expect(s3.at(-1)).toContain("No pets, no smoking, got it. What would you like to pay per hour?");
+  });
+
+  it("the last ack and the recap go out as ONE message", async () => {
+    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, relationship: "self", seniorName: "Hamse", rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Light Housekeeping"], householdAsked: true, rate: 16, email: "h@x.com" };
+    const { deps, sent, recap } = makeDeps(["SKIP"], site);
+    await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text: "skip", session: { onboardingData: {} } });
+    expect(recap()).toBe(1);
+    expect(sent.at(-1)).toBe("No problem, we'll leave that blank.\n\n[recap]");
+  });
+
   it("one person named → the count question; a number adds people to ask about in the site's order; \"no\" confirms", async () => {
     const base = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true };
     // "my mom Rosa" → one person → asked how many in total
-    const { deps, sent, merged } = makeDeps(['{"people":[{"relationship":"parent","name":"Rosa Diaz"}]}', '{"count":2,"others":""}', '{"people":[{"relationship":"son or daughter (age unknown)","name":""}]}', "ADULT", "Sam Diaz"], base);
+    const { deps, sent, merged } = makeDeps(['{"people":[{"relationship":"parent","name":"Rosa Diaz"}]}', '{"people":[]}' /* "2" is read for people first */, '{"count":2,"others":""}', '{"people":[{"relationship":"son or daughter (age unknown)","name":""}]}', "ADULT", "Sam Diaz"], base);
     const session: any = { onboardingData: {} };
     const say = async (text: string) => { await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text, session }); session.onboardingData = Object.assign({}, session.onboardingData, ...merged); };
     await say("my mom Rosa Diaz");
@@ -270,7 +301,7 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     const all = Object.assign({}, ...merged);
     expect(all.additionalRecipients).toEqual([{ name: "Sam Diaz", relationship: "adult child" }]);
     // "no" at the count question confirms a single person
-    const { deps: d2, sent: s2 } = makeDeps(['{"count":1,"others":""}'], { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) });
+    const { deps: d2, sent: s2 } = makeDeps(["unknown", '{"count":1,"others":""}'], { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) });
     await runFamilyIntakeTurn(d2, { phone: "+1", chatId: "c", text: "no, just her", session: { onboardingData: {} } });
     expect(s2.at(-1)).toContain("Nobody else, got it. How many care providers do you need?");
   });
@@ -288,8 +319,8 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     expect(sent.at(-1)).toContain("Care for you and your child, got it. What's your child's name?");
   });
 
-  it("a side question is answered and the current question re-asked, with no write", async () => {
-    const { deps, sent, merged } = makeDeps([]);
+  it("a side question is answered and the current question re-asked, with no write — but only after nothing read as an answer", async () => {
+    const { deps, sent, merged } = makeDeps(["unknown"]);
     (deps.isQuestionOrOther as any).mockResolvedValueOnce(true);
     await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text: "how much does this cost?", session: { onboardingData: { firstName: "Hamse" } } });
     expect(merged.length).toBe(0);

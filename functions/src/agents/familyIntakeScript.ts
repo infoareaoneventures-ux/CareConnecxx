@@ -268,7 +268,9 @@ export function familyQuestion(step: FamilyStep, d: Data): string {
     case "family_ask_recipient_name": return pending?.kind === "name" ? `What's ${personPhrase(pending.person)}'s name? First and last is best.` : "Who is the care for?";
     case "family_ask_recipient_stage": return pending?.kind === "stage" ? stageQuestion(pending.person.name || personPhrase(pending.person)) : stageQuestion(null);
     // The site's counter, in text form (founder, 2026-10-20: a yes/no beats "how many in total"); a number still works.
-    case "family_ask_more_people": return "Is there anyone else who needs care? Reply NO, or tell me who.";
+    case "family_ask_more_people": return d.rosterAddPending === true
+      ? `Who else needs care? Your relationship to them — ${RELATIONSHIP_OPTIONS_TEXT.replace("Myself, ", "Myself, ")}.`
+      : "Is there anyone else who needs care? Reply NO, or tell me who.";
     case "family_ask_providers_count": return `How many care providers do you need? Reply 1, 2, 3, or 4. (Most families need 1.)`;
     case "family_ask_emergency": return "Who should we contact in case of an emergency? Their name and phone number.";
     case "family_ask_emergency_phone": return `What's ${String(d.emergencyContactName ?? "their")}'s phone number?`;
@@ -326,8 +328,8 @@ export interface FamilyIntakeDeps {
   mergeOnboardingData: (phone: string, fields: Data) => Promise<void>;
   updateSession: (phone: string, updates: Data) => Promise<void>;
   sendMessage: (chatId: string, text: string) => Promise<unknown>;
-  /** Park the cursor at client_confirm_intake and send the recap (the existing confirm step). */
-  sendRecap: (phone: string, chatId: string) => Promise<void>;
+  /** Park the cursor at client_confirm_intake and send the recap (the existing confirm step), prefixed by the last ack in the SAME message. */
+  sendRecap: (phone: string, chatId: string, prefix?: string) => Promise<void>;
   isMedicationInstruction: (text: string) => boolean;
   medicationMessage: string;
   /** Today in the business time zone (YYYY-MM-DD) and its weekday name, for relative dates. */
@@ -582,9 +584,24 @@ async function readRecipientStage(deps: FamilyIntakeDeps, text: string, d: Data)
   return { fields: dataFromRoster(roster), ack: `${ageRangeLabel(stage)}, got it.` };
 }
 
-/** The site's "How many people need care?" counter: a number 1-4, or the other people by name. */
+/** The site's "How many people need care?" counter, by text: "Is there anyone else who needs care? Reply NO, or tell me who." */
 async function readMorePeople(deps: FamilyIntakeDeps, text: string, d: Data, accountName: { first: string; last: string }): Promise<StepResult | null> {
   const roster = rosterFromData(d);
+  const norm = text.trim().toUpperCase();
+  // The question offers NO outright (strict binary reply); YES means "someone else" — ask who.
+  if (norm === "NO" || norm === "NO." || norm === "NOPE") {
+    return { fields: { ...dataFromRoster(roster), rosterCountConfirmed: true, rosterAddPending: null }, ack: "Nobody else, got it." };
+  }
+  if (norm === "YES" || norm === "YES." || norm === "YEAH" || norm === "YEP") {
+    return { fields: { rosterAddPending: true }, ack: "" };
+  }
+  // People named ("myself", "my dad too", "adult child too") are ADDED — read first, never judged as chit-chat.
+  const named = await readRoster(deps, text, accountName).catch(() => null);
+  if (named) {
+    const added = named.roster.filter((x) => !(x.relationship === "self" && roster.some((q) => q.relationship === "self")));
+    const next = [...roster, ...added].slice(0, MAX_RECIPIENTS);
+    return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true, rosterAddPending: null }, ack: rosterAck(next) };
+  }
   const raw = await deps.parseWithClaude(
     `The family was asked "Is there anyone else who needs care? Reply NO, or tell me who." Reply with raw JSON {"count":0,"others":"the OTHER people named, copied from their words, or empty"} — a plain NO / "just her" / "only me" means nobody else: reply {"count":1,"others":""}; if they gave a total number of people (1 to ${MAX_RECIPIENTS}) put it in count; if they named who else, put that phrase in others.`,
     text,
@@ -597,13 +614,13 @@ async function readMorePeople(deps: FamilyIntakeDeps, text: string, d: Data, acc
     if (!r) return null;
     const added = r.roster.filter((x) => !(x.relationship === "self" && roster.some((q) => q.relationship === "self")));
     const next = [...roster, ...added].slice(0, MAX_RECIPIENTS);
-    return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true }, ack: rosterAck(next) };
+    return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true, rosterAddPending: null }, ack: rosterAck(next) };
   }
   const count = smallCount(p.count, MAX_RECIPIENTS);
   if (count === null) return null;
   const next = [...roster];
   while (next.length < count) next.push({ relationship: "unknown", name: "" });
-  return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true }, ack: count === 1 ? "Nobody else, got it." : `${count} people, got it.` };
+  return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true, rosterAddPending: null }, ack: count === 1 ? "Nobody else, got it." : `${count} people, got it.` };
 }
 
 async function readProvidersCount(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
@@ -662,13 +679,13 @@ async function readNeeds(deps: FamilyIntakeDeps, text: string): Promise<StepResu
 /** The site's two checkboxes under the care types (optional, default unchecked). */
 async function readPetsSmoking(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
   const raw = await deps.parseWithClaude(
-    'The family was asked two yes/no things: are there pets in the home, and does anyone in the household smoke. Reply with raw JSON {"pets":true|false|null,"smoking":true|false|null} — null when they did not say.',
+    'The family was asked two yes/no things: are there pets in the home, and does anyone in the household smoke. Reply with raw JSON {"pets":true|false|null,"smoking":true|false|null}. A plain "no" / "neither" / "none" / "no and no" answers BOTH with false; "yes" alone answers both with true; null only when a thing is genuinely not addressed.',
     text,
   );
   let p: { pets?: unknown; smoking?: unknown };
   try { p = JSON.parse(raw); } catch { return null; }
-  if (p.pets === null && p.smoking === null) return null;
-  const pets = p.pets === true, smoking = p.smoking === true;
+  if (typeof p.pets !== "boolean" && typeof p.smoking !== "boolean") return null;
+  const pets = p.pets === true, smoking = p.smoking === true; // the site's checkboxes default unchecked
   const ack = [`${pets ? "Pets in the home" : "No pets"}`, `${smoking ? "someone smokes" : "no smoking"}`].join(", ") + ", got it.";
   return { fields: { petsInHome: pets, smokingHousehold: smoking, householdAsked: true }, ack };
 }
@@ -680,9 +697,10 @@ async function readRate(deps: FamilyIntakeDeps, text: string): Promise<StepResul
   return { fields: { rate: n }, ack: `$${n}/hr, got it.` };
 }
 
-async function readDescription(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null | { error: string }> {
-  const raw = await deps.parseWithClaude("The family was asked what else care providers should know about the job, or to say skip. Reply exactly SKIP if they declined / have nothing to add, otherwise reply TEXT.", text);
+async function readDescription(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null | { error: string } | { question: true }> {
+  const raw = await deps.parseWithClaude("The family was asked what else care providers should know about the job, or to say skip. Reply exactly SKIP if they declined / have nothing to add, QUESTION if they asked something about the process instead of describing the job, otherwise reply TEXT (anything they say about the job, the person, or what they're looking for IS the note).", text);
   if (raw.trim().toUpperCase() === "SKIP") return { fields: { descriptionSkipped: true }, ack: "No problem, we'll leave that blank." };
+  if (raw.trim().toUpperCase() === "QUESTION") return { question: true };
   const t = text.trim();
   if (t.length > JOB_DESCRIPTION_MAX_CHARS) return { error: `That's ${t.length.toLocaleString("en-US")} characters and the job details hold up to ${JOB_DESCRIPTION_MAX_CHARS.toLocaleString("en-US")}. Could you send a shorter version?` };
   if (deps.isMedicationInstruction(t)) return { error: deps.medicationMessage };
@@ -744,7 +762,7 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
   return { fields, ...(roster ? { roster, capped } : {}) };
 }
 
-const ROSTER_FIELDS = ["relationship", "seniorName", "additionalRecipients", "careKind", "ageRange", "primaryKindUnknown", "rosterCountConfirmed"];
+const ROSTER_FIELDS = ["relationship", "seniorName", "additionalRecipients", "careKind", "ageRange", "primaryKindUnknown", "rosterCountConfirmed", "rosterAddPending"];
 
 /** The fields a step's own reader writes (never overwritten by the side extraction). */
 export function fieldsOwnedBy(step: FamilyStep): string[] {
@@ -822,15 +840,11 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
     return;
   }
 
-  // 1. A side question: answer it, then re-ask the current question. No write.
-  if (await deps.isQuestionOrOther(text, question)) {
-    const answer = await deps.answerQuestionMidFlow(text, session, phone);
-    await deps.sendMessage(chatId, `${answer}\n\n${question}`);
-    return;
-  }
-
-  // 2. Read this step's answer.
-  let result: StepResult | null | { error: string } = null;
+  // 1. Read this step's answer FIRST (live 2026-10-21: "yes", "myself", "this is for
+  //    my child" were judged "a question or other" by the model and answered with
+  //    prose instead of being read). A real answer always wins; only when nothing
+  //    reads as an answer does the side-question path run.
+  let result: StepResult | null | { error: string } | { question: true } = null;
   let rosterCapped = false;
   switch (step) {
     case "family_ask_name": result = await readName(deps, text); break;
@@ -866,10 +880,11 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
     case "family_ask_email": result = await readEmail(deps, text); break;
   }
   if (result && "error" in result) { await deps.sendMessage(chatId, result.error); return; }
+  const stepRead = result && !("question" in result) ? result : null;
 
-  // 3. Other fields in the same message (front-loading or a correction) — overwrite.
-  const fields: Data = { ...(result?.fields ?? {}) };
-  const acks: string[] = result ? [result.ack] : [];
+  // 2. Other fields in the same message (front-loading or a correction) — overwrite.
+  const fields: Data = { ...(stepRead?.fields ?? {}) };
+  const acks: string[] = stepRead ? [stepRead.ack].filter(Boolean) : [];
   if (text.trim().split(/\s+/).length >= WORDS_FOR_SIDE_EXTRACTION) {
     const other: { fields: Data; roster?: RosterPerson[]; capped?: boolean } = await extractOtherFields(deps, text, step, accountName).catch(() => ({ fields: {} }));
     for (const [k, v] of Object.entries(other.fields)) if (!(k in fields)) fields[k] = v;
@@ -880,14 +895,21 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
     }
   }
 
-  // 4. Nothing usable — re-ask, no write.
+  // 3. Nothing read as an answer: a side question is answered and the current
+  //    question re-asked (no write); anything else gets a plain re-ask.
   if (!Object.keys(fields).length) {
+    const isQuestion = (result && "question" in result) || await deps.isQuestionOrOther(text, question);
+    if (isQuestion) {
+      const answer = await deps.answerQuestionMidFlow(text, session, phone);
+      await deps.sendMessage(chatId, `${answer}\n\n${question}`);
+      return;
+    }
     await deps.updateSession(phone, { onboardingStep: step });
     await deps.sendMessage(chatId, `Sorry, I didn't catch that. ${question}`);
     return;
   }
 
-  // 5. Save (mirrors to the site record) and gate the service area on an address.
+  // 4. Save (mirrors to the site record) and gate the service area on an address.
   await deps.mergeOnboardingData(phone, fields);
   d = { ...d, ...fields };
   if (fields.zipCode !== undefined || fields.homeZipCode !== undefined || fields.sameAsHomeAddress === true) {
@@ -900,16 +922,17 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
     }
   }
 
-  // 6. Next question = the first still-unanswered step; none left → the recap.
+  // 5. Next question = the first still-unanswered step; none left → the recap, in
+  //    ONE message with the ack (two sends can arrive out of order over SMS).
   const next = nextFamilyStep(d);
   const capNote = rosterCapped ? ` I can set up care for up to ${MAX_RECIPIENTS} people, like the site, so I kept the first ${MAX_RECIPIENTS}.` : "";
+  const ackLine = `${acks.join(" ")}${capNote}`.trim();
   if (!next) {
-    await deps.sendMessage(chatId, `${acks.join(" ")}${capNote}`);
-    await deps.sendRecap(phone, chatId);
+    await deps.sendRecap(phone, chatId, ackLine || undefined);
     return;
   }
   await deps.updateSession(phone, { onboardingStep: next });
-  await deps.sendMessage(chatId, `${acks.join(" ")}${capNote} ${familyQuestion(next, d)}`);
+  await deps.sendMessage(chatId, `${ackLine ? ackLine + " " : ""}${familyQuestion(next, d)}`);
 }
 
 /** "you (Light Housekeeping) and Mahad K, your child · Toddler" — every person, for the recap. */

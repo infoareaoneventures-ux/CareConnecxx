@@ -882,10 +882,11 @@ function familyIntakeDeps(): FamilyIntakeDeps {
     mergeOnboardingData: (phone, fields) => mergeOnboardingData(phone, fields),
     updateSession: (phone, updates) => updateSession(phone, updates),
     sendMessage: (chatId, text) => sendMessage(chatId, text),
-    sendRecap: async (phone, chatId) => {
+    sendRecap: async (phone, chatId, prefix) => {
       await updateSession(phone, { onboardingStep: "client_confirm_intake" });
       const snap = await db.collection("agent_sessions").doc(phone).get();
-      await sendClientIntakeSummary(chatId, (snap.data() ?? {}) as AgentSession);
+      const summary = buildIntakeSummary(((snap.data() ?? {}) as AgentSession).onboardingData ?? {});
+      await sendMessage(chatId, prefix ? `${prefix}\n\n${summary}` : summary);
     },
     isMedicationInstruction: (t) => isMedicationInstructionText(t),
     medicationMessage: MEDICATION_INSTRUCTION_TEXT,
@@ -2100,6 +2101,36 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
     return;
   }
+  // "Can I add one more person?" → "Sure — who?" was asked; this reply names them (2026-10-21).
+  if ((session as unknown as Record<string, unknown>).confirmRosterAddPending === true) {
+    const dAdd = (session.onboardingData ?? {}) as Record<string, unknown>;
+    const nameAdd = { first: String(dAdd.firstName ?? "").trim(), last: String(dAdd.lastName ?? "").trim() };
+    const clearAdd = () => db.collection("agent_sessions").doc(phone).update({ confirmRosterAddPending: admin.firestore.FieldValue.delete() }).catch(() => {});
+    const who = await readRoster(familyIntakeDeps(), text, nameAdd).catch(() => null);
+    if (!who) {
+      if (await isQuestionOrOther(text, "Who else needs care?")) {
+        const answer = await answerQuestionMidFlow(text, session, phone);
+        await sendMessage(chatId, `${answer}\n\nWho else needs care? Your relationship to them (Myself, Parent, Spouse or Partner, Adult child, Child, or Other) and their name.`);
+        return;
+      }
+      await sendMessage(chatId, "Sorry, I didn't catch that. Who else needs care? Your relationship to them (Myself, Parent, Spouse or Partner, Adult child, Child, or Other) and their name.");
+      return;
+    }
+    await clearAdd();
+    const existing = rosterFromData(dAdd);
+    const added = who.roster.filter((x) => !(x.relationship === "self" && existing.some((q) => q.relationship === "self")));
+    const merged = [...existing, ...added].slice(0, 4);
+    await mergeOnboardingData(phone, { ...dataFromRoster(merged), rosterCountConfirmed: true });
+    const refreshedAdd = await db.collection("agent_sessions").doc(phone).get();
+    if (rosterPending(rosterFromData((refreshedAdd.data()?.onboardingData ?? {}) as Record<string, unknown>))) {
+      await sendMessage(chatId, "Got it — added.");
+      await runFamilyIntake(phone, chatId, "__RESUME__", refreshedAdd.data() as AgentSession);
+      return;
+    }
+    await sendMessage(chatId, "Got it — added.");
+    await sendClientIntakeSummary(chatId, refreshedAdd.data() as AgentSession);
+    return;
+  }
   // One classification for the reply to "Did I get that right?": confirm, a
   // correction, a NOTE for caregivers (the wizard's "What would you like
   // caregivers to know" answer often lands here — live 2026-09-20 "my son is
@@ -2114,6 +2145,16 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     text,
   );
   if (kind === "question") {
+    // "Can I add one more person?" is a request to add to the roster, not a question to answer (live 2026-10-21).
+    const rosterAsk = await parseWithClaude(
+      "The family was shown a summary of their care request. Is this message asking to ADD another person who needs care (e.g. \"can I add one more person\", \"I also need care for my dad\")? Reply ADD, or NO.",
+      text,
+    ).catch(() => "NO");
+    if (rosterAsk.trim().toUpperCase() === "ADD") {
+      await db.collection("agent_sessions").doc(phone).set({ confirmRosterAddPending: true }, { merge: true }).catch(() => {});
+      await sendMessage(chatId, "Sure — who else needs care? Your relationship to them (Myself, Parent, Spouse or Partner, Adult child, Child, or Other) and their name.");
+      return;
+    }
     const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, `${answer}\n\nDoes that all look right? Say yes and I'll show you who can help, or tell me what to fix.`);
     return;
@@ -2160,7 +2201,18 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
   const rosterRead = await readRoster(familyIntakeDeps(), text, accountName).catch(() => null);
   if (rosterRead) {
     for (const k of ["seniorName", "relationship", "ageRange"]) delete corrections[k];
-    Object.assign(corrections, dataFromRoster(rosterRead.roster));
+    // "It's for me and my child" restates the roster (replace); "add my dad" / "myself too" adds to it.
+    const mode = await parseWithClaude(
+      "The family was shown a summary of their care request and named people. Did they RESTATE who the care is for (reply REPLACE), or ADD someone to the people already listed (reply ADD)? Words like add / also / too / as well mean ADD.",
+      text,
+    ).catch(() => "REPLACE");
+    if (mode.trim().toUpperCase() === "ADD") {
+      const existing = rosterFromData(d0);
+      const added = rosterRead.roster.filter((x) => !(x.relationship === "self" && existing.some((q) => q.relationship === "self")));
+      Object.assign(corrections, dataFromRoster([...existing, ...added].slice(0, 4)), { rosterCountConfirmed: true });
+    } else {
+      Object.assign(corrections, dataFromRoster(rosterRead.roster), { rosterCountConfirmed: rosterRead.roster.length > 1 ? true : null });
+    }
   }
   if (Object.keys(corrections).length > 0) {
     await mergeOnboardingData(phone, corrections);
@@ -5332,7 +5384,7 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
   }
   return (await quickComplete(
     CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a warm human-feeling care coordinator at Evia. You help people entirely over text — " +
-      "YOU do the work for them: you find, vet, and match care providers and set everything up through this conversation. " +
+      "YOU do the work for them: you find and match care providers and set everything up through this conversation. " +
       `The person you're texting is ${session.userType === "caregiver" ? "a care provider looking for work" : "a family member looking for care for a loved one"}` +
       `${name ? ` named ${name}` : ""}, and they're in the middle of signing up with you. They just said something — it may be a question, or just a comment. ` +
       "Reply in ONE warm, specific sentence. " +
@@ -5350,7 +5402,8 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
       "(8) NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you just sent, " +
       "resent, or will send a link: real links are delivered by the system as separate tappable messages, not by you. " +
       "(9) NEVER say you changed, updated, saved, fixed or removed anything — you cannot change their answers in this reply. " +
-      "If they want something changed, say they can tell you exactly what to change and it will be updated.",
+      "If they want something changed, say they can tell you exactly what to change and it will be updated. " +
+      "(10) Never describe care providers as vetted, verified, approved, trusted, screened or reliable; if it comes up, state the requirement — every care provider completes a Checkr background check before families can book them.",
     text,
     { maxTokens: 90 },
   )).trim();

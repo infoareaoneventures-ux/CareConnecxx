@@ -375,6 +375,8 @@ export function mapJobPostingsDocToOnboardingData(
 
   const seniorName = joinName(d.careRecipientFirstName as string | undefined, d.careRecipientLastName as string | undefined);
   if (seniorName) out.seniorName = seniorName;
+  // The site's own counter answers the text intake's "How many people need care?" (2026-10-20).
+  if (typeof d.adultsCount === "number" && d.adultsCount >= 1) out.adultsCount = d.adultsCount;
   if (Array.isArray(d.additionalRecipients) && d.additionalRecipients.length) {
     out.additionalRecipients = (d.additionalRecipients as Array<Record<string, unknown>>).map((r) => ({
       name: joinName(r.firstName as string | undefined, r.lastName as string | undefined),

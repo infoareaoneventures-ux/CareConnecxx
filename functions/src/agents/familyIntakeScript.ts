@@ -3,7 +3,9 @@
 // Founder, after a text test in which "me and my child" became an adult-or-child
 // question about him, the correction was dropped, and the confirm step appended
 // his words to the job description: "can there be one process that follows the
-// site … make sure that works well and correct."
+// site … make sure that works well and correct" — and then: "do the same as the
+// site. everything that a client can do on the site for the signup wizard all
+// the way to the confirmation."
 //
 // This module IS the family questionnaire by text: the site wizard's steps, in
 // the site's order, one question per turn, with fixed wording. The model does two
@@ -12,25 +14,33 @@
 // decides what to ask next and never writes a question.
 //
 //   site step  → text step
-//   2  frequency              family_ask_frequency
-//   3  home address           family_ask_home_address        (ZIP → city/state like the site)
-//   4  care address           family_ask_care_address        (same address? / another; service-area gate)
-//   5  start date             family_ask_start, family_ask_ongoing
-//   6  days + time            family_ask_days
-//   8  photo (optional)       family_ask_photo
-//   9  relationship(s)        family_ask_recipients          (one to FOUR people, read as a list)
-//   10 names / stages         family_ask_recipient_name / _kind / _stage   (one person at a time, by name)
-//   11 emergency contact      family_ask_emergency, _emergency_phone, _emergency_relationship
-//   12 care types             family_ask_needs               (the lists for the people on the roster)
-//   13 rate                   family_ask_rate
-//   14 description            family_ask_description         (cap, never cut; medication refused)
-//   /start email              family_ask_email               (only when the site didn't collect it)
-//   → client_confirm_intake   (the existing recap + confirm handler)
+//   /start     name (only when a cold text has none)   family_ask_name
+//   2  frequency                                       family_ask_frequency
+//   3  home address (ZIP → city/state)                 family_ask_home_address
+//   4  care address (saved / different; county gate)   family_ask_care_address
+//   6  start date, ongoing / end date                  family_ask_start, family_ask_ongoing
+//   6  days (select all) + flexible + time of day       family_ask_days
+//   8  photo (Skip for now)                            family_ask_photo
+//   9  relationship (six buttons; Other → adult/child) family_ask_recipients (+ _recipient_kind)
+//   10 name (+ Stage for a child)                      family_ask_recipient_name, _recipient_stage
+//   10 "How many people need care?" (1-4)              family_ask_more_people
+//   10 each extra person: relationship, kind, name, stage   family_ask_recipient_relationship, …
+//   10 "How many care providers do you need?" (1-4)    family_ask_providers_count
+//   11 emergency contact: name, phone, relationship    family_ask_emergency, _phone, _relationship
+//   12 care types (the lists for the people on the post), pets / smoking   family_ask_needs, family_ask_pets_smoking
+//   13 rate                                            family_ask_rate
+//   14 description (cap, never cut; medication refused) family_ask_description
+//   /start email (only when the site didn't collect it) family_ask_email
+//   → client_confirm_intake (the existing recap + confirm handler) = step 15
 //
 // The next question is always the FIRST UNANSWERED step computed from the live
 // data — the site record (job_postings / users, read before every turn) under the
 // text draft — so answers given on the site are never asked again, front-loaded
 // answers skip ahead, and a correction at any step simply changes the data.
+//
+// Nothing about a person is guessed: a bare "my son / my daughter" is ASKED —
+// child, or an adult son or daughter — the way the site's Adult child and Child
+// buttons force the pick; the count of people is asked like the site's counter.
 //
 // Everything saved goes through mergeOnboardingData, which mirrors each field to
 // job_postings/{uid} as it lands, so the site shows it while the text is going.
@@ -51,16 +61,19 @@ export function isFamilyScriptStep(step: unknown): step is FamilyStep {
   return typeof step === "string" && (FAMILY_STEP_IDS as readonly string[]).includes(step);
 }
 
-/** The site allows one to four people on a post. */
+/** The site allows one to four people on a post, and one to four care providers. */
 export const MAX_RECIPIENTS = 4;
+export const MAX_PROVIDERS = 4;
 
 type Data = Record<string, unknown>;
 
 // ── Roster model ─────────────────────────────────────────────────────────────
 // Evia's internal relationship words (the website's are mapped at the boundary by
 // careRecipients.toWebsiteRelationship: self → myself; the rest pass through).
-export type RosterRelationship = "self" | "parent" | "spouse" | "adult child" | "child" | "other";
-export const ROSTER_RELATIONSHIPS: readonly RosterRelationship[] = ["self", "parent", "spouse", "adult child", "child", "other"];
+// "unknown" is a person the count question added whose relationship is still to be asked.
+export type RosterRelationship = "self" | "parent" | "spouse" | "adult child" | "child" | "other" | "unknown";
+/** The site's six, in the site's order — the words every relationship question offers. */
+export const RELATIONSHIP_OPTIONS_TEXT = "Myself, Parent, Spouse or Partner, Adult child, Child, or Other";
 
 export interface RosterPerson {
   relationship: RosterRelationship;
@@ -70,6 +83,8 @@ export interface RosterPerson {
   careKind?: "senior" | "child";
   /** Only for a child: one AGE_RANGES id. */
   ageRange?: string;
+  /** A bare "my son / my daughter": child or adult child is still to be ASKED (never guessed). */
+  kindUnknown?: boolean;
 }
 
 export function normalizeRelationship(value: unknown): RosterRelationship | null {
@@ -79,39 +94,44 @@ export function normalizeRelationship(value: unknown): RosterRelationship | null
   if (["parent", "mother", "father", "mom", "dad", "mum", "stepmother", "stepfather", "parents"].includes(v)) return "parent";
   if (["spouse", "spouse or partner", "partner", "wife", "husband"].includes(v)) return "spouse";
   if (["adult child", "adult son", "adult daughter", "grown son", "grown daughter", "grown child"].includes(v)) return "adult child";
-  if (["child", "son", "daughter", "kid", "baby", "toddler", "infant", "teen", "teenager"].includes(v)) return "child";
+  if (["child", "kid", "baby", "toddler", "infant", "teen", "teenager", "minor"].includes(v)) return "child";
+  if (["son", "daughter", "son or daughter", "son or daughter (age unknown)"].includes(v)) return "child"; // callers mark kindUnknown
   if (["other", "grandparent", "grandmother", "grandfather", "sibling", "brother", "sister", "friend", "neighbor", "relative", "aunt", "uncle", "cousin"].includes(v)) return "other";
+  if (["unknown", ""].includes(v)) return "unknown";
   return null;
 }
 
-/** A person is a child when the relationship says so, or Other was answered "child". */
-export function isChildPerson(p: Pick<RosterPerson, "relationship" | "careKind">): boolean {
-  const rel = p.relationship === "self" ? "Myself" : p.relationship === "adult child" ? "Adult child" : p.relationship.charAt(0).toUpperCase() + p.relationship.slice(1);
+/** A person is a child when the relationship says so (and it is not still to be asked), or Other was answered "child". */
+export function isChildPerson(p: Pick<RosterPerson, "relationship" | "careKind" | "kindUnknown">): boolean {
+  if (p.kindUnknown) return false;
+  const rel = p.relationship === "self" ? "Myself" : p.relationship === "adult child" ? "Adult child" : p.relationship === "unknown" ? "" : p.relationship.charAt(0).toUpperCase() + p.relationship.slice(1);
   return recipientCareKind(rel, p.careKind) === "child";
+}
+
+function personFromStored(r: Record<string, unknown> | undefined, fallbackRel: RosterRelationship): RosterPerson {
+  const rel = normalizeRelationship(r?.relationship) ?? fallbackRel;
+  return {
+    relationship: rel,
+    name: String(r?.name ?? "").trim(),
+    ...(r?.careKind === "child" || r?.careKind === "senior" ? { careKind: r.careKind as "child" | "senior" } : {}),
+    ...(typeof r?.ageRange === "string" && r.ageRange ? { ageRange: r.ageRange } : {}),
+    ...(r?.kindUnknown === true ? { kindUnknown: true } : {}),
+  };
 }
 
 /** The roster as stored: primary on the top-level fields, the rest in additionalRecipients. */
 export function rosterFromData(d: Data): RosterPerson[] {
   const primaryRel = normalizeRelationship(d.relationship);
-  if (!primaryRel) return [];
+  if (!primaryRel || primaryRel === "unknown") return [];
   const primary: RosterPerson = {
     relationship: primaryRel,
     name: String(d.seniorName ?? "").trim(),
     ...(d.careKind === "child" || d.careKind === "senior" ? { careKind: d.careKind } : {}),
     ...(typeof d.ageRange === "string" && d.ageRange ? { ageRange: d.ageRange } : {}),
+    ...(d.primaryKindUnknown === true ? { kindUnknown: true } : {}),
   };
   const extra = Array.isArray(d.additionalRecipients) ? (d.additionalRecipients as Array<Record<string, unknown>>) : [];
-  const rest: RosterPerson[] = [];
-  for (const r of extra) {
-    const rel = normalizeRelationship(r?.relationship) ?? "other";
-    rest.push({
-      relationship: rel,
-      name: String(r?.name ?? "").trim(),
-      ...(r?.careKind === "child" || r?.careKind === "senior" ? { careKind: r.careKind as "child" | "senior" } : {}),
-      ...(typeof r?.ageRange === "string" && r.ageRange ? { ageRange: r.ageRange } : {}),
-    });
-  }
-  return [primary, ...rest];
+  return [primary, ...extra.map((r) => personFromStored(r, "unknown"))];
 }
 
 /** The stored shape for a roster (the fields mergeOnboardingData mirrors to the site). */
@@ -123,26 +143,31 @@ export function dataFromRoster(roster: RosterPerson[]): Data {
     seniorName: p.name,
     careKind: p.relationship === "other" && p.careKind ? p.careKind : null,
     ageRange: isChildPerson(p) && p.ageRange ? p.ageRange : null,
+    primaryKindUnknown: p.kindUnknown === true ? true : null,
     additionalRecipients: rest.map((r) => ({
       name: r.name,
-      relationship: r.relationship,
+      relationship: r.relationship === "unknown" ? "" : r.relationship,
       ...(r.relationship === "other" && r.careKind ? { careKind: r.careKind } : {}),
       ...(isChildPerson(r) && r.ageRange ? { ageRange: r.ageRange } : {}),
+      ...(r.kindUnknown === true ? { kindUnknown: true } : {}),
     })),
   };
 }
 
 export type RosterPending =
-  | { kind: "name"; index: number; person: RosterPerson }
+  | { kind: "relationship"; index: number; person: RosterPerson }
   | { kind: "kind"; index: number; person: RosterPerson }
+  | { kind: "name"; index: number; person: RosterPerson }
   | { kind: "stage"; index: number; person: RosterPerson };
 
-/** The first thing still missing on the roster, in person order — the site's step-10 gate. */
+/** The first thing still missing on the roster, in person order — the site's step-9/10 gate. */
 export function rosterPending(roster: RosterPerson[]): RosterPending | null {
   for (let i = 0; i < roster.length; i++) {
     const p = roster[i];
-    if (!p.name && p.relationship !== "self") return { kind: "name", index: i, person: p };
+    if (p.relationship === "unknown") return { kind: "relationship", index: i, person: p };
     if (p.relationship === "other" && !p.careKind) return { kind: "kind", index: i, person: p };
+    if (p.kindUnknown) return { kind: "kind", index: i, person: p };
+    if (!p.name && p.relationship !== "self") return { kind: "name", index: i, person: p };
     if (isChildPerson(p) && !p.ageRange) return { kind: "stage", index: i, person: p };
   }
   return null;
@@ -156,7 +181,7 @@ export function personPhrase(p: RosterPerson): string {
     case "parent": return "your parent";
     case "spouse": return "your spouse or partner";
     case "adult child": return "your adult child";
-    case "child": return "your child";
+    case "child": return p.kindUnknown ? "your son or daughter" : "your child";
     default: return "this person";
   }
 }
@@ -176,22 +201,50 @@ export function nextFamilyStep(d: Data): FamilyStep | null {
   if (!isFieldFilled(d.careRecipientPhotoURL) && d.photoSkipped !== true) return "family_ask_photo";
   const roster = rosterFromData(d);
   if (!roster.length) return "family_ask_recipients";
+  // The first person is completed before the count is asked (the site's step 10 order).
+  const firstPending = rosterPending([roster[0]]);
+  if (firstPending) return stepForPending(firstPending);
+  // The site's counter: asked only when ONE person is on the record and nothing confirmed the count
+  // (naming several at once, a number, "no", or the site's own adultsCount all count as answered).
+  const countConfirmed = d.rosterCountConfirmed === true || Number(d.adultsCount) >= 1;
+  if (roster.length === 1 && !countConfirmed) return "family_ask_more_people";
   const pending = rosterPending(roster);
-  if (pending) return pending.kind === "name" ? "family_ask_recipient_name" : pending.kind === "kind" ? "family_ask_recipient_kind" : "family_ask_recipient_stage";
+  if (pending) return stepForPending(pending);
+  const providers = Number(d.caregiversNeeded);
+  if (!(providers >= 1 && providers <= MAX_PROVIDERS)) return "family_ask_providers_count";
   if (!isFieldFilled(d.emergencyContactName)) return "family_ask_emergency";
   if (!isFieldFilled(d.emergencyContactPhone)) return "family_ask_emergency_phone";
   if (!isFieldFilled(d.emergencyContactRelationship)) return "family_ask_emergency_relationship";
   if (!(Array.isArray(d.careNeeds) && (d.careNeeds as unknown[]).length)) return "family_ask_needs";
+  if (d.householdAsked !== true) return "family_ask_pets_smoking";
   if (coerceClientRate(d.rate) === null) return "family_ask_rate";
   if (!isFieldFilled(d.jobDescription) && d.descriptionSkipped !== true) return "family_ask_description";
   if (!isFieldFilled(d.email)) return "family_ask_email";
   return null;
 }
 
+function stepForPending(p: RosterPending): FamilyStep {
+  switch (p.kind) {
+    case "relationship": return "family_ask_recipient_relationship";
+    case "kind": return "family_ask_recipient_kind";
+    case "name": return "family_ask_recipient_name";
+    case "stage": return "family_ask_recipient_stage";
+  }
+}
+
+/** The person a roster sub-step is about: the first person first, then the rest in order. */
+function currentPending(d: Data): RosterPending | null {
+  const roster = rosterFromData(d);
+  if (!roster.length) return null;
+  return rosterPending([roster[0]]) ?? rosterPending(roster);
+}
+
+function ordinalLabel(index: number): string { return `care recipient ${index + 1}`; }
+
 // ── Questions: fixed text, the site's words ──────────────────────────────────
 export function familyQuestion(step: FamilyStep, d: Data): string {
   const roster = rosterFromData(d);
-  const pending = rosterPending(roster);
+  const pending = currentPending(d);
   switch (step) {
     case "family_ask_name": return "What's your first and last name?";
     case "family_ask_frequency": return "How often do you need care — occasional, part-time, or full-time?";
@@ -201,20 +254,35 @@ export function familyQuestion(step: FamilyStep, d: Data): string {
     case "family_ask_ongoing": return "Is this ongoing, or is there an end date?";
     case "family_ask_days": return "Which days of the week, and what time of day — morning, afternoon, evening, or overnight? (You can also say the days are flexible.)";
     case "family_ask_photo": return "Want to add a profile photo of yourself? Send a picture here, or say skip.";
-    case "family_ask_recipients": return `Who is the care for? For example: my mom, me and my child, or my parents — up to ${MAX_RECIPIENTS} people.`;
+    case "family_ask_recipients": return `What is your relationship to the person needing care? ${RELATIONSHIP_OPTIONS_TEXT}. (If care is for more than one person, you can name them all.)`;
+    case "family_ask_recipient_relationship": return pending?.kind === "relationship"
+      ? `What is your relationship to ${ordinalLabel(pending.index)}? ${RELATIONSHIP_OPTIONS_TEXT}.`
+      : `What is your relationship to this person? ${RELATIONSHIP_OPTIONS_TEXT}.`;
+    case "family_ask_recipient_kind": {
+      if (pending?.kind !== "kind") return OTHER_KIND_QUESTION;
+      const who = pending.person.name || personPhrase(pending.person);
+      return pending.person.kindUnknown
+        ? `Is ${who} a child, or an adult son or daughter?`
+        : `${pending.person.name ? pending.person.name + " — " : ""}${OTHER_KIND_QUESTION}`;
+    }
     case "family_ask_recipient_name": return pending?.kind === "name" ? `What's ${personPhrase(pending.person)}'s name? First and last is best.` : "Who is the care for?";
-    case "family_ask_recipient_kind": return pending?.kind === "kind" ? `${pending.person.name ? pending.person.name + " — " : ""}${OTHER_KIND_QUESTION}` : OTHER_KIND_QUESTION;
     case "family_ask_recipient_stage": return pending?.kind === "stage" ? stageQuestion(pending.person.name || personPhrase(pending.person)) : stageQuestion(null);
+    case "family_ask_more_people": {
+      const first = roster[0] ? (roster[0].relationship === "self" ? "you" : roster[0].name || personPhrase(roster[0])) : "that person";
+      return `How many people need care in total — just ${first}, or more? Reply 1, 2, 3, or 4, or tell me who else.`;
+    }
+    case "family_ask_providers_count": return `How many care providers do you need? Reply 1, 2, 3, or 4. (Most families need 1.)`;
     case "family_ask_emergency": return "Who should we contact in case of an emergency? Their name and phone number.";
     case "family_ask_emergency_phone": return `What's ${String(d.emergencyContactName ?? "their")}'s phone number?`;
     case "family_ask_emergency_relationship": {
       const who = roster.length ? (roster[0].relationship === "self" ? "you" : roster[0].name || personPhrase(roster[0])) : "the person needing care";
-      return `How is ${String(d.emergencyContactName ?? "that person")} related to ${who}?`;
+      return `How is ${String(d.emergencyContactName ?? "that person")} related to ${who}? (e.g. Mother, Sibling, Friend)`;
     }
     case "family_ask_needs": {
-      const kinds = rosterCareKinds(roster.map((p) => ({ relationship: p.relationship === "self" ? "Myself" : p.relationship === "adult child" ? "Adult child" : p.relationship, careKind: p.careKind })));
+      const kinds = rosterCareKinds(roster.filter((p) => p.relationship !== "unknown" && !p.kindUnknown).map((p) => ({ relationship: p.relationship === "self" ? "Myself" : p.relationship === "adult child" ? "Adult child" : p.relationship, careKind: p.careKind })));
       return `What type of care is needed? Pick as many as apply:\n${serviceMenuText(kinds.length ? kinds : ["senior"])}`;
     }
+    case "family_ask_pets_smoking": return "Two quick ones: are there pets in the home, and does anyone in the household smoke?";
     case "family_ask_rate": return "What would you like to pay per hour? (e.g. 32)";
     case "family_ask_description": return `What else should care providers know about this job? Care providers browsing jobs can read this, so leave out medical details, addresses, phone numbers, email addresses, and anything private. You can also say skip.`;
     case "family_ask_email": return "Last thing — what's your email address? It's only used for account recovery, never shared with care providers.";
@@ -241,6 +309,10 @@ export function normalizeFrequency(value: unknown): "occasional" | "part_time" |
   return null;
 }
 export function isValidZip(value: unknown): value is string { return /^\d{5}$/.test(String(value ?? "").trim()); }
+function smallCount(value: unknown, max: number): number | null {
+  const n = Number(String(value ?? "").trim().replace(/[^\d]/g, ""));
+  return Number.isInteger(n) && n >= 1 && n <= max ? n : null;
+}
 
 // ── Deps: every side effect, injected ────────────────────────────────────────
 export interface FamilyIntakeDeps {
@@ -276,7 +348,7 @@ export async function effectiveFamilyData(deps: FamilyIntakeDeps, session: any):
   const draft = (session?.onboardingData ?? {}) as Data;
   const site = await deps.loadSiteData(session).catch(() => ({} as Data));
   const out: Data = { ...site };
-  for (const [k, v] of Object.entries(draft)) if (isFieldFilled(v) || typeof v === "boolean") out[k] = v;
+  for (const [k, v] of Object.entries(draft)) if (isFieldFilled(v) || typeof v === "boolean" || typeof v === "number") out[k] = v;
   return out;
 }
 
@@ -409,13 +481,18 @@ async function readPhotoSkip(deps: FamilyIntakeDeps, text: string): Promise<Step
   return null;
 }
 
-/** "me and my child", "my parents", "mom Dorothy and dad Frank" → a roster (first = primary). */
+/**
+ * "me and my child", "my parents", "mom Dorothy and dad Frank", "Parent" → a roster (first = primary).
+ * A bare son / daughter is NOT guessed: it comes back as a child with kindUnknown, so the next
+ * question asks child or adult son/daughter — the site's Adult child vs Child buttons, by text.
+ */
 export async function readRoster(deps: FamilyIntakeDeps, text: string, accountName: { first: string; last: string }): Promise<{ roster: RosterPerson[]; capped: boolean } | null> {
   const raw = await deps.parseWithClaude(
-    "The family was asked who the care is for. List EVERY person needing care, in the order mentioned, as raw JSON " +
-      '{"people":[{"relationship":"self|parent|spouse|adult child|child|other","name":"first and last if given, else empty","stage":"only for a child when stated: ' +
+    "The family was asked their relationship to the person needing care (Myself, Parent, Spouse or Partner, Adult child, Child, or Other) and may name one or several people. List EVERY person needing care, in the order mentioned, as raw JSON " +
+      '{"people":[{"relationship":"self|parent|spouse|adult child|child|son or daughter (age unknown)|other","name":"first and last if given, else empty","stage":"only for a child when stated: ' +
       AGE_RANGES.map((a) => a.label).join(", ") + '","kind":"only for other when stated: adult|child"}]}. ' +
-      'Rules: "me / myself / I" is self. "my child / son / daughter / kid" is child (a GROWN son or daughter is "adult child"). "mom / dad / mother / father" is parent; "my parents" is TWO parents. "wife / husband / partner" is spouse. Anyone else (grandparent, sibling, friend, neighbor) is other. ' +
+      'Rules: "me / myself / I" is self. "child", "kid", a baby/toddler/teen, or a son/daughter with an age under 18 is child. A GROWN son or daughter, or "adult child", is "adult child". ' +
+      'A bare "my son" / "my daughter" with NO age or adult/child cue is "son or daughter (age unknown)" — never guess. "mom / dad / mother / father" is parent; "my parents" is TWO parents. "wife / husband / partner" is spouse. Anyone else (grandparent, sibling, friend, neighbor) is other. ' +
       'Do not invent people and do not repeat a person. Reply {"people":[]} if nobody is named.',
     text,
   );
@@ -424,14 +501,23 @@ export async function readRoster(deps: FamilyIntakeDeps, text: string, accountNa
   const people = Array.isArray(p.people) ? (p.people as Array<Record<string, unknown>>) : [];
   const roster: RosterPerson[] = [];
   for (const x of people) {
-    const rel = normalizeRelationship(x?.relationship);
-    if (!rel) continue;
+    const relWord = String(x?.relationship ?? "").trim().toLowerCase();
+    const rel = normalizeRelationship(relWord);
+    if (!rel || rel === "unknown") continue;
+    const kindUnknown = relWord.startsWith("son or daughter") || relWord === "son" || relWord === "daughter";
     const name = rel === "self" ? [accountName.first, accountName.last].filter(Boolean).join(" ") : String(x?.name ?? "").trim();
     const stage = ageRangeFromWords(x?.stage) ?? undefined;
     const kindWord = String(x?.kind ?? "").trim().toLowerCase();
     const careKind = rel === "other" ? (kindWord === "child" ? "child" : kindWord === "adult" ? "senior" : undefined) : undefined;
     if (rel === "self" && roster.some((r) => r.relationship === "self")) continue;
-    roster.push({ relationship: rel, name, ...(careKind ? { careKind } : {}), ...(stage && (rel === "child" || careKind === "child") ? { ageRange: stage } : {}) });
+    // A stated stage settles a bare son/daughter as a child.
+    const settledUnknown = kindUnknown && !stage;
+    roster.push({
+      relationship: rel, name,
+      ...(careKind ? { careKind } : {}),
+      ...(stage && (rel === "child" || careKind === "child") ? { ageRange: stage } : {}),
+      ...(settledUnknown ? { kindUnknown: true } : {}),
+    });
   }
   if (!roster.length) return null;
   const capped = roster.length > MAX_RECIPIENTS;
@@ -439,14 +525,26 @@ export async function readRoster(deps: FamilyIntakeDeps, text: string, accountNa
 }
 
 function rosterAck(roster: RosterPerson[]): string {
-  const words = roster.map((p) => (p.relationship === "self" ? "you" : p.name || personPhrase(p).replace(/^your /, "your ")));
+  const words = roster.map((p) => (p.relationship === "self" ? "you" : p.name || personPhrase(p)));
   const list = words.length === 1 ? words[0] : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
   return `Care for ${list}, got it.`;
 }
 
+async function readRecipientRelationship(deps: FamilyIntakeDeps, text: string, d: Data, accountName: { first: string; last: string }): Promise<StepResult | null> {
+  const roster = rosterFromData(d);
+  const pending = currentPending(d);
+  if (!pending || pending.kind !== "relationship") return null;
+  const r = await readRoster(deps, text, accountName);
+  if (!r) return null;
+  const given = r.roster[0];
+  if (given.relationship === "self" && roster.some((p) => p.relationship === "self")) return null;
+  roster[pending.index] = { ...given, name: given.name || pending.person.name };
+  return { fields: dataFromRoster(roster), ack: `${given.relationship === "self" ? "You" : personPhrase(given).replace(/^your /, "Your ")}, got it.` };
+}
+
 async function readRecipientName(deps: FamilyIntakeDeps, text: string, d: Data): Promise<StepResult | null> {
   const roster = rosterFromData(d);
-  const pending = rosterPending(roster);
+  const pending = currentPending(d);
   if (!pending || pending.kind !== "name") return null;
   const raw = await deps.parseWithClaude("Extract the person's name as given (first and last if shared). Reply with just the name, or unknown.", text);
   const name = raw.trim();
@@ -457,18 +555,24 @@ async function readRecipientName(deps: FamilyIntakeDeps, text: string, d: Data):
 
 async function readRecipientKind(deps: FamilyIntakeDeps, text: string, d: Data): Promise<StepResult | null> {
   const roster = rosterFromData(d);
-  const pending = rosterPending(roster);
+  const pending = currentPending(d);
   if (!pending || pending.kind !== "kind") return null;
-  const raw = await deps.parseWithClaude(`The family was asked "${OTHER_KIND_QUESTION}". Reply exactly ADULT, CHILD, or unknown.`, text);
+  const q = pending.person.kindUnknown ? "Is this person a child, or an adult son or daughter?" : OTHER_KIND_QUESTION;
+  const raw = await deps.parseWithClaude(`The family was asked "${q}". Reply exactly ADULT, CHILD, or unknown.`, text);
   const v = raw.trim().toUpperCase();
   if (v !== "ADULT" && v !== "CHILD") return null;
-  roster[pending.index] = { ...pending.person, careKind: v === "CHILD" ? "child" : "senior" };
+  if (pending.person.kindUnknown) {
+    const { kindUnknown: _k, ...rest } = pending.person;
+    roster[pending.index] = { ...rest, relationship: v === "CHILD" ? "child" : "adult child" };
+  } else {
+    roster[pending.index] = { ...pending.person, careKind: v === "CHILD" ? "child" : "senior" };
+  }
   return { fields: dataFromRoster(roster), ack: `${v === "CHILD" ? "A child" : "An adult"}, got it.` };
 }
 
 async function readRecipientStage(deps: FamilyIntakeDeps, text: string, d: Data): Promise<StepResult | null> {
   const roster = rosterFromData(d);
-  const pending = rosterPending(roster);
+  const pending = currentPending(d);
   if (!pending || pending.kind !== "stage") return null;
   const raw = await deps.parseWithClaude(
     `The family was asked the child's ${STAGE_HEADING.toLowerCase()}: ${AGE_RANGES.map((a) => a.label).join(", ")}. Reply with exactly one of those labels, or unknown.`,
@@ -478,6 +582,37 @@ async function readRecipientStage(deps: FamilyIntakeDeps, text: string, d: Data)
   if (!stage) return null;
   roster[pending.index] = { ...pending.person, ageRange: stage };
   return { fields: dataFromRoster(roster), ack: `${ageRangeLabel(stage)}, got it.` };
+}
+
+/** The site's "How many people need care?" counter: a number 1-4, or the other people by name. */
+async function readMorePeople(deps: FamilyIntakeDeps, text: string, d: Data, accountName: { first: string; last: string }): Promise<StepResult | null> {
+  const roster = rosterFromData(d);
+  const raw = await deps.parseWithClaude(
+    `The family was asked how many people need care in total (1 to ${MAX_RECIPIENTS}), or who else. Reply with raw JSON {"count":0,"others":"the OTHER people named, copied from their words, or empty"} — count is the total number if they gave one (a plain "no" / "just her" / "only me" means the count stays as it is: reply 1); others is the phrase naming additional people when they named them instead of a number.`,
+    text,
+  );
+  let p: { count?: unknown; others?: unknown };
+  try { p = JSON.parse(raw); } catch { return null; }
+  const others = String(p.others ?? "").trim();
+  if (others) {
+    const r = await readRoster(deps, others, accountName);
+    if (!r) return null;
+    const added = r.roster.filter((x) => !(x.relationship === "self" && roster.some((q) => q.relationship === "self")));
+    const next = [...roster, ...added].slice(0, MAX_RECIPIENTS);
+    return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true }, ack: rosterAck(next) };
+  }
+  const count = smallCount(p.count, MAX_RECIPIENTS);
+  if (count === null) return null;
+  const next = [...roster];
+  while (next.length < count) next.push({ relationship: "unknown", name: "" });
+  return { fields: { ...dataFromRoster(next), rosterCountConfirmed: true }, ack: count === 1 ? "Just the one person, got it." : `${count} people, got it.` };
+}
+
+async function readProvidersCount(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
+  const raw = await deps.parseWithClaude(`The family was asked how many care providers they need (1 to ${MAX_PROVIDERS}). Reply with just the number ("one is fine" = 1), or unknown.`, text);
+  const n = smallCount(raw, MAX_PROVIDERS) ?? smallCount(text, MAX_PROVIDERS);
+  if (n === null) return null;
+  return { fields: { caregiversNeeded: n }, ack: `${n} care provider${n === 1 ? "" : "s"}, got it.` };
 }
 
 async function readEmergency(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
@@ -510,7 +645,7 @@ async function readEmergencyRelationship(deps: FamilyIntakeDeps, text: string): 
   return { fields: { emergencyContactRelationship: v }, ack: `${v.charAt(0).toUpperCase() + v.slice(1)}, got it.` };
 }
 
-async function readNeeds(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null | { fields: Data; ack: string; note?: string }> {
+async function readNeeds(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
   const raw = await deps.parseWithClaude(
     'The family was asked what type of care is needed and may name several things. Reply with raw JSON {"needs":["each thing they named, in their words"]} — or {"needs":[]} if none.',
     text,
@@ -524,6 +659,20 @@ async function readNeeds(deps: FamilyIntakeDeps, text: string): Promise<StepResu
   if (c.medical.length) notes.push(`${c.medical.join(", ")} is medical care, which care providers here don't do, so I left it off — the closest service is Medication Reminders Only (reminding when it's time, not giving them).`);
   if (c.unmapped.length) notes.push(`${c.unmapped.join(", ")} isn't one of the services on the list, so I left it off.`);
   return { fields: { careNeeds: c.careNeeds }, ack: `${c.careNeeds.map(serviceLabel).join(", ")}, got it.${notes.length ? " " + notes.join(" ") : ""}` };
+}
+
+/** The site's two checkboxes under the care types (optional, default unchecked). */
+async function readPetsSmoking(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
+  const raw = await deps.parseWithClaude(
+    'The family was asked two yes/no things: are there pets in the home, and does anyone in the household smoke. Reply with raw JSON {"pets":true|false|null,"smoking":true|false|null} — null when they did not say.',
+    text,
+  );
+  let p: { pets?: unknown; smoking?: unknown };
+  try { p = JSON.parse(raw); } catch { return null; }
+  if (p.pets === null && p.smoking === null) return null;
+  const pets = p.pets === true, smoking = p.smoking === true;
+  const ack = [`${pets ? "Pets in the home" : "No pets"}`, `${smoking ? "someone smokes" : "no smoking"}`].join(", ") + ", got it.";
+  return { fields: { petsInHome: pets, smokingHousehold: smoking, householdAsked: true }, ack };
 }
 
 async function readRate(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
@@ -559,7 +708,7 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
     `Today is ${t.weekday}, ${t.iso}. The family is partway through setting up care by text and was just asked: "${familyQuestionLabel(currentStep)}". ` +
       "Besides the answer to that question, extract ONLY other details they clearly stated or changed in this message, as raw JSON with any of: " +
       '{"careFrequency":"occasional|part_time|full_time","homeStreet":"","homeZipCode":"","startDate":"YYYY-MM-DD or ASAP","ongoing":true,"endDate":"YYYY-MM-DD","selectedDays":["MON"],"daysFlexible":false,"timeOfDay":["morning"],' +
-      '"emergencyContactName":"","emergencyContactPhone":"","emergencyContactRelationship":"","careNeeds":["their words"],"rate":0,"email":"",' +
+      '"emergencyContactName":"","emergencyContactPhone":"","emergencyContactRelationship":"","careNeeds":["their words"],"rate":0,"email":"","caregiversNeeded":0,"petsInHome":true,"smokingHousehold":false,' +
       '"recipients":"ONLY if they say WHO the care is for (e.g. me and my child, my mom): copy that phrase here"}. ' +
       "Omit everything not clearly stated. No markdown.",
     text,
@@ -581,6 +730,9 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
   const ePhone = formatWizardPhone(p.emergencyContactPhone); if (ePhone && !skip.has("emergencyContactPhone")) fields.emergencyContactPhone = ePhone;
   if (typeof p.emergencyContactRelationship === "string" && p.emergencyContactRelationship.trim() && !skip.has("emergencyContactRelationship")) fields.emergencyContactRelationship = p.emergencyContactRelationship.trim();
   const rate = coerceClientRate(p.rate); if (rate !== null && !skip.has("rate")) fields.rate = rate;
+  const providers = smallCount(p.caregiversNeeded, MAX_PROVIDERS); if (providers !== null && !skip.has("caregiversNeeded")) fields.caregiversNeeded = providers;
+  if (typeof p.petsInHome === "boolean" && !skip.has("petsInHome")) fields.petsInHome = p.petsInHome;
+  if (typeof p.smokingHousehold === "boolean" && !skip.has("smokingHousehold")) fields.smokingHousehold = p.smokingHousehold;
   if (typeof p.email === "string" && /^\S+@\S+\.\S+$/.test(p.email.trim()) && !skip.has("email")) fields.email = p.email.trim().toLowerCase();
   if (Array.isArray(p.careNeeds) && p.careNeeds.length && !skip.has("careNeeds")) {
     const c = await deps.canonicalizeCareNeeds(p.careNeeds).catch(() => ({ careNeeds: [] as string[], medical: [], unmapped: [] }));
@@ -594,6 +746,8 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
   return { fields, ...(roster ? { roster, capped } : {}) };
 }
 
+const ROSTER_FIELDS = ["relationship", "seniorName", "additionalRecipients", "careKind", "ageRange", "primaryKindUnknown", "rosterCountConfirmed"];
+
 /** The fields a step's own reader writes (never overwritten by the side extraction). */
 export function fieldsOwnedBy(step: FamilyStep): string[] {
   switch (step) {
@@ -605,11 +759,13 @@ export function fieldsOwnedBy(step: FamilyStep): string[] {
     case "family_ask_ongoing": return ["ongoing", "endDate"];
     case "family_ask_days": return ["selectedDays", "daysFlexible", "timeOfDay"];
     case "family_ask_photo": return [];
-    case "family_ask_recipients": case "family_ask_recipient_name": case "family_ask_recipient_kind": case "family_ask_recipient_stage": return ["relationship", "seniorName", "additionalRecipients", "careKind", "ageRange"];
+    case "family_ask_recipients": case "family_ask_recipient_relationship": case "family_ask_recipient_name": case "family_ask_recipient_kind": case "family_ask_recipient_stage": case "family_ask_more_people": return ROSTER_FIELDS;
+    case "family_ask_providers_count": return ["caregiversNeeded"];
     case "family_ask_emergency": return ["emergencyContactName", "emergencyContactPhone", "emergencyContactRelationship"];
     case "family_ask_emergency_phone": return ["emergencyContactPhone"];
     case "family_ask_emergency_relationship": return ["emergencyContactRelationship"];
     case "family_ask_needs": return ["careNeeds"];
+    case "family_ask_pets_smoking": return ["petsInHome", "smokingHousehold"];
     case "family_ask_rate": return ["rate"];
     case "family_ask_description": return ["jobDescription"];
     case "family_ask_email": return ["email"];
@@ -627,18 +783,26 @@ export function familyQuestionLabel(step: FamilyStep): string {
     case "family_ask_ongoing": return "whether it is ongoing or has an end date";
     case "family_ask_days": return "which days and time of day";
     case "family_ask_photo": return "a profile photo or skip";
-    case "family_ask_recipients": return "who the care is for";
+    case "family_ask_recipients": return "their relationship to the person needing care";
+    case "family_ask_recipient_relationship": return "their relationship to another care recipient";
     case "family_ask_recipient_name": return "a care recipient's name";
-    case "family_ask_recipient_kind": return "whether the person is an adult or a child";
+    case "family_ask_recipient_kind": return "whether the person is a child or an adult";
     case "family_ask_recipient_stage": return "a child's stage";
+    case "family_ask_more_people": return "how many people need care";
+    case "family_ask_providers_count": return "how many care providers they need";
     case "family_ask_emergency": return "the emergency contact's name and phone";
     case "family_ask_emergency_phone": return "the emergency contact's phone";
     case "family_ask_emergency_relationship": return "how the emergency contact is related";
     case "family_ask_needs": return "what type of care is needed";
+    case "family_ask_pets_smoking": return "pets in the home and smoking";
     case "family_ask_rate": return "the hourly rate";
     case "family_ask_description": return "what else care providers should know";
     case "family_ask_email": return "their email";
   }
+}
+
+export function isRosterStep(step: FamilyStep): boolean {
+  return ["family_ask_recipients", "family_ask_recipient_relationship", "family_ask_recipient_name", "family_ask_recipient_kind", "family_ask_recipient_stage", "family_ask_more_people"].includes(step);
 }
 
 // ── The turn ─────────────────────────────────────────────────────────────────
@@ -681,16 +845,24 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
     case "family_ask_photo": result = await readPhotoSkip(deps, text); break;
     case "family_ask_recipients": {
       const r = await readRoster(deps, text, accountName);
-      if (r) { result = { fields: dataFromRoster(r.roster), ack: rosterAck(r.roster) }; rosterCapped = r.capped; }
+      if (r) {
+        // Several people named at once = the count is known (the site's counter, answered in one go).
+        result = { fields: { ...dataFromRoster(r.roster), rosterCountConfirmed: r.roster.length > 1 ? true : null }, ack: rosterAck(r.roster) };
+        rosterCapped = r.capped;
+      }
       break;
     }
+    case "family_ask_recipient_relationship": result = await readRecipientRelationship(deps, text, d, accountName); break;
     case "family_ask_recipient_name": result = await readRecipientName(deps, text, d); break;
     case "family_ask_recipient_kind": result = await readRecipientKind(deps, text, d); break;
     case "family_ask_recipient_stage": result = await readRecipientStage(deps, text, d); break;
+    case "family_ask_more_people": result = await readMorePeople(deps, text, d, accountName); break;
+    case "family_ask_providers_count": result = await readProvidersCount(deps, text); break;
     case "family_ask_emergency": result = await readEmergency(deps, text); break;
     case "family_ask_emergency_phone": result = await readEmergencyPhone(deps, text); break;
     case "family_ask_emergency_relationship": result = await readEmergencyRelationship(deps, text); break;
     case "family_ask_needs": result = await readNeeds(deps, text); break;
+    case "family_ask_pets_smoking": result = await readPetsSmoking(deps, text); break;
     case "family_ask_rate": result = await readRate(deps, text); break;
     case "family_ask_description": result = await readDescription(deps, text); break;
     case "family_ask_email": result = await readEmail(deps, text); break;
@@ -704,7 +876,7 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
     const other: { fields: Data; roster?: RosterPerson[]; capped?: boolean } = await extractOtherFields(deps, text, step, accountName).catch(() => ({ fields: {} }));
     for (const [k, v] of Object.entries(other.fields)) if (!(k in fields)) fields[k] = v;
     if (other.roster && !isRosterStep(step)) {
-      Object.assign(fields, dataFromRoster(other.roster));
+      Object.assign(fields, dataFromRoster(other.roster), { rosterCountConfirmed: other.roster.length > 1 ? true : null });
       acks.push(rosterAck(other.roster));
       if (other.capped) rosterCapped = true;
     }
@@ -742,17 +914,13 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
   await deps.sendMessage(chatId, `${acks.join(" ")}${capNote} ${familyQuestion(next, d)}`);
 }
 
-export function isRosterStep(step: FamilyStep): boolean {
-  return step === "family_ask_recipients" || step === "family_ask_recipient_name" || step === "family_ask_recipient_kind" || step === "family_ask_recipient_stage";
-}
-
 /** "you (Light Housekeeping) and Mahad K, your child · Toddler" — every person, for the recap. */
 export function describeRoster(d: Data): string {
   const roster = rosterFromData(d);
   if (!roster.length) return String(d.seniorName ?? "your loved one");
   const words = roster.map((p) => {
     if (p.relationship === "self") return "you";
-    const rel = p.relationship === "adult child" ? "your adult child" : p.relationship === "other" ? (p.careKind === "child" ? "a child" : "") : `your ${p.relationship}`;
+    const rel = p.relationship === "adult child" ? "your adult child" : p.relationship === "other" ? (p.careKind === "child" ? "a child" : "") : p.relationship === "unknown" ? "" : `your ${p.relationship}`;
     const stage = isChildPerson(p) && p.ageRange ? ageRangeLabel(p.ageRange) : "";
     const tail = [rel, stage].filter(Boolean).join(" · ");
     return `${p.name || personPhrase(p)}${tail ? ` (${tail})` : ""}`;

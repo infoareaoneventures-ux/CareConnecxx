@@ -61,8 +61,8 @@ describe("the family intake follows the site: one step list, first unanswered st
   });
 
   it("answers already on the site are never asked again", () => {
-    const d = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["MON"], timeOfDay: ["morning"], photoSkipped: true, relationship: "parent", seniorName: "Rosa Diaz" };
-    expect(nextFamilyStep(d)).toBe("family_ask_emergency");
+    const d = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["MON"], timeOfDay: ["morning"], photoSkipped: true, relationship: "parent", seniorName: "Rosa Diaz", adultsCount: 1, caregiversNeeded: 1 };
+    expect(nextFamilyStep(d)).toBe("family_ask_emergency"); // the site's adultsCount answers the count question
   });
 
   it("the roster gate works like the site's step 10: a child needs a stage, Other needs adult or child, names before anything", () => {
@@ -74,15 +74,29 @@ describe("the family intake follows the site: one step list, first unanswered st
     const named = { ...base, ...dataFromRoster([{ relationship: "self", name: "Hamse" }, { relationship: "child", name: "Mahad K" }]) };
     expect(nextFamilyStep(named)).toBe("family_ask_recipient_stage");
     expect(familyQuestion("family_ask_recipient_stage", named)).toContain("Mahad K");
-    const staged = { ...base, ...dataFromRoster([{ relationship: "self", name: "Hamse" }, { relationship: "child", name: "Mahad K", ageRange: "toddler" }]) };
-    expect(nextFamilyStep(staged)).toBe("family_ask_emergency");
+    const staged = { ...base, ...dataFromRoster([{ relationship: "self", name: "Hamse" }, { relationship: "child", name: "Mahad K", ageRange: "toddler" }]), rosterCountConfirmed: true };
+    expect(nextFamilyStep(staged)).toBe("family_ask_providers_count"); // the site's "How many care providers do you need?"
+    expect(nextFamilyStep({ ...staged, caregiversNeeded: 1 })).toBe("family_ask_emergency");
+    // ONE person named → the site's "How many people need care?" counter is asked before moving on
+    const onlyMom = { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) };
+    expect(nextFamilyStep(onlyMom)).toBe("family_ask_more_people");
+    expect(familyQuestion("family_ask_more_people", onlyMom)).toContain("just Rosa Diaz, or more? Reply 1, 2, 3, or 4");
+    expect(nextFamilyStep({ ...onlyMom, rosterCountConfirmed: true })).toBe("family_ask_providers_count");
+    // a person the counter added, relationship still to be asked, in the site's words
+    const placeholder = { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }, { relationship: "unknown", name: "" }]), rosterCountConfirmed: true };
+    expect(nextFamilyStep(placeholder)).toBe("family_ask_recipient_relationship");
+    expect(familyQuestion("family_ask_recipient_relationship", placeholder)).toBe("What is your relationship to care recipient 2? Myself, Parent, Spouse or Partner, Adult child, Child, or Other.");
+    // a bare "my son": child or adult son/daughter is ASKED, never guessed (the site's two buttons)
+    const bareSon = { ...base, ...dataFromRoster([{ relationship: "child", name: "", kindUnknown: true }]) };
+    expect(nextFamilyStep(bareSon)).toBe("family_ask_recipient_kind");
+    expect(familyQuestion("family_ask_recipient_kind", bareSon)).toBe("Is your son or daughter a child, or an adult son or daughter?");
     // Other → adult or child first
     const other = { ...base, ...dataFromRoster([{ relationship: "other", name: "Nadia" }]) };
     expect(nextFamilyStep(other)).toBe("family_ask_recipient_kind");
     const otherChild = { ...base, ...dataFromRoster([{ relationship: "other", name: "Nadia", careKind: "child" }]) };
     expect(nextFamilyStep(otherChild)).toBe("family_ask_recipient_stage");
     // an adult child is an adult: no stage
-    const adultChild = { ...base, ...dataFromRoster([{ relationship: "adult child", name: "Sam" }]) };
+    const adultChild = { ...base, ...dataFromRoster([{ relationship: "adult child", name: "Sam" }]), rosterCountConfirmed: true, caregiversNeeded: 1 };
     expect(nextFamilyStep(adultChild)).toBe("family_ask_emergency");
   });
 
@@ -107,6 +121,12 @@ describe("the family intake follows the site: one step list, first unanswered st
     expect(q2).toContain("Supervision");
   });
 
+  it("after the care types, the site's pets / smoking checkboxes are asked once", () => {
+    const d = { firstName: "H", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["MON"], timeOfDay: ["morning"], photoSkipped: true, ...dataFromRoster([{ relationship: "self", name: "H" }]), rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Companionship"] };
+    expect(nextFamilyStep(d)).toBe("family_ask_pets_smoking");
+    expect(nextFamilyStep({ ...d, householdAsked: true })).toBe("family_ask_rate");
+  });
+
   it("value rules: day codes, frequency words", () => {
     expect(normalizeDayCodes(["tuesday", "Mon", "fri"])).toEqual(["MON", "TUE", "FRI"]);
     expect(normalizeFrequency("Part-time")).toBe("part_time");
@@ -128,6 +148,20 @@ describe("readRoster — who the care is for, read as a list (up to four, like t
     expect(r?.capped).toBe(false);
   });
 
+  it('a bare "my son" is flagged to be asked; "my 3-year-old son" is a child; "my grown son" is an adult child', async () => {
+    const { deps } = makeDeps([
+      '{"people":[{"relationship":"son or daughter (age unknown)","name":""}]}',
+      '{"people":[{"relationship":"child","name":"","stage":"Toddler"}]}',
+      '{"people":[{"relationship":"adult child","name":"Sam"}]}',
+    ]);
+    const bare = await readRoster(deps, "my son", { first: "H", last: "" });
+    expect(bare?.roster).toEqual([{ relationship: "child", name: "", kindUnknown: true }]);
+    const toddler = await readRoster(deps, "my 3-year-old son", { first: "H", last: "" });
+    expect(toddler?.roster).toEqual([{ relationship: "child", name: "", ageRange: "toddler" }]);
+    const grown = await readRoster(deps, "my grown son Sam", { first: "H", last: "" });
+    expect(grown?.roster).toEqual([{ relationship: "adult child", name: "Sam" }]);
+  });
+
   it("five people are kept to four and flagged", async () => {
     const { deps } = makeDeps(['{"people":[{"relationship":"parent","name":"A"},{"relationship":"parent","name":"B"},{"relationship":"child","name":"C"},{"relationship":"child","name":"D"},{"relationship":"other","name":"E"}]}']);
     const r = await readRoster(deps, "all five of them", { first: "H", last: "" });
@@ -147,13 +181,15 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
       "ONGOING",                                                         // ongoing
       '{"days":["TUE"],"flexible":false,"timeOfDay":["morning"]}',       // days
       "SKIP",                                                            // photo
-      CHILD_ROSTER,                                                      // recipients
+      CHILD_ROSTER,                                                      // recipients (two named → the count is known)
       "{}",                                                              // side extraction (6-word message)
       "Mahad K",                                                         // child's name
       "Toddler",                                                         // stage
+      "1",                                                               // how many care providers
       '{"name":"contact s s","phone":"4088745451","relationship":""}',   // emergency
       "cousin",                                                          // emergency relationship
       '{"needs":["light housekeeping","supervision"]}',                  // needs
+      '{"pets":false,"smoking":false}',                                  // pets / smoking
       "16",                                                              // rate
       "TEXT",                                                            // description (text)
       "hamse@example.com",                                               // email
@@ -178,20 +214,24 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     await say("tuesday mornings");
     expect(sent.at(-1)).toContain("TUE, morning, got it. Want to add a profile photo");
     await say("skip");
-    expect(sent.at(-1)).toContain("skip the photo. Who is the care for?");
+    expect(sent.at(-1)).toContain("skip the photo. What is your relationship to the person needing care? Myself, Parent, Spouse or Partner, Adult child, Child, or Other.");
     await say("it's for me and my child");
     expect(sent.at(-1)).toBe("Care for you and your child, got it. What's your child's name? First and last is best.");
     await say("Mahad K");
     expect(sent.at(-1)).toContain("Mahad K, got it. Which stage is Mahad K at");
     await say("toddler");
-    expect(sent.at(-1)).toContain("Toddler, got it. Who should we contact in case of an emergency?");
+    expect(sent.at(-1)).toContain("Toddler, got it. How many care providers do you need? Reply 1, 2, 3, or 4.");
+    await say("1");
+    expect(sent.at(-1)).toContain("1 care provider, got it. Who should we contact in case of an emergency?");
     await say("contact s s 4088745451");
     expect(sent.at(-1)).toContain("How is contact s s related to you?");
     await say("cousin");
     expect(sent.at(-1)).toContain("Cousin, got it. What type of care is needed?");
     expect(sent.at(-1)).toContain("Child care:");
     await say("light housekeeping and supervision");
-    expect(sent.at(-1)).toContain("Light Housekeeping, Supervision, got it. What would you like to pay per hour?");
+    expect(sent.at(-1)).toContain("Light Housekeeping, Supervision, got it. Two quick ones: are there pets in the home, and does anyone in the household smoke?");
+    await say("no and no");
+    expect(sent.at(-1)).toContain("No pets, no smoking, got it. What would you like to pay per hour?");
     await say("16");
     expect(sent.at(-1)).toContain("$16/hr, got it. What else should care providers know");
     await say("this is for my family.");
@@ -206,10 +246,37 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     expect(all.careNeeds).toEqual(["Light Housekeeping", "Supervision"]);
     expect(all.jobDescription).toBe("this is for my family.");
     expect(all.emergencyContactPhone).toBe("(408) 874-5451");
+    expect(all.caregiversNeeded).toBe(1);
+    expect(all.petsInHome).toBe(false);
+    expect(all.smokingHousehold).toBe(false);
+  });
+
+  it("one person named → the count question; a number adds people to ask about in the site's order; \"no\" confirms", async () => {
+    const base = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true };
+    // "my mom Rosa" → one person → asked how many in total
+    const { deps, sent, merged } = makeDeps(['{"people":[{"relationship":"parent","name":"Rosa Diaz"}]}', '{"count":2,"others":""}', '{"people":[{"relationship":"son or daughter (age unknown)","name":""}]}', "ADULT", "Sam Diaz"], base);
+    const session: any = { onboardingData: {} };
+    const say = async (text: string) => { await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text, session }); session.onboardingData = Object.assign({}, session.onboardingData, ...merged); };
+    await say("my mom Rosa Diaz");
+    expect(sent.at(-1)).toContain("Care for Rosa Diaz, got it. How many people need care in total — just Rosa Diaz, or more?");
+    await say("2");
+    expect(sent.at(-1)).toContain("2 people, got it. What is your relationship to care recipient 2? Myself, Parent, Spouse or Partner, Adult child, Child, or Other.");
+    await say("my son");
+    expect(sent.at(-1)).toContain("Your son or daughter, got it. Is your son or daughter a child, or an adult son or daughter?");
+    await say("he's an adult");
+    expect(sent.at(-1)).toContain("An adult, got it. What's your adult child's name?");
+    await say("Sam Diaz");
+    expect(sent.at(-1)).toContain("Sam Diaz, got it. How many care providers do you need?");
+    const all = Object.assign({}, ...merged);
+    expect(all.additionalRecipients).toEqual([{ name: "Sam Diaz", relationship: "adult child" }]);
+    // "no" at the count question confirms a single person
+    const { deps: d2, sent: s2 } = makeDeps(['{"count":1,"others":""}'], { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) });
+    await runFamilyIntakeTurn(d2, { phone: "+1", chatId: "c", text: "no, just her", session: { onboardingData: {} } });
+    expect(s2.at(-1)).toContain("Just the one person, got it. How many care providers do you need?");
   });
 
   it("a correction at any step changes the roster instead of becoming job text", async () => {
-    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, relationship: "parent", seniorName: "Mahad K", emergencyContactName: "s s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Light Housekeeping"] };
+    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, relationship: "parent", seniorName: "Mahad K", rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "s s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Light Housekeeping"], householdAsked: true };
     // at the rate step, they say who the care is for instead of a rate
     const { deps, sent, merged } = makeDeps(["unknown", '{"recipients":"me and my child"}', CHILD_ROSTER], site);
     const session: any = { onboardingData: { firstName: "Hamse" } };
@@ -243,7 +310,7 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
   });
 
   it("a description over the cap is refused with the count, never cut; medication instructions are refused", async () => {
-    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, relationship: "self", seniorName: "Hamse", emergencyContactName: "s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Light Housekeeping"], rate: 16 };
+    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, relationship: "self", seniorName: "Hamse", rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Light Housekeeping"], householdAsked: true, rate: 16 };
     const { deps, sent, merged } = makeDeps(["TEXT", "TEXT"], site);
     await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text: "x".repeat(1001), session: { onboardingData: {} } });
     expect(sent.at(-1)).toContain("1,001 characters");

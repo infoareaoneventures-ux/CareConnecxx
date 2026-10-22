@@ -438,6 +438,8 @@ export interface SendOptions {
    * Docs: /guides/messaging/protocol-selection/
    */
   preferredService?: LinqService;
+  /** What the thread mirror records as the message origin ("cara_sms" default; "team" = a human reply from the admin, 2026-10-22). */
+  mirrorSource?: string;
   /**
    * What to do when the guarded send paths (safeSend/sendToPhone) are blocked
    * by the circuit breaker or per-pair rate limit. "queue" (default) parks the
@@ -593,7 +595,7 @@ async function sendMessageDeliver(
     // Mirror the cleaned text so the web inbox matches what actually went out
     // over SMS/iMessage — see cleanOutboundText for the lint+redact contract.
     mirrorText = await cleanOutboundText(textOrMessage);
-    void mirrorToWebThread({ chatId, direction: "outbound", text: mirrorText });
+    void mirrorToWebThread({ chatId, direction: "outbound", text: mirrorText, ...(opts.mirrorSource ? { source: opts.mirrorSource } : {}) });
   } catch { /* non-critical */ }
 
   // Outbound history recorder (hallucination hardening U3 / R4). Fired AFTER

@@ -16,7 +16,7 @@ import { logAudit } from "../observability/auditLog";
 
 const db = admin.firestore();
 
-export type AdminAssistQueueType = "request_consent" | "end_consent" | "send_link" | "acted";
+export type AdminAssistQueueType = "request_consent" | "end_consent" | "send_link" | "acted" | "human_on" | "human_off" | "team_text";
 export const ADMIN_ASSIST_LINK_KINDS = [
   "client_identity", "client_payment", "caregiver_membership", "caregiver_background_check", "caregiver_payouts", "caregiver_photo",
 ] as const;
@@ -33,6 +33,8 @@ export interface AdminAssistQueueDoc {
   kind?: string;
   summary?: string;
   extra?: Record<string, unknown>;
+  /** type "team_text": the team's reply, sent from Evia's number into the person's thread. */
+  text?: string;
 }
 
 export function linkKindAllowedForRole(kind: string, role: "client" | "caregiver"): kind is AdminAssistLinkKind {
@@ -69,6 +71,18 @@ export const processAdminAssistQueue = functions.firestore
         case "end_consent":
           await assist.endAdminAssist({ uid: data.uid, phone: person.phone, adminUid: data.adminUid, adminName: data.adminName ?? "", reason: "ended" });
           break;
+        // Human mode (2026-10-22): the team holds the thread / hands it back / replies into it.
+        case "human_on":
+        case "human_off": {
+          const { setHumanMode } = await import("../agents/humanMode");
+          await setHumanMode({ uid: data.uid, phone: person.phone, on: data.type === "human_on", reason: "admin", by: { uid: data.adminUid, name: data.adminName ?? "" } });
+          break;
+        }
+        case "team_text": {
+          const { sendTeamText } = await import("../agents/humanMode");
+          await sendTeamText({ uid: data.uid, phone: person.phone, text: String(data.text ?? ""), adminUid: data.adminUid, adminName: data.adminName ?? "" });
+          break;
+        }
         case "acted": {
           // Only inside an open window (the rules already gate the write itself; this gates the record + text).
           if (!(await assist.assistWindowOpenFor(data.uid, data.adminUid))) { await done("No open consent window for this person"); return; }

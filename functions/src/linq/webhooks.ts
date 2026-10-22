@@ -1150,6 +1150,19 @@ const handleInboundInner = traceable(
     if (handled) { await stopTyping(chatId).catch(() => {}); return; }
   }
 
+  // ── Human mode (2026-10-22): the team holds this thread; Evia stays quiet ──
+  // The text is already mirrored into the thread above; the counters move, the
+  // team is alerted, and the admin's Messages tab shows it live. STOP falls
+  // through to the normal handler (agents/humanMode.ts).
+  if ((session as unknown as Record<string, unknown>).humanMode && ((session as unknown as Record<string, { on?: boolean }>).humanMode.on === true)) {
+    const { handleInboundWhileHuman } = await import("../agents/humanMode");
+    const held = await handleInboundWhileHuman({ phone, session, text }).catch((err) => {
+      console.error("humanMode inbound failed", err instanceof Error ? err.message : err);
+      return false;
+    });
+    if (held) { await stopTyping(chatId).catch(() => {}); return; }
+  }
+
   // ── Sticker / voice memo / media-only — no text to process ──────────────────
   // Stickers are inbound-only (API doesn't support sending them). Voice memos
   // are transcribed above; if that failed we still land here. Other media

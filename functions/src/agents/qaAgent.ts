@@ -3727,6 +3727,12 @@ export async function runQaAgent(params: {
           handedToHumanAt:     handoffIso,
           handedToHumanReason: "low_confidence_unbacked_claim",
         }, { merge: true }).catch(() => { /* non-critical */ });
+        // 2026-10-22: the same flag the admin's "Hand to human" sets — Evia goes quiet for this
+        // person and they show in the admin's "Needs a human" list until the team hands back.
+        if (userId) {
+          import("./humanMode").then((m) => m.setHumanMode({ uid: userId, phone, on: true, reason: "low_confidence", by: "evia" }))
+            .catch((err) => console.warn("handoff setHumanMode failed (non-fatal)", err instanceof Error ? err.message : err));
+        }
         // 2026-09-19: the "looping in a teammate" reply used to go nowhere — the
         // flag was set and nothing told anyone. Now it lands in the person's
         // support room (a system note, never texted back) and alerts the team.

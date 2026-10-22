@@ -2344,12 +2344,37 @@ export const shiftHoursService = {
 // ─── Admin-only helpers ──────────────────────────────────────────────────────
 
 export interface AdminAssistQueueRequest {
-    type: 'request_consent' | 'end_consent' | 'send_link';
+    type: 'request_consent' | 'end_consent' | 'send_link' | 'human_on' | 'human_off' | 'team_text';
     uid: string;
     role: 'client' | 'caregiver';
     linkKind?: string;
+    /** type team_text: the reply the team sends into the person's thread. */
+    text?: string;
     adminUid: string;
     adminName: string;
+}
+/** The flat human-mode fields on users/{uid} (server-written, agents/humanMode.ts). */
+export interface HumanModeFields {
+    humanModeOn?: boolean;
+    humanModeSince?: string;
+    humanModeReason?: string;
+    humanModeByName?: string;
+    humanModeUnread?: number;
+    humanModeLastText?: string;
+    humanModeLastAt?: string;
+    humanModeEndedAt?: string;
+}
+export interface HumanQueueRow {
+    uid: string;
+    role: 'client' | 'caregiver';
+    name: string;
+    phone?: string;
+    since?: string;
+    reason?: string;
+    byName?: string;
+    lastText?: string;
+    lastAt?: string;
+    unread: number;
 }
 export interface AdminAssistState {
     status: 'requested' | 'granted' | 'declined' | 'ended' | 'expired';
@@ -2469,6 +2494,39 @@ export const adminService = {
             (snap) => onState(snap.exists ? (snap.data() as AdminAssistState) : null),
             () => onState(null),
         );
+    },
+    /** The person's human-mode fields, live (users/{uid}). */
+    watchHumanMode: (uid: string, onFields: (fields: HumanModeFields | null) => void): (() => void) => {
+        if (!isConfigured || !db) { onFields(null); return () => {}; }
+        return db.collection('users').doc(uid).onSnapshot(
+            (snap) => onFields(snap.exists ? (snap.data() as HumanModeFields) : null),
+            () => onFields(null),
+        );
+    },
+    /** Everyone whose human-mode switch is on, newest activity first, live. */
+    watchHumanQueue: (onRows: (rows: HumanQueueRow[], error?: string) => void): (() => void) => {
+        if (!isConfigured || !db) { onRows([], 'Database not connected'); return () => {}; }
+        return db.collection('users').where('humanModeOn', '==', true).orderBy('humanModeLastAt', 'desc').limit(200)
+            .onSnapshot(
+                (snap) => onRows(snap.docs.map((d) => {
+                    const u = d.data() as Record<string, unknown>;
+                    const name = [u.firstName, u.lastName].filter((x) => typeof x === 'string' && x).join(' ').trim()
+                        || (typeof u.name === 'string' ? u.name : '') || (typeof u.displayName === 'string' ? u.displayName : '') || (typeof u.email === 'string' ? u.email : '') || d.id;
+                    return {
+                        uid: d.id,
+                        role: u.userType === 'caregiver' ? 'caregiver' : 'client',
+                        name,
+                        phone: typeof u.phone === 'string' ? u.phone : undefined,
+                        since: typeof u.humanModeSince === 'string' ? u.humanModeSince : undefined,
+                        reason: typeof u.humanModeReason === 'string' ? u.humanModeReason : undefined,
+                        byName: typeof u.humanModeByName === 'string' ? u.humanModeByName : undefined,
+                        lastText: typeof u.humanModeLastText === 'string' ? u.humanModeLastText : undefined,
+                        lastAt: typeof u.humanModeLastAt === 'string' ? u.humanModeLastAt : undefined,
+                        unread: typeof u.humanModeUnread === 'number' ? u.humanModeUnread : 0,
+                    };
+                })),
+                (err) => onRows([], err?.code === 'failed-precondition' ? 'The list index is still building — try again in a minute' : 'Could not load the list'),
+            );
     },
     /** The person's Evia text thread (threads/cara_{uid}/messages, server-mirrored), oldest first, live. */
     watchEviaThread: (uid: string, onMessages: (messages: EviaThreadMessage[], error?: string) => void): (() => void) => {

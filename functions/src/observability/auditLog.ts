@@ -143,6 +143,10 @@ export type AuditEventType =
   | "admin_link_sent"
   // One acted-for change on the person's pages or through a callable (data: kind, summary, adminName).
   | "admin_acted"
+  // Human mode (2026-10-22, agents/humanMode.ts): the team holds the person's thread.
+  | "human_mode_on"
+  | "human_mode_off"
+  | "team_text_sent"
   // The person's own timeline (2026-10-22): one entry per in-app notification
   // created for them (notifications/userNotification.ts) — the same place the
   // person is told, so the log can't drift from what they saw.

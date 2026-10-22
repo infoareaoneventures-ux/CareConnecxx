@@ -169,7 +169,8 @@ service cloud.firestore {
       
       // Subcollection: notifications
       match /notifications/{notificationId} {
-        allow read: if isOwner(userId);
+        // An admin may read (admin assist, 2026-10-22: the pages look as they do for the person).
+        allow read: if isOwner(userId) || isAdmin();
         // Cross-user notifications are server-owned side effects (U3): only the
         // Admin SDK creates them. Browsers never peer-write here.
         allow create: if isAdmin();
@@ -177,7 +178,7 @@ service cloud.firestore {
         // (isDeleted + deletedAt) — the exact fields useNotifications writes.
         // hasOnly(['isRead','read']) alone silently denied markAsRead and the
         // trash icon (both include their timestamp field; found live 2026-07-15).
-        allow update: if isOwner(userId) &&
+        allow update: if (isOwner(userId) || actingFor(userId)) &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['isRead', 'read', 'readAt', 'isDeleted', 'deletedAt']);
         // U3: owner hard-delete denied so the deterministic notification id can

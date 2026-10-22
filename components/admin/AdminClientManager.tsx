@@ -11,6 +11,7 @@ import { AdminAssistStrip } from './AdminAssistStrip';
 import { AdminSendLinks } from './AdminSendLinks';
 import { PersonAuditLog } from './PersonAuditLog';
 import { PersonMessages } from './PersonMessages';
+import { HumanModeSwitch } from './HumanModeSwitch';
 
 type Panel = 'profile' | 'appointments' | 'messages' | 'audit';
 
@@ -41,11 +42,13 @@ interface ClientRow extends AdminUser {
 
 type ConfirmAction = 'ban' | 'unban' | 'reset' | null;
 
-export const AdminClientManager: React.FC = () => {
+export const AdminClientManager: React.FC<{ initialUid?: string; initialPanel?: Panel }> = ({ initialUid, initialPanel }) => {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'banned'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'banned' | 'human'>('all');
+  // Opened from the "Needs a human" list: select that person and land on the asked panel once the rows are in.
+  const [openedInitial, setOpenedInitial] = useState<string | null>(null);
   const [selected, setSelected] = useState<ClientRow | null>(null);
   const [panel, setPanel] = useState<Panel>('profile');
   const [editing, setEditing] = useState(false);
@@ -105,6 +108,15 @@ export const AdminClientManager: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!initialUid || openedInitial === initialUid || clients.length === 0) return;
+    const row = clients.find(c => c.uid === initialUid);
+    if (!row) return;
+    setOpenedInitial(initialUid);
+    void openClient(row).then(() => { if (initialPanel) setPanel(initialPanel); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialUid, clients]);
 
   const openClient = async (c: ClientRow) => {
     setSelected(c);
@@ -346,7 +358,8 @@ export const AdminClientManager: React.FC = () => {
       statusFilter === 'all' ||
       (statusFilter === 'banned' && c.isBanned) ||
       (statusFilter === 'suspended' && c.isSuspended && !c.isBanned) ||
-      (statusFilter === 'active' && !c.isBanned && !c.isSuspended && c.verified);
+      (statusFilter === 'active' && !c.isBanned && !c.isSuspended && c.verified) ||
+      (statusFilter === 'human' && (c as any).humanModeOn === true);
     return matchSearch && matchStatus;
   });
 
@@ -375,10 +388,10 @@ export const AdminClientManager: React.FC = () => {
             />
           </div>
           <div className="flex gap-1">
-            {(['all', 'active', 'suspended', 'banned'] as const).map(f => (
+            {(['all', 'active', 'suspended', 'banned', 'human'] as const).map(f => (
               <button key={f} onClick={() => setStatusFilter(f)}
-                className={`flex-1 py-1 text-xs rounded-full font-medium capitalize transition-colors ${statusFilter === f ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-                {f}
+                className={`flex-1 py-1 text-xs rounded-full font-medium capitalize transition-colors ${statusFilter === f ? (f === 'human' ? 'bg-rose-100 text-rose-700' : 'bg-primary-100 text-primary-700') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                {f === 'human' ? 'Needs a human' : f}
               </button>
             ))}
           </div>
@@ -432,6 +445,9 @@ export const AdminClientManager: React.FC = () => {
 
           {/* Admin assist (2026-10-22): "Act for this client" → texted YES → one-hour window */}
           <AdminAssistStrip uid={selected.uid} role="client" personName={selected.name || (selected as any).firstName || 'this client'} phone={(selected as any).phone} onToast={showToast} />
+
+          {/* Human mode (2026-10-22): Hand to human / Back to Evia */}
+          <HumanModeSwitch uid={selected.uid} role="client" personName={selected.name || (selected as any).firstName || 'this client'} onToast={showToast} />
 
           {/* Sub-tabs */}
           <div className="bg-white border-b border-slate-200 flex px-5">
@@ -724,7 +740,7 @@ export const AdminClientManager: React.FC = () => {
               </>
             )}
 
-            {panel === 'messages' && <PersonMessages uid={selected.uid} personName={selected.name || (selected as any).firstName || 'this client'} />}
+            {panel === 'messages' && <PersonMessages uid={selected.uid} role="client" personName={selected.name || (selected as any).firstName || 'this client'} onToast={showToast} />}
 
             {panel === 'audit' && <PersonAuditLog uid={selected.uid} phone={(selected as any).phone} />}
 

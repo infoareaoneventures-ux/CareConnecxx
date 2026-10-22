@@ -12,6 +12,7 @@ import { AdminAssistStrip } from './AdminAssistStrip';
 import { AdminSendLinks } from './AdminSendLinks';
 import { PersonAuditLog } from './PersonAuditLog';
 import { PersonMessages } from './PersonMessages';
+import { HumanModeSwitch } from './HumanModeSwitch';
 import { Caregiver, Appointment } from '../../types';
 import { adminMvrLineApplies, adminMvrStatusFor, adminMvrTone, adminTransportationLine, adminMvrReportId, checkrReportUrl } from '../../utils/drivingRecordAdmin';
 
@@ -25,11 +26,13 @@ const SKILLS_OPTIONS: string[] = [...PRIMARY_SERVICES];
 
 const VER_FILTERS = ['all', 'pending', 'submitted', 'approved', 'rejected'] as const;
 
-export const AdminCaregiverManager: React.FC = () => {
+export const AdminCaregiverManager: React.FC<{ initialUid?: string; initialPanel?: Panel }> = ({ initialUid, initialPanel }) => {
   const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [verFilter, setVerFilter] = useState<string>('all');
+  // Opened from the "Needs a human" list: select that person and land on the asked panel once the rows are in.
+  const [openedInitial, setOpenedInitial] = useState<string | null>(null);
   const [selected, setSelected] = useState<Caregiver | null>(null);
   const [panel, setPanel] = useState<Panel>('profile');
   const [editing, setEditing] = useState(false);
@@ -130,6 +133,15 @@ export const AdminCaregiverManager: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!initialUid || openedInitial === initialUid || caregivers.length === 0) return;
+    const row = caregivers.find(c => c.uid === initialUid);
+    if (!row) return;
+    setOpenedInitial(initialUid);
+    void openCaregiver(row).then(() => { if (initialPanel) setPanel(initialPanel); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialUid, caregivers]);
 
   const openCaregiver = async (c: Caregiver) => {
     setSelected(c);
@@ -362,7 +374,9 @@ export const AdminCaregiverManager: React.FC = () => {
     const searchDigits = search.replace(/\D/g, '');
     const matchSearch = !search || c.name?.toLowerCase().includes(search.toLowerCase()) || c.email?.toLowerCase().includes(search.toLowerCase())
       || (searchDigits.length >= 3 && String((c as any).phone || '').replace(/\D/g, '').includes(searchDigits));
-    const matchVer = verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && (!c.verificationStatus || c.verificationStatus === 'info_requested'));
+    const matchVer = verFilter === 'human'
+      ? (c as any).humanModeOn === true
+      : (verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && (!c.verificationStatus || c.verificationStatus === 'info_requested')));
     return matchSearch && matchVer;
   });
 
@@ -379,6 +393,7 @@ export const AdminCaregiverManager: React.FC = () => {
             {VER_FILTERS.map(f => (
               <button key={f} onClick={() => setVerFilter(f)} className={`px-2.5 py-1 text-xs rounded-full font-medium capitalize transition-colors ${verFilter === f ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{f}</button>
             ))}
+            <button onClick={() => setVerFilter('human')} className={`px-2.5 py-1 text-xs rounded-full font-medium transition-colors ${verFilter === 'human' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Needs a human</button>
           </div>
         </div>
 
@@ -441,6 +456,9 @@ export const AdminCaregiverManager: React.FC = () => {
 
           {/* Admin assist (2026-10-22): "Act for this care provider" → texted YES → one-hour window */}
           <AdminAssistStrip uid={selected.uid} role="caregiver" personName={selected.name || 'this care provider'} phone={(selected as any).phone} onToast={showToast} />
+
+          {/* Human mode (2026-10-22): Hand to human / Back to Evia */}
+          <HumanModeSwitch uid={selected.uid} role="caregiver" personName={selected.name || 'this care provider'} onToast={showToast} />
 
           {/* Tabs */}
           <div className="flex border-b border-slate-200 px-6">
@@ -682,7 +700,7 @@ export const AdminCaregiverManager: React.FC = () => {
             )}
 
             {/* APPOINTMENTS */}
-            {panel === 'messages' && <PersonMessages uid={selected.uid} personName={selected.name || 'this care provider'} />}
+            {panel === 'messages' && <PersonMessages uid={selected.uid} role="caregiver" personName={selected.name || 'this care provider'} onToast={showToast} />}
 
             {panel === 'audit' && <PersonAuditLog uid={selected.uid} phone={(selected as any).phone} />}
 

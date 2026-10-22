@@ -3379,6 +3379,9 @@ async function executeToolCall(
         const { relayToTeam } = await import("../utils/supportRoom");
         const { roomId } = await relayToTeam({ userId: String(userId), text: message.trim().slice(0, 2000) });
         logAudit({ eventType: "support_message_relayed", userId: String(userId), data: { source: "mcp:contact_support", roomId } }).catch(() => {});
+        // 2026-10-22: they asked for a person — the team holds the thread from here (admin "Needs a human" list).
+        import("../agents/humanMode").then((m) => m.setHumanMode({ uid: String(userId), on: true, reason: "asked_for_human", by: "evia" }))
+          .catch((err) => console.warn("contact_support setHumanMode failed (non-fatal)", err instanceof Error ? err.message : err));
         return { success: true, roomId, instruction: "Tell them in one line that our team has their message and will reply here by text. Do not promise a time, and do not keep answering the thing they asked the team about." };
       }
 

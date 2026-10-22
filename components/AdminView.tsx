@@ -25,6 +25,8 @@ import { AdminAlertsPanel } from './admin/AdminAlertsPanel';
 import { WaitlistPanel } from './admin/WaitlistPanel';
 import { AdminCaraControlRoom } from './admin/AdminCaraControlRoom';
 import { AdminReports } from './admin/AdminReports';
+import { AdminHumanQueue } from './admin/AdminHumanQueue';
+import { adminService } from '../services/api';
 
 interface AdminViewProps {
   onBack: () => void;
@@ -34,7 +36,7 @@ type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'team' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes'
   | 'finance' | 'disputes' | 'messages' | 'blog' | 'audit'
-  | 'cara_control' | 'alerts' | 'reports' | 'waitlist';
+  | 'cara_control' | 'alerts' | 'reports' | 'waitlist' | 'human_queue';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -112,6 +114,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   }, []);
 
   const [openAlertsCount, setOpenAlertsCount] = useState(0);
+  // "Needs a human" (2026-10-22): everyone whose human-mode switch is on; clicking one opens their page.
+  const [humanQueueCount, setHumanQueueCount] = useState(0);
+  const [openPerson, setOpenPerson] = useState<{ uid: string; role: 'client' | 'caregiver' } | null>(null);
+  useEffect(() => adminService.watchHumanQueue((rows) => setHumanQueueCount(rows.length)), []);
   const [caraFailedCount, setCaraFailedCount] = useState(0);
   const [caraPendingCount, setCaraPendingCount] = useState(0);
   useEffect(() => {
@@ -188,6 +194,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         { id: 'appointments' as TabId, label: 'Appointments', icon: Calendar },
         { id: 'reviews' as TabId, label: 'Reviews', icon: Star },
         { id: 'intakes' as TabId, label: 'Intake Leads', icon: FileText, badge: pendingLeadsCount },
+        { id: 'human_queue' as TabId, label: 'Needs a human', icon: UserCheck, badge: humanQueueCount },
         { id: 'waitlist' as TabId, label: 'Waitlist', icon: Phone },
       ],
     },
@@ -225,7 +232,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'team', 'coordinators', 'appointments', 'reviews', 'disputes', 'messages', 'blog', 'cara_control', 'reports'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'team', 'coordinators', 'appointments', 'reviews', 'disputes', 'messages', 'blog', 'cara_control', 'reports', 'human_queue'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -309,8 +316,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         {/* Tab content */}
         {isFullBleed ? (
           <div className="flex-1 overflow-hidden">
-            {activeTab === 'clients'      && <AdminClientManager />}
-            {activeTab === 'caregivers'   && <AdminCaregiverManager />}
+            {activeTab === 'clients'      && <AdminClientManager initialUid={openPerson?.role === 'client' ? openPerson.uid : undefined} initialPanel={openPerson?.role === 'client' ? 'messages' : undefined} />}
+            {activeTab === 'caregivers'   && <AdminCaregiverManager initialUid={openPerson?.role === 'caregiver' ? openPerson.uid : undefined} initialPanel={openPerson?.role === 'caregiver' ? 'messages' : undefined} />}
+            {activeTab === 'human_queue'  && <AdminHumanQueue onOpen={(uid, role) => { setOpenPerson({ uid, role }); setActiveTab(role === 'caregiver' ? 'caregivers' : 'clients'); }} />}
             {activeTab === 'verification' && <CaregiverVerificationDashboard onShowToast={(msg, type) => showToast(msg)} />}
             {activeTab === 'team'         && <AdminTeamManager />}
             {activeTab === 'coordinators' && <CoordinatorManagement onShowToast={(msg, type) => showToast(msg)} />}

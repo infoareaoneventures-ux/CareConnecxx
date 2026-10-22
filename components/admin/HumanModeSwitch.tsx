@@ -27,7 +27,7 @@ export const HumanModeSwitch: React.FC<Props> = ({ uid, role, personName, onToas
   useEffect(() => { setFields(null); return adminService.watchHumanMode(uid, setFields); }, [uid]);
 
   const on = fields?.humanModeOn === true;
-  const first = personName.split(/\s+/)[0] || 'this person';
+  const first = /^this /.test(personName) ? personName : (personName.split(/\s+/)[0] || 'this person');
 
   const flip = async (next: boolean) => {
     if (!currentUser) { onToast('Not signed in as an admin', 'error'); return; }

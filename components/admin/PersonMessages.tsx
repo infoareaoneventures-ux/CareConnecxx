@@ -54,7 +54,7 @@ export const PersonMessages: React.FC<Props> = ({ uid, personName, role = 'clien
 
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [messages]);
 
-  const first = personName.split(/\s+/)[0] || 'the person';
+  const first = /^this /.test(personName) ? personName : (personName.split(/\s+/)[0] || 'the person');
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 flex flex-col" style={{ minHeight: 320, maxHeight: '70vh' }}>

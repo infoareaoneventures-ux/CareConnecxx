@@ -65,7 +65,7 @@ export const AdminAssistStrip: React.FC<Props> = ({ uid, role, personName, phone
   const remaining = active ? Math.max(0, untilMs - now) : 0;
   const mm = Math.floor(remaining / 60000);
   const ss = Math.floor((remaining % 60000) / 1000).toString().padStart(2, '0');
-  const first = personName.split(/\s+/)[0] || 'this person';
+  const first = /^this /.test(personName) ? personName : (personName.split(/\s+/)[0] || 'this person');
 
   return (
     <div className={`px-5 py-2.5 border-b text-sm flex items-center gap-3 flex-wrap ${active ? 'bg-emerald-50 border-emerald-200' : waiting && !waitLapsed ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'}`}>

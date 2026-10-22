@@ -1406,6 +1406,12 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow write: if false;
     }
+    // ADMIN PRESENCE (2026-10-22) — one doc per admin while they act for / view a person, written
+    // by that admin's own browser (refreshed every minute; the Open sessions page ignores stale ones).
+    match /admin_presence/{adminUid} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isAdmin() && request.auth.uid == adminUid;
+    }
 
     // RESET ACCOUNT QUEUE — admin writes; trigger wipes all data for the account
     match /adminResetQueue/{docId} {

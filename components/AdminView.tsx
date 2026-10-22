@@ -26,6 +26,7 @@ import { WaitlistPanel } from './admin/WaitlistPanel';
 import { AdminCaraControlRoom } from './admin/AdminCaraControlRoom';
 import { AdminReports } from './admin/AdminReports';
 import { AdminHumanQueue } from './admin/AdminHumanQueue';
+import { AdminOpenSessions } from './admin/AdminOpenSessions';
 import { adminService } from '../services/api';
 
 interface AdminViewProps {
@@ -36,7 +37,7 @@ type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'team' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes'
   | 'finance' | 'disputes' | 'messages' | 'blog' | 'audit'
-  | 'cara_control' | 'alerts' | 'reports' | 'waitlist' | 'human_queue';
+  | 'cara_control' | 'alerts' | 'reports' | 'waitlist' | 'human_queue' | 'sessions';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -118,6 +119,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const [humanQueueCount, setHumanQueueCount] = useState(0);
   const [openPerson, setOpenPerson] = useState<{ uid: string; role: 'client' | 'caregiver' } | null>(null);
   useEffect(() => adminService.watchHumanQueue((rows) => setHumanQueueCount(rows.length)), []);
+  // Open sessions (2026-10-22): accounts the team is acting for or viewing right now.
+  const [openSessionsCount, setOpenSessionsCount] = useState(0);
+  useEffect(() => adminService.watchOpenSessions((rows) => setOpenSessionsCount(rows.length)), []);
   const [caraFailedCount, setCaraFailedCount] = useState(0);
   const [caraPendingCount, setCaraPendingCount] = useState(0);
   useEffect(() => {
@@ -195,6 +199,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         { id: 'reviews' as TabId, label: 'Reviews', icon: Star },
         { id: 'intakes' as TabId, label: 'Intake Leads', icon: FileText, badge: pendingLeadsCount },
         { id: 'human_queue' as TabId, label: 'Needs a human', icon: UserCheck, badge: humanQueueCount },
+        { id: 'sessions' as TabId, label: 'Open sessions', icon: Shield, badge: openSessionsCount },
         { id: 'waitlist' as TabId, label: 'Waitlist', icon: Phone },
       ],
     },
@@ -232,7 +237,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'team', 'coordinators', 'appointments', 'reviews', 'disputes', 'messages', 'blog', 'cara_control', 'reports', 'human_queue'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'team', 'coordinators', 'appointments', 'reviews', 'disputes', 'messages', 'blog', 'cara_control', 'reports', 'human_queue', 'sessions'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -319,6 +324,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'clients'      && <AdminClientManager initialUid={openPerson?.role === 'client' ? openPerson.uid : undefined} initialPanel={openPerson?.role === 'client' ? 'messages' : undefined} />}
             {activeTab === 'caregivers'   && <AdminCaregiverManager initialUid={openPerson?.role === 'caregiver' ? openPerson.uid : undefined} initialPanel={openPerson?.role === 'caregiver' ? 'messages' : undefined} />}
             {activeTab === 'human_queue'  && <AdminHumanQueue onOpen={(uid, role) => { setOpenPerson({ uid, role }); setActiveTab(role === 'caregiver' ? 'caregivers' : 'clients'); }} />}
+            {activeTab === 'sessions'     && <AdminOpenSessions onOpen={(uid, role) => { setOpenPerson({ uid, role }); setActiveTab(role === 'caregiver' ? 'caregivers' : 'clients'); }} onToast={(msg) => showToast(msg)} />}
             {activeTab === 'verification' && <CaregiverVerificationDashboard onShowToast={(msg, type) => showToast(msg)} />}
             {activeTab === 'team'         && <AdminTeamManager />}
             {activeTab === 'coordinators' && <CoordinatorManagement onShowToast={(msg, type) => showToast(msg)} />}

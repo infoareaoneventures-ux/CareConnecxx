@@ -101,6 +101,14 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             return;
         }
         setActingContext(actingFor);
+        // Open sessions (2026-10-22): say who is on whose pages — refreshed every minute, cleared on stop.
+        const since = new Date().toISOString();
+        const beat = () => adminService.setAdminPresence({
+            adminUid: actingFor.adminUid, adminName: actingFor.adminName, uid: actingFor.uid, role: actingFor.role,
+            personName: actingFor.name, mode: actingFor.mode === 'view' ? 'view' : 'act', since, lastSeen: new Date().toISOString(),
+        }).catch(() => {});
+        void beat();
+        const beatTimer = setInterval(beat, 60000);
         try { sessionStorage.setItem('evia:acting-for', JSON.stringify(actingFor)); } catch { /* storage unavailable */ }
         let cancelled = false;
         const end = (why: string) => {
@@ -145,6 +153,8 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             : () => {};
         return () => {
             cancelled = true; unsub(); clearInterval(timer); unsubCg();
+            clearInterval(beatTimer);
+            void adminService.clearAdminPresence(actingFor.adminUid);
             if (actingFor.role === 'caregiver') setCaregiverProfile(null);
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps

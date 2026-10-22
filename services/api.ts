@@ -2373,6 +2373,30 @@ export interface HumanModeFields {
     humanModeLastAt?: string;
     humanModeEndedAt?: string;
 }
+/** Admin presence (2026-10-22): one doc per admin while they act for / view a person — written by the admin's own browser, refreshed every minute. */
+export interface AdminPresence {
+    adminUid: string;
+    adminName: string;
+    uid: string;
+    role: 'client' | 'caregiver';
+    personName: string;
+    mode: 'act' | 'view';
+    since: string;
+    lastSeen: string;
+}
+export interface OpenSessionRow {
+    key: string;
+    uid: string;
+    role: 'client' | 'caregiver';
+    personName: string;
+    adminUid: string;
+    adminName: string;
+    /** act = on their pages inside a YES window; view = looking only; window = YES given, nobody on their pages right now. */
+    kind: 'act' | 'view' | 'window';
+    since: string;
+    until?: string;
+    lastSeen?: string;
+}
 export interface HumanQueueRow {
     uid: string;
     role: 'client' | 'caregiver';
@@ -2503,6 +2527,57 @@ export const adminService = {
             (snap) => onState(snap.exists ? (snap.data() as AdminAssistState) : null),
             () => onState(null),
         );
+    },
+    /** The admin's own presence while acting for / viewing a person (admin_presence/{adminUid}). */
+    setAdminPresence: async (p: AdminPresence): Promise<void> => {
+        if (!isConfigured || !db) return;
+        await db.collection('admin_presence').doc(p.adminUid).set(p);
+    },
+    clearAdminPresence: async (adminUid: string): Promise<void> => {
+        if (!isConfigured || !db) return;
+        await db.collection('admin_presence').doc(adminUid).delete().catch(() => {});
+    },
+    /** Every account the team is acting for or viewing right now (YES windows + fresh presence), live. */
+    watchOpenSessions: (onRows: (rows: OpenSessionRow[]) => void): (() => void) => {
+        if (!isConfigured || !db) { onRows([]); return () => {}; }
+        const FRESH_MS = 3 * 60 * 1000;
+        let windows: Array<{ uid: string; role: 'client' | 'caregiver'; adminUid: string; adminName: string; since: string; until: string }> = [];
+        let presence: AdminPresence[] = [];
+        const names = new Map<string, string>();
+        const nameFor = async (uid: string): Promise<string> => {
+            if (names.has(uid)) return names.get(uid)!;
+            const u = (await db!.collection('users').doc(uid).get().catch(() => null))?.data() as Record<string, unknown> | undefined;
+            const n = u ? ([u.firstName, u.lastName].filter((x) => typeof x === 'string' && x).join(' ').trim() || (typeof u.name === 'string' ? u.name : '') || (typeof u.displayName === 'string' ? u.displayName : '') || (typeof u.email === 'string' ? u.email : '')) : '';
+            names.set(uid, n || 'Unnamed account');
+            return names.get(uid)!;
+        };
+        const emit = async () => {
+            const now = Date.now();
+            const rows: OpenSessionRow[] = [];
+            const fresh = presence.filter((p) => now - Date.parse(p.lastSeen) < FRESH_MS);
+            for (const p of fresh) rows.push({ key: `p:${p.adminUid}`, uid: p.uid, role: p.role, personName: p.personName, adminUid: p.adminUid, adminName: p.adminName, kind: p.mode, since: p.since, lastSeen: p.lastSeen });
+            for (const w of windows) {
+                if (Date.parse(w.until) <= now) continue;
+                const onPages = fresh.some((p) => p.uid === w.uid && p.mode === 'act');
+                if (onPages) { const r = rows.find((x) => x.uid === w.uid && x.kind === 'act'); if (r) r.until = w.until; continue; }
+                rows.push({ key: `w:${w.uid}`, uid: w.uid, role: w.role, personName: await nameFor(w.uid), adminUid: w.adminUid, adminName: w.adminName, kind: 'window', since: w.since, until: w.until });
+            }
+            rows.sort((a, b) => (a.since < b.since ? 1 : -1));
+            onRows(rows);
+        };
+        const unsubA = db.collection('adminAssist').where('status', '==', 'granted').onSnapshot((snap) => {
+            windows = snap.docs.map((d) => {
+                const s = d.data() as Record<string, any>;
+                return { uid: d.id, role: s.role === 'caregiver' ? 'caregiver' : 'client', adminUid: String(s.requestedBy?.uid ?? ''), adminName: String(s.requestedBy?.name ?? ''), since: String(s.grantedAt ?? s.requestedAt ?? ''), until: String(s.until ?? '') };
+            });
+            void emit();
+        }, () => { windows = []; void emit(); });
+        const unsubP = db.collection('admin_presence').onSnapshot((snap) => {
+            presence = snap.docs.map((d) => d.data() as AdminPresence);
+            void emit();
+        }, () => { presence = []; void emit(); });
+        const timer = setInterval(() => { void emit(); }, 30000);
+        return () => { unsubA(); unsubP(); clearInterval(timer); };
     },
     /** The person's human-mode fields, live (users/{uid}). */
     watchHumanMode: (uid: string, onFields: (fields: HumanModeFields | null) => void): (() => void) => {

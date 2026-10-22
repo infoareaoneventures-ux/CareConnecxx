@@ -78,6 +78,8 @@ export interface LinqMessage {
 }
 
 export interface AgentSession {
+  /** Admin assist (2026-10-22): a parked "Reply YES to allow" from the admin page (agents/adminAssist.ts). */
+  adminAssistConsentPending?: { uid: string; role: "client" | "caregiver"; adminUid: string; adminName: string; requestedAt: string };
   chatId:           string;
   userId?:          string;
   seniorId?:        string;

@@ -7,8 +7,11 @@ import { dbService, adminService } from '../../services/api';
 import { queueAdminReset } from '../../services/adminResetQueue';
 import { AdminUser, Appointment } from '../../types';
 import { db, functions } from '../../lib/firebase';
+import { AdminAssistStrip } from './AdminAssistStrip';
+import { AdminSendLinks } from './AdminSendLinks';
+import { PersonAuditLog } from './PersonAuditLog';
 
-type Panel = 'profile' | 'appointments';
+type Panel = 'profile' | 'appointments' | 'audit';
 
 interface ClientRow extends AdminUser {
   isSuspended?: boolean;
@@ -424,9 +427,12 @@ export const AdminClientManager: React.FC = () => {
             <span className={`text-sm font-medium px-3 py-1 rounded-full shrink-0 ${statusColor(selected)}`}>{statusLabel(selected)}</span>
           </div>
 
+          {/* Admin assist (2026-10-22): "Act for this client" → texted YES → one-hour window */}
+          <AdminAssistStrip uid={selected.uid} role="client" personName={selected.name || (selected as any).firstName || 'this client'} phone={(selected as any).phone} onToast={showToast} />
+
           {/* Sub-tabs */}
           <div className="bg-white border-b border-slate-200 flex px-5">
-            {(['profile', 'appointments'] as Panel[]).map(p => (
+            {(['profile', 'appointments', 'audit'] as Panel[]).map(p => (
               <button key={p} onClick={() => handlePanelSwitch(p)}
                 className={`px-4 py-3 text-sm font-medium capitalize border-b-2 transition-colors ${panel === p ? 'border-primary-600 text-primary-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                 {p}
@@ -594,6 +600,9 @@ export const AdminClientManager: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Link-only steps (2026-10-22): sent by Evia, never done for the person. The overrides above stay for testing. */}
+                <AdminSendLinks uid={selected.uid} role="client" onToast={showToast} />
+
                 {/* Moderation */}
                 <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
                   <h3 className="font-semibold text-slate-900">Moderation</h3>
@@ -711,6 +720,8 @@ export const AdminClientManager: React.FC = () => {
                 </div>
               </>
             )}
+
+            {panel === 'audit' && <PersonAuditLog uid={selected.uid} phone={(selected as any).phone} />}
 
             {panel === 'appointments' && (
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">

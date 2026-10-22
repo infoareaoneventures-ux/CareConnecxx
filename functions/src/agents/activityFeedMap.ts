@@ -188,6 +188,15 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   amendment_declined:                 { included: false },
   amendment_accepted:                 { included: false },
   interview_completed:                { included: true,  description: "Evia marked an interview as completed." },
+  // Admin assist (2026-10-22): the team's consent trail + sent links are for the admin audit tab, not the family feed;
+  // user_notified is the notification itself, already shown to the person.
+  admin_assist_requested:             { included: false },
+  admin_assist_granted:               { included: false },
+  admin_assist_declined:              { included: false },
+  admin_assist_ended:                 { included: false },
+  admin_assist_expired:               { included: false },
+  admin_link_sent:                    { included: false },
+  user_notified:                      { included: false },
 };
 
 /** The static, PII-free description for an included event, or null if excluded. */

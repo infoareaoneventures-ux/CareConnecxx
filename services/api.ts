@@ -2283,6 +2283,33 @@ export const shiftHoursService = {
 
 // ─── Admin-only helpers ──────────────────────────────────────────────────────
 
+export interface AdminAssistQueueRequest {
+    type: 'request_consent' | 'end_consent' | 'send_link';
+    uid: string;
+    role: 'client' | 'caregiver';
+    linkKind?: string;
+    adminUid: string;
+    adminName: string;
+}
+export interface AdminAssistState {
+    status: 'requested' | 'granted' | 'declined' | 'ended' | 'expired';
+    phone?: string;
+    requestedAt?: string;
+    requestedBy?: { uid: string; name: string };
+    grantedAt?: string;
+    until?: string;
+    endedAt?: string;
+    lastReply?: string;
+}
+export interface PersonAuditEntry {
+    id: string;
+    eventType: string;
+    userId?: string;
+    phone?: string;
+    data: Record<string, unknown>;
+    timestamp: string;
+}
+
 export const adminService = {
     getAllAppointments: async (): Promise<import('../types').Appointment[]> => {
         if (!isConfigured || !db) return [];
@@ -2334,6 +2361,73 @@ export const adminService = {
     unsuspendUser: async (uid: string): Promise<void> => {
         if (!isConfigured || !db) throw new Error("Database not connected");
         await db.collection('users').doc(uid).update({ isSuspended: false, suspendedUntil: null, suspensionReason: null });
+    },
+
+    // ── Admin assist (2026-10-22): consent strip, send-link buttons, per-person audit log ──
+    // The admin page asks the server through adminAssistQueue (no new public callables —
+    // GCP org policy); the server answers on the queue doc (processedAt/error) and keeps the
+    // consent state on adminAssist/{uid}. Read by components/admin/AdminAssistStrip,
+    // AdminSendLinks and PersonAuditLog.
+    queueAdminAssist: async (req: AdminAssistQueueRequest): Promise<string> => {
+        if (!isConfigured || !db) throw new Error("Database not connected");
+        const ref = await db.collection('adminAssistQueue').add({
+            ...req,
+            createdAt: new Date().toISOString(),
+            processedAt: null,
+            error: null,
+        });
+        return ref.id;
+    },
+    /** Follow one queued request until the server has processed it (or the timeout). */
+    watchAdminAssistRequest: (
+        requestId: string,
+        onDone: (result: { error: string | null }) => void,
+        timeoutMs = 30000,
+    ): (() => void) => {
+        if (!isConfigured || !db) { onDone({ error: 'Database not connected' }); return () => {}; }
+        let finished = false;
+        const unsub = db.collection('adminAssistQueue').doc(requestId).onSnapshot((snap) => {
+            const d = snap.data() as { processedAt?: unknown; error?: string | null } | undefined;
+            if (!d || !d.processedAt || finished) return;
+            finished = true; unsub(); clearTimeout(timer);
+            onDone({ error: d.error ?? null });
+        }, () => { if (!finished) { finished = true; clearTimeout(timer); onDone({ error: 'Could not follow the request' }); } });
+        const timer = setTimeout(() => { if (!finished) { finished = true; unsub(); onDone({ error: 'No answer from the server yet — check the audit log' }); } }, timeoutMs);
+        return () => { finished = true; unsub(); clearTimeout(timer); };
+    },
+    /** The person's consent state, live. */
+    watchAdminAssist: (uid: string, onState: (state: AdminAssistState | null) => void): (() => void) => {
+        if (!isConfigured || !db) { onState(null); return () => {}; }
+        return db.collection('adminAssist').doc(uid).onSnapshot(
+            (snap) => onState(snap.exists ? (snap.data() as AdminAssistState) : null),
+            () => onState(null),
+        );
+    },
+    /** Everything logged for one person (by uid and, when known, by phone), newest first. */
+    getPersonAuditLog: async (uid: string, phone?: string, max = 200): Promise<PersonAuditEntry[]> => {
+        if (!isConfigured || !db) return [];
+        const byId = new Map<string, PersonAuditEntry>();
+        const parseTs = (raw: unknown): string => {
+            if (typeof raw === 'string') return raw;
+            if (raw && typeof (raw as { toDate?: () => Date }).toDate === 'function') return (raw as { toDate: () => Date }).toDate().toISOString();
+            return '';
+        };
+        const take = (snap: { docs: Array<{ id: string; data: () => Record<string, unknown> }> }) => {
+            for (const doc of snap.docs) {
+                const d = doc.data();
+                byId.set(doc.id, {
+                    id: doc.id,
+                    eventType: String(d.eventType ?? 'unknown'),
+                    userId: d.userId as string | undefined,
+                    phone: d.phone as string | undefined,
+                    data: (d.data as Record<string, unknown>) ?? {},
+                    timestamp: parseTs(d.timestamp),
+                });
+            }
+        };
+        take(await db.collection('agent_audit_log').where('userId', '==', uid).orderBy('timestamp', 'desc').limit(max).get());
+        if (phone) take(await db.collection('agent_audit_log').where('phone', '==', phone).orderBy('timestamp', 'desc').limit(max).get());
+        return [...byId.values()].sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
     },
 
     updateClient: async (uid: string, data: Partial<import('../types').AdminUser>): Promise<void> => {

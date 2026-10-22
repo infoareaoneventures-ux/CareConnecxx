@@ -1138,6 +1138,18 @@ const handleInboundInner = traceable(
     return;
   }
 
+  // ── Admin assist consent (2026-10-22): "Reply YES to allow" from the admin page ──
+  // Only a strict YES / NO is taken as the answer; anything else routes as usual
+  // (the request lapses after 15 minutes). See agents/adminAssist.ts.
+  if ((session as unknown as Record<string, unknown>).adminAssistConsentPending) {
+    const { handleAdminAssistConsentReply } = await import("../agents/adminAssist");
+    const handled = await handleAdminAssistConsentReply(phone, chatId, session, text).catch((err) => {
+      console.error("adminAssist consent reply failed", err instanceof Error ? err.message : err);
+      return false;
+    });
+    if (handled) { await stopTyping(chatId).catch(() => {}); return; }
+  }
+
   // ── Sticker / voice memo / media-only — no text to process ──────────────────
   // Stickers are inbound-only (API doesn't support sending them). Voice memos
   // are transcribed above; if that failed we still land here. Other media

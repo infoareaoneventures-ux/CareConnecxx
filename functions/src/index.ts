@@ -229,6 +229,7 @@ export { aiProxy } from "./aiProxy";
 
 // ADMIN ADVANCE QUEUE — Firestore trigger; avoids the allUsers IAM callable requirement
 export { processAdminAdvanceQueue } from './triggers/adminAdvanceQueue';
+export { processAdminAssistQueue } from './triggers/adminAssistQueue';
 
 // RESET ACCOUNT QUEUE — Firestore trigger; wipes all data for a test account
 export { processResetAccountQueue } from './triggers/resetAccountQueue';

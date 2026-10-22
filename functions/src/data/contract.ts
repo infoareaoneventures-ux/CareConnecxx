@@ -167,6 +167,13 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Every consequential agent action (observability/auditLog.ts); AuditTrail admin surface reads. Memory-grounding U4b: memory_fact_corrected / memory_fact_forgotten completion entries (worker + MCP memory tools) are the durable accountability trail for cross-store fact changes — written before the memory_operations record becomes expiry-eligible; data carries category/source metadata only, never fact text.",
   },
+  adminAssist: {
+    path: "adminAssist",
+    docId: "uid",
+    caraWrites: true,
+    webReads: true,
+    notes: "Admin assist (2026-10-22): one doc per person — the team's 'Act for this person' consent state (requested / granted with a one-hour until / declined / ended / expired), written by agents/adminAssist.ts from the person's texted YES/NO; the admin client + care provider pages read it live (AdminAssistStrip). Requests come in through adminAssistQueue (admin-created, server-processed).",
+  },
   agent_action_ledger: {
     path: "agent_action_ledger",
     docId: "auto",

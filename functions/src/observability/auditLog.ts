@@ -131,7 +131,20 @@ export type AuditEventType =
   | "amendment_requested"
   | "amendment_declined"
   | "amendment_accepted"
-  | "interview_completed";
+  | "interview_completed"
+  // Admin assist (2026-10-22, agents/adminAssist.ts + triggers/adminAssistQueue.ts):
+  // the team helping a person on the phone — consent asked / answered / ended,
+  // link-only steps sent by Evia, and (next batch) every acted-for change.
+  | "admin_assist_requested"
+  | "admin_assist_granted"
+  | "admin_assist_declined"
+  | "admin_assist_ended"
+  | "admin_assist_expired"
+  | "admin_link_sent"
+  // The person's own timeline (2026-10-22): one entry per in-app notification
+  // created for them (notifications/userNotification.ts) — the same place the
+  // person is told, so the log can't drift from what they saw.
+  | "user_notified";
 
 export interface AuditEvent {
   eventType: AuditEventType;

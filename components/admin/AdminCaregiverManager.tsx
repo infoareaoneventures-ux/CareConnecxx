@@ -8,10 +8,13 @@ import {
 import { adminService, dbService } from '../../services/api';
 import { queueAdminReset } from '../../services/adminResetQueue';
 import { db, functions } from '../../lib/firebase';
+import { AdminAssistStrip } from './AdminAssistStrip';
+import { AdminSendLinks } from './AdminSendLinks';
+import { PersonAuditLog } from './PersonAuditLog';
 import { Caregiver, Appointment } from '../../types';
 import { adminMvrLineApplies, adminMvrStatusFor, adminMvrTone, adminTransportationLine, adminMvrReportId, checkrReportUrl } from '../../utils/drivingRecordAdmin';
 
-type Panel = 'profile' | 'appointments' | 'verification';
+type Panel = 'profile' | 'appointments' | 'verification' | 'audit';
 type ModerationAction = 'ban' | 'unban' | 'suspend' | 'unsuspend' | 'notify' | 'reset' | null;
 type ToastState = { msg: string; type: 'success' | 'error' } | null;
 
@@ -432,9 +435,12 @@ export const AdminCaregiverManager: React.FC = () => {
             </div>
           </div>
 
+          {/* Admin assist (2026-10-22): "Act for this care provider" → texted YES → one-hour window */}
+          <AdminAssistStrip uid={selected.uid} role="caregiver" personName={selected.name || 'this care provider'} phone={(selected as any).phone} onToast={showToast} />
+
           {/* Tabs */}
           <div className="flex border-b border-slate-200 px-6">
-            {(['profile', 'appointments', 'verification'] as Panel[]).map(p => (
+            {(['profile', 'appointments', 'verification', 'audit'] as Panel[]).map(p => (
               <button key={p} onClick={() => handlePanelSwitch(p)} className={`px-4 py-3 text-sm font-medium capitalize border-b-2 transition-colors ${panel === p ? 'border-primary-600 text-primary-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{p}</button>
             ))}
           </div>
@@ -672,6 +678,8 @@ export const AdminCaregiverManager: React.FC = () => {
             )}
 
             {/* APPOINTMENTS */}
+            {panel === 'audit' && <PersonAuditLog uid={selected.uid} phone={(selected as any).phone} />}
+
             {panel === 'appointments' && (
               <div>
                 {apptLoading ? (
@@ -852,6 +860,9 @@ export const AdminCaregiverManager: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
+                  {/* Link-only steps (2026-10-22): sent by Evia, never done for the person. The overrides above stay for testing. */}
+                  <AdminSendLinks uid={selected.uid} role="caregiver" onToast={showToast} />
 
                   {selected.backgroundCheckData && (
                     <div className="grid grid-cols-2 gap-3 bg-white rounded-xl p-4 text-sm">

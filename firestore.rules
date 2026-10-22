@@ -1355,6 +1355,21 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
+    // ADMIN ASSIST QUEUE (2026-10-22) — the admin page asks the server to text the
+    // "Reply YES to allow" consent, stop acting, or send a link-only step
+    // (triggers/adminAssistQueue.ts). The admin reads the doc back for processedAt/error.
+    match /adminAssistQueue/{docId} {
+      allow create: if isAdmin() && request.resource.data.adminUid == request.auth.uid;
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+    // ADMIN ASSIST STATE — one doc per person: requested / granted (with the window) /
+    // declined / ended / expired. Written by the server only (agents/adminAssist.ts).
+    match /adminAssist/{uid} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // RESET ACCOUNT QUEUE — admin writes; trigger wipes all data for the account
     match /adminResetQueue/{docId} {
       allow create: if isAdmin();

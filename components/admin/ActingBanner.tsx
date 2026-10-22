@@ -17,11 +17,43 @@ export const ActingBanner: React.FC = () => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+  // View mode (2026-10-22, founder: "I shouldn't be able to click actions, more like tabs"): action
+  // buttons are blocked before they open anything — Apply, Save, Send, Accept, Start, Pay… — and
+  // every form submit. Navigation stays: the top menu, links, page tabs, filters, the banner.
+  const viewing = actingFor?.mode === 'view';
+  useEffect(() => {
+    if (!viewing) return;
+    let lastToast = 0;
+    const warn = () => {
+      const now = Date.now();
+      if (now - lastToast < 2000) return;
+      lastToast = now;
+      addToast("Viewing only — nothing can be changed. Ask them for a YES from their admin page to make changes.", 'info');
+    };
+    const ACTION = /^(apply|submit|save|send|accept|decline|start|end|finish|done|undo|log|request|book|hire|post|publish|update|delete|remove|upload|pay|set up|setup|confirm|reschedule|propose|withdraw|leave|edit|message|schedule|block|report|mark|cancel (visit|shift|booking|interview|request|membership)|approve|retry|resend|change|add|create|invite|connect|verify|sign|complete|continue|next|get started|yes,)/i;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const el = target.closest('button, [type="submit"], [role="button"]') as HTMLElement | null;
+      if (!el) return;
+      if (el.closest('[data-acting-banner], nav, header, [role="tablist"], [role="tab"], a[href]')) return;
+      const isSubmit = (el as HTMLButtonElement).type === 'submit' || el.getAttribute('type') === 'submit';
+      const text = (el.getAttribute('aria-label') || el.textContent || '').trim();
+      if (!isSubmit && !ACTION.test(text)) return;
+      e.preventDefault(); e.stopPropagation(); warn();
+    };
+    const onSubmit = (e: Event) => { e.preventDefault(); e.stopPropagation(); warn(); };
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('submit', onSubmit, true);
+    return () => { document.removeEventListener('click', onClick, true); document.removeEventListener('submit', onSubmit, true); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewing]);
+
   if (!actingFor || !adminUser) return null;
 
   if (actingFor.mode === 'view') {
     return (
-      <div className="sticky top-0 z-[60] bg-slate-700 text-white text-sm px-4 py-2 flex items-center gap-3 flex-wrap shadow">
+      <div data-acting-banner className="sticky top-0 z-[60] bg-slate-700 text-white text-sm px-4 py-2 flex items-center gap-3 flex-wrap shadow">
         <Shield className="w-4 h-4 shrink-0" />
         <span>Viewing <strong>{actingFor.name}</strong>'s pages as the Evia team — <strong>nothing is saved or texted</strong>. To make a change, ask them for a YES from their admin page.</span>
         <div className="ml-auto flex items-center gap-2">
@@ -47,7 +79,7 @@ export const ActingBanner: React.FC = () => {
   };
 
   return (
-    <div className="sticky top-0 z-[60] bg-emerald-700 text-white text-sm px-4 py-2 flex items-center gap-3 flex-wrap shadow">
+    <div data-acting-banner className="sticky top-0 z-[60] bg-emerald-700 text-white text-sm px-4 py-2 flex items-center gap-3 flex-wrap shadow">
       <Shield className="w-4 h-4 shrink-0" />
       <span>
         Acting for <strong>{actingFor.name}</strong> as the Evia team, allowed by their YES until {untilLabel}

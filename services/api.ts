@@ -2291,6 +2291,8 @@ export const shiftHoursService = {
     },
 
     retryPayment: async (appointmentId: string) => {
+        // Admin assist (2026-10-22): a payment stays with the person — the server would otherwise honour the admin's own role.
+        if (actingContext) throw new Error(ACTING_LINK_ONLY_MESSAGE);
         if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-retryShiftPayment');
         const res = await fn({ appointmentId });

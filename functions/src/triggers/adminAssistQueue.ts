@@ -16,7 +16,7 @@ import { logAudit } from "../observability/auditLog";
 
 const db = admin.firestore();
 
-export type AdminAssistQueueType = "request_consent" | "end_consent" | "send_link" | "acted" | "human_on" | "human_off" | "team_text";
+export type AdminAssistQueueType = "request_consent" | "end_consent" | "send_link" | "acted" | "human_on" | "human_off" | "team_text" | "viewed";
 export const ADMIN_ASSIST_LINK_KINDS = [
   "client_identity", "client_payment", "caregiver_membership", "caregiver_background_check", "caregiver_payouts", "caregiver_photo",
 ] as const;
@@ -78,6 +78,10 @@ export const processAdminAssistQueue = functions.firestore
           await setHumanMode({ uid: data.uid, phone: person.phone, on: data.type === "human_on", reason: "admin", by: { uid: data.adminUid, name: data.adminName ?? "" } });
           break;
         }
+        // View mode (2026-10-22): an admin looked at the person's pages — logged, never texted.
+        case "viewed":
+          await logAudit({ eventType: "admin_viewed", userId: data.uid, phone: person.phone, data: { adminUid: data.adminUid, adminName: data.adminName ?? "", role: data.role } });
+          break;
         case "team_text": {
           const { sendTeamText } = await import("../agents/humanMode");
           await sendTeamText({ uid: data.uid, phone: person.phone, text: String(data.text ?? ""), adminUid: data.adminUid, adminName: data.adminName ?? "" });

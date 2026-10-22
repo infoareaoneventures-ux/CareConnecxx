@@ -17,6 +17,7 @@ const ADMIN_LABELS: Record<string, string> = {
   admin_assist_ended: 'Acting stopped by the team',
   admin_assist_expired: 'Consent request lapsed',
   admin_link_sent: 'Link sent by Evia',
+  admin_viewed: 'Viewed their pages (nothing changed)',
 };
 
 const LINK_LABELS: Record<string, string> = {

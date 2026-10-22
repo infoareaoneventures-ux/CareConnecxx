@@ -17,6 +17,8 @@ export interface ActingContext {
     adminUid: string;
     adminName: string;
     until: string;
+    /** "act" = inside the person's YES window (writes allowed, recorded, texted); "view" = look only (2026-10-22). */
+    mode?: 'act' | 'view';
     /** The person's identity, once their profile is loaded (context/CareConnexContext.tsx). */
     email?: string | null;
     photoURL?: string | null;
@@ -27,6 +29,9 @@ export function setActingContext(ctx: ActingContext | null): void {
     actingContext = ctx;
     setActingAuthUser(ctx ? { uid: ctx.uid, displayName: ctx.name, email: ctx.email ?? null, photoURL: ctx.photoURL ?? null, phoneNumber: ctx.phone ?? null } : null);
 }
+/** True while an admin is only LOOKING at a person's pages (no YES): nothing is saved, nothing is texted. */
+export function isViewingOnly(): boolean { return actingContext?.mode === 'view'; }
+export const VIEW_ONLY_MESSAGE = "You're viewing this person's pages. To make a change, ask them for a YES from their admin page first.";
 /** The message a link-only step shows when an admin is acting (payment, identity, payouts stay with the person). */
 export const ACTING_LINK_ONLY_MESSAGE = "This step stays with the person. Send them the link from their admin page instead.";
 export function getActingContext(): ActingContext | null { return actingContext; }
@@ -36,7 +41,7 @@ export function effectiveUid(): string | undefined {
 }
 /** While acting: record what the team just did for the person (audit entry + the person is told). No-op otherwise. */
 export async function recordActedForPerson(kind: string, summary: string, extra?: Record<string, unknown>): Promise<void> {
-    if (!actingContext || !isConfigured || !db) return;
+    if (!actingContext || actingContext.mode === 'view' || !isConfigured || !db) return;
     try {
         await db.collection('adminAssistQueue').add({
             type: 'acted',
@@ -460,6 +465,7 @@ export const dbService = {
     },
 
     createJobPost: async (post: Partial<JobPost> & { streetAddress?: string; lat?: number; lng?: number; geoPrecision?: GeoPrecision }, clientId: string) => {
+        if (isViewingOnly()) throw new Error(VIEW_ONLY_MESSAGE);
         // streetAddress is NEVER stored on the public post (it is used for the
         // geocode only — see below); the caregiver sees city/state/zip + distance.
         const allowedFields = [
@@ -744,6 +750,7 @@ export const dbService = {
     },
 
     updateUser: async (collectionName: string, uid: string, data: Partial<AdminUser | Caregiver | Senior>) => {
+        if (isViewingOnly()) throw new Error(VIEW_ONLY_MESSAGE);
         // SECURITY FIX: Verify ownership or admin status before updating
         if (isConfigured && db && auth?.currentUser) {
             try {
@@ -1036,6 +1043,7 @@ export const dbService = {
     },
 
     sendMessage: async (threadId: string, text: string, senderId: string) => {
+        if (isViewingOnly()) throw new Error(VIEW_ONLY_MESSAGE);
         // Rate limit: Prevent message spam with 500ms debounce per thread
         const cacheKey = `msg_${threadId}_${senderId}`;
         return dedupePromise(cacheKey, async () => {
@@ -1072,6 +1080,7 @@ export const dbService = {
     },
 
     createThread: async (otherUserId: string, otherUserName: string, otherUserAvatar?: string) => {
+        if (isViewingOnly()) throw new Error(VIEW_ONLY_MESSAGE);
         // Rate limit: Prevent duplicate thread creation with deduplication
         const currentUid = effectiveUid();
         if (!currentUid) throw new Error("Not authenticated");
@@ -2344,7 +2353,7 @@ export const shiftHoursService = {
 // ─── Admin-only helpers ──────────────────────────────────────────────────────
 
 export interface AdminAssistQueueRequest {
-    type: 'request_consent' | 'end_consent' | 'send_link' | 'human_on' | 'human_off' | 'team_text';
+    type: 'request_consent' | 'end_consent' | 'send_link' | 'human_on' | 'human_off' | 'team_text' | 'viewed';
     uid: string;
     role: 'client' | 'caregiver';
     linkKind?: string;
@@ -2686,6 +2695,7 @@ export async function loadJobPostingDraft(uid: string): Promise<Record<string, a
     return snap?.exists ? (snap.data() as Record<string, any>) : null;
 }
 export async function saveJobPostingDraft(uid: string, fields: Record<string, any>, draftStep: number): Promise<void> {
+    if (isViewingOnly()) return; // looking only: the wizard's per-step saves are dropped silently (the finish is refused with a message)
     if (!db) return;
     const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)));
     await db.collection('job_postings').doc(uid).set({
@@ -2697,6 +2707,7 @@ export async function saveJobPostingDraft(uid: string, fields: Record<string, an
 }
 
 export async function createJobPosting(uid: string, data: WizardJobPostingData): Promise<void> {
+    if (isViewingOnly()) throw new Error(VIEW_ONLY_MESSAGE);
     if (!isConfigured || !db) throw new Error("Database not connected");
 
     const clean = {

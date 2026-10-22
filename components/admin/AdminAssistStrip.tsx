@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, Square, RefreshCw, CheckCircle, Clock, AlertCircle, ExternalLink } from 'lucide-react';
+import { Phone, Square, RefreshCw, CheckCircle, Clock, AlertCircle, ExternalLink, Eye } from 'lucide-react';
 import { adminService, type AdminAssistState } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 
@@ -62,6 +62,21 @@ export const AdminAssistStrip: React.FC<Props> = ({ uid, role, personName, phone
     }
   };
 
+  // Looking only (2026-10-22): no YES, no text, nothing saved; logged under the admin's name.
+  const viewPages = () => {
+    if (!currentUser) { onToast('Not signed in as an admin', 'error'); return; }
+    const adminName = currentUser.displayName || currentUser.email || currentUser.uid;
+    adminService.queueAdminAssist({ type: 'viewed', uid, role, adminUid: currentUser.uid, adminName }).catch(() => {});
+    startActingFor({ uid, role, name: personName, adminUid: currentUser.uid, adminName, until: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(), mode: 'view' });
+    navigate(role === 'client' ? '/client/dashboard' : '/care-provider/dashboard');
+  };
+  const viewButton = (
+    <button onClick={viewPages} title="Look at their pages as they see them. Nothing is saved or texted."
+      className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">
+      <Eye className="w-3.5 h-3.5" /> View their pages
+    </button>
+  );
+
   const remaining = active ? Math.max(0, untilMs - now) : 0;
   const mm = Math.floor(remaining / 60000);
   const ss = Math.floor((remaining % 60000) / 1000).toString().padStart(2, '0');
@@ -79,7 +94,7 @@ export const AdminAssistStrip: React.FC<Props> = ({ uid, role, personName, phone
           {currentUser && state?.until && (
             <button
               onClick={() => {
-                startActingFor({ uid, role, name: personName, adminUid: currentUser.uid, adminName: currentUser.displayName || currentUser.email || currentUser.uid, until: state.until as string });
+                startActingFor({ uid, role, name: personName, adminUid: currentUser.uid, adminName: currentUser.displayName || currentUser.email || currentUser.uid, until: state.until as string, mode: 'act' });
                 navigate(role === 'client' ? '/client/dashboard' : '/care-provider/dashboard');
               }}
               className="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
@@ -97,12 +112,15 @@ export const AdminAssistStrip: React.FC<Props> = ({ uid, role, personName, phone
           <span className="text-amber-900">
             Consent text sent to {phone || state?.phone || 'their phone'} at {fmtTime(state?.requestedAt)}, waiting for YES
           </span>
-          {waitedMs > 90 * 1000 && (
-            <button onClick={() => queue('request_consent')} disabled={busy}
-              className="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50">
-              <RefreshCw className="w-3 h-3" /> Resend
-            </button>
-          )}
+          <span className="ml-auto flex items-center gap-2">
+            {viewButton}
+            {waitedMs > 90 * 1000 && (
+              <button onClick={() => queue('request_consent')} disabled={busy}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50">
+                <RefreshCw className="w-3 h-3" /> Resend
+              </button>
+            )}
+          </span>
         </>
       ) : (
         <>
@@ -110,11 +128,14 @@ export const AdminAssistStrip: React.FC<Props> = ({ uid, role, personName, phone
           {(state?.status === 'expired' || waitLapsed) && <span className="inline-flex items-center gap-1.5 text-slate-600"><AlertCircle className="w-4 h-4" /> Expired, ask again.</span>}
           {state?.status === 'ended' && <span className="text-slate-600">Last session ended at {fmtTime(state.endedAt)}.</span>}
           {state?.status === 'granted' && !active && <span className="text-slate-600">The hour ran out at {fmtTime(state.until)}.</span>}
-          <button onClick={() => queue('request_consent')} disabled={busy || !phone}
-            title={!phone ? 'No phone number on this account yet' : undefined}
-            className="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50">
-            <Phone className="w-3.5 h-3.5" /> Act for this {role === 'client' ? 'client' : 'care provider'}
-          </button>
+          <span className="ml-auto flex items-center gap-2">
+            {viewButton}
+            <button onClick={() => queue('request_consent')} disabled={busy || !phone}
+              title={!phone ? 'No phone number on this account yet' : undefined}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50">
+              <Phone className="w-3.5 h-3.5" /> Act for this {role === 'client' ? 'client' : 'care provider'}
+            </button>
+          </span>
         </>
       )}
     </div>

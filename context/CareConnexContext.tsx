@@ -88,7 +88,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             const raw = sessionStorage.getItem('evia:acting-for');
             if (!raw) return;
             const saved = JSON.parse(raw) as ActingContext;
-            if (saved.adminUid === currentUser.uid && Date.parse(saved.until) > Date.now()) setActingFor(saved);
+            if (saved.adminUid === currentUser.uid && (saved.mode === 'view' || Date.parse(saved.until) > Date.now())) setActingFor(saved);
             else sessionStorage.removeItem('evia:acting-for');
         } catch { /* storage unavailable */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,12 +126,14 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                 jobPostingCompleted: profile.jobPostingCompleted,
             });
         }).catch(() => end('Could not load their account'));
-        const unsub = adminService.watchAdminAssist(actingFor.uid, (state) => {
+        // View mode (2026-10-22): looking only — no consent window to follow, no hour to run out.
+        const viewing = actingFor.mode === 'view';
+        const unsub = viewing ? () => {} : adminService.watchAdminAssist(actingFor.uid, (state) => {
             const active = !!state && state.status === 'granted' && !!state.until && Date.parse(state.until) > Date.now();
             if (!active) end(`Acting for ${actingFor.name} has ended`);
         });
         const timer = setInterval(() => {
-            if (Date.parse(actingFor.until) <= Date.now()) end(`The hour for ${actingFor.name} ran out`);
+            if (!viewing && Date.parse(actingFor.until) <= Date.now()) end(`The hour for ${actingFor.name} ran out`);
         }, 15000);
         // Acting for a care provider (batch 3, 2026-10-22): their record is caregiverProfile — the
         // provider pages, the gate hook and the onboarding wizard all read it from here. The admin

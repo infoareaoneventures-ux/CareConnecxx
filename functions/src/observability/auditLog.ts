@@ -143,6 +143,8 @@ export type AuditEventType =
   | "admin_link_sent"
   // One acted-for change on the person's pages or through a callable (data: kind, summary, adminName).
   | "admin_acted"
+  // An admin looked at the person's pages in view mode (nothing changed, nothing texted).
+  | "admin_viewed"
   // Human mode (2026-10-22, agents/humanMode.ts): the team holds the person's thread.
   | "human_mode_on"
   | "human_mode_off"

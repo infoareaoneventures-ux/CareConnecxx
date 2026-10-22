@@ -19,6 +19,20 @@ export const ActingBanner: React.FC = () => {
   }, []);
   if (!actingFor || !adminUser) return null;
 
+  if (actingFor.mode === 'view') {
+    return (
+      <div className="sticky top-0 z-[60] bg-slate-700 text-white text-sm px-4 py-2 flex items-center gap-3 flex-wrap shadow">
+        <Shield className="w-4 h-4 shrink-0" />
+        <span>Viewing <strong>{actingFor.name}</strong>'s pages as the Evia team — <strong>nothing is saved or texted</strong>. To make a change, ask them for a YES from their admin page.</span>
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={() => { stopActing(); navigate('/admin'); }} className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-900">
+            <ArrowLeft className="w-3 h-3" /> Back to admin
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const remaining = Math.max(0, Date.parse(actingFor.until) - now);
   const mm = Math.floor(remaining / 60000);
   const ss = Math.floor((remaining % 60000) / 1000).toString().padStart(2, '0');

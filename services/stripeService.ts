@@ -250,6 +250,7 @@ export interface PayoutResult {
 }
 
 export const requestInstantPayout = async (): Promise<PayoutResult> => {
+  if (getActingContext()) throw new Error(ACTING_LINK_ONLY_MESSAGE);
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
@@ -331,6 +332,7 @@ export const stripeService = {
   getSubscriptionStatus,
   listenToSubscriptionStatus,
   cancelSubscription: async () => {
+    if (getActingContext()) throw new Error(ACTING_LINK_ONLY_MESSAGE);
     if (!auth) throw new Error('Auth not initialized');
     const user = auth.currentUser;
     if (!user) throw new Error('User not authenticated');
@@ -339,6 +341,7 @@ export const stripeService = {
     await cancelFn({});
   },
   reactivateSubscription: async () => {
+    if (getActingContext()) throw new Error(ACTING_LINK_ONLY_MESSAGE);
     if (!auth) throw new Error('Auth not initialized');
     const user = auth.currentUser;
     if (!user) throw new Error('User not authenticated');

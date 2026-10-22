@@ -104,6 +104,34 @@ export async function assistWindowOpenFor(uid: string, adminUid: string): Promis
 }
 
 /**
+ * A callable acting for a person: data.actingForUid is honoured only for an admin inside the
+ * person's open window (otherwise permission-denied); without it the caller acts as themself.
+ */
+export async function resolveActingCallerUid(callerUid: string, data: unknown): Promise<{ uid: string; actingAdminUid: string | null }> {
+  const d = (data ?? {}) as Record<string, unknown>;
+  const actingForUid = typeof d.actingForUid === "string" && d.actingForUid.trim() ? d.actingForUid.trim() : null;
+  if (!actingForUid || actingForUid === callerUid) return { uid: callerUid, actingAdminUid: null };
+  if (!(await assistWindowOpenFor(actingForUid, callerUid))) {
+    const functions = await import("firebase-functions/v1");
+    throw new functions.https.HttpsError("permission-denied", "No open consent window for this person");
+  }
+  return { uid: actingForUid, actingAdminUid: callerUid };
+}
+
+/** Record an acted-for change made through a callable (admin name + the person's phone looked up here). */
+export async function recordActedByCallable(input: { uid: string; adminUid: string; kind: string; summary: string; sourcePath: string; eventId: string }): Promise<void> {
+  const adminDoc = (await db.collection("users").doc(input.adminUid).get()).data() ?? {};
+  const personUser = (await db.collection("users").doc(input.uid).get()).data() ?? {};
+  const personCg = personUser.userType === "caregiver" ? ((await db.collection("caregivers").doc(input.uid).get()).data() ?? {}) : {};
+  const phone = typeof personCg.phone === "string" ? personCg.phone : typeof personUser.phone === "string" ? personUser.phone : undefined;
+  await recordAdminActed({
+    uid: input.uid, role: personUser.userType === "caregiver" ? "caregiver" : "client", adminUid: input.adminUid,
+    adminName: String(adminDoc.displayName ?? adminDoc.firstName ?? adminDoc.name ?? adminDoc.email ?? input.adminUid),
+    kind: input.kind, summary: input.summary, sourcePath: input.sourcePath, eventId: input.eventId, ...(phone ? { phone } : {}),
+  });
+}
+
+/**
  * One acted-for change, recorded the same way wherever it came from (the site's
  * acted-write records via adminAssistQueue, or a callable acting for the person):
  * an audit entry under the admin's name, a bell, and a text to the person.

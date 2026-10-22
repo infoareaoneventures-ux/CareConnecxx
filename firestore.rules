@@ -501,6 +501,17 @@ service cloud.firestore {
     function applicant() {
       return get(/databases/$(database)/documents/caregivers/$(request.auth.uid)).data;
     }
+    // Admin assist (2026-10-22): the same gate for the care provider an admin is acting for —
+    // the APPLICANT's record is checked, never the admin's.
+    function applicantOf(uid) {
+      return get(/databases/$(database)/documents/caregivers/$(uid)).data;
+    }
+    function applyGatePassesFor(uid, jobId) {
+      return caregiverMembershipActive(applicantOf(uid))
+        && caregiverBackgroundApproved(applicantOf(uid))
+        && (!jobRequiresTransport(get(/databases/$(database)/documents/job_posts/$(jobId)).data)
+            || caregiverTransportBadge(applicantOf(uid)));
+    }
     function caregiverMembershipActive(cg) {
       // Stripe's retry state counts as active (2026-10-06: no lock while Stripe retries).
       return cg.get('membershipStatus', null) in ['active', 'trialing', 'past_due', 'payment_failed']
@@ -543,9 +554,11 @@ service cloud.firestore {
       
       // Only the caregiver herself, and only past the Jobs page gate (above).
       allow create: if isAuthenticated()
-        && request.resource.data.caregiverId == request.auth.uid
         && request.resource.data.jobId is string
-        && applyGatePasses(request.resource.data.jobId);
+        && (
+          (request.resource.data.caregiverId == request.auth.uid && applyGatePasses(request.resource.data.jobId))
+          || (actingFor(request.resource.data.caregiverId) && applyGatePassesFor(request.resource.data.caregiverId, request.resource.data.jobId))
+        );
       
       // Client can update status (accept/reject); caregiver can withdraw their own application
       allow update: if isAuthenticated() && (
@@ -1467,7 +1480,7 @@ service cloud.firestore {
     // this is why it is not an action set on world-readable
     // account_action_requests).
     match /visit_action_requests/{requestId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.caregiverId;
+      allow read: if request.auth != null && (request.auth.uid == resource.data.caregiverId || isAdmin());
       allow create: if request.resource.data.type in ['start_visit', 'end_visit', 'cancel_visit', 'cancel_booking', 'log_hours']
         && request.resource.data.status == 'pending'
         && request.resource.data.keys().hasOnly(
@@ -1475,7 +1488,8 @@ service cloud.firestore {
            'closingNote', 'startedAt', 'completedAt', 'tasksCompleted', 'completionNotes']
         )
         && request.resource.data.shiftId is string
-        && request.auth != null && request.auth.uid == request.resource.data.caregiverId;
+        && request.auth != null
+        && (request.auth.uid == request.resource.data.caregiverId || actingFor(request.resource.data.caregiverId));
       allow update, delete: if false; // server-side only (Admin SDK trigger)
     }
 

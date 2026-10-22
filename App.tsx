@@ -122,12 +122,13 @@ const ClientAuthRoute: React.FC<{ element: React.ReactElement }> = ({ element })
 };
 
 const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
-  const { currentUser, authResolved, caregiverProfile, addToast } = useCareConnex();
+  const { currentUser, authResolved, caregiverProfile, addToast, actingFor } = useCareConnex();
   const navigate = useNavigate();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
-  if (!currentUser.eviaConnected) return <Navigate to="/care-provider/connect" replace />;
+  // An admin acting for the care provider (2026-10-22) is not sent to the Evia-connect QR page.
+  if (!currentUser.eviaConnected && !actingFor) return <Navigate to="/care-provider/connect" replace />;
   // Same default as ClientRoute's jobPostingCompleted check: treat "no record
   // yet" as "still needs the wizard", not as "wait until one shows up". A
   // caregiver's record is now created the moment they connect (webhooks.ts

@@ -782,6 +782,7 @@ export const dbService = {
                 }
                 
                 await db.collection(collectionName).doc(uid).set(data, { merge: true });
+                if (collectionName === 'caregivers' || collectionName === 'users') void recordActedForPerson('profile_updated', 'updated your profile');
                 
                 // Audit log for sensitive updates
                 if (isAdmin && uid !== currentUid) {
@@ -1338,6 +1339,8 @@ export const dbService = {
     },
 
     initiateBackgroundCheck: async (data: BackgroundCheckData) => {
+        // Admin assist (2026-10-22): the background-check consent stays with the person.
+        if (actingContext) throw new Error(ACTING_LINK_ONLY_MESSAGE);
         if (isConfigured && functions && auth?.currentUser) {
             try {
                 const initiateFn = functions.httpsCallable('v1-initiateCheckrCandidate');
@@ -2238,7 +2241,7 @@ export const shiftHoursService = {
     ) => {
         if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-submitShiftHours');
-        const res = await fn({ shiftId, startTime, endTime, lineItems: lineItems ?? [] });
+        const res = await fn({ shiftId, startTime, endTime, lineItems: lineItems ?? [], ...(actingContext ? { actingForUid: actingContext.uid } : {}) });
         return res.data as { success: boolean; shiftId: string; totalHours: number };
     },
 
@@ -2250,6 +2253,7 @@ export const shiftHoursService = {
         if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-reviewShiftHours');
         const res = await fn({
+            ...(actingContext ? { actingForUid: actingContext.uid } : {}),
             appointmentId,
             action,
             proposedStartTime: proposed?.startTime,
@@ -2268,6 +2272,7 @@ export const shiftHoursService = {
         if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-respondToCorrection');
         const res = await fn({
+            ...(actingContext ? { actingForUid: actingContext.uid } : {}),
             appointmentId,
             action,
             counterStartTime: counter?.startTime,

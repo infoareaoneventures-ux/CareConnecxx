@@ -76,18 +76,18 @@ export const AdminAssistStrip: React.FC<Props> = ({ uid, role, personName, phone
             Acting for <strong>{first}</strong>, allowed by YES at {fmtTime(state?.grantedAt)}, until {fmtTime(state?.until)}
             <span className="ml-2 font-mono text-xs text-emerald-700">{mm}:{ss}</span>
           </span>
-          {role === 'client' && currentUser && state?.until && (
+          {currentUser && state?.until && (
             <button
               onClick={() => {
                 startActingFor({ uid, role, name: personName, adminUid: currentUser.uid, adminName: currentUser.displayName || currentUser.email || currentUser.uid, until: state.until as string });
-                navigate('/client/dashboard');
+                navigate(role === 'client' ? '/client/dashboard' : '/care-provider/dashboard');
               }}
               className="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
               <ExternalLink className="w-3 h-3" /> Open their pages
             </button>
           )}
           <button onClick={() => queue('end_consent')} disabled={busy}
-            className={`${role === 'client' ? '' : 'ml-auto '}inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-100 disabled:opacity-50`}>
+            className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-100 disabled:opacity-50">
             <Square className="w-3 h-3" /> Stop
           </button>
         </>

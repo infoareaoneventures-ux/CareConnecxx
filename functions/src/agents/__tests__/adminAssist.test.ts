@@ -37,13 +37,17 @@ vi.mock("../../linq/client", () => ({
 const audits: Array<{ eventType: string; userId: string; data: Record<string, unknown> }> = [];
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn(async (e: any) => { audits.push(e); }) }));
 vi.mock("firebase-functions", () => ({ firestore: { document: () => ({ onCreate: (fn: any) => fn }) } }));
+vi.mock("firebase-functions/v1", () => ({
+  firestore: { document: () => ({ onCreate: (fn: any) => fn, onWrite: (fn: any) => fn, onUpdate: (fn: any) => fn }) },
+  https: { onCall: (fn: any) => fn, HttpsError: class HttpsError extends Error { code: string; constructor(code: string, msg: string) { super(msg); this.code = code; } } },
+}));
 const bells: Array<Record<string, unknown>> = [];
 vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (input: Record<string, unknown>) => { bells.push(input); return true; }) }));
 
 import {
   consentReplyKind, isPendingFresh, isAssistActive, assistWindowEnd, ASSIST_WINDOW_MS,
   requestAdminAssist, endAdminAssist, handleAdminAssistConsentReply, CONSENT_GRANTED_TEXT, CONSENT_DECLINED_TEXT,
-  actedText, assistWindowOpenFor, recordAdminActed,
+  actedText, assistWindowOpenFor, recordAdminActed, resolveActingCallerUid, recordActedByCallable,
 } from "../adminAssist";
 import { linkKindAllowedForRole } from "../../triggers/adminAssistQueue";
 
@@ -152,6 +156,20 @@ describe("admin assist consent (2026-10-22): a texted YES opens a one-hour windo
     expect(await assistWindowOpenFor(UID, "notadmin")).toBe(false);
     store.set(`adminAssist/${UID}`, { status: "ended" });
     expect(await assistWindowOpenFor(UID, "adm1")).toBe(false);
+  });
+
+  it("a callable acts for the person only with actingForUid + an open window + an admin caller", async () => {
+    store.set("users/adm1", { userType: "admin", displayName: "Hamse" });
+    store.set("users/cg1", { userType: "caregiver" });
+    store.set("caregivers/cg1", { phone: PHONE });
+    expect(await resolveActingCallerUid("cg1", { shiftId: "s1" })).toEqual({ uid: "cg1", actingAdminUid: null });
+    expect(await resolveActingCallerUid("adm1", { actingForUid: "adm1" })).toEqual({ uid: "adm1", actingAdminUid: null });
+    await expect(resolveActingCallerUid("adm1", { actingForUid: "cg1" })).rejects.toMatchObject({ code: "permission-denied" });
+    store.set("adminAssist/cg1", { status: "granted", until: new Date(Date.now() + 60000).toISOString() });
+    expect(await resolveActingCallerUid("adm1", { actingForUid: "cg1" })).toEqual({ uid: "cg1", actingAdminUid: "adm1" });
+    await recordActedByCallable({ uid: "cg1", adminUid: "adm1", kind: "hours_submitted", summary: "submitted your hours for a visit", sourcePath: "shifts/s1", eventId: "e1" });
+    expect(audits.at(-1)).toMatchObject({ eventType: "admin_acted", userId: "cg1", data: { kind: "hours_submitted", adminName: "Hamse" } });
+    expect(sent.at(-1)).toEqual({ to: PHONE, text: actedText("submitted your hours for a visit") });
   });
 
   it("send-link kinds follow the role: a client gets identity + payment, a care provider the membership / background check / payouts / photo links", () => {

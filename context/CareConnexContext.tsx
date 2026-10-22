@@ -133,7 +133,18 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         const timer = setInterval(() => {
             if (Date.parse(actingFor.until) <= Date.now()) end(`The hour for ${actingFor.name} ran out`);
         }, 15000);
-        return () => { cancelled = true; unsub(); clearInterval(timer); };
+        // Acting for a care provider (batch 3, 2026-10-22): their record is caregiverProfile — the
+        // provider pages, the gate hook and the onboarding wizard all read it from here. The admin
+        // has no record of their own, so it goes back to null when acting ends.
+        const unsubCg = actingFor.role === 'caregiver'
+            ? dbService.subscribeToCaregiverProfile(actingFor.uid, (cg) => {
+                if (cg) setCaregiverProfile({ ...(cg as any), userType: 'caregiver' } as any);
+            })
+            : () => {};
+        return () => {
+            cancelled = true; unsub(); clearInterval(timer); unsubCg();
+            if (actingFor.role === 'caregiver') setCaregiverProfile(null);
+        };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [actingFor]);
 
@@ -293,8 +304,9 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     };
 
     const refreshCaregiverProfile = async () => {
-        if (currentUser?.uid) {
-            const p = await dbService.getUser(currentUser.uid);
+        const uid = actingFor?.uid ?? currentUser?.uid;
+        if (uid) {
+            const p = await dbService.getUser(uid);
             if (p) setCaregiverProfile(p as any);
         }
     };

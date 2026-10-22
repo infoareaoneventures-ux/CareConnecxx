@@ -87,15 +87,16 @@ describe('the caregiver Bookings page no longer builds the visits in the browser
 describe('firestore.rules — visit_action_requests: the queue the site writes instead', () => {
     const queue = block('visit_action_requests/{requestId}');
 
-    it('only the signed-in caregiver named on the request may create it, with the five actions and the known payload keys', () => {
+    it('only the signed-in caregiver named on the request may create it (or an admin acting for them during an open consent window — admin assist, 2026-10-22), with the five actions and the known payload keys', () => {
         expect(queue).toContain("request.resource.data.type in ['start_visit', 'end_visit', 'cancel_visit', 'cancel_booking', 'log_hours']");
         expect(queue).toContain("request.resource.data.status == 'pending'");
-        expect(queue).toContain("request.auth != null && request.auth.uid == request.resource.data.caregiverId");
+        expect(queue).toContain("request.auth != null");
+        expect(queue).toContain("(request.auth.uid == request.resource.data.caregiverId || actingFor(request.resource.data.caregiverId))");
         expect(queue).toMatch(/keys\(\)\.hasOnly\(\s*\['type', 'status', 'createdAt', 'caregiverId', 'shiftId',\s*'closingNote', 'startedAt', 'completedAt', 'tasksCompleted', 'completionNotes'\]/);
     });
 
-    it('only that caregiver reads it back; nobody updates or deletes from the client', () => {
-        expect(queue).toContain('allow read: if request.auth != null && request.auth.uid == resource.data.caregiverId;');
+    it('only that caregiver (or an admin) reads it back; nobody updates or deletes from the client', () => {
+        expect(queue).toContain('allow read: if request.auth != null && (request.auth.uid == resource.data.caregiverId || isAdmin());');
         expect(queue).toContain('allow update, delete: if false;');
     });
 });

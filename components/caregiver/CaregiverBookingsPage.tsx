@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { recordActedForPerson } from '../../services/api';
 import React, { useEffect, useState } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -740,6 +741,7 @@ const BookingGroupCard: React.FC<{
     try {
       const r = await submitVisitAction('start_visit', { caregiverId: shift.caregiverId, shiftId });
       if (!r.ok) addToast(r.message, 'error');
+      else void recordActedForPerson('visit_started', 'started a visit');
     } catch {
       addToast('Could not start this shift. Please try again.', 'error');
     } finally {
@@ -756,6 +758,7 @@ const BookingGroupCard: React.FC<{
     try {
       const r = await submitVisitAction('end_visit', { caregiverId: shift.caregiverId, shiftId, closingNote: notes?.trim() || undefined });
       if (!r.ok) addToast(r.message, 'error');
+      else void recordActedForPerson('visit_ended', 'ended a visit');
     } catch {
       addToast('Could not end this shift. Please try again.', 'error');
     } finally {
@@ -774,6 +777,7 @@ const BookingGroupCard: React.FC<{
       notesLog: firebase.firestore.FieldValue.arrayUnion({ at: new Date().toISOString(), text, by: 'caregiver' }),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     }).catch(() => {});
+    void recordActedForPerson('visit_note_added', 'added a note to a visit');
   };
 
   const handleCancelShift = async (shift: Shift) => {
@@ -838,6 +842,7 @@ const BookingGroupCard: React.FC<{
         rescheduledBy: 'caregiver',
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
+      void recordActedForPerson('visit_reschedule_proposed', 'proposed a new time for a visit');
       setRescheduleOpenId(null);
       setRescheduleDate('');
       setRescheduleStart('');
@@ -885,6 +890,7 @@ const BookingGroupCard: React.FC<{
         }),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
+      void recordActedForPerson('visit_reschedule_accepted', 'accepted a new time for a visit');
     } catch {
       // non-critical
     } finally {
@@ -1985,6 +1991,7 @@ export const CaregiverBookingsPage: React.FC = () => {
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
+      void recordActedForPerson('booking_accepted', 'accepted a booking request');
       // Shift generation is handled by the onBookingAccepted Cloud Function
       addToast('Booking request accepted!', 'success');
     } catch (e) {
@@ -2005,6 +2012,7 @@ export const CaregiverBookingsPage: React.FC = () => {
         status: 'declined',
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
+      void recordActedForPerson('booking_declined', 'declined a booking request');
       // Notification handled by onBookingRequestWrite Cloud Function
       addToast('Request declined', 'info');
     } catch {
@@ -2046,6 +2054,7 @@ export const CaregiverBookingsPage: React.FC = () => {
         status: 'accepted',
         respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
+      void recordActedForPerson('schedule_change_accepted', 'accepted a schedule change');
       addToast('Schedule updated — new visits added.', 'success');
     } catch (e) {
       console.error('handleAcceptAmendment error', e);

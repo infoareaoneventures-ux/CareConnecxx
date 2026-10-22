@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect, useCallback } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { createPortal } from 'react-dom';
@@ -283,6 +284,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     setSaving(true);
     try {
       await db.collection('caregivers').doc(user.uid).update({ weeklyAvailability: blocksToWeeklySlots(editAvail as Record<string, string[]>) });
+      void recordActedForPerson('availability_updated', 'updated your availability');
       setAvailability(editAvail);
       setShowAvailModal(false);
     } catch {
@@ -944,6 +946,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         await fdb.collection('video_interviews').doc(interview.id).update({
           status: 'accepted', updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        void recordActedForPerson('interview_accepted', 'accepted an interview');
         // Notification handled by onVideoInterviewWrite Cloud Function
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'accepted' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'accepted' as const } : prev);
@@ -964,6 +967,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           status: 'declined', updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
           reschedulePendingTime: firebase.firestore.FieldValue.delete(), rescheduledBy: firebase.firestore.FieldValue.delete(),
         });
+        void recordActedForPerson('interview_declined', 'declined an interview');
         // Notification handled by onVideoInterviewWrite Cloud Function
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'declined' as const } : prev);
@@ -991,6 +995,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           rescheduledViaAgent: firebase.firestore.FieldValue.delete(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        void recordActedForPerson('interview_reschedule_proposed', 'proposed a new interview time');
         setShowPropose(false);
         addToast('New time proposed — waiting on the family to confirm', 'success');
       } catch (e: any) {
@@ -1011,6 +1016,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           status: 'cancelled', cancelledBy: 'caregiver', updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
           reschedulePendingTime: firebase.firestore.FieldValue.delete(), rescheduledBy: firebase.firestore.FieldValue.delete(),
         });
+        void recordActedForPerson('interview_cancelled', 'cancelled an interview');
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);
       } catch {

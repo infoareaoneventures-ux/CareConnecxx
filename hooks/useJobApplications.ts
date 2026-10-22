@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { recordActedForPerson } from '../services/api';
 import { db } from '../lib/firebase';
 import {
   collection,
@@ -248,6 +249,7 @@ export const jobApplicationService = {
       jobFrequency: jobData.jobFrequency || null,
       jobDaysOfWeek: jobData.daysOfWeek || [],
     });
+    void recordActedForPerson('job_applied', 'applied to a job');
 
     // Notification handled by onJobApplicationCreate Cloud Function
     return docRef.id;

@@ -94,7 +94,16 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   }
   // The modal's write lives in submitShiftHoursAs so Evia's Submit hours flow
   // (agents/caregiverTimesheets.ts) runs the very same function — one write path.
-  return submitShiftHoursAs(context.auth.uid, data ?? {});
+  // Admin assist (2026-10-22): an admin inside the care provider's open consent window submits AS them.
+  const { resolveActingCallerUid, recordActedByCallable } = await import("./agents/adminAssist");
+  const { uid, actingAdminUid } = await resolveActingCallerUid(context.auth.uid, data);
+  const result = await submitShiftHoursAs(uid, data ?? {});
+  if (actingAdminUid) {
+    const shiftId = String((data ?? {}).shiftId ?? "");
+    await recordActedByCallable({ uid, adminUid: actingAdminUid, kind: "hours_submitted", summary: "submitted your hours for a visit", sourcePath: `shifts/${shiftId}`, eventId: `hours_${shiftId}_${Date.now()}` })
+      .catch((err) => console.warn("submitShiftHours: acted record failed", err instanceof Error ? err.message : err));
+  }
+  return result;
 });
 
 export interface SubmitShiftHoursInput { shiftId: string; startTime: string; endTime: string; lineItems?: any[] }
@@ -214,7 +223,16 @@ export const reviewShiftHours = functions.https.onCall(async (data, context) => 
   }
   // The modal's four actions live in billing/reviewShiftHours.ts so Evia's
   // review_shift_hours tool runs the very same function (one write path).
-  return reviewShiftHoursAs(context.auth.uid, data ?? {});
+  // Admin assist (2026-10-22): an admin inside the family's open consent window reviews AS them.
+  const { resolveActingCallerUid, recordActedByCallable } = await import("./agents/adminAssist");
+  const { uid, actingAdminUid } = await resolveActingCallerUid(context.auth.uid, data);
+  const result = await reviewShiftHoursAs(uid, data ?? {});
+  if (actingAdminUid) {
+    const appointmentId = String((data ?? {}).appointmentId ?? "");
+    await recordActedByCallable({ uid, adminUid: actingAdminUid, kind: "hours_reviewed", summary: "answered the hours review for a visit", sourcePath: `shifts/${appointmentId}`, eventId: `review_${appointmentId}_${Date.now()}` })
+      .catch((err) => console.warn("reviewShiftHours: acted record failed", err instanceof Error ? err.message : err));
+  }
+  return result;
 });
 
 /**
@@ -226,7 +244,16 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
   }
   // The Review-correction modal's two buttons live in respondToCorrectionAs so
   // Evia's REVIEW flow (agents/caregiverTimesheets.ts) runs the same function.
-  return respondToCorrectionAs(context.auth.uid, data ?? {});
+  // Admin assist (2026-10-22): an admin inside the care provider's open consent window answers AS them.
+  const { resolveActingCallerUid, recordActedByCallable } = await import("./agents/adminAssist");
+  const { uid, actingAdminUid } = await resolveActingCallerUid(context.auth.uid, data);
+  const result = await respondToCorrectionAs(uid, data ?? {});
+  if (actingAdminUid) {
+    const appointmentId = String((data ?? {}).appointmentId ?? "");
+    await recordActedByCallable({ uid, adminUid: actingAdminUid, kind: "correction_answered", summary: "answered the hours correction for a visit", sourcePath: `shifts/${appointmentId}`, eventId: `correction_${appointmentId}_${Date.now()}` })
+      .catch((err) => console.warn("respondToCorrection: acted record failed", err instanceof Error ? err.message : err));
+  }
+  return result;
 });
 
 export interface RespondToCorrectionInput {

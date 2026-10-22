@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel, kindsOfPost, serviceListsForKinds, CARE_KINDS, CARE_KIND_LABEL, CareKind } from './signup/constants';
+import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -357,6 +358,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                 status: 'accepted',
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
+            void recordActedForPerson('interview_accepted', 'accepted an interview');
             onShowToast('Interview accepted', 'success');
         } catch {
             onShowToast('Failed to accept interview', 'error');
@@ -382,6 +384,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                 reschedulePendingTime: firebase.firestore.FieldValue.delete(),
                 rescheduledBy: firebase.firestore.FieldValue.delete(),
             });
+            void recordActedForPerson('interview_declined', 'declined an interview');
             onShowToast('Interview declined', 'info');
         } catch {
             onShowToast('Failed to decline interview', 'error');
@@ -405,6 +408,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                 reschedulePendingTime: firebase.firestore.FieldValue.delete(),
                 rescheduledBy: firebase.firestore.FieldValue.delete(),
             });
+            void recordActedForPerson('interview_cancelled', 'cancelled an interview');
             onShowToast('Interview cancelled', 'info');
         } catch {
             onShowToast('Failed to cancel interview', 'error');
@@ -448,6 +452,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                 rescheduledViaAgent: firebase.firestore.FieldValue.delete(),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
+            void recordActedForPerson('interview_reschedule_proposed', 'proposed a new interview time');
             setRescheduleOpenId(null);
             setRescheduleDate('');
             setRescheduleTime('');
@@ -480,6 +485,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                 remindersScheduledAt: firebase.firestore.FieldValue.delete(),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
+            void recordActedForPerson('interview_new_time_accepted', "accepted the family's new interview time");
             onShowToast('Interview time confirmed', 'success');
         } catch {
             onShowToast('Failed to confirm the interview time', 'error');

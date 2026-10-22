@@ -387,10 +387,10 @@ export const AdminClientManager: React.FC<{ initialUid?: string; initialPanel?: 
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-1 flex-wrap">
             {(['all', 'active', 'suspended', 'banned', 'human'] as const).map(f => (
               <button key={f} onClick={() => setStatusFilter(f)}
-                className={`flex-1 py-1 text-xs rounded-full font-medium capitalize transition-colors ${statusFilter === f ? (f === 'human' ? 'bg-rose-100 text-rose-700' : 'bg-primary-100 text-primary-700') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                className={`px-2.5 py-1 text-xs rounded-full font-medium whitespace-nowrap ${f === 'human' ? '' : 'capitalize '}transition-colors ${statusFilter === f ? (f === 'human' ? 'bg-rose-100 text-rose-700' : 'bg-primary-100 text-primary-700') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
                 {f === 'human' ? 'Needs a human' : f}
               </button>
             ))}

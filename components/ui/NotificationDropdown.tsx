@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, BellRing, Info, Calendar, MessageSquare, AlertTriangle, Trash2, CheckCheck } from 'lucide-react';
 import { useNotifications } from '../../hooks/useNotifications';
-import { authService } from '../../services/api';
+import { authService, isViewingOnly, VIEW_ONLY_MESSAGE } from '../../services/api';
 import { AppNotification } from '../../types';
 import { routeForNotification } from '../../utils/notificationRoutes';
 
@@ -60,17 +60,24 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ role
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen]);
 
+  // Admin assist view mode (2026-10-22): the bell can be read, never changed — no mark-read, no
+  // clear, no opening an item (which would mark it read). The list itself stays visible.
+  const viewOnly = (): boolean => { if (!isViewingOnly()) return false; window.alert(VIEW_ONLY_MESSAGE); return true; };
+
   const handleMarkAllRead = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    if (viewOnly()) return;
     markAllAsRead();
   }, [markAllAsRead]);
 
   const handleDelete = useCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (viewOnly()) return;
     deleteNotification(id);
   }, [deleteNotification]);
 
   const handleNotificationClick = useCallback((notif: AppNotification) => {
+    if (viewOnly()) return;
     if (!notif.isRead) markAsRead(notif.id);
     setIsOpen(false);
     navigate(routeForNotification(notif, role));

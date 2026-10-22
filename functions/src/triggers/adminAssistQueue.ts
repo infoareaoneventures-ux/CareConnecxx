@@ -16,7 +16,7 @@ import { logAudit } from "../observability/auditLog";
 
 const db = admin.firestore();
 
-export type AdminAssistQueueType = "request_consent" | "end_consent" | "send_link";
+export type AdminAssistQueueType = "request_consent" | "end_consent" | "send_link" | "acted";
 export const ADMIN_ASSIST_LINK_KINDS = [
   "client_identity", "client_payment", "caregiver_membership", "caregiver_background_check", "caregiver_payouts", "caregiver_photo",
 ] as const;
@@ -29,6 +29,10 @@ export interface AdminAssistQueueDoc {
   adminUid: string;
   adminName: string;
   linkKind?: AdminAssistLinkKind;
+  /** type "acted": what the admin just did on the person's pages (services/api.ts recordActedForPerson). */
+  kind?: string;
+  summary?: string;
+  extra?: Record<string, unknown>;
 }
 
 export function linkKindAllowedForRole(kind: string, role: "client" | "caregiver"): kind is AdminAssistLinkKind {
@@ -65,6 +69,17 @@ export const processAdminAssistQueue = functions.firestore
         case "end_consent":
           await assist.endAdminAssist({ uid: data.uid, phone: person.phone, adminUid: data.adminUid, adminName: data.adminName ?? "", reason: "ended" });
           break;
+        case "acted": {
+          // Only inside an open window (the rules already gate the write itself; this gates the record + text).
+          if (!(await assist.assistWindowOpenFor(data.uid, data.adminUid))) { await done("No open consent window for this person"); return; }
+          const kind = String(data.kind ?? "").trim() || "change";
+          const summary = String(data.summary ?? "").trim() || "made a change on your account";
+          await assist.recordAdminActed({
+            uid: data.uid, role: data.role, adminUid: data.adminUid, adminName: data.adminName ?? "", kind, summary,
+            sourcePath: snap.ref.path, eventId: snap.id, phone: person.phone, ...(data.extra ? { extra: data.extra } : {}),
+          });
+          break;
+        }
         case "send_link": {
           const kind = String(data.linkKind ?? "");
           if (!linkKindAllowedForRole(kind, data.role)) { await done(`That link isn't one for a ${data.role === "client" ? "client" : "care provider"}`); return; }

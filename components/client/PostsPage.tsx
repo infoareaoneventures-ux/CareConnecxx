@@ -1,4 +1,5 @@
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { recordActedForPerson } from '../../services/api';
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
 import { PRIMARY_SERVICES, serviceLabel, ageRangeLabel, recipientStage } from '../caregiver/signup/constants';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -995,6 +996,7 @@ export const PostsPage: React.FC = () => {
           isResend: false,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        void recordActedForPerson('booking_sent', 'sent a booking request to a care provider');
         await fdb.collection('hire_decisions').add({
           clientId: user.uid,
           clientName: user.displayName || '',

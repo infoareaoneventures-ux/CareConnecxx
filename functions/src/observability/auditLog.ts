@@ -141,6 +141,8 @@ export type AuditEventType =
   | "admin_assist_ended"
   | "admin_assist_expired"
   | "admin_link_sent"
+  // One acted-for change on the person's pages or through a callable (data: kind, summary, adminName).
+  | "admin_acted"
   // The person's own timeline (2026-10-22): one entry per in-app notification
   // created for them (notifications/userNotification.ts) — the same place the
   // person is told, so the log can't drift from what they saw.

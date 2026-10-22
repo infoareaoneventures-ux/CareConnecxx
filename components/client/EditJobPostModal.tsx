@@ -1,4 +1,5 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
+import { recordActedForPerson } from '../../services/api';
 import { serviceLabel, PRIMARY_SERVICES, CARE_KINDS, serviceListsForKinds, kindsOfServices, JOB_DESCRIPTION_MAX_CHARS } from '../caregiver/signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -119,6 +120,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
       };
 
       await db.collection('job_posts').doc(post.id).update(payload);
+      void recordActedForPerson('job_post_updated', 'updated your job post');
       onSaved(payload as Partial<JobPost>);
       onShowToast('Post updated', 'success');
       onClose();

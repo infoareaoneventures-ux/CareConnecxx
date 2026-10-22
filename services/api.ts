@@ -1,7 +1,60 @@
 import { stripeService as externalStripeService } from './stripeService';
 import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 
-import firebase, { auth, db, functions, storage, isConfigured } from '../lib/firebase';
+import firebase, { auth, db, functions, storage, isConfigured, setActingAuthUser } from '../lib/firebase';
+
+// ── Admin assist: acting for a person (2026-10-22) ───────────────────────────
+// While an admin uses a person's own pages for them (after the person's texted
+// YES — see context/CareConnexContext.tsx startActingFor), the site acts as that
+// person: reads and writes keyed by effectiveUid(), and every acted write is
+// recorded through adminAssistQueue (type "acted") so the server logs it under
+// the admin's name and tells the person by text + bell. firestore.rules lets the
+// admin write as the person only while adminAssist/{uid} holds an open window.
+export interface ActingContext {
+    uid: string;
+    role: 'client' | 'caregiver';
+    name: string;
+    adminUid: string;
+    adminName: string;
+    until: string;
+    /** The person's identity, once their profile is loaded (context/CareConnexContext.tsx). */
+    email?: string | null;
+    photoURL?: string | null;
+    phone?: string | null;
+}
+let actingContext: ActingContext | null = null;
+export function setActingContext(ctx: ActingContext | null): void {
+    actingContext = ctx;
+    setActingAuthUser(ctx ? { uid: ctx.uid, displayName: ctx.name, email: ctx.email ?? null, photoURL: ctx.photoURL ?? null, phoneNumber: ctx.phone ?? null } : null);
+}
+/** The message a link-only step shows when an admin is acting (payment, identity, payouts stay with the person). */
+export const ACTING_LINK_ONLY_MESSAGE = "This step stays with the person. Send them the link from their admin page instead.";
+export function getActingContext(): ActingContext | null { return actingContext; }
+/** The uid the site acts as: the person an admin is acting for, else the signed-in user. */
+export function effectiveUid(): string | undefined {
+    return actingContext?.uid ?? auth?.currentUser?.uid ?? undefined;
+}
+/** While acting: record what the team just did for the person (audit entry + the person is told). No-op otherwise. */
+export async function recordActedForPerson(kind: string, summary: string, extra?: Record<string, unknown>): Promise<void> {
+    if (!actingContext || !isConfigured || !db) return;
+    try {
+        await db.collection('adminAssistQueue').add({
+            type: 'acted',
+            uid: actingContext.uid,
+            role: actingContext.role,
+            adminUid: actingContext.adminUid,
+            adminName: actingContext.adminName,
+            kind,
+            summary,
+            ...(extra ? { extra } : {}),
+            createdAt: new Date().toISOString(),
+            processedAt: null,
+            error: null,
+        });
+    } catch (err) {
+        console.warn('recordActedForPerson failed (the change itself is saved):', err);
+    }
+}
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { geocodeAddress, GeoPrecision } from '../utils/geocode';
 import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
@@ -480,8 +533,7 @@ export const dbService = {
         }
 
         if (isConfigured && db) {
-            const currentUser = auth?.currentUser;
-            const clientName = currentUser?.displayName || 'Anonymous';
+            const clientName = actingContext?.name || auth?.currentUser?.displayName || 'Anonymous';
 
             const ref = await db.collection('job_posts').add({
                 ...sanitizedPost,
@@ -935,7 +987,7 @@ export const dbService = {
 
     subscribeToThreads: (userType: 'client' | 'caregiver', onUpdate: (threads: Thread[]) => void) => {
         if (isConfigured && db && auth?.currentUser) {
-            const q = db.collection('threads').where('participants', 'array-contains', auth.currentUser.uid);
+            const q = db.collection('threads').where('participants', 'array-contains', effectiveUid() as string);
 
             return q.onSnapshot(async (snapshot) => {
                 const threads: Thread[] = [];
@@ -1007,6 +1059,7 @@ export const dbService = {
                         lastMessageTime: new Date().toLocaleTimeString(),
                         unreadCount: 1
                     });
+                    void recordActedForPerson('message_sent', 'sent a message from your inbox');
                     return true;
                 } catch (e: any) {
                     console.error("Message send failed", e);
@@ -1019,7 +1072,7 @@ export const dbService = {
 
     createThread: async (otherUserId: string, otherUserName: string, otherUserAvatar?: string) => {
         // Rate limit: Prevent duplicate thread creation with deduplication
-        const currentUid = auth?.currentUser?.uid;
+        const currentUid = effectiveUid();
         if (!currentUid) throw new Error("Not authenticated");
         
         // Default avatar if none provided
@@ -1065,11 +1118,11 @@ export const dbService = {
     // v1-chatWithCara callable and renders whatever lands in the thread.
 
     caraThreadId: (): string | null =>
-        auth?.currentUser ? `cara_${auth.currentUser.uid}` : null,
+        effectiveUid() ? `cara_${effectiveUid()}` : null,
 
     subscribeToCaraThread: (onUpdate: (thread: { id: string; [key: string]: any } | null) => void) => {
         if (isConfigured && db && auth?.currentUser) {
-            return db.collection('threads').doc(`cara_${auth.currentUser.uid}`).onSnapshot(
+            return db.collection('threads').doc(`cara_${effectiveUid()}`).onSnapshot(
                 (snap) => onUpdate(snap.exists ? { id: snap.id, ...snap.data() } : null),
                 (error) => {
                     if (error.code !== 'permission-denied') console.error('Evia thread subscription error:', error);
@@ -1083,7 +1136,7 @@ export const dbService = {
     clearCaraThreadUnread: async () => {
         // The only client-side write firestore.rules allows on an Evia thread.
         if (isConfigured && db && auth?.currentUser) {
-            await db.collection('threads').doc(`cara_${auth.currentUser.uid}`)
+            await db.collection('threads').doc(`cara_${effectiveUid()}`)
                 .update({ unreadCount: 0 })
                 .catch(() => { /* thread may not exist yet */ });
         }
@@ -2627,7 +2680,8 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
 
     if (photoURL) {
         await db.collection('users').doc(uid).set({ photoURL }, { merge: true }).catch(() => {});
-        try { await firebase.auth().currentUser?.updateProfile({ photoURL }); } catch { /* best effort */ }
+        // Never the admin's own Auth profile while acting for someone (2026-10-22).
+        try { if (!actingContext) await firebase.auth().currentUser?.updateProfile({ photoURL }); } catch { /* best effort */ }
     }
 
     // Best-effort writes — don't block wizard completion if they fail
@@ -2684,4 +2738,5 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         locationPoolUpdate(),
         emergencyContactWrite,
     ]);
+    void recordActedForPerson('care_request_completed', 'finished your care request setup');
 }

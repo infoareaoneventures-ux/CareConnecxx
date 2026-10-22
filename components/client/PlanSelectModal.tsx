@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getActingContext, ACTING_LINK_ONLY_MESSAGE } from '../../services/api';
 import { X, Loader2, Check } from 'lucide-react';
 import { auth } from '../../lib/firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -46,6 +47,8 @@ export function PlanSelectModal({ onClose, currentPriceId, caregiverName, caregi
     setError(null);
 
     try {
+      // Admin assist (2026-10-22): membership payment stays with the person.
+      if (getActingContext()) throw new Error(ACTING_LINK_ONLY_MESSAGE);
       const functions = getFunctions();
       const createCheckoutSession = httpsCallable(functions, 'v1-createCheckoutSession');
 

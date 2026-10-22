@@ -18,7 +18,8 @@ export function useAuthUser(): firebase.User | null {
 
   useEffect(() => {
     if (!auth) return;
-    const unsub = auth.onAuthStateChanged((u) => setUser(u));
+    // Read back through `auth.currentUser` so an admin acting for a person (lib/firebase.ts) is honoured.
+    const unsub = auth.onAuthStateChanged((u) => setUser(u ? (auth?.currentUser ?? u) : null));
     return () => unsub();
   }, []);
 

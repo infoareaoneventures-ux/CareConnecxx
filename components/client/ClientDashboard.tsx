@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { recordActedForPerson } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, CreditCard } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
@@ -502,7 +503,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       ? savedIds.filter(id => id !== caregiver.id)
       : [...savedIds, caregiver.id];
     setSavedIds(next);
-    db.collection('users').doc(currentUser.uid).update({ savedCaregiverIds: next }).catch(() => setSavedIds(savedIds));
+    db.collection('users').doc(currentUser.uid).update({ savedCaregiverIds: next }).then(() => recordActedForPerson('saved_list_changed', 'changed your saved care providers')).catch(() => setSavedIds(savedIds));
   };
 
   const fmtTime = (t?: string) => {

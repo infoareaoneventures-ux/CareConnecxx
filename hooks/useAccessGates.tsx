@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { ACTING_LINK_ONLY_MESSAGE } from '../services/api';
 import { auth, db } from '../lib/firebase';
 import { startIdentityVerification } from '../services/stripeService';
 import { IdentityGateModal } from '../components/client/IdentityGateModal';
@@ -71,7 +72,7 @@ export function useAccessGates() {
       await startIdentityVerification(returnUrl);
     } catch (e) {
       console.error('Failed to start identity verification', e);
-      alert('Could not start identity verification. Please try again.');
+      alert(e instanceof Error && e.message === ACTING_LINK_ONLY_MESSAGE ? e.message : 'Could not start identity verification. Please try again.');
     }
   };
 

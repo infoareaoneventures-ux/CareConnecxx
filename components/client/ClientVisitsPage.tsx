@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
+import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -1887,6 +1888,7 @@ export const ClientVisitsPage: React.FC = () => {
       isResend: false,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
+    void recordActedForPerson('booking_sent', 'sent a booking request to a care provider');
 
     await db.collection('shifts').doc(shift.id).update({
       replacementRequestId: bookingRef.id,

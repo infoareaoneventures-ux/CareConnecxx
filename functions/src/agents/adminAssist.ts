@@ -21,6 +21,7 @@
 import * as admin from "firebase-admin";
 import { logAudit } from "../observability/auditLog";
 import { sendMessage, sendToPhone, type AgentSession } from "../linq/client";
+import { writeUserNotification } from "../notifications/userNotification";
 
 const db = admin.firestore();
 
@@ -88,6 +89,43 @@ export const CONSENT_GRANTED_TEXT =
 export const CONSENT_DECLINED_TEXT = "No problem — nothing will be done on your account by our team.";
 export const ASSIST_ENDED_TEXT = "Our team has finished helping with your account. If you need anything else, just text me.";
 
+/** The text the person gets for each thing the team did for them. */
+export function actedText(summary: string): string {
+  return `Our team ${summary.trim().replace(/\.$/, "")} for you by phone, at your request. If that's not right, reply here and I'll flag it.`;
+}
+
+/** True while the person's window is open — the server-side twin of firestore.rules actingFor(). */
+export async function assistWindowOpenFor(uid: string, adminUid: string): Promise<boolean> {
+  const snap = await db.collection("adminAssist").doc(uid).get();
+  const st = snap.data() as Partial<AdminAssistState> | undefined;
+  if (!isAssistActive(st)) return false;
+  const adminDoc = (await db.collection("users").doc(adminUid).get()).data() ?? {};
+  return adminDoc.userType === "admin" || adminDoc.isAdmin === true;
+}
+
+/**
+ * One acted-for change, recorded the same way wherever it came from (the site's
+ * acted-write records via adminAssistQueue, or a callable acting for the person):
+ * an audit entry under the admin's name, a bell, and a text to the person.
+ */
+export async function recordAdminActed(input: {
+  uid: string; role?: AssistRole; adminUid: string; adminName: string; kind: string; summary: string;
+  sourcePath: string; eventId: string; phone?: string; extra?: Record<string, unknown>;
+}): Promise<void> {
+  await logAudit({
+    eventType: "admin_acted",
+    userId: input.uid,
+    ...(input.phone ? { phone: input.phone } : {}),
+    data: { kind: input.kind, summary: input.summary, adminUid: input.adminUid, adminName: input.adminName, ...(input.extra ? { extra: input.extra } : {}) },
+  });
+  await writeUserNotification({
+    sourcePath: input.sourcePath, eventId: input.eventId, recipientId: input.uid,
+    transitionType: `admin_acted_${input.kind}`, type: "admin_action",
+    title: "Our team helped with your account", body: `Our team ${input.summary} for you by phone.`,
+  }).catch((err) => console.warn("recordAdminActed: notification failed", err instanceof Error ? err.message : err));
+  if (input.phone) await sendToPhone(input.phone, actedText(input.summary)).catch((err) => console.warn("recordAdminActed: text failed", err instanceof Error ? err.message : err));
+}
+
 function pendingTimeFormat(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
 }
@@ -143,7 +181,8 @@ export async function handleAdminAssistConsentReply(phone: string, chatId: strin
   if (kind === "yes") {
     const grantedAt = new Date(now).toISOString();
     const until = assistWindowEnd(now);
-    await db.collection("adminAssist").doc(pending.uid).set({ status: "granted", grantedAt, until, lastReply: text.trim().slice(0, 40) }, { merge: true });
+    // untilTs: the same moment as a Timestamp, for firestore.rules actingFor() (request.time comparison).
+    await db.collection("adminAssist").doc(pending.uid).set({ status: "granted", grantedAt, until, untilTs: admin.firestore.Timestamp.fromMillis(now + ASSIST_WINDOW_MS), lastReply: text.trim().slice(0, 40) }, { merge: true });
     await sendMessage(chatId, CONSENT_GRANTED_TEXT);
     await logAudit({ eventType: "admin_assist_granted", userId: pending.uid, phone, data: { adminUid: pending.adminUid, adminName: pending.adminName, until, askedAt: pendingTimeFormat(pending.requestedAt) } });
     return true;

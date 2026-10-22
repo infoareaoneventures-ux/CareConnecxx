@@ -196,6 +196,7 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   admin_assist_ended:                 { included: false },
   admin_assist_expired:               { included: false },
   admin_link_sent:                    { included: false },
+  admin_acted:                        { included: false },
   user_notified:                      { included: false },
 };
 

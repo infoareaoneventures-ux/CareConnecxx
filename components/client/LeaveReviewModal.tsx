@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { recordActedForPerson } from '../../services/api';
 import { Star, X, CheckCircle, Loader2 } from 'lucide-react';
 import { db, auth } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
@@ -61,6 +62,7 @@ export const LeaveReviewModal: React.FC<LeaveReviewModalProps> = ({
         clientPhotoURL = userData?.photoURL || userData?.photo || userData?.imageUrl || userData?.profilePhoto || null;
       }
 
+      void recordActedForPerson('review_left', 'left a review for a care provider');
       await db!.collection('reviews').add({
         clientId:       user?.uid || '',
         clientName:     user?.displayName || 'Client',

@@ -33,7 +33,8 @@ interface Props {
 interface Outcome { sending?: boolean; sentAt?: string; error?: string }
 
 export const AdminSendLinks: React.FC<Props> = ({ uid, role, onToast }) => {
-  const { currentUser } = useCareConnex();
+  const { currentUser: ctxUser, adminUser } = useCareConnex();
+  const currentUser = adminUser ?? ctxUser;
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
 
   useEffect(() => { setOutcomes({}); }, [uid]);

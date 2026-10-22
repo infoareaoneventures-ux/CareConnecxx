@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { dbService, authService } from '../services/api';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { dbService, authService, adminService, setActingContext, type ActingContext } from '../services/api';
 import { notificationService } from '../services/notifications';
 import { pushNotificationService } from '../services/pushNotificationService';
 import { setSentryUser } from '../lib/sentry';
@@ -48,6 +48,12 @@ interface CareConnexContextType {
     unblockUser: (targetId: string) => Promise<void>;
     membershipModalOpen: boolean;
     setMembershipModalOpen: (v: boolean) => void;
+    // Admin assist (2026-10-22): while an admin acts for a person, currentUser IS that person
+    // (their pages run as them); adminUser keeps the signed-in admin for the banner and AdminRoute.
+    actingFor: ActingContext | null;
+    adminUser: AuthenticatedUser | null;
+    startActingFor: (ctx: ActingContext) => void;
+    stopActing: () => void;
 }
 
 const CareConnexContext = createContext<CareConnexContextType | undefined>(undefined);
@@ -64,6 +70,72 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
     const [blockedUserProfiles, setBlockedUserProfiles] = useState<Record<string, { name: string; photo: string }>>({});
     const [membershipModalOpen, setMembershipModalOpen] = useState(false);
+
+    // ── Admin assist: acting for a person (2026-10-22) ─────────────────────
+    // Opened from the admin page once the person texted YES (adminAssist/{uid}
+    // granted, one-hour window). The person's own profile becomes currentUser so
+    // every page, read and write runs as them; services/api.ts is told too
+    // (setActingContext) so uid-bound calls and the acted-for records follow.
+    // Ends when the admin stops, the window runs out, or the server closes it.
+    const [actingFor, setActingFor] = useState<ActingContext | null>(null);
+    const [actingUser, setActingUser] = useState<AuthenticatedUser | null>(null);
+    const startActingFor = useCallback((ctx: ActingContext) => { setActingFor(ctx); }, []);
+    const stopActing = useCallback(() => { setActingFor(null); }, []);
+    useEffect(() => {
+        // Restore after a refresh — only for the same admin and an open window.
+        if (!currentUser || currentUser.userType !== 'admin' || actingFor) return;
+        try {
+            const raw = sessionStorage.getItem('evia:acting-for');
+            if (!raw) return;
+            const saved = JSON.parse(raw) as ActingContext;
+            if (saved.adminUid === currentUser.uid && Date.parse(saved.until) > Date.now()) setActingFor(saved);
+            else sessionStorage.removeItem('evia:acting-for');
+        } catch { /* storage unavailable */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentUser?.uid, currentUser?.userType]);
+    useEffect(() => {
+        if (!actingFor) {
+            setActingContext(null);
+            setActingUser(null);
+            try { sessionStorage.removeItem('evia:acting-for'); } catch { /* storage unavailable */ }
+            return;
+        }
+        setActingContext(actingFor);
+        try { sessionStorage.setItem('evia:acting-for', JSON.stringify(actingFor)); } catch { /* storage unavailable */ }
+        let cancelled = false;
+        const end = (why: string) => {
+            if (cancelled) return;
+            cancelled = true;
+            setActingFor(null);
+            addToast(why, 'info');
+        };
+        dbService.getUser(actingFor.uid).then((profile: any) => {
+            if (cancelled) return;
+            if (!profile) { end('Could not load their account'); return; }
+            // The site's own reads of the signed-in account (auth.currentUser) now show this person too.
+            setActingContext({ ...actingFor, name: profile.firstName || profile.name || actingFor.name, email: profile.email ?? null, photoURL: profile.photoURL ?? null, phone: profile.phone ?? null });
+            setActingUser({
+                uid: actingFor.uid,
+                email: profile.email ?? null,
+                displayName: profile.firstName || profile.name || actingFor.name,
+                photoURL: profile.photoURL ?? null,
+                userType: actingFor.role,
+                isVerified: profile.verified ?? false,
+                phone: profile.phone,
+                eviaConnected: profile.eviaConnected,
+                jobPostingCompleted: profile.jobPostingCompleted,
+            });
+        }).catch(() => end('Could not load their account'));
+        const unsub = adminService.watchAdminAssist(actingFor.uid, (state) => {
+            const active = !!state && state.status === 'granted' && !!state.until && Date.parse(state.until) > Date.now();
+            if (!active) end(`Acting for ${actingFor.name} has ended`);
+        });
+        const timer = setInterval(() => {
+            if (Date.parse(actingFor.until) <= Date.now()) end(`The hour for ${actingFor.name} ran out`);
+        }, 15000);
+        return () => { cancelled = true; unsub(); clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [actingFor]);
 
     // Auth Listener - fetches user profile from Firestore to get userType
     useEffect(() => {
@@ -390,12 +462,17 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
 
     return (
         <CareConnexContext.Provider value={{
-            currentUser,
+            currentUser: actingFor && actingUser ? actingUser : currentUser,
+            adminUser: actingFor ? currentUser : null,
+            actingFor,
+            startActingFor,
+            stopActing,
             caregiverProfile,
             refreshCaregiverProfile,
             caregivers,
             isLoading,
-            authResolved,
+            // While the person's profile is still loading, no page sees the admin as currentUser.
+            authResolved: authResolved && !(actingFor && !actingUser),
             authRecovery,
             retryAuth,
             signOutFromRecovery,

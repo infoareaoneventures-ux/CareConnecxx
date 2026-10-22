@@ -20,6 +20,16 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
     
+    // Admin assist (2026-10-22): an admin acting for a person during the window the person
+    // opened by texting YES (adminAssist/{uid}: status granted, untilTs still ahead). Used
+    // wherever a family-side write is bound to request.auth.uid.
+    function actingFor(uid) {
+      return isAdmin()
+        && exists(/databases/$(database)/documents/adminAssist/$(uid))
+        && get(/databases/$(database)/documents/adminAssist/$(uid)).data.status == 'granted'
+        && get(/databases/$(database)/documents/adminAssist/$(uid)).data.untilTs > request.time;
+    }
+
     // Check if user has admin role (userType == 'admin' OR isAdmin == true)
     function isAdmin() {
       return isAuthenticated() && (
@@ -330,15 +340,15 @@ service cloud.firestore {
     // THREADS (CHAT) COLLECTION
     // ==========================================
     match /threads/{threadId} {
-      // Only participants can read/write
+      // Only participants can read/write (an admin may read: admin assist, 2026-10-22)
       allow read: if isAuthenticated() &&
-        request.auth.uid in resource.data.participants;
+        (request.auth.uid in resource.data.participants || isAdmin());
 
       // Evia threads (isCaraThread == true) are written server-side only
       // (Admin SDK via threadMirror / chatWithCara); the sole client-side
       // update allowed is clearing the unread counter.
       allow update: if isAuthenticated() &&
-        request.auth.uid in resource.data.participants &&
+        (request.auth.uid in resource.data.participants || isAdmin()) &&
         (
           resource.data.get('isCaraThread', false) != true ||
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadCount'])
@@ -346,29 +356,36 @@ service cloud.firestore {
 
       allow delete: if isAdmin();
 
-      // Create new thread (clients can never create Evia threads)
+      // Create new thread (clients can never create Evia threads); an admin acting for a
+      // participant during an open window may open one for them.
       allow create: if isAuthenticated() &&
-        request.auth.uid in request.resource.data.participants &&
         request.resource.data.participants is list &&
         request.resource.data.participants.size() >= 2 &&
+        (
+          request.auth.uid in request.resource.data.participants ||
+          actingFor(request.resource.data.participants[0]) ||
+          actingFor(request.resource.data.participants[1])
+        ) &&
         request.resource.data.get('isCaraThread', false) != true;
 
       // Subcollection: messages
       match /messages/{messageId} {
-        // Only thread participants can read messages
+        // Only thread participants can read messages (an admin may read: admin assist, 2026-10-22)
         allow read: if isAuthenticated() &&
-          request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+          (request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants || isAdmin());
 
         // Evia-thread messages are server-only: clients cannot create, edit,
         // or delete them (prevents forging senderId 'cara' into the record).
         allow write: if isAuthenticated() &&
           get(/databases/$(database)/documents/threads/$(threadId)).data.get('isCaraThread', false) != true &&
-          request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+          (request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants || isAdmin());
 
+        // A message is sent as its sender: the participant themself, or an admin acting for
+        // that participant during an open window (the record stays in the person's name).
         allow create: if isAuthenticated() &&
           get(/databases/$(database)/documents/threads/$(threadId)).data.get('isCaraThread', false) != true &&
-          request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants &&
-          request.resource.data.senderId == request.auth.uid;
+          request.resource.data.senderId in get(/databases/$(database)/documents/threads/$(threadId)).data.participants &&
+          (request.resource.data.senderId == request.auth.uid || actingFor(request.resource.data.senderId));
       }
     }
     
@@ -438,7 +455,7 @@ service cloud.firestore {
     // ==========================================
     match /job_postings/{postId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && request.auth.uid == postId;
+      allow create, update: if (isAuthenticated() && request.auth.uid == postId) || actingFor(postId);
       allow delete: if isAdmin();
     }
 
@@ -463,9 +480,11 @@ service cloud.firestore {
         isAdmin()
       );
       
-      // Create new job post
-      allow create: if isAuthenticated() &&
-        request.resource.data.clientId == request.auth.uid;
+      // Create new job post (or an admin acting for the client during an open window)
+      allow create: if isAuthenticated() && (
+        request.resource.data.clientId == request.auth.uid ||
+        actingFor(request.resource.data.clientId)
+      );
     }
     
     // ==========================================
@@ -987,9 +1006,11 @@ service cloud.firestore {
         resource.data.caregiverId == request.auth.uid ||
         isAdmin()
       );
-      // Client creates the request
-      allow create: if isAuthenticated() &&
-        request.resource.data.clientId == request.auth.uid;
+      // Client creates the request (or an admin acting for them during an open window)
+      allow create: if isAuthenticated() && (
+        request.resource.data.clientId == request.auth.uid ||
+        actingFor(request.resource.data.clientId)
+      );
       // Client can resend (update); caregiver can accept/decline (update status)
       allow update: if isAuthenticated() && (
         resource.data.clientId == request.auth.uid ||
@@ -1008,8 +1029,10 @@ service cloud.firestore {
         resource.data.caregiverId == request.auth.uid ||
         isAdmin()
       );
-      allow create: if isAuthenticated() &&
-        request.resource.data.clientId == request.auth.uid;
+      allow create: if isAuthenticated() && (
+        request.resource.data.clientId == request.auth.uid ||
+        actingFor(request.resource.data.clientId)
+      );
       allow update, delete: if isAdmin();
     }
 

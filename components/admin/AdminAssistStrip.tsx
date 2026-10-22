@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Phone, Square, RefreshCw, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Phone, Square, RefreshCw, CheckCircle, Clock, AlertCircle, ExternalLink } from 'lucide-react';
 import { adminService, type AdminAssistState } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 
@@ -21,7 +22,9 @@ interface Props {
 const fmtTime = (iso?: string) => iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
 
 export const AdminAssistStrip: React.FC<Props> = ({ uid, role, personName, phone, onToast }) => {
-  const { currentUser } = useCareConnex();
+  const { currentUser: ctxUser, adminUser, startActingFor } = useCareConnex();
+  const currentUser = adminUser ?? ctxUser;
+  const navigate = useNavigate();
   const [state, setState] = useState<AdminAssistState | null>(null);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
@@ -73,8 +76,18 @@ export const AdminAssistStrip: React.FC<Props> = ({ uid, role, personName, phone
             Acting for <strong>{first}</strong>, allowed by YES at {fmtTime(state?.grantedAt)}, until {fmtTime(state?.until)}
             <span className="ml-2 font-mono text-xs text-emerald-700">{mm}:{ss}</span>
           </span>
+          {role === 'client' && currentUser && state?.until && (
+            <button
+              onClick={() => {
+                startActingFor({ uid, role, name: personName, adminUid: currentUser.uid, adminName: currentUser.displayName || currentUser.email || currentUser.uid, until: state.until as string });
+                navigate('/client/dashboard');
+              }}
+              className="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+              <ExternalLink className="w-3 h-3" /> Open their pages
+            </button>
+          )}
           <button onClick={() => queue('end_consent')} disabled={busy}
-            className="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-100 disabled:opacity-50">
+            className={`${role === 'client' ? '' : 'ml-auto '}inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-100 disabled:opacity-50`}>
             <Square className="w-3 h-3" /> Stop
           </button>
         </>

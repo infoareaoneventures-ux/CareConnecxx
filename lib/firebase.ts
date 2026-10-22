@@ -18,6 +18,45 @@ const firebaseConfig = {
 
 let app;
 let auth: firebase.auth.Auth | undefined;
+
+// ── Admin assist: acting for a person (2026-10-22) ───────────────────────────
+// The client pages read the signed-in account in ~35 places (auth.currentUser,
+// authService.getCurrentUser(), useAuthUser) for the uid, name, email and photo
+// they write under. While an admin acts for a person, that identity IS the
+// person: `auth.currentUser` returns a view of the real signed-in user whose
+// uid / displayName / email / photoURL / phoneNumber are the person's, while
+// every method (getIdToken, reload, sign-out…) still runs on the real admin, so
+// callables carry the admin's token (+ actingForUid) and firestore.rules
+// actingFor() decides. Set from services/api.ts setActingContext.
+export interface ActingAuthIdentity {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+  photoURL: string | null;
+  phoneNumber: string | null;
+}
+let actingIdentity: ActingAuthIdentity | null = null;
+export function setActingAuthUser(identity: ActingAuthIdentity | null): void { actingIdentity = identity; }
+function actingUserFor(real: firebase.User | null): firebase.User | null {
+  if (!actingIdentity || !real) return real;
+  const id = actingIdentity as unknown as Record<string, unknown>;
+  return new Proxy(real, {
+    get(target, prop) {
+      if (typeof prop === 'string' && prop in id) return id[prop];
+      const v = Reflect.get(target, prop, target);
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  });
+}
+function withActingUser(real: firebase.auth.Auth): firebase.auth.Auth {
+  return new Proxy(real, {
+    get(target, prop) {
+      if (prop === 'currentUser') return actingUserFor(target.currentUser);
+      const v = Reflect.get(target, prop, target);
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  });
+}
 let db: firebase.firestore.Firestore | undefined;
 let functions: firebase.functions.Functions | undefined;
 let storage: firebase.storage.Storage | undefined;
@@ -36,7 +75,7 @@ try {
   } else {
     app = firebase.app();
   }
-  auth = firebase.auth();
+  auth = withActingUser(firebase.auth());
   db = firebase.firestore();
   // Firestore rejects a field whose value is undefined ("Unsupported field value: undefined") and the
   // save fails as a whole. The server has had ignoreUndefinedProperties on since 2026-08; the site gets

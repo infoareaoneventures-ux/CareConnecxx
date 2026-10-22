@@ -74,6 +74,7 @@ import { pushNotificationService } from './services/pushNotificationService';
 
 // PWA Components
 import { PWAInstallPrompt, registerServiceWorker } from './utils/pwa';
+import { ActingBanner } from './components/admin/ActingBanner';
 import { preloadCriticalResources } from './utils/performance';
 
 
@@ -92,11 +93,12 @@ const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element })
 };
 
 const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
-  const { currentUser, authResolved } = useCareConnex();
+  const { currentUser, authResolved, actingFor } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'caregiver') return <Navigate to="/care-provider/dashboard" replace />;
-  if (!currentUser.eviaConnected) return <Navigate to="/client/connect" replace />;
+  // An admin acting for the family (2026-10-22) is not sent to the Evia-connect QR page.
+  if (!currentUser.eviaConnected && !actingFor) return <Navigate to="/client/connect" replace />;
   return (
     <>
       {element}
@@ -163,10 +165,15 @@ const CaregiverAuthRoute: React.FC<{ element: React.ReactElement }> = ({ element
 };
 
 const AdminRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
-  const { authResolved, currentUser } = useCareConnex();
+  const { authResolved, currentUser, adminUser, actingFor, stopActing } = useCareConnex();
+  // While acting for a person, currentUser is that person; the admin is adminUser. Admin pages are
+  // never shown in the acting view: landing here ends it (the person's consent window stays open,
+  // so "Open their pages" on their strip picks it back up).
+  useEffect(() => { if (actingFor) stopActing(); }, [actingFor, stopActing]);
+  const me = adminUser ?? currentUser;
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
-  if (!currentUser) return <Navigate to="/login" replace />;
-  if (currentUser.userType !== 'admin') return <Navigate to="/" replace />;
+  if (!me) return <Navigate to="/login" replace />;
+  if (me.userType !== 'admin') return <Navigate to="/" replace />;
   return element;
 };
 
@@ -302,6 +309,7 @@ const AppContent: React.FC = () => {
   return (
     <div className="min-h-screen bg-[var(--color-neutral-50)] font-sans relative">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <ActingBanner />
 
       <Suspense fallback={<PageLoader fullScreen message="Loading page..." />}>
         <Routes>

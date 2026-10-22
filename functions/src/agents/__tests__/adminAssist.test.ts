@@ -26,6 +26,7 @@ vi.mock("firebase-admin", () => {
     }),
   });
   firestore.FieldValue = { serverTimestamp: () => "ts", delete: () => DELETE };
+  firestore.Timestamp = { fromMillis: (ms: number) => ({ toMillis: () => ms, seconds: Math.floor(ms / 1000) }) };
   return { default: { firestore, apps: [{}], auth: () => ({}) }, firestore, apps: [{}], auth: () => ({}), initializeApp: () => ({}) };
 });
 const sent: Array<{ to: string; text: string }> = [];
@@ -36,10 +37,13 @@ vi.mock("../../linq/client", () => ({
 const audits: Array<{ eventType: string; userId: string; data: Record<string, unknown> }> = [];
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn(async (e: any) => { audits.push(e); }) }));
 vi.mock("firebase-functions", () => ({ firestore: { document: () => ({ onCreate: (fn: any) => fn }) } }));
+const bells: Array<Record<string, unknown>> = [];
+vi.mock("../../notifications/userNotification", () => ({ writeUserNotification: vi.fn(async (input: Record<string, unknown>) => { bells.push(input); return true; }) }));
 
 import {
   consentReplyKind, isPendingFresh, isAssistActive, assistWindowEnd, ASSIST_WINDOW_MS,
   requestAdminAssist, endAdminAssist, handleAdminAssistConsentReply, CONSENT_GRANTED_TEXT, CONSENT_DECLINED_TEXT,
+  actedText, assistWindowOpenFor, recordAdminActed,
 } from "../adminAssist";
 import { linkKindAllowedForRole } from "../../triggers/adminAssistQueue";
 
@@ -47,7 +51,7 @@ const PHONE = "+14085551234";
 const UID = "fam1";
 const pendingFor = (requestedAt = new Date().toISOString()) => ({ uid: UID, role: "client" as const, adminUid: "adm1", adminName: "Hamse", requestedAt });
 
-beforeEach(() => { store.clear(); sent.length = 0; audits.length = 0; });
+beforeEach(() => { store.clear(); sent.length = 0; audits.length = 0; bells.length = 0; });
 
 describe("admin assist consent (2026-10-22): a texted YES opens a one-hour window", () => {
   it("only a strict YES / NO is the consent answer", () => {
@@ -122,6 +126,32 @@ describe("admin assist consent (2026-10-22): a texted YES opens a one-hour windo
     expect(store.get(`adminAssist/${UID}`)).toMatchObject({ status: "ended", endedBy: { uid: "adm1", name: "Hamse" } });
     expect(sent[0].text).toContain("finished helping with your account");
     expect(audits[0]).toMatchObject({ eventType: "admin_assist_ended", data: { adminName: "Hamse" } });
+  });
+
+  it("YES also writes the window as a Timestamp (untilTs) for firestore.rules actingFor()", async () => {
+    store.set(`adminAssist/${UID}`, { status: "requested" });
+    store.set(`agent_sessions/${PHONE}`, { chatId: "c1", adminAssistConsentPending: pendingFor() });
+    await handleAdminAssistConsentReply(PHONE, "c1", store.get(`agent_sessions/${PHONE}`) as any, "YES");
+    const st = store.get(`adminAssist/${UID}`)!;
+    expect(st.untilTs).toBeDefined();
+  });
+
+  it("an acted-for change = one audit entry under the admin's name + a bell + a text to the person", async () => {
+    await recordAdminActed({ uid: UID, role: "client", adminUid: "adm1", adminName: "Hamse", kind: "care_plan_updated", summary: "updated your care plan", sourcePath: "adminAssistQueue/q1", eventId: "q1", phone: PHONE });
+    expect(audits[0]).toMatchObject({ eventType: "admin_acted", userId: UID, data: { kind: "care_plan_updated", summary: "updated your care plan", adminName: "Hamse" } });
+    expect(bells[0]).toMatchObject({ recipientId: UID, transitionType: "admin_acted_care_plan_updated", title: "Our team helped with your account" });
+    expect(sent[0]).toEqual({ to: PHONE, text: actedText("updated your care plan") });
+    expect(actedText("updated your care plan.")).toBe("Our team updated your care plan for you by phone, at your request. If that's not right, reply here and I'll flag it.");
+  });
+
+  it("the server-side window check: open window + a real admin, else false", async () => {
+    store.set("users/adm1", { userType: "admin" });
+    store.set("users/notadmin", { userType: "client" });
+    store.set(`adminAssist/${UID}`, { status: "granted", until: new Date(Date.now() + 60000).toISOString() });
+    expect(await assistWindowOpenFor(UID, "adm1")).toBe(true);
+    expect(await assistWindowOpenFor(UID, "notadmin")).toBe(false);
+    store.set(`adminAssist/${UID}`, { status: "ended" });
+    expect(await assistWindowOpenFor(UID, "adm1")).toBe(false);
   });
 
   it("send-link kinds follow the role: a client gets identity + payment, a care provider the membership / background check / payouts / photo links", () => {

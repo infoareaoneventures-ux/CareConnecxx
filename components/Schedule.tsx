@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './caregiver/signup/constants';
+import { recordActedForPerson } from '../services/api';
 import { useState, useEffect } from 'react';
 import { VisitNotesBlock } from './shared/VisitNotesBlock';
 import { useNavigate } from 'react-router-dom';
@@ -220,6 +221,7 @@ export default function Schedule() {
     await db.collection('shifts').doc(id).update({
       status: 'cancelled', cancelledBy: 'client', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
+    void recordActedForPerson('visit_cancelled', 'cancelled a visit');
     setSelectedShift(null);
     fetchShifts();
   };
@@ -508,6 +510,7 @@ export default function Schedule() {
         await fdb.collection('video_interviews').doc(interview.id).update({
           status: 'cancelled', cancelledBy: 'client', cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        void recordActedForPerson('interview_cancelled', 'cancelled an interview');
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'cancelled' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'cancelled' as const } : prev);
       } catch { } finally { setCancelling(false); }

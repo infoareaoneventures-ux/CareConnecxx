@@ -1,4 +1,5 @@
 import { db, functions } from '../lib/firebase';
+import { getActingContext } from './api';
 import { VideoInterview, VideoInterviewStatus, AGREED_INTERVIEW_STATUSES } from '../types';
 
 export const videoService = {
@@ -67,7 +68,9 @@ export const videoService = {
 
             if (!functions) throw new Error('Firebase Functions is not configured');
             const createInterview = functions.httpsCallable('v1-createVideoInterviewRequest');
-            const response = await createInterview(interviewData);
+            // Admin assist (2026-10-22): the server checks the person's open consent window and records the action.
+            const acting = getActingContext();
+            const response = await createInterview(acting ? { ...interviewData, actingForUid: acting.uid } : interviewData);
             const result = response.data as { interview?: VideoInterview };
             if (!result.interview?.id) throw new Error('Interview creation returned no record');
             const docRef = { id: result.interview.id };

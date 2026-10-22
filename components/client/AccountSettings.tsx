@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { recordActedForPerson } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronUp, ChevronDown, Check, X, Loader2, Trash2,
@@ -297,6 +298,7 @@ export const AccountSettings: React.FC = () => {
       location: `${careLocation.city}, ${careLocation.state} ${careLocation.zip}`.trim(),
       careLocation, // keep legacy field in sync
     });
+    void recordActedForPerson('account_updated', 'updated your care address in Account Settings');
     setEditingLocation(false);
   }, 'Location saved');
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { recordActedForPerson } from '../../../services/api';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
 import { ClientNavigation } from '../ClientNavigation';
@@ -87,6 +88,7 @@ export const PostJobFlow: React.FC = () => {
       };
 
       const id = await dbService.createJobPost(payload as any, currentUser.uid);
+      void recordActedForPerson('job_post_created', 'posted a job for care providers to see');
       setSubmittedPostId(typeof id === 'string' ? id : 'posted');
       addToast('Job posted! Care providers can now apply.', 'success');
 

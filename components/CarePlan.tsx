@@ -1,5 +1,6 @@
 
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../utils/medicationInstruction';
+import { recordActedForPerson } from '../services/api';
 import { serviceLabel, PRIMARY_SERVICES, CareKind, RELATIONSHIPS, serviceListsForKinds, AGE_RANGES, STAGE_HEADING, ageRangeLabel, recipientCareKind, recipientStage, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS } from './caregiver/signup/constants';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
@@ -549,6 +550,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
           await docRef.set(payload);
         } else throw e;
       }
+      void recordActedForPerson('care_plan_updated', 'updated your care plan');
       setRecipientPlans(prev => ({ ...prev, [key]: updated }));
       if (editingSection === 'careNeeds' && typeof updated.ageRange === 'string' && updated.ageRange && recipientCareKind(recipient.relationship, recipient.careKind) === 'child') {
         await syncRosterStage(recipient, updated.ageRange).catch(() => {});

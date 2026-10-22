@@ -1,4 +1,5 @@
 import { loadStripe, Stripe } from '@stripe/stripe-js';
+import { getActingContext, ACTING_LINK_ONLY_MESSAGE } from './api';
 import { auth, db } from '../lib/firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { LIVE_SUBSCRIPTION_STATUSES, pickLiveSubscription } from '../utils/liveSubscription';
@@ -38,6 +39,7 @@ let isCreatingSession = false;
 
 // Create checkout session for client monthly membership (uses default MEMBERSHIP_PRICE_ID)
 export const createCheckoutSession = async (successUrl: string, cancelUrl: string): Promise<string | null> => {
+  if (getActingContext()) throw new Error(ACTING_LINK_ONLY_MESSAGE);
   if (isCreatingSession) return null;
   isCreatingSession = true;
   try {
@@ -67,6 +69,7 @@ export const createCaregiverCheckoutSession = async (
   successUrl: string,
   cancelUrl: string,
 ): Promise<string | null> => {
+  if (getActingContext()) throw new Error(ACTING_LINK_ONLY_MESSAGE);
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
@@ -84,6 +87,7 @@ export const createCaregiverCheckoutSession = async (
 
 // Open the Stripe Billing Portal for a caregiver to update their payment method
 export const openCaregiverBillingPortal = async (returnUrl: string): Promise<void> => {
+  if (getActingContext()) throw new Error(ACTING_LINK_ONLY_MESSAGE);
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
@@ -102,6 +106,7 @@ export const openCaregiverBillingPortal = async (returnUrl: string): Promise<voi
  * action). The user doc's `identityCheckStatus` is flipped to 'processing' server-side.
  */
 export const startIdentityVerification = async (returnUrl: string): Promise<void> => {
+  if (getActingContext()) throw new Error(ACTING_LINK_ONLY_MESSAGE);
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');

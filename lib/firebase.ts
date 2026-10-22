@@ -36,17 +36,22 @@ export interface ActingAuthIdentity {
   phoneNumber: string | null;
 }
 let actingIdentity: ActingAuthIdentity | null = null;
-export function setActingAuthUser(identity: ActingAuthIdentity | null): void { actingIdentity = identity; }
+let actingView: { real: firebase.User; identity: ActingAuthIdentity; user: firebase.User } | null = null;
+export function setActingAuthUser(identity: ActingAuthIdentity | null): void { actingIdentity = identity; actingView = null; }
 function actingUserFor(real: firebase.User | null): firebase.User | null {
   if (!actingIdentity || !real) return real;
+  // One stable view object per (signed-in user, identity): components compare it by reference.
+  if (actingView && actingView.real === real && actingView.identity === actingIdentity) return actingView.user;
   const id = actingIdentity as unknown as Record<string, unknown>;
-  return new Proxy(real, {
+  const user = new Proxy(real, {
     get(target, prop) {
       if (typeof prop === 'string' && prop in id) return id[prop];
       const v = Reflect.get(target, prop, target);
       return typeof v === 'function' ? v.bind(target) : v;
     },
   });
+  actingView = { real, identity: actingIdentity, user };
+  return user;
 }
 function withActingUser(real: firebase.auth.Auth): firebase.auth.Auth {
   return new Proxy(real, {

@@ -91,7 +91,7 @@ export const ASSIST_ENDED_TEXT = "Our team has finished helping with your accoun
 
 /** The text the person gets for each thing the team did for them. */
 export function actedText(summary: string): string {
-  return `Our team ${summary.trim().replace(/\.$/, "")} for you by phone, at your request. If that's not right, reply here and I'll flag it.`;
+  return `Our team ${summary.trim().replace(/\.$/, "")} for you by phone, at your request.`;
 }
 
 /** True while the person's window is open — the server-side twin of firestore.rules actingFor(). */

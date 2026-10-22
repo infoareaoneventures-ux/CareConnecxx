@@ -145,7 +145,7 @@ describe("admin assist consent (2026-10-22): a texted YES opens a one-hour windo
     expect(audits[0]).toMatchObject({ eventType: "admin_acted", userId: UID, data: { kind: "care_plan_updated", summary: "updated your care plan", adminName: "Hamse" } });
     expect(bells[0]).toMatchObject({ recipientId: UID, transitionType: "admin_acted_care_plan_updated", title: "Our team helped with your account" });
     expect(sent[0]).toEqual({ to: PHONE, text: actedText("updated your care plan") });
-    expect(actedText("updated your care plan.")).toBe("Our team updated your care plan for you by phone, at your request. If that's not right, reply here and I'll flag it.");
+    expect(actedText("updated your care plan.")).toBe("Our team updated your care plan for you by phone, at your request.");
   });
 
   it("the server-side window check: open window + a real admin, else false", async () => {

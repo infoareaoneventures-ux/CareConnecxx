@@ -1108,13 +1108,17 @@ async function handleJpAskCareNeeds(
   const pendingStage = awaitingStageFor ? nextStageQuestion(recipients0) : null;
   const REASK = pendingStage ? pendingStage.question
     : `What type of care ${needCareVerb(name)} ${name} need? Pick as many as apply:\n${serviceMenuText(kinds)}`;
-  if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
-  if (await isQuestionOrOther(text, REASK)) {
-    const answer = await answerQuestionMidFlow(phone, text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, REASK);
-    return;
-  }
+  // The answer is read FIRST; back-out / question only when nothing on the list was named (live
+  // 2026-10-21: "school & homework" — an item on the menu — was judged "something else" and bounced).
+  const notAnAnswer = async (): Promise<boolean> => {
+    if (await isBackOutRequest(text, REASK)) { await handleJobPostingBackOut(phone, chatId, session); return true; }
+    if (await isQuestionOrOther(text, REASK)) {
+      const answer = await answerQuestionMidFlow(phone, text, session);
+      await sendMessage(chatId, `${answer}\n\n${REASK}`);
+      return true;
+    }
+    return false;
+  };
 
   // ONE stage per child (2026-10-18 late): the answer lands on that child; then the next child, or the rate.
   if (pendingStage) {
@@ -1124,7 +1128,11 @@ async function handleJpAskCareNeeds(
       text,
     ).catch(() => "NONE");
     const id = ageRangeFromWords(raw);
-    if (!id) { await sendMessage(chatId, `${JP_DIDNT_CATCH} ${pendingStage.question}`); return; }
+    if (!id) {
+      if (await notAnAnswer()) return;
+      await sendMessage(chatId, `${JP_DIDNT_CATCH} ${pendingStage.question}`);
+      return;
+    }
     const key = recipientPlanKey(pendingStage.child.firstName, pendingStage.child.lastName);
     const updated = recipients0.map((r) => (recipientPlanKey(r.firstName, r.lastName) === key ? { ...r, ageRange: id } : r));
     await mergeJobData(phone, { careRecipients: updated });
@@ -1147,6 +1155,10 @@ async function handleJpAskCareNeeds(
   const offList = canon.careNeeds.filter((s) => !shown.has(s));
   if (offList.length) notes.push(`"${offList.map(serviceLabel).join('", "')}" isn't on ${name}'s list, so I've left it off.`);
   if (careNeeds.length === 0) {
+    // Nothing care-related in the message at all → maybe a back-out or a question. Something named
+    // but left off (medical / off-list / unplaced) is an attempt at the question: the note + re-ask answer it.
+    const sawNothing = !canon.medical.length && !canon.unmapped.length && !canon.unresolved.length && !offList.length;
+    if (sawNothing && await notAnAnswer()) return;
     await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}${REASK}`);
     return;
   }

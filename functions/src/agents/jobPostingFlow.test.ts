@@ -354,10 +354,8 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
   afterEach(() => { delete process.env.CONVERGENCE_UNFLIPPED; });
 
   it("stores the canonical category, not the fine-grained term the model returned", async () => {
-    // Call 1: isQuestionOrOther → NO. Call 2: the shared services mapper (the sentence is not a direct hit).
-    modelReplies("NO");
-    // utils/parseWithClaude is used twice on this turn: the back-out check (stepHandler) first, then the mapper.
-    mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: ["Personal Care", "Medication Reminders"], medical: [], unmapped: [] }));
+    // The answer is read FIRST (2026-10-21): the shared services mapper is the one call on this turn.
+    mapper.mapperReply.mockResolvedValueOnce(JSON.stringify({ services: ["Personal Care", "Medication Reminders"], medical: [], unmapped: [] }));
 
     await handleJobPostingStep(PHONE, CHAT, "she needs help bathing and remembering her meds", {
       ...SESSION,
@@ -372,9 +370,7 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
   // 2026-10-04: the sub-task chips left the family screens — nothing is stored
   // underneath a category, and the read-back uses the shown names.
   it("stores the category only (no jobCareNeedDetails) and reads the shown names back", async () => {
-    modelReplies("NO");
-    // utils/parseWithClaude is used twice on this turn: the back-out check (stepHandler) first, then the mapper.
-    mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: ["Personal Care", "Medication Reminders"], medical: [], unmapped: [] }));
+    mapper.mapperReply.mockResolvedValueOnce(JSON.stringify({ services: ["Personal Care", "Medication Reminders"], medical: [], unmapped: [] }));
 
     await handleJobPostingStep(PHONE, CHAT, "she needs help bathing and remembering her meds", {
       ...SESSION,
@@ -389,8 +385,7 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
   });
 
   it("re-asks instead of storing an empty result when nothing normalizes", async () => {
-    modelReplies("NO");
-    mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: [], medical: [], unmapped: ["not sure what she needs"] }));
+    mapper.mapperReply.mockResolvedValueOnce(JSON.stringify({ services: [], medical: [], unmapped: ["not sure what she needs"] }));
 
     await handleJobPostingStep(PHONE, CHAT, "not sure what she needs", {
       ...SESSION,
@@ -414,9 +409,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18, un-framed 2026-10-19)
     // A Both household posting for a child recipient — the relationship on the post decides the list (2026-10-18 evening).
     const CHILD_POST = { jobFrequency: "occasional", careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }] };
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: CHILD_POST }) });
-    modelReplies("NO"); // isQuestionOrOther
-    mapper.mapperReply.mockResolvedValueOnce("NO") // back-out check
-      .mockResolvedValueOnce(JSON.stringify({ services: ["Supervision", "School & Homework"], medical: [], unmapped: [] }));
+    mapper.mapperReply.mockResolvedValueOnce(JSON.stringify({ services: ["Supervision", "School & Homework"], medical: [], unmapped: [] })); // the answer is read first
     await handleJobPostingStep(PHONE, CHAT, "someone to watch my toddler and help with school pickup", {
       ...SESSION, userId: "fam1", jobPostingStep: "jp_ask_care_needs", jobPostingData: CHILD_POST,
     });
@@ -435,8 +428,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18, un-framed 2026-10-19)
   it("a child who already has a stage is never asked again — straight to the rate", async () => {
     const STAGED = { jobFrequency: "occasional", careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false, ageRange: "toddler" }] };
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: STAGED }) });
-    modelReplies("NO");
-    mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: ["Supervision"], medical: [], unmapped: [] }));
+    mapper.mapperReply.mockResolvedValueOnce(JSON.stringify({ services: ["Supervision"], medical: [], unmapped: [] }));
     await handleJobPostingStep(PHONE, CHAT, "watch him after school", { ...SESSION, userId: "fam1", jobPostingStep: "jp_ask_care_needs", jobPostingData: STAGED });
     expect(hoisted.updateMock.mock.calls.some(([arg]) => typeof arg?.jobPostingData?.awaitingStageFor === "string" && arg.jobPostingData.awaitingStageFor !== "__DELETE__")).toBe(false);
     expect(hoisted.updateMock.mock.calls.some(([arg]) => arg?.jobPostingStep === "jp_ask_rate")).toBe(true);
@@ -445,8 +437,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18, un-framed 2026-10-19)
   });
 
   it("the stage answer lands on THAT child (one name, never a number, never a list) and the flow moves on to the rate", async () => {
-    modelReplies("NO", "Toddler"); // isQuestionOrOther, then the one-stage parse
-    mapper.mapperReply.mockResolvedValueOnce("NO"); // back-out check
+    modelReplies("Toddler"); // the one-stage parse is the first read
     const ONE = { jobFrequency: "occasional", jobCareNeeds: ["Supervision"], jobCareKinds: ["child"], careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }], awaitingStageFor: "S" };
     // getJobData is read more than once on a turn — pin the parked state for the whole turn, then restore the default.
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: ONE }) });
@@ -461,8 +452,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18, un-framed 2026-10-19)
   });
 
   it("two children on the post: each is asked by name, one at a time — the second question follows the first answer", async () => {
-    modelReplies("NO", "Teen");
-    mapper.mapperReply.mockResolvedValueOnce("NO");
+    modelReplies("Teen");
     const TWO = { jobFrequency: "occasional", jobCareNeeds: ["Supervision"], jobCareKinds: ["child"], careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }, { firstName: "Ali", lastName: "Mahad", relationship: "Child", isSelf: false }], awaitingStageFor: "S" };
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: TWO }) });
     await handleJobPostingStep(PHONE, CHAT, "teenager", { ...SESSION, userId: "fam1", jobPostingStep: "jp_ask_care_needs", jobPostingData: TWO });
@@ -476,9 +466,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18, un-framed 2026-10-19)
   });
 
   it("a child service for a post with no child on it is left off and said so (no pointer to any setting) — nothing saved, the senior list re-asked", async () => {
-    modelReplies("NO"); // isQuestionOrOther
-    mapper.mapperReply.mockResolvedValueOnce("NO") // back-out check
-      .mockResolvedValueOnce(JSON.stringify({ services: ["Supervision"], medical: [], unmapped: [] }));
+    mapper.mapperReply.mockResolvedValueOnce(JSON.stringify({ services: ["Supervision"], medical: [], unmapped: [] }));
     await handleJobPostingStep(PHONE, CHAT, "someone to watch my son after school", {
       ...SESSION, jobPostingStep: "jp_ask_care_needs", jobPostingData: { jobFrequency: "occasional" },
     });
@@ -493,9 +481,9 @@ describe("handleJpAskCareNeeds — child care (2026-10-18, un-framed 2026-10-19)
 
   it("the list follows the recipients on the post: a child recipient gets the child list, a parent the senior list — no household record is read", async () => {
     hoisted.docGetMock.mockResolvedValue({ exists: true, data: () => ({ careKinds: ["senior", "child"], jobPostingData: { jobFrequency: "occasional", careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }] } }) });
+    mapper.mapperReply.mockResolvedValueOnce(JSON.stringify({ services: [], medical: [], unmapped: [] })) // nothing named → then back-out / question, then the menu again
+      .mockResolvedValueOnce("NO"); // back-out check
     modelReplies("NO"); // isQuestionOrOther
-    mapper.mapperReply.mockResolvedValueOnce("NO") // back-out check
-      .mockResolvedValueOnce(JSON.stringify({ services: [], medical: [], unmapped: [] })); // nothing named → the menu is re-asked
     await handleJobPostingStep(PHONE, CHAT, "hmm", {
       ...SESSION, userId: "fam1", jobPostingStep: "jp_ask_care_needs", jobPostingData: { jobFrequency: "occasional", careRecipients: [{ firstName: "S", lastName: "Mahad", relationship: "Child", isSelf: false }] },
     });
@@ -519,8 +507,7 @@ describe("handleJpAskCareNeeds — child care (2026-10-18, un-framed 2026-10-19)
   });
 
   it("nobody on the post yet → exactly today's menu — the senior eight, no chips, no new question", async () => {
-    modelReplies("NO");
-    mapper.mapperReply.mockResolvedValueOnce("NO").mockResolvedValueOnce(JSON.stringify({ services: ["Companionship"], medical: [], unmapped: [] }));
+    mapper.mapperReply.mockResolvedValueOnce(JSON.stringify({ services: ["Companionship"], medical: [], unmapped: [] }));
     await handleJobPostingStep(PHONE, CHAT, "company during the day", {
       ...SESSION, jobPostingStep: "jp_ask_care_needs", jobPostingData: { jobFrequency: "occasional" },
     });

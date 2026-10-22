@@ -187,7 +187,7 @@ let wantsLink    = "NO";    // wantsGateLinkResend verdict (identity/stripe/bgch
 let wantsMore    = "NO";    // wantsMoreCaregivers verdict ("show me more caregivers" mid-gate)
 let intakeConfirmIntent  = "confirm"; // handleClientConfirmIntake's confirm-vs-edit classification
 let noteReplacement = "EMPTY";        // noteReplacementFromReply: the new note text, NONE, or EMPTY (bare ask)
-let intakeCorrectionJson = "{}";      // extractIntakeCorrections' extracted-fields JSON
+let intakeCorrectionJson = "{}";      // readRecapEdit's structured edit JSON (familyRecapEdits.ts)
 vi.mock("../../utils/openaiClient", () => ({
   quickComplete: vi.fn(async (prompt: string) => {
     if (prompt.includes("You are extracting onboarding details from one message")) return "{}";
@@ -204,7 +204,7 @@ vi.mock("../../utils/openaiClient", () => ({
     // 2026-10-21: add_person / change_people joined the one classification.
     if (prompt.includes("confirm, add_person, change_people, edit, fix_note, note, or question")) return questionMode ? "question" : intakeConfirmIntent;
     if (prompt.includes("asked to change the short note")) return noteReplacement;
-    if (prompt.includes("The family is correcting their care intake")) return intakeCorrectionJson;
+    if (prompt.includes("is changing something")) return intakeCorrectionJson; // readRecapEdit
     return stepAnswer;
   }),
 }));
@@ -843,7 +843,7 @@ describe("client care records + payment mirror", () => {
     const session = seed("client_confirm_intake", { ...CLIENT_DATA },
       { userType: "client", userId: CLIENT_UID });
     intakeConfirmIntent = "edit";
-    intakeCorrectionJson = '{"relationship":"mother"}'; // the relationship names the RECIPIENT (2026-10-18: "daughter" now means a child)
+    intakeCorrectionJson = '{"people":{"relationship":{"who":"Margaret","to":"parent"}}}'; // the relationship names the RECIPIENT (2026-10-18: "daughter" now means a child)
 
     await handleOnboardingStep(PHONE, CHAT, "she's my mother, not my spouse", session);
 

@@ -206,9 +206,11 @@ export function nextFamilyStep(d: Data): FamilyStep | null {
   const pending = rosterPending(roster);
   if (pending) return stepForPending(pending);
   // The site's counter, by text: "Is there anyone else who needs care?" — asked after each person
-  // until NO, a number, or four people (naming several at once, a number, "no", or the site's own
-  // adultsCount all count as the count being answered). Founder, 2026-10-21: cycle back for the next person.
-  const countConfirmed = d.rosterCountConfirmed === true || Number(d.adultsCount) >= 1;
+  // until NO, a number, or four people (naming several at once, a number or "no" count as the count
+  // being answered). Founder, 2026-10-21: cycle back for the next person. The mirrored adultsCount
+  // is NOT a count answer — it is written after every added person, so reading it as "confirmed"
+  // ended the cycle at the second person (live 2026-10-21: no way to add a third).
+  const countConfirmed = d.rosterCountConfirmed === true;
   if (roster.length < MAX_RECIPIENTS && !countConfirmed) return "family_ask_more_people";
   const providers = Number(d.caregiversNeeded);
   if (!(providers >= 1 && providers <= MAX_PROVIDERS)) return "family_ask_providers_count";
@@ -753,14 +755,16 @@ async function readEmail(deps: FamilyIntakeDeps, text: string): Promise<StepResu
 // One extraction over the whole schema (the model reads; the code validates),
 // applied as OVERWRITES so a changed answer wins — except the field of the step
 // being answered (its own reader owns it) and the roster (readRoster owns it).
-export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, currentStep: FamilyStep, accountName: { first: string; last: string }): Promise<{ fields: Data; roster?: RosterPerson[]; capped?: boolean }> {
+export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, currentStep: FamilyStep, accountName: { first: string; last: string }, d: Data = {}): Promise<{ fields: Data; roster?: RosterPerson[]; capped?: boolean; rosterMode?: "add" | "replace"; people?: Data }> {
   const t = deps.today();
   const raw = await deps.parseWithClaude(
     `Today is ${t.weekday}, ${t.iso}. The family is partway through setting up care by text and was just asked: "${familyQuestionLabel(currentStep)}". ` +
       "Besides the answer to that question, extract ONLY other details they clearly stated or changed in this message, as raw JSON with any of: " +
-      '{"careFrequency":"occasional|part_time|full_time","homeStreet":"","homeZipCode":"","startDate":"YYYY-MM-DD or ASAP","ongoing":true,"endDate":"YYYY-MM-DD","selectedDays":["MON"],"daysFlexible":false,"timeOfDay":["morning"],' +
+      '{"careFrequency":"occasional|part_time|full_time","homeStreet":"","homeZipCode":"","sameAsHomeAddress":true,"street":"the CARE address street when it differs from home","zipCode":"","startDate":"YYYY-MM-DD or ASAP","ongoing":true,"endDate":"YYYY-MM-DD","selectedDays":["MON"],"daysFlexible":false,"timeOfDay":["morning"],' +
       '"emergencyContactName":"","emergencyContactPhone":"","emergencyContactRelationship":"","careNeeds":["their words"],"rate":0,"email":"","caregiversNeeded":0,"petsInHome":true,"smokingHousehold":false,' +
-      '"recipients":"ONLY if they say WHO the care is for (e.g. me and my child, my mom): copy that phrase here"}. ' +
+      '"recipients":"ONLY if they say WHO the care is for (e.g. me and my child, my mom): copy that phrase here","recipientsMode":"add if they ADD someone to the people already listed (add / also / too / as well), replace if they restate who the care is for",' +
+      '"people":{"rename":{"from":"the listed person\'s current name or relationship","to":"new name"},"stage":{"who":"name or relationship","stage":"Infant|Toddler|Preschooler|School-age|Teen"},"relationship":{"who":"name","to":"parent|spouse|adult child|child|other"},"remove":"name or relationship of a listed person to take off"}}. ' +
+      'A change to a person ALREADY listed (their name, stage, relationship, or taking them off) is "people", never "recipients". ' +
       "Omit everything not clearly stated. No markdown.",
     text,
   ).catch(() => "{}");
@@ -770,7 +774,25 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
   const skip = new Set<string>(fieldsOwnedBy(currentStep));
   const freq = normalizeFrequency(p.careFrequency); if (freq && !skip.has("careFrequency")) fields.careFrequency = freq;
   if (typeof p.homeStreet === "string" && p.homeStreet.trim() && !skip.has("homeStreet")) fields.homeStreet = p.homeStreet.trim();
-  if (isValidZip(p.homeZipCode) && !skip.has("homeZipCode")) fields.homeZipCode = String(p.homeZipCode).trim();
+  if (isValidZip(p.homeZipCode) && !skip.has("homeZipCode")) {
+    fields.homeZipCode = String(p.homeZipCode).trim();
+    const pl = await deps.lookupZipPlace(fields.homeZipCode as string).catch(() => null);
+    if (pl) { fields.homeCity = pl.city; fields.homeState = pl.state; }
+  }
+  // The care address (2026-10-21): "same as home", or a different street / ZIP; and when the home
+  // address changes while care is at home, the care address follows it (the site stores both).
+  if (p.sameAsHomeAddress === true && !skip.has("street")) {
+    Object.assign(fields, { sameAsHomeAddress: true, street: fields.homeStreet ?? d.homeStreet ?? null, zipCode: fields.homeZipCode ?? d.homeZipCode ?? null, city: fields.homeCity ?? d.homeCity ?? null, state: fields.homeState ?? d.homeState ?? null });
+  }
+  if (typeof p.street === "string" && p.street.trim() && !skip.has("street")) { fields.street = p.street.trim(); fields.sameAsHomeAddress = false; }
+  if (isValidZip(p.zipCode) && !skip.has("zipCode")) {
+    fields.zipCode = String(p.zipCode).trim(); fields.sameAsHomeAddress = false;
+    const pl = await deps.lookupZipPlace(fields.zipCode as string).catch(() => null);
+    if (pl) { fields.city = pl.city; fields.state = pl.state; }
+  }
+  if ((fields.homeStreet !== undefined || fields.homeZipCode !== undefined) && fields.sameAsHomeAddress === undefined && d.sameAsHomeAddress === true && !skip.has("street")) {
+    Object.assign(fields, { street: fields.homeStreet ?? d.homeStreet ?? null, zipCode: fields.homeZipCode ?? d.homeZipCode ?? null, city: fields.homeCity ?? d.homeCity ?? null, state: fields.homeState ?? d.homeState ?? null });
+  }
   const start = normalizeStartDateToISO(p.startDate, t.iso); if (start && !skip.has("startDate")) fields.startDate = start;
   if (p.ongoing === true && !skip.has("ongoing")) { fields.ongoing = true; fields.endDate = null; }
   const end = normalizeStartDateToISO(p.endDate, t.iso); if (end && !skip.has("endDate")) { fields.endDate = end; fields.ongoing = false; }
@@ -790,11 +812,13 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
     if (c.careNeeds.length) fields.careNeeds = c.careNeeds;
   }
   let roster: RosterPerson[] | undefined; let capped: boolean | undefined;
+  const rosterMode: "add" | "replace" = String(p.recipientsMode ?? "").trim().toLowerCase() === "add" ? "add" : "replace";
   if (typeof p.recipients === "string" && p.recipients.trim() && !skip.has("relationship")) {
     const r = await readRoster(deps, p.recipients, accountName).catch(() => null);
     if (r) { roster = r.roster; capped = r.capped; }
   }
-  return { fields, ...(roster ? { roster, capped } : {}) };
+  const people = p.people && typeof p.people === "object" && !skip.has("relationship") ? (p.people as Data) : undefined;
+  return { fields, ...(roster ? { roster, capped, rosterMode } : {}), ...(people ? { people } : {}) };
 }
 
 const ROSTER_FIELDS = ["relationship", "seniorName", "additionalRecipients", "careKind", "ageRange", "primaryKindUnknown", "rosterCountConfirmed", "rosterAddPending"];
@@ -920,13 +944,32 @@ export async function runFamilyIntakeTurn(deps: FamilyIntakeDeps, turn: FamilyIn
   // 2. Other fields in the same message (front-loading or a correction) — overwrite.
   const fields: Data = { ...(stepRead?.fields ?? {}) };
   const acks: string[] = stepRead ? [stepRead.ack].filter(Boolean) : [];
-  if (text.trim().split(/\s+/).length >= WORDS_FOR_SIDE_EXTRACTION) {
-    const other: { fields: Data; roster?: RosterPerson[]; capped?: boolean } = await extractOtherFields(deps, text, step, accountName).catch(() => ({ fields: {} }));
+  // Runs for a longer message, and ALWAYS when the step read nothing — a short correction
+  // ("make it full time", "change to Mondays") at any step is still applied (2026-10-21).
+  if (!stepRead || text.trim().split(/\s+/).length >= WORDS_FOR_SIDE_EXTRACTION) {
+    const other: { fields: Data; roster?: RosterPerson[]; capped?: boolean; rosterMode?: "add" | "replace"; people?: Data } = await extractOtherFields(deps, text, step, accountName, d).catch(() => ({ fields: {} }));
     for (const [k, v] of Object.entries(other.fields)) if (!(k in fields)) fields[k] = v;
     if (other.roster && !isRosterStep(step)) {
-      Object.assign(fields, dataFromRoster(other.roster), { rosterCountConfirmed: other.roster.length > 1 ? true : null });
-      acks.push(rosterAck(other.roster));
+      // "add my dad" mid-flow ADDS; "it's for me and my child" restates (replaces).
+      const existing = rosterFromData(d);
+      const next = other.rosterMode === "add" && existing.length
+        ? [...existing, ...other.roster.filter((x) => !(x.relationship === "self" && existing.some((q) => q.relationship === "self")))].slice(0, MAX_RECIPIENTS)
+        : other.roster;
+      Object.assign(fields, dataFromRoster(next), { rosterCountConfirmed: other.rosterMode === "add" ? (d.rosterCountConfirmed === true ? true : null) : (next.length > 1 ? true : null) });
+      acks.push(rosterAck(next));
       if (other.capped) rosterCapped = true;
+    }
+    if (other.people && !other.roster && !isRosterStep(step)) {
+      // The recap's people applier (rename / stage / relationship / remove; never the account holder's
+      // own name, never the last person). Loaded here, not at the top: the two modules import each other.
+      const { applyRecapEdit } = await import("./familyRecapEdits");
+      const pe = await applyRecapEdit(deps, { ...d, ...fields }, { people: other.people }).catch(() => null);
+      if (pe) {
+        Object.assign(fields, pe.fields);
+        const said = pe.notes.filter(Boolean).join("; ");
+        if (said) acks.push(`${said.charAt(0).toUpperCase()}${said.slice(1)}.`);
+        if (pe.ask) acks.push(`${pe.ask} Tell me by name and I'll change it.`);
+      }
     }
   }
 

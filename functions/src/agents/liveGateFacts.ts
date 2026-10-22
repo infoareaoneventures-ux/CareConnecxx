@@ -266,6 +266,7 @@ export const LIVE_GATE_FACT_BUILDERS: Record<string, (phone: string, session: Ag
   caregiver_awaiting_bgcheck:         (_p, s) => buildLiveBgcheckFact(s),
   caregiver_send_stripe_connect:      buildLivePayoutSetupFact,
   caregiver_awaiting_stripe:          buildLivePayoutSetupFact,
+  client_ask_plan:                    buildLiveClientPaymentFact, // the plan step had no live fact (live 2026-10-21: an invented email + "can't see your account status")
   client_send_payment:                buildLiveClientPaymentFact,
   client_awaiting_payment:            buildLiveClientPaymentFact,
   client_awaiting_identity:           buildLiveClientIdentityFact,

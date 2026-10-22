@@ -36,9 +36,13 @@ export const ActingBanner: React.FC = () => {
       if (!target) return;
       const el = target.closest('button, [type="submit"], [role="button"]') as HTMLElement | null;
       if (!el) return;
-      if (el.closest('[data-acting-banner], nav, header, [role="tablist"], [role="tab"], a[href]')) return;
-      const isSubmit = (el as HTMLButtonElement).type === 'submit' || el.getAttribute('type') === 'submit';
+      if (el.closest('[data-acting-banner], nav, header, [role="tablist"], [role="tab"], [role="alert"], a[href]')) return;
       const text = (el.getAttribute('aria-label') || el.textContent || '').trim();
+      // Closing / dismissing is never an action (the toast's own X, modal close buttons).
+      if (/^(dismiss|close)\b/i.test(text)) return;
+      // A <button> with no type attribute reports itself as "submit" — only an explicit submit, or
+      // an untyped button inside a form, counts (the first version blocked the toast's X this way).
+      const isSubmit = el.getAttribute('type') === 'submit' || (!el.getAttribute('type') && !!el.closest('form'));
       if (!isSubmit && !ACTION.test(text)) return;
       e.preventDefault(); e.stopPropagation(); warn();
     };

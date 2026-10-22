@@ -2361,6 +2361,13 @@ export interface AdminAssistState {
     endedAt?: string;
     lastReply?: string;
 }
+export interface EviaThreadMessage {
+    id: string;
+    senderId: string;
+    text: string;
+    source?: string;
+    createdAt: string;
+}
 export interface PersonAuditEntry {
     id: string;
     eventType: string;
@@ -2462,6 +2469,24 @@ export const adminService = {
             (snap) => onState(snap.exists ? (snap.data() as AdminAssistState) : null),
             () => onState(null),
         );
+    },
+    /** The person's Evia text thread (threads/cara_{uid}/messages, server-mirrored), oldest first, live. */
+    watchEviaThread: (uid: string, onMessages: (messages: EviaThreadMessage[], error?: string) => void): (() => void) => {
+        if (!isConfigured || !db) { onMessages([], 'Database not connected'); return () => {}; }
+        const parseTs = (raw: unknown): string => {
+            if (typeof raw === 'string') return raw;
+            if (raw && typeof (raw as { toDate?: () => Date }).toDate === 'function') return (raw as { toDate: () => Date }).toDate().toISOString();
+            return '';
+        };
+        return db.collection('threads').doc(`cara_${uid}`).collection('messages')
+            .orderBy('createdAt', 'asc').limitToLast(300)
+            .onSnapshot(
+                (snap) => onMessages(snap.docs.map((d) => {
+                    const m = d.data() as Record<string, unknown>;
+                    return { id: d.id, senderId: String(m.senderId ?? ''), text: String(m.text ?? ''), source: typeof m.source === 'string' ? m.source : undefined, createdAt: parseTs(m.createdAt) };
+                })),
+                (err) => onMessages([], err?.code === 'permission-denied' ? 'This thread is not readable from the admin' : 'Could not load the thread'),
+            );
     },
     /** Everything logged for one person (by uid and, when known, by phone), newest first. */
     getPersonAuditLog: async (uid: string, phone?: string, max = 200): Promise<PersonAuditEntry[]> => {

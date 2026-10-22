@@ -11,10 +11,11 @@ import { db, functions } from '../../lib/firebase';
 import { AdminAssistStrip } from './AdminAssistStrip';
 import { AdminSendLinks } from './AdminSendLinks';
 import { PersonAuditLog } from './PersonAuditLog';
+import { PersonMessages } from './PersonMessages';
 import { Caregiver, Appointment } from '../../types';
 import { adminMvrLineApplies, adminMvrStatusFor, adminMvrTone, adminTransportationLine, adminMvrReportId, checkrReportUrl } from '../../utils/drivingRecordAdmin';
 
-type Panel = 'profile' | 'appointments' | 'verification' | 'audit';
+type Panel = 'profile' | 'appointments' | 'verification' | 'messages' | 'audit';
 type ModerationAction = 'ban' | 'unban' | 'suspend' | 'unsuspend' | 'notify' | 'reset' | null;
 type ToastState = { msg: string; type: 'success' | 'error' } | null;
 
@@ -357,7 +358,10 @@ export const AdminCaregiverManager: React.FC = () => {
   };
 
   const filtered = caregivers.filter(c => {
-    const matchSearch = !search || c.name?.toLowerCase().includes(search.toLowerCase()) || c.email?.toLowerCase().includes(search.toLowerCase());
+    // Name, email, or phone (digits only — "650 563" finds +16505633842), 2026-10-22.
+    const searchDigits = search.replace(/\D/g, '');
+    const matchSearch = !search || c.name?.toLowerCase().includes(search.toLowerCase()) || c.email?.toLowerCase().includes(search.toLowerCase())
+      || (searchDigits.length >= 3 && String((c as any).phone || '').replace(/\D/g, '').includes(searchDigits));
     const matchVer = verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && (!c.verificationStatus || c.verificationStatus === 'info_requested'));
     return matchSearch && matchVer;
   });
@@ -369,7 +373,7 @@ export const AdminCaregiverManager: React.FC = () => {
         <div className="p-4 border-b border-slate-100 space-y-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search care providers…" className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, phone or email…" className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500" />
           </div>
           <div className="flex gap-1 flex-wrap">
             {VER_FILTERS.map(f => (
@@ -440,7 +444,7 @@ export const AdminCaregiverManager: React.FC = () => {
 
           {/* Tabs */}
           <div className="flex border-b border-slate-200 px-6">
-            {(['profile', 'appointments', 'verification', 'audit'] as Panel[]).map(p => (
+            {(['profile', 'appointments', 'verification', 'messages', 'audit'] as Panel[]).map(p => (
               <button key={p} onClick={() => handlePanelSwitch(p)} className={`px-4 py-3 text-sm font-medium capitalize border-b-2 transition-colors ${panel === p ? 'border-primary-600 text-primary-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{p}</button>
             ))}
           </div>
@@ -678,6 +682,8 @@ export const AdminCaregiverManager: React.FC = () => {
             )}
 
             {/* APPOINTMENTS */}
+            {panel === 'messages' && <PersonMessages uid={selected.uid} personName={selected.name || 'this care provider'} />}
+
             {panel === 'audit' && <PersonAuditLog uid={selected.uid} phone={(selected as any).phone} />}
 
             {panel === 'appointments' && (

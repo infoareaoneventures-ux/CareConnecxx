@@ -10,8 +10,9 @@ import { db, functions } from '../../lib/firebase';
 import { AdminAssistStrip } from './AdminAssistStrip';
 import { AdminSendLinks } from './AdminSendLinks';
 import { PersonAuditLog } from './PersonAuditLog';
+import { PersonMessages } from './PersonMessages';
 
-type Panel = 'profile' | 'appointments' | 'audit';
+type Panel = 'profile' | 'appointments' | 'messages' | 'audit';
 
 interface ClientRow extends AdminUser {
   isSuspended?: boolean;
@@ -335,10 +336,12 @@ export const AdminClientManager: React.FC = () => {
 
   const filtered = clients.filter(c => {
     const displayName = c.name || (c as any).firstName || '';
+    // Name, email, or phone — the phone matches on digits only, so "650 563" and "(650) 563-" both find +16505633842 (2026-10-22).
+    const searchDigits = search.replace(/\D/g, '');
     const matchSearch = !search ||
       displayName.toLowerCase().includes(search.toLowerCase()) ||
       c.email?.toLowerCase().includes(search.toLowerCase()) ||
-      c.phone?.includes(search);
+      (searchDigits.length >= 3 && (c.phone || '').replace(/\D/g, '').includes(searchDigits));
     const matchStatus =
       statusFilter === 'all' ||
       (statusFilter === 'banned' && c.isBanned) ||
@@ -367,7 +370,7 @@ export const AdminClientManager: React.FC = () => {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Search clients…"
+              placeholder="Search by name, phone or email…"
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
@@ -432,7 +435,7 @@ export const AdminClientManager: React.FC = () => {
 
           {/* Sub-tabs */}
           <div className="bg-white border-b border-slate-200 flex px-5">
-            {(['profile', 'appointments', 'audit'] as Panel[]).map(p => (
+            {(['profile', 'appointments', 'messages', 'audit'] as Panel[]).map(p => (
               <button key={p} onClick={() => handlePanelSwitch(p)}
                 className={`px-4 py-3 text-sm font-medium capitalize border-b-2 transition-colors ${panel === p ? 'border-primary-600 text-primary-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                 {p}
@@ -720,6 +723,8 @@ export const AdminClientManager: React.FC = () => {
                 </div>
               </>
             )}
+
+            {panel === 'messages' && <PersonMessages uid={selected.uid} personName={selected.name || (selected as any).firstName || 'this client'} />}
 
             {panel === 'audit' && <PersonAuditLog uid={selected.uid} phone={(selected as any).phone} />}
 

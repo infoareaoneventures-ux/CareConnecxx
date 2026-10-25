@@ -377,7 +377,9 @@ export const AdminCaregiverManager: React.FC<{ initialUid?: string; initialPanel
       || (searchDigits.length >= 3 && String((c as any).phone || '').replace(/\D/g, '').includes(searchDigits));
     const matchVer = verFilter === 'human'
       ? (c as any).humanModeOn === true
-      : (verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && (!c.verificationStatus || c.verificationStatus === 'info_requested')));
+      : verFilter === 'name'
+        ? (c as any).nameReview?.status === 'mismatch'
+        : (verFilter === 'all' || c.verificationStatus === verFilter || (verFilter === 'pending' && (!c.verificationStatus || c.verificationStatus === 'info_requested')));
     return matchSearch && matchVer;
   });
 
@@ -395,6 +397,7 @@ export const AdminCaregiverManager: React.FC<{ initialUid?: string; initialPanel
               <button key={f} onClick={() => setVerFilter(f)} className={`px-2.5 py-1 text-xs rounded-full font-medium capitalize transition-colors ${verFilter === f ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{f}</button>
             ))}
             <button onClick={() => setVerFilter('human')} className={`px-2.5 py-1 text-xs rounded-full font-medium transition-colors ${verFilter === 'human' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Needs a human</button>
+            <button onClick={() => setVerFilter('name')} className={`px-2.5 py-1 text-xs rounded-full font-medium transition-colors ${verFilter === 'name' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Name review</button>
           </div>
         </div>
 
@@ -424,6 +427,7 @@ export const AdminCaregiverManager: React.FC<{ initialUid?: string; initialPanel
                   )}
                 </div>
               </div>
+              {(c as any).nameReview?.status === 'mismatch' && <span className="text-xs font-medium px-2 py-0.5 rounded-full shrink-0 bg-amber-100 text-amber-800">Name review</span>}
               <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 capitalize ${verStatusColor(c.verificationStatus)}`}>{c.verificationStatus || 'pending'}</span>
             </button>
           ))}

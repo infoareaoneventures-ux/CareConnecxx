@@ -47,7 +47,7 @@ export const AdminClientManager: React.FC<{ initialUid?: string; initialPanel?: 
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'active' | 'suspended' | 'banned' | 'human'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'active' | 'suspended' | 'banned' | 'human' | 'name'>('all');
   // Opened from the "Needs a human" list: select that person and land on the asked panel once the rows are in.
   const [openedInitial, setOpenedInitial] = useState<string | null>(null);
   const [selected, setSelected] = useState<ClientRow | null>(null);
@@ -361,7 +361,8 @@ export const AdminClientManager: React.FC<{ initialUid?: string; initialPanel?: 
       (statusFilter === 'suspended' && c.isSuspended && !c.isBanned) ||
       (statusFilter === 'active' && !c.isBanned && !c.isSuspended && c.verified) ||
       (statusFilter === 'pending' && !c.isBanned && !c.isSuspended && !c.verified) ||
-      (statusFilter === 'human' && (c as any).humanModeOn === true);
+      (statusFilter === 'human' && (c as any).humanModeOn === true) ||
+      (statusFilter === 'name' && (c as any).nameReview?.status === 'mismatch');
     return matchSearch && matchStatus;
   });
 
@@ -390,10 +391,10 @@ export const AdminClientManager: React.FC<{ initialUid?: string; initialPanel?: 
             />
           </div>
           <div className="flex gap-1 flex-wrap">
-            {(['all', 'pending', 'active', 'suspended', 'banned', 'human'] as const).map(f => (
+            {(['all', 'pending', 'active', 'suspended', 'banned', 'human', 'name'] as const).map(f => (
               <button key={f} onClick={() => setStatusFilter(f)}
-                className={`px-2.5 py-1 text-xs rounded-full font-medium whitespace-nowrap ${f === 'human' ? '' : 'capitalize '}transition-colors ${statusFilter === f ? (f === 'human' ? 'bg-rose-100 text-rose-700' : 'bg-primary-100 text-primary-700') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-                {f === 'human' ? 'Needs a human' : f}
+                className={`px-2.5 py-1 text-xs rounded-full font-medium whitespace-nowrap ${f === 'human' || f === 'name' ? '' : 'capitalize '}transition-colors ${statusFilter === f ? (f === 'human' ? 'bg-rose-100 text-rose-700' : f === 'name' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-700') : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                {f === 'human' ? 'Needs a human' : f === 'name' ? 'Name review' : f}
               </button>
             ))}
           </div>
@@ -418,6 +419,7 @@ export const AdminClientManager: React.FC<{ initialUid?: string; initialPanel?: 
                 <p className="font-medium text-slate-900 text-sm truncate">{c.name || (c as any).firstName}</p>
                 <p className="text-xs text-slate-400 truncate">{c.email}</p>
               </div>
+              {(c as any).nameReview?.status === 'mismatch' && <span className="text-xs font-medium px-2 py-0.5 rounded-full shrink-0 bg-amber-100 text-amber-800">Name review</span>}
               <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${statusColor(c)}`}>{statusLabel(c)}</span>
             </button>
           ))}

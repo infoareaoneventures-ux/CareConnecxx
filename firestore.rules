@@ -150,6 +150,9 @@ service cloud.firestore {
       // v1-resolveReferrerByCode.
       allow update: if isAdmin() || (
         isOwner(userId) &&
+        // Name binding (2026-10-24): once the ID check bound the name, only the team changes it.
+        !(resource.data.get('nameLocked', false) == true &&
+          request.resource.data.diff(resource.data).affectedKeys().hasAny(['name', 'firstName', 'lastName', 'displayName'])) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'isAdmin', 'userType', 'role', 'isBanned',
           'verified', 'verificationStatus', 'totalEarnings',
@@ -209,6 +212,9 @@ service cloud.firestore {
       // BUG FIX: Added bio length validation (max 500 chars)
       allow update: if isAdmin() || (
           isAuthenticated() && request.auth.uid == caregiverId
+          // Name binding (2026-10-24): once the background check bound the name, only the team changes it.
+          && !(resource.data.get('nameLocked', false) == true &&
+               request.resource.data.diff(resource.data).affectedKeys().hasAny(['name']))
           && (
             !request.resource.data.diff(resource.data).affectedKeys().hasAny(['bio'])
             || isValidBio(request.resource.data.bio)

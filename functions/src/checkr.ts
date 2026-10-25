@@ -510,7 +510,35 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         }
       }
 
+      // Name binding (2026-10-24): the legal name on the check must match the account name,
+      // else the approval is HELD (nameReview + admin alert + the person told) until the team
+      // decides from the admin page (nameBinding.applyNameDecision applies these same fields).
+      let nameHeld = false;
       if (status === "clear") {
+        try {
+          const nb = await import("./nameBinding");
+          const cgForName = (await db.collection("caregivers").doc(caregiverUid).get()).data() ?? {};
+          const legal = await nb.caregiverVerifiedName(caregiverUid);
+          const account = nb.splitAccountName(cgForName.name);
+          if (legal && !nb.namesMatch(account, legal)) {
+            nameHeld = true;
+            updates["backgroundCheckData.checkrClearedAt"] = new Date().toISOString();
+            updates["backgroundCheckData.nameHold"] = true;
+            if ((cgForName.nameReview as { status?: string } | undefined)?.status !== "mismatch") {
+              await nb.holdNameMismatch({
+                uid: caregiverUid, role: "caregiver", source: "checkr", phone: typeof cgForName.phone === "string" ? cgForName.phone : undefined,
+                accountName: String(cgForName.name ?? ""), verifiedFirst: legal.first, verifiedLast: legal.last,
+              });
+            }
+          } else if (legal) {
+            updates["nameLocked"] = true;
+            updates["verifiedLegalName"] = nb.fullName(legal.first, legal.last);
+          }
+        } catch (err) {
+          console.error("checkrWebhook: name binding failed (non-fatal, clearing as before):", err instanceof Error ? err.message : err);
+        }
+      }
+      if (status === "clear" && !nameHeld) {
         updates["verified"] = true;
         updates["verificationStatus"] = "approved";
         updates["status"] = "active";

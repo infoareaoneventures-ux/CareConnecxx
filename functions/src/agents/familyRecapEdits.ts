@@ -28,7 +28,38 @@ import {
 
 type Data = Record<string, unknown>;
 
+/** The question for a field they named without giving its new value ("can you fix the day"). */
+export const FIELD_QUESTIONS: Record<string, string> = {
+  selectedDays: "Sure — which day(s) should it be?",
+  daysFlexible: "Sure — which day(s) should it be, or are the days flexible?",
+  timeOfDay: "Sure — morning, afternoon, evening, or overnight?",
+  careFrequency: "Sure — occasional, part-time, or full-time?",
+  startDate: "Sure — when should care start?",
+  endDate: "Sure — through what date, or is it ongoing?",
+  ongoing: "Sure — through what date, or is it ongoing?",
+  rate: "Sure — what hourly rate?",
+  caregiversNeeded: "Sure — how many care providers, 1 to 4?",
+  careNeeds: "Sure — which care types should I add or remove?",
+  petsInHome: "Sure — are there pets in the home?",
+  smokingHousehold: "Sure — does anyone in the household smoke?",
+  emergencyContactName: "Sure — who should we contact in an emergency? Their name and phone number.",
+  emergencyContactPhone: "Sure — what's the emergency contact's phone number?",
+  emergencyContactRelationship: "Sure — what's their relationship to you?",
+  homeStreet: "Sure — what's the home address (street and ZIP)?",
+  homeZipCode: "Sure — what's the home ZIP code?",
+  street: "Sure — where is care needed? Same as home, or another street and ZIP?",
+  zipCode: "Sure — what's the ZIP code where care is needed?",
+  email: "Sure — what email should I use?",
+  people: "Sure — who should the care be for, or what should I change about them?",
+};
+export function questionForField(field: unknown): string {
+  const f = String(field ?? "").trim();
+  return FIELD_QUESTIONS[f] ?? "Sure — what should it be?";
+}
+
 export interface RecapEdit {
+  /** They named WHAT to change but not the new value — the field key; nothing else is set. */
+  ask?: unknown;
   careFrequency?: unknown; startDate?: unknown; ongoing?: unknown; endDate?: unknown;
   selectedDays?: unknown; daysFlexible?: unknown; timeOfDay?: unknown;
   homeStreet?: unknown; homeZipCode?: unknown; sameAsHomeAddress?: unknown; street?: unknown; zipCode?: unknown;
@@ -46,11 +77,12 @@ export interface RecapEdit {
 }
 
 /** One model read of the reply → a structured edit (values still unvalidated). */
-export async function readRecapEdit(deps: FamilyIntakeDeps, text: string, d: Data): Promise<RecapEdit | null> {
+export async function readRecapEdit(deps: FamilyIntakeDeps, text: string, d: Data, hint?: string): Promise<RecapEdit | null> {
   const t = deps.today();
   const people = rosterFromData(d).map((p) => (p.relationship === "self" ? "the account holder (you)" : `${p.name || personPhrase(p)} (${p.relationship})`)).join("; ");
   const raw = await deps.parseWithClaude(
     `Today is ${t.weekday}, ${t.iso}. The family was shown a summary of their care request and is changing something. People on the request: ${people || "none yet"}. ` +
+      (hint ? `Evia just asked them: "${hint}" — their message is the answer to that question. ` : "") +
       "Extract ONLY what they are changing, as raw JSON with any of: " +
       '{"careFrequency":"occasional|part_time|full_time","startDate":"YYYY-MM-DD or ASAP","ongoing":true,"endDate":"YYYY-MM-DD","selectedDays":["MON"],"daysFlexible":true,"timeOfDay":["morning"],' +
       '"homeStreet":"","homeZipCode":"","sameAsHomeAddress":true,"street":"","zipCode":"","rate":0,"caregiversNeeded":0,"petsInHome":true,"smokingHousehold":false,"email":"",' +
@@ -59,6 +91,7 @@ export async function readRecapEdit(deps: FamilyIntakeDeps, text: string, d: Dat
       '"people":{"rename":{"from":"old name or relationship if said","to":"new name"},"stage":{"who":"name or relationship if said","stage":"' + AGE_RANGES.map((a) => a.label).join("|") + '"},' +
       '"relationship":{"who":"name if said","to":"self|parent|spouse|adult child|child|other"},"remove":"name or relationship of the person to remove","restate":"the phrase naming WHO the care is for when they restate the whole list"}}. ' +
       'Rules: "add X" / "also X" → careNeeds.add; "remove X" / "not X" / "take off X" → careNeeds.remove. A name change is people.rename (never careNeeds). ' +
+      'If they say WHAT to change but not the new value ("can you fix the day", "change the rate"), return ONLY {"ask":"<field key>"} — NEVER invent a value they did not give. ' +
       "The account holder's own first/last name is NEVER changed here — if they try, return {}. Omit everything not clearly changed. No markdown.",
     text,
   ).catch(() => "{}");
@@ -95,6 +128,8 @@ export interface AppliedRecapEdit {
   notes: string[];
   /** A question to ask when a people edit couldn't tell who. */
   ask?: string;
+  /** The field they want to change without having given the value — the next reply answers `ask`. */
+  askField?: string;
   /** The pending people edit to resolve on the next reply (stored on the session). */
   pending?: { kind: "rename" | "stage" | "relationship" | "remove"; to?: string; stage?: string };
   /** True when the roster changed and the script should finish it (name / stage / a new care list). */
@@ -106,6 +141,9 @@ export async function applyRecapEdit(deps: FamilyIntakeDeps, d: Data, edit: Reca
   const fields: Data = {};
   const notes: string[] = [];
   let rosterChanged = false;
+
+  // They named the field but not the value (2026-10-24, live: "can you fix the day" became MON out of thin air).
+  if (typeof edit.ask === "string" && edit.ask.trim()) return { fields, notes, rosterChanged, ask: questionForField(edit.ask), askField: edit.ask.trim() };
 
   const freq = normalizeFrequency(edit.careFrequency); if (freq) { fields.careFrequency = freq; notes.push(`${freq === "occasional" ? "occasional" : freq === "part_time" ? "part-time" : "full-time"} care`); }
   const start = normalizeStartDateToISO(edit.startDate, t.iso); if (start) { fields.startDate = start; notes.push(`starting ${start === t.iso ? "as soon as possible" : start}`); }
@@ -142,14 +180,17 @@ export async function applyRecapEdit(deps: FamilyIntakeDeps, d: Data, edit: Reca
     if (replaceW.length) {
       const c = await deps.canonicalizeCareNeeds(replaceW);
       if (c.careNeeds.length) { next = c.careNeeds; notes.push(`care types: ${c.careNeeds.map(serviceLabel).join(", ")}`); }
-      if (c.unmapped.length) notes.push(`${c.unmapped.join(", ")} isn't one of the services on the list, so I left it off`);
+      const unmappedR = c.unmapped.filter((w) => !c.careNeeds.some((n) => n.toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(n.toLowerCase())));
+      if (unmappedR.length) notes.push(`${unmappedR.join(", ")} isn't one of the services on the list, so I left it off`);
     }
     if (addW.length) {
       const c = await deps.canonicalizeCareNeeds(addW);
       for (const n of c.careNeeds) if (!next.includes(n)) next.push(n);
       if (c.careNeeds.length) notes.push(`added ${c.careNeeds.map(serviceLabel).join(", ")}`);
       if (c.medical.length) notes.push(`${c.medical.join(", ")} is medical care, which care providers here don't do, so I left it off`);
-      if (c.unmapped.length) notes.push(`${c.unmapped.join(", ")} isn't one of the services on the list, so I left it off`);
+      // "meal" next to "Meal Preparation" is the same thing said twice, not an unknown service (live 2026-10-24).
+      const unmappedA = c.unmapped.filter((w) => !c.careNeeds.some((n) => n.toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(n.toLowerCase())));
+      if (unmappedA.length) notes.push(`${unmappedA.join(", ")} isn't one of the services on the list, so I left it off`);
     }
     if (removeW.length) {
       const c = await deps.canonicalizeCareNeeds(removeW);

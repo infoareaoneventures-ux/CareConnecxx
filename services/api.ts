@@ -353,7 +353,15 @@ export const dbService = {
                         if (data.userType === 'client') {
                             const snDoc = await db.collection('senior_profiles').doc(uid).get();
                             if (snDoc.exists && snDoc.data()) {
-                                return { ...data, ...snDoc.data(), userType: 'client' } as AdminUser;
+                                const sn = snDoc.data() as Record<string, unknown>;
+                                // The recipient's record rides along (its `name` is the CARE RECIPIENT's, as before), but the
+                                // account holder's own identity fields always win when the users doc has them (2026-10-24).
+                                return {
+                                    ...data, ...sn, userType: 'client',
+                                    ...(data.firstName ? { firstName: data.firstName } : {}),
+                                    ...(data.lastName ? { lastName: data.lastName } : {}),
+                                    ...(data.displayName ? { displayName: data.displayName } : {}),
+                                } as AdminUser;
                             }
                         }
                         return data as AdminUser;
@@ -2353,12 +2361,14 @@ export const shiftHoursService = {
 // ─── Admin-only helpers ──────────────────────────────────────────────────────
 
 export interface AdminAssistQueueRequest {
-    type: 'request_consent' | 'end_consent' | 'send_link' | 'human_on' | 'human_off' | 'team_text' | 'viewed';
+    type: 'request_consent' | 'end_consent' | 'send_link' | 'human_on' | 'human_off' | 'team_text' | 'viewed' | 'name_use_verified' | 'name_keep_account';
     uid: string;
     role: 'client' | 'caregiver';
     linkKind?: string;
     /** type team_text: the reply the team sends into the person's thread. */
     text?: string;
+    /** type name_keep_account: why the account name is kept over the verified one. */
+    reason?: string;
     adminUid: string;
     adminName: string;
 }

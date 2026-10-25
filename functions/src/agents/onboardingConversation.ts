@@ -256,6 +256,15 @@ export async function mergeOnboardingData(phone: string, data: Record<string, un
   if (caregiverId && sess.userType === "caregiver") {
     const { mirrorCaregiverDraftToRecord } = await import("./caregiverProfileMirror");
     await mirrorCaregiverDraftToRecord(caregiverId, merged, Object.keys(data));
+    // The provider's recovery email also lands on users/{uid} (the account record the site and the
+    // admin read), and the welcome email goes out the moment it arrives — the users-doc create
+    // trigger only fires for site signups that already carry one (2026-10-24, same as the family side).
+    const cgEmail = typeof data.email === "string" && /^\S+@\S+\.\S+$/.test(data.email.trim()) ? data.email.trim().toLowerCase() : "";
+    if (cgEmail) {
+      await db.collection("users").doc(caregiverId).set({ email: cgEmail }, { merge: true })
+        .catch((err) => console.error("mergeOnboardingData: users email mirror (caregiver) failed (non-fatal):", err));
+      import("../email").then((m) => m.sendWelcomeEmailFor(caregiverId)).catch((err) => console.warn("welcome email after text signup (caregiver) failed (non-fatal):", err instanceof Error ? err.message : err));
+    }
   }
 
   // 2026-09-20 (founder: one questionnaire, two doors): a FAMILY's answers land on
@@ -270,6 +279,33 @@ export async function mergeOnboardingData(phone: string, data: Record<string, un
       await db.collection("job_postings").doc(clientUid)
         .set({ ...draft, clientId: clientUid, draftUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
         .catch((err) => console.error("mergeOnboardingData: client draft mirror failed (non-fatal):", err));
+    }
+    // The account holder's name and recovery email live on users/{uid} — the same fields the site's
+    // signup writes and the admin page reads (2026-10-24, live: a cold-text client read "Full Name: Not set").
+    const acct: Record<string, unknown> = {};
+    const first = typeof data.firstName === "string" ? data.firstName.trim() : "";
+    const last = typeof data.lastName === "string" ? data.lastName.trim() : "";
+    if (first) acct.firstName = first;
+    if (last) acct.lastName = last;
+    if (first || last) {
+      const fullFirst = first || String(merged.firstName ?? "").trim();
+      const fullLast = last || String(merged.lastName ?? "").trim();
+      acct.name = [fullFirst, fullLast].filter(Boolean).join(" ");
+    }
+    const email = typeof data.email === "string" && /^\S+@\S+\.\S+$/.test(data.email.trim()) ? data.email.trim().toLowerCase() : "";
+    if (email) acct.email = email;
+    if (Object.keys(acct).length > 0) {
+      await db.collection("users").doc(clientUid).set(acct, { merge: true })
+        .catch((err) => console.error("mergeOnboardingData: users account mirror failed (non-fatal):", err));
+      if (typeof acct.name === "string" && acct.name) {
+        await admin.auth().updateUser(clientUid, { displayName: acct.name })
+          .catch((err) => console.warn("mergeOnboardingData: Auth displayName update failed (non-fatal):", err instanceof Error ? err.message : err));
+      }
+    }
+    // The welcome email goes out when the email arrives — the users-doc create trigger only fires for
+    // site signups that already carry one (2026-10-24, live: a cold-text client got only the recovery mail).
+    if (email) {
+      import("../email").then((m) => m.sendWelcomeEmailFor(clientUid)).catch((err) => console.warn("welcome email after text signup failed (non-fatal):", err instanceof Error ? err.message : err));
     }
   }
 }
@@ -1590,16 +1626,10 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       return;
     }
     await updateSession(phone, { onboardingStep: "family_ask_name", userType: "client" });
-    const msgSelfName = await generateCaraMessage({
-      audience: "family",
-      context: "Someone just said they're looking for care for THEMSELVES. You ALREADY introduced yourself in the " +
-        "previous message — do NOT say your name or re-introduce yourself. Speak to them directly and warmly ask " +
-        "their name. Mention — once, casually — that a voice memo works instead of typing if that's easier.",
-      fallback: "I'd be glad to help you directly. What's your first and last name? And anytime typing feels like a pain, just send me a voice memo — I'll listen.",
-      maxTokens: 100,
-      emotionalDirective,
-    });
-    await sendMessage(chatId, msgSelfName);
+    // The first question is the site's first step, fixed text (2026-10-24 — the model prose asked for the
+    // care recipient's name and pitched voice memos; the script then re-asked for the account holder's name).
+    const firstQSelf = await familyFirstQuestion({ ...session, userType: "client", onboardingStep: "family_ask_name" } as AgentSession);
+    await sendMessage(chatId, `I'd be glad to help you directly. ${firstQSelf ?? "What's your first and last name?"}`);
     return;
   }
   if (raw === "client") {
@@ -1630,17 +1660,9 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       return;
     }
     await updateSession(phone, { onboardingStep: "family_ask_name", userType: "client" });
-    const msg1 = await generateCaraMessage({
-      audience: "family",
-      context: "A new family member just said they're looking for care for a loved one. You ALREADY introduced " +
-        "yourself in the previous message — do NOT say your name or re-introduce yourself. Warmly ask for " +
-        "their name, and mention — once, casually — that if typing it all out ever feels like a pain, they can " +
-        "just send you a voice memo and you'll listen.",
-      fallback: "I'd love to help. What's your first and last name? And anytime typing feels like a pain, just send me a voice memo — I'll listen.",
-      maxTokens: 100,
-      emotionalDirective,
-    });
-    await sendMessage(chatId, msg1);
+    // Same as above: the script's first question, fixed text.
+    const firstQ1 = await familyFirstQuestion({ ...session, userType: "client", onboardingStep: "family_ask_name" } as AgentSession);
+    await sendMessage(chatId, `I'd love to help. ${firstQ1 ?? "What's your first and last name?"}`);
     return;
   }
   if (raw === "caregiver") {
@@ -1663,16 +1685,8 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       return;
     }
     await updateSession(phone, { onboardingStep: "caregiver_ask_name", userType: "caregiver" });
-    const msg2 = await generateCaraMessage({
-      audience: "caregiver",
-      context: "A new care provider just said they're looking for work. You ALREADY introduced yourself in the previous " +
-        "message — do NOT say your name or re-introduce yourself. Let them know profile setup takes about 3 minutes " +
-        "and everything happens right here over text. Then ask their first and last name (once).",
-      fallback: "Great — let's get your profile set up. Takes about 3 minutes and everything happens right here.\n\nWhat's your first and last name?",
-      maxTokens: 80,
-      emotionalDirective,
-    });
-    await sendMessage(chatId, msg2);
+    // Fixed text, like the family side (2026-10-24).
+    await sendMessage(chatId, "Great — let's get your profile set up. Takes about 3 minutes and everything happens right here.\n\nWhat's your first and last name?");
     return;
   }
   await sendMessage(chatId,
@@ -2085,6 +2099,35 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     await runFamilyIntake(phone, chatId, "__RESUME__", refreshedAdd.data() as AgentSession);
     return;
   }
+  // "Sure — which day(s) should it be?" was asked after "can you fix the day"; this reply is the value (2026-10-24).
+  const askedField = (session as unknown as Record<string, unknown>).confirmEditAskField;
+  if (typeof askedField === "string" && askedField) {
+    const clearAsk = () => db.collection("agent_sessions").doc(phone).update({ confirmEditAskField: admin.firestore.FieldValue.delete() }).catch(() => {});
+    const dA = (session.onboardingData ?? {}) as Record<string, unknown>;
+    const { questionForField } = await import("./familyRecapEdits");
+    const hinted = await readRecapEdit(familyIntakeDeps(), text, dA, questionForField(askedField)).catch(() => null);
+    const appliedA: AppliedRecapEdit = hinted && !(typeof hinted.ask === "string")
+      ? await applyRecapEdit(familyIntakeDeps(), dA, hinted).catch(() => ({ fields: {}, notes: [], rosterChanged: false }))
+      : { fields: {}, notes: [], rosterChanged: false };
+    if (Object.keys(appliedA.fields).length || appliedA.notes.length) {
+      await clearAsk();
+      if (appliedA.ask && appliedA.pending) {
+        await db.collection("agent_sessions").doc(phone).set({ confirmEditPending: appliedA.pending }, { merge: true }).catch(() => {});
+        await sendMessage(chatId, appliedA.ask);
+        return;
+      }
+      if (await finishRecapEdit(phone, chatId, appliedA)) return;
+    }
+    // Not an answer to that question: a side question is answered and the question stays; anything else re-asks it once.
+    if (await isQuestionOrOther(text, questionForField(askedField))) {
+      const answer = await answerQuestionMidFlow(text, session, phone);
+      await sendMessage(chatId, `${answer}\n\n${questionForField(askedField)}`);
+      return;
+    }
+    await clearAsk();
+    await sendMessage(chatId, `Sorry, I didn't catch that. ${RECAP_EDIT_FALLBACK}`);
+    return;
+  }
   // "Whose name — you or Mahad C?" was asked after an edit that didn't say who; this reply names them (2026-10-21).
   const pendingEdit = (session as unknown as Record<string, unknown>).confirmEditPending as NonNullable<AppliedRecapEdit["pending"]> | undefined;
   if (pendingEdit && typeof pendingEdit === "object" && typeof pendingEdit.kind === "string") {
@@ -2201,6 +2244,11 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     : { fields: {}, notes: [], rosterChanged: false };
   if (applied.ask && applied.pending) {
     await db.collection("agent_sessions").doc(phone).set({ confirmEditPending: applied.pending }, { merge: true }).catch(() => {});
+    await sendMessage(chatId, applied.ask);
+    return;
+  }
+  if (applied.ask && applied.askField) {
+    await db.collection("agent_sessions").doc(phone).set({ confirmEditAskField: applied.askField }, { merge: true }).catch(() => {});
     await sendMessage(chatId, applied.ask);
     return;
   }

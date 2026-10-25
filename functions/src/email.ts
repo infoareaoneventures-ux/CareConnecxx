@@ -528,15 +528,20 @@ export const sendPasswordResetEmail = functions.https.onCall(async (data) => {
  * Firestore trigger: send role-specific welcome email when a user doc is created.
  * Handles email/password signup AND Google sign-in (both create a users/ doc).
  */
-export const sendWelcomeEmail = functions.firestore
-  .document("users/{userId}")
-  .onCreate(async (snap) => {
+/**
+ * Send the role-specific welcome email once per account (stamped welcomeEmailSentAt on users/{uid}).
+ * Called by the users/{uid} create trigger below (site signups carry the email) and by the text
+ * signup the moment the recovery email is given (2026-10-24).
+ */
+export async function sendWelcomeEmailFor(userId: string): Promise<{ success: boolean; error?: string } | null> {
+    const userRef = admin.firestore().collection("users").doc(userId);
+    const userData = (await userRef.get()).data();
+    if (userData?.welcomeEmailSentAt) return null;
     if (!resend) {
       console.log("Resend not configured, skipping welcome email");
       return null;
     }
 
-    const userData = snap.data();
     const email = userData?.email;
     const userType: "client" | "caregiver" = userData?.userType === "caregiver" ? "caregiver" : "client";
 
@@ -573,13 +578,23 @@ export const sendWelcomeEmail = functions.firestore
         return { success: false, error: error.message };
       }
 
-      console.log(`Welcome email (${userType}) sent for user ${snap.id}`);
+      await userRef.set({ welcomeEmailSentAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+      console.log(`Welcome email (${userType}) sent for user ${userId}`);
       return { success: true };
     } catch (err: any) {
       console.error("Welcome email exception:", err);
       return { success: false, error: err.message };
     }
-  });
+}
+
+/**
+ * Firestore trigger: send role-specific welcome email when a user doc is created with an email.
+ * Handles email/password signup AND Google sign-in (both create a users/ doc).
+ */
+export const sendWelcomeEmail = functions.firestore
+  .document("users/{userId}")
+  .onCreate(async (snap) => sendWelcomeEmailFor(snap.id));
+
 
 // Sent to the CURRENT (confirmed) recovery email when a change is requested —
 // that address approves the change before the new one is ever contacted.

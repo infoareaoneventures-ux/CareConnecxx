@@ -13,6 +13,7 @@ import { AdminSendLinks } from './AdminSendLinks';
 import { PersonAuditLog } from './PersonAuditLog';
 import { PersonMessages } from './PersonMessages';
 import { HumanModeSwitch } from './HumanModeSwitch';
+import { NameReviewCard } from './NameReviewCard';
 import { Caregiver, Appointment } from '../../types';
 import { adminMvrLineApplies, adminMvrStatusFor, adminMvrTone, adminTransportationLine, adminMvrReportId, checkrReportUrl } from '../../utils/drivingRecordAdmin';
 
@@ -884,6 +885,9 @@ export const AdminCaregiverManager: React.FC<{ initialUid?: string; initialPanel
                       </div>
                     </div>
                   </div>
+
+                  {/* Name binding (2026-10-24): the background check's legal name vs the account name */}
+                  <NameReviewCard uid={selected.uid} role="caregiver" review={(selected as any).nameReview} nameLocked={(selected as any).nameLocked} verifiedLegalName={(selected as any).verifiedLegalName} onToast={showToast} onResolved={load} />
 
                   {/* Link-only steps (2026-10-22): sent by Evia, never done for the person. The overrides above stay for testing. */}
                   <AdminSendLinks uid={selected.uid} role="caregiver" onToast={showToast} />

@@ -145,6 +145,9 @@ export type AuditEventType =
   | "admin_acted"
   // An admin looked at the person's pages in view mode (nothing changed, nothing texted).
   | "admin_viewed"
+  // Name binding (2026-10-24, nameBinding.ts): the verified legal name vs the account name.
+  | "name_mismatch_held"
+  | "name_decided"
   // Human mode (2026-10-22, agents/humanMode.ts): the team holds the person's thread.
   | "human_mode_on"
   | "human_mode_off"

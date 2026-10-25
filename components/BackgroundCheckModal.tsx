@@ -5,6 +5,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { dbService } from '../services/api';
 import { AddToastFunction } from '../types';
+import { useCareConnex } from '../context/CareConnexContext';
 
 interface BackgroundCheckModalProps {
   onClose: () => void;
@@ -15,10 +16,15 @@ interface BackgroundCheckModalProps {
 type Step = 'disclosure' | 'form' | 'success';
 
 export const BackgroundCheckModal: React.FC<BackgroundCheckModalProps> = ({ onClose, onShowToast, onSuccess }) => {
+  const { caregiverProfile } = useCareConnex();
+  // Prefilled from the account name (2026-10-24): the legal name on the check is compared with it when
+  // the result comes back, so starting from the same name keeps the two in step; a real difference is
+  // corrected here and reviewed by the team.
+  const accountParts = String((caregiverProfile as any)?.name ?? '').trim().split(/\s+/).filter(Boolean);
   const [step, setStep] = useState<Step>('disclosure');
   const [formData, setFormData] = useState({
-    legalFirstName: '',
-    legalLastName: '',
+    legalFirstName: accountParts[0] ?? '',
+    legalLastName: accountParts.slice(1).join(' '),
     zipCode: '',
     state: '',
     consentGiven: false,

@@ -1227,7 +1227,7 @@ export const createIdentityVerificationSession = functions.https.onCall(async (d
 // advance Evia's conversation only when the family next texted (the awaiting
 // steps re-check live state). Now the webhook finds the session by uid and
 // advances it at once, so the family gets the next text the moment it clears.
-async function advanceEviaSessionForUid(userId: string, awaitingStep: string, task: string, taskData: string): Promise<void> {
+export async function advanceEviaSessionForUid(userId: string, awaitingStep: string, task: string, taskData: string): Promise<void> {
   try {
     const q = await admin.firestore().collection('agent_sessions').where('userId', '==', userId).limit(1).get();
     const sess = q.docs[0];
@@ -1250,6 +1250,43 @@ async function handleIdentityVerificationEvent(session: Stripe.Identity.Verifica
     canceled:       'canceled',
   };
   const status = statusMap[session.status] || session.status;
+
+  // Name binding (2026-10-24): the name on the ID document must match the account name, else the
+  // verification is HELD (identityCheckStatus "name_review" + admin alert + the person told) until the
+  // team decides from the admin page (nameBinding.applyNameDecision then applies the verified state).
+  if (status === 'verified') {
+    try {
+      const uidForName = userId ?? (phone ? ((await admin.firestore().collection('agent_sessions').doc(phone).get()).data()?.userId as string | undefined) : undefined);
+      if (uidForName) {
+        const full = await stripe.identity.verificationSessions.retrieve(session.id, { expand: ['verified_outputs'] });
+        const vo = full.verified_outputs;
+        const vf = String(vo?.first_name ?? '').trim();
+        const vl = String(vo?.last_name ?? '').trim();
+        if (vf || vl) {
+          const nb = await import('./nameBinding');
+          const usersRef = admin.firestore().collection('users').doc(uidForName);
+          const u = (await usersRef.get()).data() ?? {};
+          const account = (u.firstName || u.lastName)
+            ? { first: String(u.firstName ?? ''), last: String(u.lastName ?? '') }
+            : nb.splitAccountName(u.name ?? u.displayName);
+          if (!nb.namesMatch(account, { first: vf, last: vl })) {
+            await usersRef.set({ identityCheckStatus: 'name_review', stripeIdentityVerificationId: session.id, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+            if ((u.nameReview as { status?: string } | undefined)?.status !== 'mismatch') {
+              await nb.holdNameMismatch({
+                uid: uidForName, role: 'client', source: 'stripe_identity', phone: typeof u.phone === 'string' ? u.phone : phone,
+                accountName: nb.fullName(account.first, account.last), verifiedFirst: vf, verifiedLast: vl,
+              });
+            }
+            console.log(`Identity verification held for name review: user ${uidForName}`);
+            return;
+          }
+          await usersRef.set({ nameLocked: true, verifiedLegalName: nb.fullName(vf, vl) }, { merge: true });
+        }
+      }
+    } catch (err) {
+      console.error('identity name binding failed (non-fatal, verifying as before):', err instanceof Error ? err.message : err);
+    }
+  }
 
   // ── iMessage onboarding flow (phone metadata, no firebaseUID yet) ──────────
   if (phone) {

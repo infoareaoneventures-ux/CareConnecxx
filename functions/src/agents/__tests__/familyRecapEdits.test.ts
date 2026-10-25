@@ -109,6 +109,26 @@ describe("edits at the recap — anything but the account holder's name; care ty
     expect(moved.fields).toMatchObject({ homeStreet: "9 Oak St", homeZipCode: "95112", street: "9 Oak St", zipCode: "95112", city: "San Jose", state: "CA" });
   });
 
+  it("a field named without its value asks for it instead of inventing one ('can you fix the day' → which day?)", async () => {
+    const r = await applyRecapEdit(deps(), BASE, { ask: "selectedDays" });
+    expect(r.fields).toEqual({});
+    expect(r.ask).toBe("Sure — which day(s) should it be?");
+    expect(r.askField).toBe("selectedDays");
+    const d = deps(['{"ask":"selectedDays"}']);
+    expect((await readRecapEdit(d, "can you fix the day", BASE))?.ask).toBe("selectedDays");
+    const hinted = deps(['{"selectedDays":["WED"]}']);
+    expect((await readRecapEdit(hinted, "Wednesday", BASE, "Sure — which day(s) should it be?"))?.selectedDays).toEqual(["WED"]);
+    expect(String((hinted.parseWithClaude as any).mock.calls[0][0])).toContain('Evia just asked them: "Sure — which day(s) should it be?"');
+  });
+
+  it("'meal' next to Meal Preparation is not reported as an unknown service", async () => {
+    const d = deps();
+    (d.canonicalizeCareNeeds as any).mockImplementationOnce(async () => ({ careNeeds: ["Meal Preparation"], medical: [], unmapped: ["meal"] }));
+    const r = await applyRecapEdit(d, BASE, { careNeeds: { add: ["meal preparation", "meal"] } });
+    expect(r.fields.careNeeds).toContain("Meal Preparation");
+    expect(r.notes.join(" ")).not.toContain("isn't one of the services");
+  });
+
   it("resolves a person by name, relationship word, or 'you'", () => {
     const roster = rosterFromData(BASE);
     expect(resolvePerson(roster, "mahad")).toEqual({ index: 1 });

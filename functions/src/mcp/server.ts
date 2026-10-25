@@ -6656,6 +6656,16 @@ async function executeToolCall(
           guidance: `"${fieldValue}" doesn't look like a valid email address — ask them for it again.`,
         };
       }
+      // A care provider's name is first AND last, like the site's signup (founder, 2026-10-24) —
+      // a single word is never saved as the name.
+      if (role === "caregiver" && fieldName === "name" && typeof fieldValue === "string" && fieldValue.trim().split(/\s+/).length < 2) {
+        return {
+          ok: true,
+          saved: false,
+          invalidValue: true,
+          guidance: `"${fieldValue.trim()}" is a first name only — ask for their last name too and save the full name (first and last are both required).`,
+        };
+      }
       // Wizard-parity value rules for the client's job post (ClientJobPostingWizard.tsx
       // canAdvanceAt + createJobPosting): the answer is validated/canonicalized
       // here, at save time, so the stored draft is exactly what the site stores.

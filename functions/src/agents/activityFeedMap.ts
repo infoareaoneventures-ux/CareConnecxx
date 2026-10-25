@@ -198,6 +198,8 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   admin_link_sent:                    { included: false },
   admin_acted:                        { included: false },
   admin_viewed:                       { included: false },
+  name_mismatch_held:                 { included: false },
+  name_decided:                       { included: false },
   human_mode_on:                      { included: false },
   human_mode_off:                     { included: false },
   team_text_sent:                     { included: false },

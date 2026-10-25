@@ -16,7 +16,7 @@ import { logAudit } from "../observability/auditLog";
 
 const db = admin.firestore();
 
-export type AdminAssistQueueType = "request_consent" | "end_consent" | "send_link" | "acted" | "human_on" | "human_off" | "team_text" | "viewed";
+export type AdminAssistQueueType = "request_consent" | "end_consent" | "send_link" | "acted" | "human_on" | "human_off" | "team_text" | "viewed" | "name_use_verified" | "name_keep_account";
 export const ADMIN_ASSIST_LINK_KINDS = [
   "client_identity", "client_payment", "caregiver_membership", "caregiver_background_check", "caregiver_payouts", "caregiver_photo",
 ] as const;
@@ -35,6 +35,8 @@ export interface AdminAssistQueueDoc {
   extra?: Record<string, unknown>;
   /** type "team_text": the team's reply, sent from Evia's number into the person's thread. */
   text?: string;
+  /** type "name_keep_account": why the account name is kept over the verified one. */
+  reason?: string;
 }
 
 export function linkKindAllowedForRole(kind: string, role: "client" | "caregiver"): kind is AdminAssistLinkKind {
@@ -76,6 +78,13 @@ export const processAdminAssistQueue = functions.firestore
         case "human_off": {
           const { setHumanMode } = await import("../agents/humanMode");
           await setHumanMode({ uid: data.uid, phone: person.phone, on: data.type === "human_on", reason: "admin", by: { uid: data.adminUid, name: data.adminName ?? "" } });
+          break;
+        }
+        // Name binding (2026-10-24): the held approval is decided from the person's page.
+        case "name_use_verified":
+        case "name_keep_account": {
+          const { applyNameDecision } = await import("../nameBinding");
+          await applyNameDecision({ uid: data.uid, role: data.role, decision: data.type === "name_use_verified" ? "use_verified" : "keep_account", reason: data.reason, adminUid: data.adminUid, adminName: data.adminName ?? "" });
           break;
         }
         // View mode (2026-10-22): an admin looked at the person's pages — logged, never texted.

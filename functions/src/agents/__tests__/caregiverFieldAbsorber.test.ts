@@ -53,7 +53,7 @@ describe("absorbCaregiverFields", () => {
 
   it("captures a front-loaded multi-field message", async () => {
     parseWithClaude.mockResolvedValueOnce(JSON.stringify({
-      name: "Maria", street: "12 Oak St", city: "San Jose", state: "ca", zipCode: "95134", yearsExperience: 6,
+      name: "Maria Lopez", street: "12 Oak St", city: "San Jose", state: "ca", zipCode: "95134", yearsExperience: 6,
       specialties: ["dementia"], certifications: ["CNA", "CPR"],
       hourlyRate: 25, serviceRadius: 12, email: "Maria.G@Example.com",
       jobType: "part_time", availability: { days: ["Monday"], hours: "8am-4pm" },
@@ -62,7 +62,7 @@ describe("absorbCaregiverFields", () => {
     // Wizard shapes: experience bucketed, travel distance snapped to the nearest option,
     // state upper-cased; certifications are NOT a wizard field and are never absorbed.
     expect(out).toMatchObject({
-      name: "Maria", street: "12 Oak St", city: "San Jose", state: "CA", zipCode: "95134", yearsExperience: "5-10 years",
+      name: "Maria Lopez", street: "12 Oak St", city: "San Jose", state: "CA", zipCode: "95134", yearsExperience: "5-10 years",
       specialties: ["Dementia / Memory Care"], skills: ["Dementia / Memory Care"], services: ["Dementia / Memory Care"],
       hourlyRate: 25, serviceRadius: 10, email: "maria.g@example.com", jobType: "part_time",
       availability: { days: ["Monday"], hours: "8am-4pm" },
@@ -98,9 +98,12 @@ describe("absorbCaregiverFields", () => {
   });
 
   it("never absorbs a bio (family-visible; collected explicitly by the loop)", async () => {
-    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ bio: "I love caregiving", name: "Maria" }));
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ bio: "I love caregiving", name: "Maria Lopez" }));
     const out = await absorbCaregiverFields("msg", {});
-    expect(out).toEqual({ name: "Maria" });
+    expect(out).toEqual({ name: "Maria Lopez" });
+    // a first name alone is never absorbed (first AND last are required, 2026-10-24)
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ name: "Maria" }));
+    expect(await absorbCaregiverFields("msg", {})).toEqual({});
   });
 
   it("ignores volunteered extras the site's wizard never asks (gender, languages, driving) — 2026-09-25", async () => {

@@ -384,12 +384,14 @@ export async function effectiveFamilyData(deps: FamilyIntakeDeps, session: any):
 // ── Per-step answer readers (the model reads the value; the code validates it) ──
 interface StepResult { fields: Data; ack: string }
 
-async function readName(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
+async function readName(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null | { error: string }> {
   const raw = await deps.parseWithClaude("Extract the person's own name as given (first and last if shared). Reply with just the name as typed, or unknown.", text);
   const name = raw.trim();
   if (!name || name.toLowerCase() === "unknown" || name === "__parse_error__") return null;
   const [firstName, ...rest] = name.split(/\s+/);
   const lastName = rest.join(" ");
+  // Both parts, like the site's signup (2026-10-24): a first name alone is asked again, never saved half.
+  if (!lastName) return { error: `Thanks, ${firstName} — I need your last name too. What's your first and last name?` };
   return { fields: { firstName, ...(lastName ? { lastName } : {}) }, ack: `Nice to meet you, ${firstName}.` };
 }
 
@@ -662,7 +664,8 @@ async function readProvidersCount(deps: FamilyIntakeDeps, text: string): Promise
 
 async function readEmergency(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
   const raw = await deps.parseWithClaude(
-    'The family was asked for their emergency contact\'s name and phone number. Reply with raw JSON {"name":"","phone":"","relationship":""} — leave a value empty when not stated.',
+    'The family was asked for their emergency contact\'s name and phone number. The message is almost always the NAME — initials or a short fragment count as the name (e.g. "S m" → name "S m", "mom" → name "mom"). ' +
+    'Reply with raw JSON {"name":"","phone":"","relationship":""} — leave a value empty when not stated.',
     text,
   );
   try {
@@ -670,7 +673,12 @@ async function readEmergency(deps: FamilyIntakeDeps, text: string): Promise<Step
     const name = String(p.name ?? "").trim();
     const phone = formatWizardPhone(p.phone);
     const relationship = String(p.relationship ?? "").trim();
-    if (!name && !phone) return null;
+    if (!name && !phone) {
+      // A few letters with no digits and no question mark is a name, whatever the model made of it.
+      const t = text.trim();
+      if (/^[A-Za-z][A-Za-z .'\-]{0,40}$/.test(t) && t.split(/\s+/).length <= 4) return { fields: { emergencyContactName: t }, ack: `${t}, got it.` };
+      return null;
+    }
     const fields: Data = { ...(name ? { emergencyContactName: name } : {}), ...(phone ? { emergencyContactPhone: phone } : {}), ...(relationship ? { emergencyContactRelationship: relationship } : {}) };
     return { fields, ack: `${[name, phone].filter(Boolean).join(", ")}, got it.` };
   } catch { return null; }
@@ -709,7 +717,8 @@ async function readNeeds(deps: FamilyIntakeDeps, text: string, d: Data): Promise
   const merged = followUp ? Array.from(new Set([...existing, ...c.careNeeds])) : c.careNeeds;
   const notes: string[] = [];
   if (c.medical.length) notes.push(`${c.medical.join(", ")} is medical care, which care providers here don't do, so I left it off — the closest service is Medication Reminders Only (reminding when it's time, not giving them).`);
-  if (c.unmapped.length) notes.push(`${c.unmapped.join(", ")} isn't one of the services on the list, so I left it off.`);
+  const unmapped = c.unmapped.filter((w) => !c.careNeeds.some((n) => n.toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(n.toLowerCase())));
+  if (unmapped.length) notes.push(`${unmapped.join(", ")} isn't one of the services on the list, so I left it off.`);
   return { fields: { careNeeds: merged, careNeedsKindsOffered: offeredNow }, ack: `${c.careNeeds.map(serviceLabel).join(", ")}, got it.${notes.length ? " " + notes.join(" ") : ""}` };
 }
 
@@ -748,7 +757,7 @@ async function readEmail(deps: FamilyIntakeDeps, text: string): Promise<StepResu
   const raw = await deps.parseWithClaude("Extract the email address from this message. Reply with just the email, or unknown.", text);
   const v = raw.trim().toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(v)) return null;
-  return { fields: { email: v }, ack: `${v}, got it.` };
+  return { fields: { email: v }, ack: "Email saved, got it." };
 }
 
 // ── Corrections / front-loading: other fields stated in the same message ─────

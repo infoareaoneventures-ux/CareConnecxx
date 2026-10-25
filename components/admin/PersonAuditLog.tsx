@@ -18,6 +18,7 @@ const ADMIN_LABELS: Record<string, string> = {
   admin_assist_expired: 'Consent request lapsed',
   admin_link_sent: 'Link sent by Evia',
   admin_viewed: 'Viewed their pages (nothing changed)',
+  name_decided: 'Decided the name on file',
 };
 
 const LINK_LABELS: Record<string, string> = {
@@ -38,7 +39,9 @@ function describe(e: Entry): { who: string; what: string; detail?: string; icon:
   const adminName = typeof d.adminName === 'string' && d.adminName ? d.adminName : 'an admin';
   if (e.eventType in ADMIN_LABELS) {
     const base = ADMIN_LABELS[e.eventType];
-    const what = e.eventType === 'admin_link_sent' ? `${base}: ${LINK_LABELS[String(d.linkKind)] ?? String(d.linkKind)}` : base;
+    const what = e.eventType === 'admin_link_sent' ? `${base}: ${LINK_LABELS[String(d.linkKind)] ?? String(d.linkKind)}`
+      : e.eventType === 'name_decided' ? `${base}: ${d.decision === 'use_verified' ? `set to ${String(d.legalName ?? '')}` : `kept ${String(d.accountName ?? '')}${d.reason ? ` (${String(d.reason)})` : ''}`}`
+      : base;
     const detail = e.eventType === 'admin_assist_granted' && typeof d.until === 'string'
       ? `allowed until ${new Date(d.until).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
       : undefined;
@@ -46,6 +49,9 @@ function describe(e: Entry): { who: string; what: string; detail?: string; icon:
   }
   if (e.eventType.startsWith('admin_acted_')) {
     return { who: adminName, what: typeof d.summary === 'string' ? d.summary : humanize(e.eventType.replace('admin_acted_', '')), detail: "at the person's request by phone", icon: 'admin' };
+  }
+  if (e.eventType === 'name_mismatch_held') {
+    return { who: 'Evia', what: 'Approval held: the verified name does not match the account name', detail: `check: ${String(d.verifiedName ?? '')} · account: ${String(d.accountName ?? '')}`, icon: 'evia' };
   }
   if (e.eventType === 'user_notified') {
     return { who: 'Evia', what: typeof d.title === 'string' ? d.title : humanize(String(d.transitionType ?? 'notified')), detail: typeof d.transitionType === 'string' ? d.transitionType.replace(/_/g, ' ') : undefined, icon: 'notice' };

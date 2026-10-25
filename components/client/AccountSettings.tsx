@@ -129,7 +129,8 @@ export const AccountSettings: React.FC = () => {
       email:     currentUser.email || '',
     }));
 
-    // Joined date
+    // Joined date — the Auth account's creation time to start with; the users doc's own createdAt
+    // replaces it below when present (the Auth user survives an account reset, so its date can be stale).
     if (currentUser.metadata?.creationTime) {
       setJoinedDate(new Date(currentUser.metadata.creationTime).toLocaleDateString('en-US', {
         month: '2-digit', day: '2-digit', year: 'numeric',
@@ -151,7 +152,7 @@ export const AccountSettings: React.FC = () => {
         // firstName; saved edits: displayName). Without this the Name row
         // rendered "—" for every SMS-onboarded client.
         if (!currentUser.displayName) {
-          const docName: string = d.displayName || d.firstName || d.name || '';
+          const docName: string = d.displayName || [d.firstName, d.lastName].filter(Boolean).join(' ') || d.name || '';
           if (docName) {
             const parts = docName.split(' ');
             setPersonalInfo(prev => ({
@@ -160,6 +161,14 @@ export const AccountSettings: React.FC = () => {
               lastName:  prev.lastName  || parts.slice(1).join(' ') || '',
             }));
           }
+        }
+
+        // The account's own creation date, when the record carries one (2026-10-24).
+        const created = d.createdAt;
+        const createdDate: Date | null = typeof created === 'string' ? new Date(created)
+          : created && typeof created.toDate === 'function' ? created.toDate() : null;
+        if (createdDate && !isNaN(createdDate.getTime())) {
+          setJoinedDate(createdDate.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }));
         }
 
         // Phone saved by signup

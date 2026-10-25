@@ -65,7 +65,8 @@ export async function absorbCaregiverFields(
   // Validate/normalize each candidate value; drop anything malformed rather
   // than persisting garbage. Mirrors the scripted parsers' clamps.
   const candidates: Record<string, unknown> = {};
-  if (typeof parsed.name === "string" && parsed.name.trim()) candidates.name = parsed.name.trim();
+  // First AND last (2026-10-24): a lone first name is left for the loop to ask about, never saved half.
+  if (typeof parsed.name === "string" && parsed.name.trim().split(/\s+/).length >= 2) candidates.name = parsed.name.trim();
   if (typeof parsed.street === "string" && parsed.street.trim() && /\d/.test(parsed.street)) candidates.street = parsed.street.trim();
   if (typeof parsed.city === "string" && parsed.city.trim()) candidates.city = parsed.city.trim();
   if (typeof parsed.state === "string" && /^[A-Za-z]{2}$/.test(parsed.state.trim())) candidates.state = parsed.state.trim().toUpperCase();

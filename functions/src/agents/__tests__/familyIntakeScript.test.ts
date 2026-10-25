@@ -334,6 +334,20 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     expect(sent.at(-1)).toContain("What would you like to pay per hour?");
   });
 
+  it("the name step needs first AND last; the email ack never echoes the address", async () => {
+    const { deps, sent, merged } = makeDeps(["Hamse"], {});
+    await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text: "Hamse", session: { onboardingData: {}, onboardingStep: "family_ask_name" } });
+    expect(merged).toHaveLength(0);
+    expect(sent.at(-1)).toContain("I need your last name too");
+    const site = { firstName: "Hamse", lastName: "Client", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, ...dataFromRoster([{ relationship: "self", name: "Hamse Client" }]), rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Companionship"], careNeedsKindsOffered: ["senior"], householdAsked: true, rate: 25, descriptionSkipped: true };
+    const e = makeDeps(["hamse143@gmail.com"], site);
+    await runFamilyIntakeTurn(e.deps, { phone: "+1", chatId: "c", text: "Hamse143@gmail.com", session: { onboardingData: {} } });
+    expect(Object.assign({}, ...e.merged).email).toBe("hamse143@gmail.com");
+    const last = e.sent.at(-1) ?? "";
+    expect(last).toContain("Email saved, got it.");
+    expect(last).not.toContain("@");
+  });
+
   it("the last ack and the recap go out as ONE message", async () => {
     const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, relationship: "self", seniorName: "Hamse", rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Light Housekeeping"], householdAsked: true, rate: 16, email: "h@x.com" };
     const { deps, sent, recap } = makeDeps(["SKIP"], site);

@@ -52,13 +52,19 @@ export const PAGE_SIZE = 2;
  */
 export function listFooter(shown: ReadonlyArray<{ action: string }>, from = 0): string {
   const numbered = shown.map((card, i) => ({ n: from + i + 1, action: card.action }));
-  const first = numbered[0]?.n ?? 1;
   const applicable = numbered.find((j) => j.action === "Apply Now");
   const gated = numbered.find((j) => j.action !== "Apply Now");
-  const parts = [`Reply with a number for the details${applicable ? `, "apply to ${applicable.n}" to apply` : ""}, or "hide ${first}".`];
-  if (gated) parts.push(`To apply to job ${gated.n} you'll need to: ${gated.action}.`);
+  // Evia's voice (2026-10-26): a question, not a reply protocol — the numbers,
+  // "apply", "hide n" and "more" still work exactly as before.
+  const parts = [applicable
+    ? "Want details on one, or want me to apply for you? Just say the number."
+    : "Want details on one? Just say the number."];
+  if (gated) parts.push(`For job ${gated.n} you'd need to ${plainAction(gated.action)} first.`);
+  parts.push("If one's not for you, say hide and the number.");
   return parts.join(" ");
 }
+/** A gate button's label as plain words ("Activate Membership" → "activate membership"). */
+export const plainAction = (action: string) => action.toLowerCase();
 /** @deprecated kept for callers that only need the default shape — prefer listFooter(shown, from). */
 export const LIST_FOOTER = listFooter([{ action: "Apply Now" }]);
 
@@ -71,20 +77,25 @@ export function jobListText(
   opts: { filtered?: boolean; filtersLabel?: string; limited?: boolean; from?: number; pageSize?: number } = {},
 ): { text: string; shown: AvailableJobsResult["jobs"]; remaining: number } {
   const from = opts.from ?? 0;
-  if (page.jobs.length === 0) return { text: opts.filtered ? "No jobs match your filters." : "No open jobs right now.", shown: [], remaining: 0 };
+  if (page.jobs.length === 0) return {
+    text: opts.filtered
+      ? "Nothing matches those filters right now. Tell me to show everything and I'll clear them."
+      : "Nothing's open near you right now. I'll let you know as soon as something new comes in.",
+    shown: [], remaining: 0,
+  };
   const size = opts.pageSize ?? (opts.limited ? page.jobs.length : PAGE_SIZE);
   const shown = page.jobs.slice(from, from + size);
   const remaining = Math.max(0, page.jobs.length - (from + shown.length));
   // Founder (2026-09-27): no counts in the text — "Jobs found:", two at a
   // time, MORE for the next two, until there are none left. A filtered list
   // names the sidebar set it was built with (B3), still without a count.
-  if (shown.length === 0) return { text: "That's all the open jobs right now — reply with a number for the details.", shown, remaining: 0 };
+  if (shown.length === 0) return { text: "That's everything that's open right now. Want details on any of them? Just say the number.", shown, remaining: 0 };
   const label = opts.filtered && opts.filtersLabel ? ` (${opts.filtersLabel})` : "";
-  const header = from === 0 ? (opts.limited ? `Jobs near you${label}:` : `Jobs found${label}:`) : `More jobs${label}:`;
+  const header = from === 0 ? (opts.limited ? `Here's what's open near you${label}:` : `Here's what's open right now${label}:`) : `Here are the next ones${label}:`;
   const lines = shown.map((card, i) =>
     `${from + i + 1}. ${jobCardLine(card)}${card.action !== "Apply Now" ? ` — ${card.action}` : ""}`);
   const footerBase = listFooter(shown, from);
-  const footer = remaining > 0 ? `${footerBase} Reply MORE to see more.` : footerBase;
+  const footer = remaining > 0 ? `${footerBase} There are more too, just say more and I'll show the next two.` : footerBase;
   return { text: [header, ...lines, "", footer].join("\n"), shown, remaining };
 }
 
@@ -109,8 +120,8 @@ export function jobDetailsText(d: JobDetails): string {
   out.push("");
   if (d.interviewStatus) out.push(d.interviewStatus);
   else if (d.applicationStatus) out.push(d.applicationStatus);
-  else if (d.action === "Apply Now") out.push(`Reply "apply" to apply, or a number for another job.`);
-  else out.push(`To apply you'll need to: ${d.action}.`);
+  else if (d.action === "Apply Now") out.push("Want me to apply for you? Or say another number and I'll pull that one up.");
+  else out.push(`To apply for this one you'd need to ${plainAction(d.action)} first.`);
   return out.join("\n");
 }
 
@@ -160,7 +171,7 @@ export async function sendJobList(
     : (opts.refine ? { ...normalizeJobBoardFilters(prev?.filters), ...given } : given);
   const page = await loadAvailableJobs(caregiverId, { filters, sort: opts.sort, limit: opts.limit });
   const filtersLabel = jobBoardFiltersLabel(filters);
-  if (!page) { await sendMessage(chatId, "I couldn't find your care provider account to load the Jobs page."); return { sent: false, count: 0, total: 0, remaining: 0, items: [], filters, filtersLabel }; }
+  if (!page) { await sendMessage(chatId, "I couldn't find your care provider account, so I can't pull up the jobs right now."); return { sent: false, count: 0, total: 0, remaining: 0, items: [], filters, filtersLabel }; }
   const filtered = hasJobBoardFilters(filters);
   const from = opts.more && prev ? (prev.offset ?? prev.items.length) : 0;
   const { text, shown, remaining } = jobListText(page, { filtered, filtersLabel, limited: !!opts.limit, from });
@@ -263,12 +274,12 @@ export async function handleJobsKeyword(
     const verb = pick[1].startsWith("APPLY") ? "APPLY" : pick[1];
     const n = Number(pick[2]);
     const jobId = resolveJobRef(session, { number: n });
-    if (!jobId) { await sendMessage(chatId, `I don't have a job ${n} on the last list — reply JOBS to see them.`); return "handled"; }
+    if (!jobId) { await sendMessage(chatId, `I don't see a job ${n} on the list I sent. Say jobs and I'll send it again.`); return "handled"; }
     if (verb === "JOB") { await sendJobDetails(phone, chatId, caregiverId, jobId); return "handled"; }
     if (verb === "HIDE") {
       // The card's Hide button: the same write (caregivers/{uid}.hiddenJobIds) and the page's toast.
-      try { await setJobHidden(caregiverId, jobId, true); await sendMessage(chatId, "Job hidden"); }
-      catch { await sendMessage(chatId, "Could not hide this job. Please try again."); }
+      try { await setJobHidden(caregiverId, jobId, true); await sendMessage(chatId, "Done, that one's hidden."); }
+      catch { await sendMessage(chatId, "Hmm, I couldn't hide that one. Give it another try in a moment."); }
       return "handled";
     }
     const { startApplyFlow } = await import("./caregiverJobFlows");
@@ -303,8 +314,8 @@ export async function sendJobDetails(
   const r = await loadJobDetails(caregiverId, jobId);
   if (!r.ok) {
     await sendMessage(chatId, r.reason === "no_caregiver"
-      ? "I couldn't find your care provider account to load that job."
-      : "That job is no longer available.");
+      ? "I couldn't find your care provider account, so I can't pull up that job."
+      : "That job isn't open anymore.");
     return { sent: true, ok: false, reason: r.reason };
   }
   await sendMessage(chatId, jobDetailsText(r.details));

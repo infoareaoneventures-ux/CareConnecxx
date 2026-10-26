@@ -66,7 +66,7 @@ export interface InterviewFlowData {
   notes?:         string;
 }
 
-const IV_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const IV_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
@@ -403,7 +403,7 @@ async function handleIvAskTime(
 // ── Step: notes (proactive, matches the site's own optional field position) ─
 
 const NOTES_QUESTION = (caregiverName: string) =>
-  `Anything you'd like to flag for the interview with ${caregiverName} — topics to discuss, etc.? Reply with what you'd like to say, or "no" to skip.`;
+  `Anything you'd like ${caregiverName} to know before the interview, like topics you want to cover? If not, just say no.`;
 
 async function handleIvAskNotes(
   phone: string, chatId: string, text: string, session: AgentSession,
@@ -446,18 +446,18 @@ export function buildInterviewRecap(data: InterviewFlowData): string {
   const timeLabel = data.time ? formatTimeForDisplay(data.time) : data.time;
   const dateLabel = data.date ? formatDateForDisplay(data.date) : data.date;
   return [
-    `Here's the interview request:`,
+    `Here's what I'll send:`,
     ``,
     `Care Provider: ${data.caregiverName}`,
     `Related job post: ${jobLine}`,
     `Date & time: ${dateLabel} at ${timeLabel}`,
     `Notes: ${notesLine}`,
     ``,
-    `Reply YES to send it, or tell me what to change.`,
+    `Does that look right? Say yes and I'll send it, or tell me what to change.`,
   ].join("\n");
 }
 
-const CONFIRM_QUESTION_FALLBACK = "Confirming whether to send this interview request — reply YES to send it, or NO to cancel.";
+const CONFIRM_QUESTION_FALLBACK = "Should I send this interview request? Say yes to send it, or no to leave it.";
 
 async function classifyIvConfirmReply(text: string): Promise<any | null> {
   const raw = await parseWithClaude(
@@ -503,7 +503,7 @@ async function handleIvConfirm(
   if (action === "edit_job") {
     const options = data.jobOptions ?? [];
     if (!options.length) {
-      await sendMessage(chatId, "I don't see any open job posts on file to link this to.");
+      await sendMessage(chatId, "I don't see any open job posts of yours to link this to.");
       await sendMessage(chatId, buildInterviewRecap(data));
       return;
     }
@@ -578,7 +578,7 @@ async function handleIvConfirm(
   // this flow owns its own confirm step already.
   const clientId = session.userId as string | undefined;
   if (!clientId || !data.date || !data.time) {
-    await sendMessage(chatId, "I couldn't find enough details to send this interview request. Please try again.");
+    await sendMessage(chatId, "I'm missing a detail or two for this interview request. Let's start it again.");
     return;
   }
   // ScheduleInterviewModal.tsx: the modal's submit runs gate('interview', caregiver.name) — re-checked at send time.
@@ -599,15 +599,15 @@ async function handleIvConfirm(
     const { resolveCommitment } = await import("./commitmentTracker");
     await resolveCommitment(phone, "interview", "scheduled").catch(() => {});
     await sendMessage(chatId,
-      `Sent to ${interview.caregiverName} for ${formatInterviewTime(startMs)} — I'll let you know as soon as they confirm. No video link exists yet; I'll share it the moment they accept.`
+      `Sent! ${interview.caregiverName} has your request for ${formatInterviewTime(startMs)}. I'll let you know as soon as they answer, and I'll text you the video link the moment they accept.`
     );
   } catch (err) {
     if (err instanceof VideoInterviewRequestError) {
       const message = err.code === "resource-exhausted"
-        ? "You've hit today's limit of interview requests — please try again tomorrow."
+        ? "You've reached today's limit on interview requests. Try again tomorrow and I'll send it then."
         : err.code === "failed-precondition"
-        ? "That care provider isn't available for interviews right now."
-        : "Something went wrong scheduling that interview — please try again.";
+        ? "That care provider isn't taking interviews right now."
+        : "Something went wrong on my end sending that. Give it another try in a minute.";
       await sendMessage(chatId, message);
       return;
     }

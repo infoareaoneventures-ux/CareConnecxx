@@ -1721,7 +1721,7 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "The Jobs page's Apply Now button, as Evia's scripted step-by-step flow — the ONLY way a care provider applies to a job. " +
       "It shows them the Apply modal's contents (Your Profile, Client's budget), asks for the optional cover letter, then asks them to " +
-      "reply SUBMIT or CANCEL, and submits the site's exact application. This tool TEXTS THE FIRST STEP ITSELF — say nothing else this turn. " +
+      "say yes or no to the send question, and submits the site's exact application. This tool TEXTS THE FIRST STEP ITSELF — say nothing else this turn. " +
       "They can back out at any step. Call it as soon as they want to apply: pass the number they said ('apply to 2'); with no number or id " +
       "(\"apply\", \"I'd like to apply to this job\") it applies to the job just shown / just noticed. Never guess a job id.",
     input_schema: {

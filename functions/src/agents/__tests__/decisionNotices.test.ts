@@ -125,7 +125,7 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
     const pd = parkedDecision("interview_request", "iv1", "an interview request from Fam", "caregiver");
     expect(await handlePendingDecisionReply("+1", "chat", "accept", session(pd))).toBe("handled");
     expect(hoisted.respondInterview).toHaveBeenCalledWith({ caregiverId: "cg1", interviewId: "iv1", decision: "accept", source: "decision_notice" });
-    expect(hoisted.sent).toEqual(["Interview accepted"]);
+    expect(hoisted.sent).toEqual(["Accepted! I'll text you the video link shortly."]);
     expect(hoisted.sessionUpdates.at(-1)?.d).toEqual({ pendingDecision: "__delete__" });
     await handlePendingDecisionReply("+1", "chat", "I can't make that", session(pd));
     expect(hoisted.respondInterview).toHaveBeenLastCalledWith(expect.objectContaining({ decision: "decline" }));
@@ -147,7 +147,7 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
     const pd = parkedDecision("interview_proposal", "iv1", "a new interview time Mahad proposed", "client");
     expect(await handlePendingDecisionReply("+1", "chat", "Yes confirm", session(pd))).toBe("handled");
     expect(hoisted.handleToolCall).toHaveBeenCalledWith("accept_interview_reschedule", { interviewId: "iv1", phone: "+1", clientId: "u1", userId: "u1" });
-    expect(hoisted.sent).toEqual(["Interview time confirmed"]);
+    expect(hoisted.sent).toEqual(["Confirmed, your interview is now at the new time."]);
   });
 
   // Keep current time (B5, 2026-10-11): the third word on a proposal notice, both roles — the page's own
@@ -182,7 +182,7 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
       hoisted.keepInterviewTime.mockResolvedValueOnce({ ok: false, code: "INVALID_INPUT", message: "There is no pending reschedule proposal on this interview" });
       const pd = parkedDecision("interview_proposal", "iv1", "x", "caregiver", Date.now(), "The Nguyen Family");
       await handlePendingDecisionReply("+1", "chat", "keep", session(pd));
-      expect(hoisted.sent).toEqual(["That proposal isn't pending any more — your interview with The Nguyen Family stays as it is."]);
+      expect(hoisted.sent).toEqual(["That proposal isn't open anymore, so your interview with The Nguyen Family stays as it is."]);
     });
 
     it("a phrasing goes through the classifier: 'the original time is fine' → KEEP", async () => {
@@ -200,7 +200,7 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
     expect(hoisted.sent[0]).toContain("Booking requests:");
     expect(hoisted.sessionUpdates).toHaveLength(0); // still parked
     await handlePendingDecisionReply("+1", "chat", "decline", session(pd));
-    expect(hoisted.sent.at(-1)).toBe("Decline Basra Yousuf's booking request? Reply YES or NO."); // names the family (2026-09-28)
+    expect(hoisted.sent.at(-1)).toBe("Just checking, do you want to decline Basra Yousuf's booking request?"); // names the family (2026-09-28)
     const confirm = hoisted.sessionSets.at(-1)?.d.pendingDecision;
     expect(confirm).toMatchObject({ kind: "booking_request_decline", recordId: "br1", options: ["YES", "NO"], party: "Basra Yousuf" });
     await handlePendingDecisionReply("+1", "chat", "yes", session(confirm));
@@ -241,12 +241,12 @@ describe("a question while a notice is parked", () => {
     const pd = parkedDecision("interview_request", "iv1", "an interview request from The Nguyen Family", "caregiver", Date.now(), "The Nguyen Family");
     (hoisted.quick as any).mockResolvedValueOnce("QUESTION").mockResolvedValueOnce("It is a video interview — accepting sends you both the Meet link.");
     expect(await handlePendingDecisionReply("+1", "chat", "is it a video call?", session(pd))).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("It is a video interview — accepting sends you both the Meet link.\n\nReply ACCEPT, DECLINE or PROPOSE for an interview request from The Nguyen Family.");
+    expect(hoisted.sent.at(-1)).toBe("It is a video interview — accepting sends you both the Meet link.\n\nBack to an interview request from The Nguyen Family: want to accept it, decline it, or propose a different time?");
     const classifier = hoisted.quick.mock.calls.at(-2)![0] as string;
     expect(classifier).toContain("A question ABOUT this same item");
     const briefing = hoisted.quick.mock.calls.at(-1)![0] as string;
     expect(briefing).toContain("Audience: care provider");
-    expect(briefing).toContain("Reply ACCEPT, DECLINE or PROPOSE for an interview request from The Nguyen Family.");
+    expect(briefing).toContain("Back to an interview request from The Nguyen Family: want to accept it, decline it, or propose a different time?");
     expect(briefing).toContain("Evia's notice was about an interview request from The Nguyen Family (The Nguyen Family)."); // no record in this fixture → the label grounds it
     expect(briefing).toContain("ACCEPT accepts the interview (the Jobs page's Accept");
     expect(briefing).toContain("nothing has been accepted, declined, confirmed or sent");
@@ -259,7 +259,7 @@ describe("a question while a notice is parked", () => {
     const pd = parkedDecision("job_application", "app1", "Maria Garcia's application to \"Weekend help\"", "client", Date.now(), "Maria Garcia");
     (hoisted.quick as any).mockResolvedValueOnce("QUESTION").mockResolvedValueOnce("Declining is confirmed first, and Maria is not told.");
     expect(await handlePendingDecisionReply("+1", "chat", "what happens if I decline?", session(pd))).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("Declining is confirmed first, and Maria is not told.\n\nReply VIEW, INTERVIEW or DECLINE for Maria Garcia's application to \"Weekend help\".");
+    expect(hoisted.sent.at(-1)).toBe("Declining is confirmed first, and Maria is not told.\n\nBack to Maria Garcia's application to \"Weekend help\": want to see their profile, set up an interview, or pass?");
     const briefing = hoisted.quick.mock.calls.at(-1)![0] as string;
     expect(briefing).toContain("Audience: family");
     expect(briefing).toContain("DECLINE declines the application (a YES/NO confirm follows first)");
@@ -285,7 +285,7 @@ describe("a reply that names someone else than the parked notice's person", () =
     expect(hoisted.quick.mock.calls[0][0]).toContain("This item is with Mahad.");
     expect(hoisted.quick.mock.calls[0][0]).toContain("SOMEONE_ELSE");
     // The confirm names IMRAN, and the parked decline is for Imran's application — Mahad's row untouched.
-    expect(hoisted.sent.at(-1)).toBe('Decline Imran\'s application to "Senior care in San Jose"? Reply YES or NO.');
+    expect(hoisted.sent.at(-1)).toBe('Just checking, do you want to decline Imran\'s application to "Senior care in San Jose"?');
     const parked = hoisted.sessionSets.map((x) => x.d.pendingDecision).filter(Boolean);
     expect(parked.at(-1)).toMatchObject({ kind: "job_application_decline", recordId: "appI", party: "Imran" });
     expect(hoisted.sessionUpdates.filter((u) => u.id === "appM")).toHaveLength(0);
@@ -296,7 +296,7 @@ describe("a reply that names someone else than the parked notice's person", () =
     expect(await handlePendingDecisionReply("+1", "chat", "Yes and Imran", session(confirm))).toBe("handled");
     expect(hoisted.sessionUpdates).toHaveLength(0); // no status: rejected write
     expect(hoisted.sent.at(-1)).toContain("I haven't changed anything for Mahad");
-    expect(hoisted.sent.at(-1)).toContain("reply YES or NO");
+    expect(hoisted.sent.at(-1)).toContain("yes or no?");
   });
   it("a name that matches no pending applicant on the post goes to the agent; the parked decision is left alone", async () => {
     (hoisted.quick as any).mockResolvedValueOnce("SOMEONE_ELSE").mockResolvedValueOnce("Zoe");
@@ -312,13 +312,13 @@ describe("shift proposal — ACCEPT / DECLINE run the strip's Accept new time / 
   it("ACCEPT = the page's accept (caregiverShiftProposal.acceptFamilyShiftProposal), confirm names the family and the new time, park cleared", async () => {
     expect(await handlePendingDecisionReply("+1", "chat", "ACCEPT", session(pd()))).toBe("handled");
     expect(hoisted.acceptShiftProposal).toHaveBeenCalledWith("cg1", "s1", expect.any(String), "decision_notice");
-    expect(hoisted.sent).toEqual(["New time confirmed — your visit with Basra Yousuf is now 2099-10-06, 12:00 – 15:00."]);
+    expect(hoisted.sent).toEqual(["Done, your visit with Basra Yousuf is now 2099-10-06, 12:00 – 15:00."]);
     expect(hoisted.sessionUpdates.at(-1)?.d).toEqual({ pendingDecision: "__delete__" });
   });
   it("DECLINE = the page's Decline (the confirmed time stands), named; 'I can't do that time' classifies to DECLINE too", async () => {
     expect(await handlePendingDecisionReply("+1", "chat", "decline", session(pd()))).toBe("handled");
     expect(hoisted.declineShiftProposal).toHaveBeenCalledWith("cg1", "s1", "decision_notice");
-    expect(hoisted.sent).toEqual(["Declined — your visit with Basra Yousuf stays at 2099-10-05, 11:00 – 14:00."]);
+    expect(hoisted.sent).toEqual(["Okay, I've declined it. Your visit with Basra Yousuf stays at 2099-10-05, 11:00 – 14:00."]);
     hoisted.sent.length = 0;
     await handlePendingDecisionReply("+1", "chat", "I can't do that time", session(pd()));
     expect(hoisted.declineShiftProposal).toHaveBeenCalledTimes(2);
@@ -327,7 +327,7 @@ describe("shift proposal — ACCEPT / DECLINE run the strip's Accept new time / 
   it("a conflict with another visit of yours → the page's alert verbatim, nothing moves, still parked (DECLINE / PROPOSE offered)", async () => {
     hoisted.acceptShiftProposal.mockResolvedValueOnce({ ok: false, code: "CONFLICT", message: "You already have another shift at 12:30 PM–2:00 PM that day — choose a different time.", conflict: { startTime: "12:30", endTime: "14:00" } } as any);
     expect(await handlePendingDecisionReply("+1", "chat", "accept", session(pd()))).toBe("handled");
-    expect(hoisted.sent).toEqual(["You already have another shift at 12:30 PM–2:00 PM that day — choose a different time. Reply DECLINE to keep the current time, or PROPOSE a different one."]);
+    expect(hoisted.sent).toEqual(["You already have another shift at 12:30 PM–2:00 PM that day — choose a different time. Want to keep the current time, or propose a different one?"]);
     expect(hoisted.sessionUpdates).toHaveLength(0); // still parked
   });
   it("PROPOSE stamps the visit on the session and asks for the day/time — the agent then runs manage_shift_reschedule propose on it; the park stays", async () => {
@@ -344,7 +344,7 @@ describe("shift proposal — ACCEPT / DECLINE run the strip's Accept new time / 
     expect(hoisted.quick).not.toHaveBeenCalled();
     hoisted.acceptShiftProposal.mockResolvedValueOnce({ ok: false, code: "INVALID_INPUT", message: "There's no pending reschedule proposal on this visit" } as any);
     expect(await handlePendingDecisionReply("+1", "chat", "accept", session(pd()))).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("That proposal isn't pending any more — your visit with Basra Yousuf stays as it is.");
+    expect(hoisted.sent.at(-1)).toBe("That proposal isn't open anymore, so your visit with Basra Yousuf stays as it is.");
     expect(hoisted.sessionUpdates.at(-1)?.d).toEqual({ pendingDecision: "__delete__" });
   });
   it("a question while parked is answered from the visit record (current time, proposed time, who proposed) — nothing decided", async () => {
@@ -356,7 +356,7 @@ describe("shift proposal — ACCEPT / DECLINE run the strip's Accept new time / 
     expect(briefing).toContain("Current (confirmed) time: 2099-10-05, 11:00 – 14:00");
     expect(briefing).toContain("Proposed new time: 2099-10-06, 12:00 – 15:00 (proposed by the family)");
     expect(briefing).toContain("ACCEPT is the page's Accept new time");
-    expect(hoisted.sent.at(-1)).toBe("The family wants Tuesday noon to 3 instead of Monday 11 to 2.\n\nReply ACCEPT, DECLINE or PROPOSE for a new visit time Basra Yousuf proposed (Tue, Oct 6, 2099, 12:00 PM – 3:00 PM).");
+    expect(hoisted.sent.at(-1)).toBe("The family wants Tuesday noon to 3 instead of Monday 11 to 2.\n\nBack to a new visit time Basra Yousuf proposed (Tue, Oct 6, 2099, 12:00 PM – 3:00 PM): want to accept the new time, keep the current one, or propose another?");
     expect(hoisted.sessionUpdates).toHaveLength(0);
   });
 });
@@ -392,6 +392,6 @@ describe("an expired notice — the park comes down, a late reply gets one line,
     hoisted.respondBooking.mockResolvedValueOnce({ ok: false, reason: "not_pending", status: "expired" } as any);
     const pd = parkedDecision("booking_request", "rep1", "a replacement request from Fam", "caregiver", Date.now(), "Fam");
     expect(await handlePendingDecisionReply("+1", "chat", "ACCEPT", session(pd))).toBe("handled");
-    expect(hoisted.sent).toEqual(["Fam's replacement request has expired — nothing was sent."]);
+    expect(hoisted.sent).toEqual(["Fam's replacement request has already expired, so nothing was sent."]);
   });
 });

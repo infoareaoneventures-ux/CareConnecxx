@@ -33,7 +33,7 @@ import { isSiteInterviewSlot, PENDING_STATUSES, ACCEPTED_STATUSES } from "./care
 
 const db = admin.firestore();
 const FLOW_TTL_MS = 60 * 60 * 1000;
-const DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
 async function parse(prompt: string, text: string): Promise<string> {
   return quickComplete(prompt + "\nReply with ONLY the requested value — no explanation.", text, { maxTokens: 120 }).catch(() => "__parse_error__");
@@ -50,16 +50,20 @@ export interface ApplyFlowData {
   coverLetter?: string;
 }
 
-const COVER_QUESTION = "Cover letter (optional) — tell the client why you're a good fit, or reply SKIP.";
+// Evia's voice (2026-10-26): questions a person would ask, no reply protocol
+// in the text — SUBMIT / CANCEL / SKIP / YES / NO still work exactly as before,
+// and anything else goes through the classifier below.
+const COVER_QUESTION = "Want to add a short note to the family about why you'd be a good fit? If not, just say skip.";
 // The recap repeats everything the modal showed (founder, 2026-09-27: "the
 // confirmation has less information") — the job with its details, Your
-// Profile, Client's budget — plus the cover letter, then SUBMIT / CANCEL.
+// Profile, Client's budget — plus the note, then the send question.
 const APPLY_CONFIRM = (d: ApplyFlowData) =>
-  `Ready to send?\n\nJob: ${d.jobTitle}\n${d.jobLine}\n\n${d.profile}\nClient's budget: ${d.budget}\n\nCover letter: ${d.coverLetter ? `"${d.coverLetter}"` : "(none)"}\n\nReply SUBMIT to send your application, or CANCEL.`;
+  `Here's what I'll send:\n\nJob: ${d.jobTitle}\n${d.jobLine}\n\n${d.profile}\nClient's budget: ${d.budget}\n\nNote to the family: ${d.coverLetter ? `"${d.coverLetter}"` : "none"}\n\nWant me to send it over?`;
+const APPLY_CONFIRM_SHORT = "Should I send your application to the family, or hold off?";
 /** The Apply modal's facts at any step: the job as shown, the profile block, the budget, and what SUBMIT does. */
 const APPLY_FACTS = (d: ApplyFlowData) =>
-  `The Apply for Position modal on their screen:\nJob: ${d.jobTitle}\n${d.jobLine}\n${d.profile}\nClient's budget: ${d.budget}${d.coverLetter !== undefined ? `\nCover letter: ${d.coverLetter ? `"${d.coverLetter}"` : "(none)"}` : ""}\n\n` +
-  "The cover letter is optional (SKIP sends none); the family sees it with the application. Nothing is sent until the care provider replies SUBMIT on the recap — the Jobs page's Apply; CANCEL sends nothing and the job stays on the Jobs page. " +
+  `The Apply for Position modal on their screen:\nJob: ${d.jobTitle}\n${d.jobLine}\n${d.profile}\nClient's budget: ${d.budget}${d.coverLetter !== undefined ? `\nNote to the family (cover letter): ${d.coverLetter ? `"${d.coverLetter}"` : "none"}` : ""}\n\n` +
+  "The note to the family (the modal's cover letter) is optional — skipping it sends none; the family sees it with the application. Nothing is sent until the care provider says yes to the recap's send question — the Jobs page's Apply; saying no sends nothing and the job stays on the Jobs page. " +
   "An application can be sent once per job; the family then requests an interview, accepts, or declines, and the application shows on My Applications.";
 
 export async function startApplyFlow(
@@ -72,12 +76,12 @@ export async function startApplyFlow(
   ]);
   if (!jobSnap.exists || jobSnap.data()?.status !== "open") {
     // Same as the board: the closed post is gone from it — show what's there now.
-    await sendMessage(chatId, "That job is no longer open — here's what's open near you now:");
+    await sendMessage(chatId, "That job isn't open anymore. Here's what is:");
     await sendJobList(phone, chatId, args.caregiverId).catch(() => {});
     return { started: false, reason: "not_open" };
   }
   if (!dup.empty) {
-    await sendMessage(chatId, "You've already applied to that job — it's on your My Applications tab.");
+    await sendMessage(chatId, "You've already applied to that one. It's on your My Applications tab.");
     return { started: false, reason: "duplicate" };
   }
   const job = normalizeJobPost({ id: jobSnap.id, ...(jobSnap.data() as Record<string, unknown>) });
@@ -104,7 +108,7 @@ export async function startApplyFlow(
     stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString(),
   });
   await sendMessage(chatId,
-    `Apply for Position — ${data.jobTitle}\n\n${profile}\n` +
+    `Let's get your application in for ${data.jobTitle}. Here's what the family will see:\n\n${profile}\n` +
     `Client's budget: ${data.budget}\n\n${COVER_QUESTION}`);
   return { started: true };
 }
@@ -115,7 +119,7 @@ export async function handleApplyFlowStep(phone: string, chatId: string, text: s
   const clear = () => db.collection("agent_sessions").doc(phone).update({
     applyFlowStep: admin.firestore.FieldValue.delete(), applyFlowData: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete(),
   });
-  const cancelled = async () => { await clear(); await sendMessage(chatId, "Okay — nothing was sent. The job is still on your Jobs page if you change your mind."); };
+  const cancelled = async () => { await clear(); await sendMessage(chatId, "No problem, I didn't send anything. The job's still on your Jobs page if you change your mind."); };
 
   if (step === "apply_cover") {
     if (await isBackOutRequest(text, COVER_QUESTION)) return cancelled();
@@ -124,8 +128,8 @@ export async function handleApplyFlowStep(phone: string, chatId: string, text: s
       return;
     }
     const verdict = await parse(
-      "The care provider was asked for an OPTIONAL cover letter, or to reply SKIP. Reply SKIP if they declined / want no cover letter " +
-      "(\"skip\", \"no\", \"none\", \"no thanks\"). Otherwise reply LETTER — their message IS the cover letter.", text);
+      "The care provider was asked whether they want to add a short OPTIONAL note to the family (a cover letter), or say skip. Reply SKIP if they declined / want no note " +
+      "(\"skip\", \"no\", \"none\", \"no thanks\", \"I'm good\"). Otherwise reply LETTER — their message IS the note.", text);
     const coverLetter = verdict.trim().toUpperCase().startsWith("SKIP") ? "" : text.trim();
     const next: ApplyFlowData = { ...data, coverLetter };
     await db.collection("agent_sessions").doc(phone).update({ applyFlowStep: "apply_confirm", applyFlowData: next });
@@ -140,26 +144,26 @@ export async function handleApplyFlowStep(phone: string, chatId: string, text: s
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, APPLY_CONFIRM(data))) action = "cancel";
     else {
-      const v = await parse("Evia asked the care provider to reply SUBMIT to send their job application, or CANCEL. Classify: SUBMIT (they want it sent), CANCEL (they don't), or OTHER (a question / something else).", text);
+      const v = await parse("Evia showed the care provider their job application and asked \"Want me to send it over?\". Classify: SUBMIT (they want it sent — \"yes\", \"send it\", \"go ahead\", \"sure\", \"submit\"), CANCEL (they don't — \"no\", \"hold off\", \"not yet\", \"cancel\", \"never mind\"), or OTHER (a question / something else).", text);
       action = v.toUpperCase().startsWith("SUBMIT") ? "submit" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
       if (await isQuestionOrOther(text, APPLY_CONFIRM(data))) await sendMessage(chatId, await answerMidFlow(text, APPLY_CONFIRM(data), { facts: APPLY_FACTS(data) }));
-      else await sendMessage(chatId, `${DIDNT_CATCH} ${APPLY_CONFIRM(data)}`);
+      else await sendMessage(chatId, `${DIDNT_CATCH} ${APPLY_CONFIRM_SHORT}`);
       return;
     }
     const caregiverId = (session.caregiverId ?? session.userId) as string;
     const result = await submitJobApplication({ caregiverId, jobId: data.jobId, coverLetter: data.coverLetter, source: "sms:apply_flow" });
     await clear();
     if (result.ok) {
-      await sendMessage(chatId, `Application submitted for ${result.jobTitle}!`); // the site's toast
+      await sendMessage(chatId, `Done! Your application for ${result.jobTitle} is in. I'll let you know as soon as the family responds.`); // the site's toast, in Evia's voice
     } else if (result.code === "GATED" && result.gate) {
       await textCaregiverGateBlock(phone, chatId, result.gate);
     } else if (result.code === "DUPLICATE") {
-      await sendMessage(chatId, "You have already applied to this job.");
+      await sendMessage(chatId, "You've already applied to that one. It's on your My Applications tab.");
     } else {
-      await sendMessage(chatId, "That job is no longer accepting applications.");
+      await sendMessage(chatId, "That job just closed, so I couldn't send it. Sorry about that.");
     }
     return;
   }
@@ -178,17 +182,18 @@ export interface RescheduleFlowData {
   time?: string;   // HH:MM
 }
 
-const DATE_QUESTION = "What date? (e.g. 9/28 or next Monday)";
-const TIME_QUESTION = "What time? Interviews run between 9:00 AM and 6:00 PM, on the hour or half hour (e.g. 10:30 AM).";
+const DATE_QUESTION = "What day works for you?";
+const TIME_QUESTION = "And what time? Anything between 9 AM and 6 PM, on the hour or half hour.";
 const RS_CONFIRM = (d: RescheduleFlowData, label: string) =>
-  `New time: ${label}\n\nReply SEND to propose it to ${d.clientName} — the interview stays at its current time until they confirm — or CANCEL.`;
+  `So that's ${label}. Want me to send that to ${d.clientName}? The interview stays at its current time until they confirm.`;
+const RS_CONFIRM_SHORT = (d: RescheduleFlowData) => `Should I send the new time to ${d.clientName}, or hold off?`;
 /** The reschedule form's facts at any step: which interview, when it is NOW, what has been chosen, the picker's rules, what SEND does. */
 const RS_FACTS = (d: RescheduleFlowData) =>
   `Interview with ${d.clientName}${d.jobTitle ? ` for "${d.jobTitle}"` : ""}, currently ${d.currentLabel || "with no time set"}. ` +
   `${d.date && d.time ? `New time chosen so far: ${formatInterviewTime(parseScheduledTimeMs(`${d.date}T${d.time}:00`))}. ` : d.date ? `New date chosen so far: ${d.date}; the time is still to be chosen. ` : "No new date chosen yet. "}` +
   "Interviews run between 9:00 AM and 6:00 PM Pacific, on the hour or half hour, on a future date. " +
-  "SEND (on the recap) proposes the new time to the family; the interview stays at its current time until they confirm, and the family can accept or propose another. " +
-  "Nothing is proposed until SEND; CANCEL leaves the interview as it is.";
+  "Saying yes to the recap's send question proposes the new time to the family; the interview stays at its current time until they confirm, and the family can accept or propose another. " +
+  "Nothing is proposed until they say yes; saying no / cancel leaves the interview as it is.";
 
 export async function startInterviewRescheduleFlow(
   phone: string, chatId: string, session: AgentSession, args: { caregiverId: string; interviewId: string },
@@ -202,11 +207,11 @@ export async function startInterviewRescheduleFlow(
   const status = String(iv.status ?? "pending");
   const pending = PENDING_STATUSES.includes(status);
   if (!pending && !ACCEPTED_STATUSES.includes(status)) {
-    await sendMessage(chatId, `That interview is ${status} — there's nothing to reschedule.`);
+    await sendMessage(chatId, `That interview is already ${status}, so there's nothing to move.`);
     return { started: false, reason: "terminal" };
   }
   if (iv.reschedulePendingTime && iv.rescheduledBy === "caregiver") {
-    await sendMessage(chatId, "You already proposed a new time for this interview — it's waiting on the family to confirm.");
+    await sendMessage(chatId, "You've already proposed a new time for that one. I'll let you know when the family answers.");
     return { started: false, reason: "own_proposal_out" };
   }
   // JobBoard.tsx hides the form while gated (membership → background check).
@@ -223,7 +228,7 @@ export async function startInterviewRescheduleFlow(
     interviewRescheduleFlowData: data,
     stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString(),
   });
-  await sendMessage(chatId, `${status === "accepted" || status === "confirmed" ? "Reschedule" : "Propose a new time for"} your interview with ${data.clientName}${data.jobTitle ? ` (${data.jobTitle})` : ""}${current ? `, currently ${current}` : ""}.\n\n${DATE_QUESTION}`);
+  await sendMessage(chatId, `Sure, let's ${status === "accepted" || status === "confirmed" ? "find a new time" : "propose a new time"} for your interview with ${data.clientName}${data.jobTitle ? ` (${data.jobTitle})` : ""}.${current ? ` Right now it's set for ${current}.` : ""}\n\n${DATE_QUESTION}`);
   return { started: true };
 }
 
@@ -234,7 +239,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
   const clear = () => ref.update({
     interviewRescheduleFlowStep: admin.firestore.FieldValue.delete(), interviewRescheduleFlowData: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete(),
   });
-  const cancelled = async () => { await clear(); await sendMessage(chatId, "Okay — nothing was sent. The interview stays as it is."); };
+  const cancelled = async () => { await clear(); await sendMessage(chatId, "No problem, I didn't send anything. The interview stays as it is."); };
 
   if (step === "rs_date") {
     if (await isBackOutRequest(text, DATE_QUESTION)) return cancelled();
@@ -285,20 +290,20 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, question)) action = "cancel";
     else {
-      const v = await parse("Evia asked the care provider to reply SEND to propose the new interview time, or CANCEL. Classify: SEND, CANCEL, or OTHER (a question / a different time / something else).", text);
+      const v = await parse("Evia showed the care provider the new interview time and asked \"Want me to send that to the family?\". Classify: SEND (yes / send it / go ahead / sure), CANCEL (no / hold off / never mind / cancel), or OTHER (a question / a different time / something else).", text);
       action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
     if (action === "other") {
       if (await isQuestionOrOther(text, question)) await sendMessage(chatId, await answerMidFlow(text, question, { facts: RS_FACTS(data) }));
-      else await sendMessage(chatId, `${DIDNT_CATCH} ${question}`);
+      else await sendMessage(chatId, `${DIDNT_CATCH} ${RS_CONFIRM_SHORT(data)}`);
       return;
     }
     const startMs = parseScheduledTimeMs(`${data.date}T${data.time}:00`);
-    if (Number.isNaN(startMs) || startMs <= Date.now()) { await clear(); await sendMessage(chatId, "That time has already passed — start again with a future date."); return; }
+    if (Number.isNaN(startMs) || startMs <= Date.now()) { await clear(); await sendMessage(chatId, "That time's already passed. Tell me a day that's still ahead and we'll start over."); return; }
     const ivRef = db.collection("video_interviews").doc(data.interviewId);
     const iv = (await ivRef.get()).data();
-    if (!iv || (iv.reschedulePendingTime && iv.rescheduledBy === "caregiver")) { await clear(); await sendMessage(chatId, "That proposal is already out — waiting on the family."); return; }
+    if (!iv || (iv.reschedulePendingTime && iv.rescheduledBy === "caregiver")) { await clear(); await sendMessage(chatId, "A new time is already out on that interview. I'll let you know when the family answers."); return; }
     // The site's handleRescheduleInterview write, field for field.
     await ivRef.update({
       reschedulePendingTime: new Date(startMs).toISOString(),
@@ -308,7 +313,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     await clear();
-    await sendMessage(chatId, "New time proposed — waiting on the family to confirm"); // the site's toast
+    await sendMessage(chatId, `Sent. I'll let you know as soon as ${data.clientName} answers.`); // the site's toast, in Evia's voice
     return;
   }
   await clear();

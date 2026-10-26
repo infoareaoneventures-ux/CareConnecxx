@@ -258,7 +258,7 @@ describe("handleInterviewFlowStep — happy path through every step", () => {
     await handleInterviewFlowStep(PHONE, CHAT, "sometime", session({ interviewFlowStep: "iv_ask_date" }));
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.interviewFlowStep).toBe("iv_ask_date");
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("didn't quite catch that");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("not sure I followed");
   });
 
   it("takes the given note when the family provides one instead of skipping", async () => {
@@ -338,7 +338,7 @@ describe("iv_confirm — edits", () => {
     expect(resolveCommitmentMock).toHaveBeenCalledWith(PHONE, "interview", "scheduled");
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.interviewFlowStep).toBeUndefined();
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Sent to Basra Yousuf");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Sent! Basra Yousuf has your request");
   });
 
   it("surfaces a friendly message on a daily-limit error without throwing", async () => {

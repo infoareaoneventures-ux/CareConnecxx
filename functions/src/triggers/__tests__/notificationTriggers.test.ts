@@ -305,7 +305,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
     const content = (call[1] as any).content as string;
     expect(content).toContain('A Family requested an interview with you for "Senior care in San Jose" on');
     expect(content).toContain("(Video). Note: \"requesting interview\"");
-    expect(content).toContain("Reply ACCEPT or DECLINE, or PROPOSE a different time.");
+    expect(content).toContain("Want to accept, decline, or propose a different time?");
     // The bell carries the same details.
     expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "interview_request", body: expect.stringContaining('Note: "requesting interview"') }));
   });
@@ -471,11 +471,11 @@ describe("onVideoInterviewWrite — SMS parity", () => {
       it("the proposal notices name KEEP and park CONFIRM / KEEP / PROPOSE with the other side's name", async () => {
         const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z" };
         await (onVideoInterviewWrite as any)(change(before, "iv1", { ...before, rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" }), { params: { interviewId: "iv1" } });
-        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("Reply CONFIRM, KEEP to keep the current time, or PROPOSE another time.") }));
+        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("Want to confirm it, keep the current time, or propose another?") }));
         expect(hoisted.docState.get("agent_sessions/+15550001111").pendingDecision).toMatchObject({ kind: "interview_proposal", recordId: "iv1", role: "caregiver", party: "A Family" });
         sendViaInteractionAgent.mockClear();
         await (onVideoInterviewWrite as any)(change(before, "iv1", { ...before, rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" }), { params: { interviewId: "iv1" } });
-        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Reply CONFIRM, KEEP to keep the current time, or suggest another time.") }));
+        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Want to confirm it, keep the current time, or suggest another?") }));
         expect(hoisted.docState.get("agent_sessions/+15550002222").pendingDecision).toMatchObject({ kind: "interview_proposal", recordId: "iv1", role: "client", party: "Alice" });
       });
 

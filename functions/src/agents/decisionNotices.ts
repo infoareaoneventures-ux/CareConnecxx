@@ -97,10 +97,12 @@ export async function classifyDecision(text: string, pd: PendingDecision): Promi
   if (BARE_YES_NO.has(text.trim().toUpperCase().replace(/[^A-Z ]/g, "").replace(/\s+/g, " ").trim()) && !pd.options.includes("YES")) return null;
   const who = pd.party ? ` This item is with ${pd.party}.` : "";
   const raw = await quickComplete(
-    `Evia texted a person about ${pd.label} and asked them to reply with one of: ${pd.options.join(", ")}.${who} ` +
-    `Classify their reply as exactly one of those words when it clearly means that choice — including when the word sits inside a sentence about this same item ` +
-    `(e.g. "please decline the booking request" → DECLINE, "yes confirm" → CONFIRM, "I can't make it" / "I can't accept this" → DECLINE, ` +
-    `"sounds good" → the positive option, "tell me more" → DETAILS when offered, "the original time is fine" / "leave it as it is" → KEEP when offered). ` +
+    `Evia texted a person about ${pd.label} and offered these choices, in plain words: ${pd.options.join(", ")}.${who} ` +
+    `Classify their reply as exactly one of those words when it clearly means that choice — including when it is phrased naturally or sits inside a sentence about this same item ` +
+    `(e.g. "please decline the booking request" / "pass" / "not this one" → DECLINE, "yes confirm" → CONFIRM, "I can't make it" / "I can't accept this" → DECLINE, ` +
+    `"sounds good" / "let's do it" / "I'll take it" → the positive option, "tell me more" / "show me" → DETAILS or VIEW when offered, "set up an interview" / "let's meet" → INTERVIEW when offered, ` +
+    `"the original time is fine" / "leave it as it is" / "keep the current time" → KEEP when offered, else DECLINE when the item is a proposed new time, ` +
+    `"a different time" / "another day" → PROPOSE when offered). ` +
     `If the reply names a DIFFERENT person than ${pd.party ? pd.party : "the one this item is with"} (e.g. "decline Imran" when this item is with Mahad), ` +
     `or answers AND adds a request about someone else ("yes and Imran"), reply SOMEONE_ELSE — never the choice word: a choice must be about this item only. ` +
     `A question ABOUT this same item (its time, place, pay, who it is with, what happens next) or about what those replies do → QUESTION. ` +
@@ -166,9 +168,20 @@ const OPTION_MEANING: Record<DecisionKind, string> = {
   job_application_decline: "YES declines the application (the care provider is not told); NO leaves it pending on the post.",
   shift_proposal:          "ACCEPT is the page's Accept new time (the visit moves to the proposed time, after a check against your other visits that day); DECLINE keeps the visit at its current time; PROPOSE suggests a different day and time to the family instead.",
 };
-const listWords = (ws: string[]) => (ws.length > 1 ? `${ws.slice(0, -1).join(", ")} or ${ws[ws.length - 1]}` : ws[0] ?? "");
+/** The choices, asked the way a person would (Evia's voice, 2026-10-26) — the parked words still match exactly. */
+const CHOICES_QUESTION: Record<DecisionKind, string> = {
+  interview_request:       "want to accept it, decline it, or propose a different time?",
+  interview_proposal:      "want to confirm the new time, keep the current one, or propose another?",
+  booking_request:         "want to accept it, decline it, or see the details?",
+  booking_request_decline: "yes or no?",
+  amendment:               "want to accept it or decline it?",
+  new_job:                 "want the details, or want to apply?",
+  job_application:         "want to see their profile, set up an interview, or pass?",
+  job_application_decline: "yes or no?",
+  shift_proposal:          "want to accept the new time, keep the current one, or propose another?",
+};
 /** The expected reply, re-stated after the answer. */
-export const expectedReplyLine = (pd: PendingDecision) => `Reply ${listWords(pd.options)} for ${pd.label}.`;
+export const expectedReplyLine = (pd: PendingDecision) => `Back to ${pd.label}: ${CHOICES_QUESTION[pd.kind]}`;
 
 /** The notice's own record, as the page shows it — best effort, each loader fails soft to the notice's label. */
 export async function noticeScreenText(pd: PendingDecision, session: AgentSession & Record<string, unknown>): Promise<string> {
@@ -332,7 +345,7 @@ export async function handlePendingDecisionReply(
     const first = String(pd.party ?? "").split(/\s+/)[0];
     if (pd.options.includes("YES")) {
       // A confirm step: anything that is not a bare YES / NO about THIS person never acts (strict protocol). Re-ask once.
-      await sendMessage(chatId, `I haven't changed anything${first ? ` for ${first}` : ""}. ${pd.label.charAt(0).toUpperCase()}${pd.label.slice(1)} — reply YES or NO. Tell me about anyone else separately after.`);
+      await sendMessage(chatId, `I haven't changed anything${first ? ` for ${first}` : ""}. First, ${pd.label}: yes or no? Then tell me about anyone else.`);
       return "handled";
     }
     if (pd.kind === "job_application") {
@@ -345,7 +358,7 @@ export async function handlePendingDecisionReply(
           await runDecision(phone, chatId, { ...session, pendingDecision: other }, other, again);
           return "handled";
         }
-        await sendMessage(chatId, `For ${String(other.party ?? "that applicant").split(/\s+/)[0]}'s application: reply VIEW, INTERVIEW or DECLINE.`);
+        await sendMessage(chatId, `For ${String(other.party ?? "that applicant").split(/\s+/)[0]}'s application, ${CHOICES_QUESTION.job_application}`);
         return "handled";
       }
     }
@@ -383,9 +396,9 @@ export async function runDecision(
       if (choice === "ACCEPT" && !(await caregiverGate(phone, chatId, caregiverId))) break;
       try {
         await respondToInterviewRequest({ caregiverId, interviewId: pd.recordId, decision: choice === "ACCEPT" ? "accept" : "decline", source: "decision_notice" });
-        await say(choice === "ACCEPT" ? "Interview accepted" : "Interview declined"); // JobBoard.tsx toasts; the Meet link follows from the trigger
+        await say(choice === "ACCEPT" ? "Accepted! I'll text you the video link shortly." : "Declined. The family will be told."); // JobBoard.tsx toasts in Evia's voice; the Meet link follows from the trigger
       } catch (err) {
-        await say(err instanceof InterviewResponseError ? err.message : "That didn't go through — the interview may have changed. Reply here and I'll check.");
+        await say(err instanceof InterviewResponseError ? err.message : "That didn't go through, the interview may have changed since. Ask me and I'll check where it stands.");
       }
       break;
     }
@@ -398,7 +411,7 @@ export async function runDecision(
         // staying at …") come from onVideoInterviewWrite, exactly as after a click.
         const { keepInterviewTime, keptInterviewLine } = await import("./interviewProposal");
         const r = await keepInterviewTime({ by: pd.role, userId: pd.role === "caregiver" ? caregiverId : clientId, interviewId: pd.recordId, source: "decision_notice" });
-        await say(r.ok ? keptInterviewLine(r) : `That proposal isn't pending any more — your interview with ${pd.party ?? (pd.role === "caregiver" ? "the family" : "your care provider")} stays as it is.`);
+        await say(r.ok ? keptInterviewLine(r) : `That proposal isn't open anymore, so your interview with ${pd.party ?? (pd.role === "caregiver" ? "the family" : "your care provider")} stays as it is.`);
         break;
       }
       if (choice === "PROPOSE") {
@@ -416,7 +429,7 @@ export async function runDecision(
         interviewId: pd.recordId, phone,
         ...(pd.role === "caregiver" ? { caregiverId } : { clientId, userId: clientId }),
       }) as { success?: boolean; message?: string; _toolError?: boolean };
-      if (r?.success) await say("Interview time confirmed"); // PostsPage.tsx / JobBoard.tsx toast
+      if (r?.success) await say("Confirmed, your interview is now at the new time."); // PostsPage.tsx / JobBoard.tsx toast, in Evia's voice
       else if (r?._toolError && r.message && !/MEMBERSHIP|BACKGROUND/.test(String((r as { code?: string }).code ?? ""))) await say(r.message);
       break;
     }
@@ -434,14 +447,14 @@ export async function runDecision(
       }
       if (choice === "DECLINE") {
         // The page's window.confirm('Decline this booking request?') — naming the family, since there is no card in view.
-        await say(`Decline ${pd.party ? `${pd.party}'s` : "this"} booking request? Reply YES or NO.`);
+        await say(`Just checking, do you want to decline ${pd.party ? `${pd.party}'s` : "this"} booking request?`);
         await db.collection("agent_sessions").doc(phone).set({ pendingDecision: parkedDecision("booking_request_decline", pd.recordId, `declining ${pd.label}`, "caregiver", Date.now(), pd.party) }, { merge: true }).catch(() => {});
         return;
       }
       if (!(await caregiverGate(phone, chatId, caregiverId))) break;
       const r = await br.respondToBookingRequest(caregiverId, pd.recordId, "accept");
       // A replacement request that already expired (30 minutes, B6): no write — the one factual line.
-      await say(r.ok ? r.toast : r.reason === "not_pending" ? (r.status === "expired" ? `${pd.party ? `${pd.party}'s` : "That"} replacement request has expired — nothing was sent.` : `That request is already ${r.status}.`) : "That request isn't on your Requests tab anymore.");
+      await say(r.ok ? r.toast : r.reason === "not_pending" ? (r.status === "expired" ? `${pd.party ? `${pd.party}'s` : "That"} replacement request has already expired, so nothing was sent.` : `That request is already ${r.status}.`) : "That request isn't on your Requests tab anymore.");
       break;
     }
     case "shift_proposal": {
@@ -461,17 +474,17 @@ export async function runDecision(
         : await sp.declineFamilyShiftProposal(caregiverId, pd.recordId, "decision_notice");
       if (!r.ok) {
         // CONFLICT is the page's own alert, verbatim; the proposal stays pending (the page leaves it too).
-        if (r.code === "CONFLICT") { keepParked = true; await say(`${r.message} Reply DECLINE to keep the current time, or PROPOSE a different one.`); break; }
-        await say(`That proposal isn't pending any more — your visit with ${pd.party ?? "the family"} stays as it is.`);
+        if (r.code === "CONFLICT") { keepParked = true; await say(`${r.message} Want to keep the current time, or propose a different one?`); break; }
+        await say(`That proposal isn't open anymore, so your visit with ${pd.party ?? "the family"} stays as it is.`);
         break;
       }
       await say(choice === "ACCEPT"
-        ? `New time confirmed — your visit with ${r.clientName} is now ${sp.visitWhen(r.to!)}.`
-        : `Declined — your visit with ${r.clientName} stays at ${sp.visitWhen(r.from)}.`);
+        ? `Done, your visit with ${r.clientName} is now ${sp.visitWhen(r.to!)}.`
+        : `Okay, I've declined it. Your visit with ${r.clientName} stays at ${sp.visitWhen(r.from)}.`);
       break;
     }
     case "booking_request_decline": {
-      if (choice === "NO") { await say(`Okay — ${pd.party ? `${pd.party}'s` : "the"} booking request stays as it is.`); break; }
+      if (choice === "NO") { await say(`Okay, I'll leave ${pd.party ? `${pd.party}'s` : "the"} booking request as it is.`); break; }
       const br = await import("./caregiverBookingRequests");
       const r = await br.respondToBookingRequest(caregiverId, pd.recordId, "decline");
       await say(r.ok ? r.toast : r.reason === "not_pending" ? `That request is already ${r.status}.` : "That request isn't on your Requests tab anymore.");
@@ -496,13 +509,13 @@ export async function runDecision(
       if (String(app.status ?? "pending") !== "pending") { await say(`${firstName}'s application is already ${String(app.status)}.`); break; }
       if (choice === "VIEW") {
         const { getAppUrl } = await import("../config/appUrl");
-        await say(`Tap to view ${firstName}'s profile: ${getAppUrl()}/p/${String(app.caregiverId ?? "")}\n\nReply INTERVIEW to request an interview, or DECLINE.`);
+        await say(`Here's ${firstName}'s profile: ${getAppUrl()}/p/${String(app.caregiverId ?? "")}\n\nWant to set up an interview with ${firstName}, or pass on this one?`);
         keepParked = true;
         break;
       }
       if (choice === "DECLINE") {
         // The row's Decline button writes at once on the page (the card is in view); over text, name it and confirm.
-        await say(`Decline ${firstName}'s application to "${String(app.jobTitle ?? "your post")}"? Reply YES or NO.`);
+        await say(`Just checking, do you want to decline ${firstName}'s application to "${String(app.jobTitle ?? "your post")}"?`);
         await db.collection("agent_sessions").doc(phone).set({ pendingDecision: parkedDecision("job_application_decline", pd.recordId, `declining ${pd.label}`, "client", Date.now(), name) }, { merge: true }).catch(() => {});
         return;
       }
@@ -513,7 +526,7 @@ export async function runDecision(
     }
     case "job_application_decline": {
       const firstName = String(pd.party ?? "the care provider").split(/\s+/)[0];
-      if (choice === "NO") { await say(`Okay — ${firstName}'s application stays as it is.`); break; }
+      if (choice === "NO") { await say(`Okay, I'll leave ${firstName}'s application as it is.`); break; }
       const ref = db.collection("job_applications").doc(pd.recordId);
       const snap = await ref.get().catch(() => null);
       const app = snap?.exists ? (snap.data() ?? {}) : null;
@@ -521,7 +534,7 @@ export async function runDecision(
       if (String(app.status ?? "pending") !== "pending") { await say(`${firstName}'s application is already ${String(app.status)}.`); break; }
       // PostsPage.tsx handleDeclineApplicant, exactly: status 'rejected' + declinedAt; nothing is sent to the caregiver.
       await ref.update({ status: "rejected", declinedAt: admin.firestore.FieldValue.serverTimestamp() });
-      await say("Applicant declined"); // the page's toast
+      await say(`Done, I've declined ${firstName}'s application.`); // the page's toast, in Evia's voice
       break;
     }
     case "new_job": {

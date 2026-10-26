@@ -48,9 +48,9 @@ vi.mock("../../ai/scoring", () => ({ haversineMiles: () => undefined }));
 vi.mock("../jobBoardText", () => ({ sendJobList: vi.fn(async () => ({ sent: true, count: 0, total: 0, items: [] })) }));
 // Deterministic LLM router: the flows only ask the model to classify / extract.
 const quickComplete = vi.fn(async (prompt: string, text: string) => {
-  if (prompt.includes("OPTIONAL cover letter")) return /^(skip|no|none)/i.test(text) ? "SKIP" : "LETTER";
-  if (prompt.includes("reply SUBMIT")) return /submit|send|yes/i.test(text) ? "SUBMIT" : /cancel|no/i.test(text) ? "CANCEL" : "OTHER";
-  if (prompt.includes("reply SEND")) return /send|yes/i.test(text) ? "SEND" : /cancel/i.test(text) ? "CANCEL" : "OTHER";
+  if (prompt.includes("OPTIONAL note")) return /^(skip|no|none)/i.test(text) ? "SKIP" : "LETTER";
+  if (prompt.includes("SUBMIT (they want it sent")) return /submit|send|yes/i.test(text) ? "SUBMIT" : /cancel|no/i.test(text) ? "CANCEL" : "OTHER";
+  if (prompt.includes("SEND (yes")) return /send|yes/i.test(text) ? "SEND" : /cancel/i.test(text) ? "CANCEL" : "OTHER";
   if (prompt.includes("naming the DATE")) return /9\/28/.test(text) ? "2099-09-28" : /monday/i.test(text) ? "2099-09-28" : "NONE";
   if (prompt.includes("naming a TIME")) { const m = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i.exec(text); if (!m) return "NONE"; let h = Number(m[1]) % 12; if (m[3].toLowerCase() === "pm") h += 12; return `${String(h).padStart(2, "0")}:${m[2] ?? "00"}`; }
   return "NONE";
@@ -82,17 +82,17 @@ describe("Apply flow — the Apply for Position modal", () => {
   it("opens with the modal's contents and asks the optional cover letter; skip → SUBMIT writes the site's application", async () => {
     const r = await startApplyFlow(PHONE, CHAT, session(), { caregiverId: "cg1", jobId: "job1" });
     expect(r.started).toBe(true);
-    expect(hoisted.sent[0]).toContain("Apply for Position — Senior care in San Jose");
+    expect(hoisted.sent[0]).toContain("Let's get your application in for Senior care in San Jose");
     expect(hoisted.sent[0]).toContain("Your Profile\nExperience: 3-5 years");
     expect(hoisted.sent[0]).not.toContain("Rating"); // no review backs the 5 — like the profile page
     expect(hoisted.sent[0]).toContain("Skills: Companionship, Transportation");
     expect(hoisted.sent[0]).toContain("Client's budget: $26/hr");
-    expect(hoisted.sent[0]).toContain("Cover letter (optional)");
+    expect(hoisted.sent[0]).toContain("Want to add a short note to the family");
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).applyFlowStep).toBe("apply_cover");
 
     await handleApplyFlowStep(PHONE, CHAT, "skip", session());
-    expect(hoisted.sent[1]).toContain("Reply SUBMIT to send your application, or CANCEL.");
-    expect(hoisted.sent[1]).toContain("Cover letter: (none)");
+    expect(hoisted.sent[1]).toContain("Want me to send it over?");
+    expect(hoisted.sent[1]).toContain("Note to the family: none");
     // The recap repeats the whole modal: the job with its details, Your Profile, the budget.
     expect(hoisted.sent[1]).toContain("Job: Senior care in San Jose\n");
     expect(hoisted.sent[1]).toContain("$26/hr");
@@ -102,14 +102,14 @@ describe("Apply flow — the Apply for Position modal", () => {
     await handleApplyFlowStep(PHONE, CHAT, "SUBMIT", session());
     const app = hoisted.adds.find((a) => a.coll === "job_applications")!.data;
     expect(app).toMatchObject({ jobId: "job1", caregiverId: "cg1", clientId: "fam1", caregiverName: "Mahad", coverLetter: "", proposedRate: null, status: "pending", jobTitle: "Senior care in San Jose", jobRate: 26, skills: ["Companionship", "Transportation"] });
-    expect(hoisted.sent[2]).toBe("Application submitted for Senior care in San Jose!");
+    expect(hoisted.sent[2]).toBe("Done! Your application for Senior care in San Jose is in. I'll let you know as soon as the family responds.");
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).applyFlowStep).toBeUndefined();
   });
 
   it("a typed cover letter is stored and shown in the recap", async () => {
     await startApplyFlow(PHONE, CHAT, session(), { caregiverId: "cg1", jobId: "job1" });
     await handleApplyFlowStep(PHONE, CHAT, "I have 4 years with dementia clients and I'm nearby.", session());
-    expect(hoisted.sent[1]).toContain('Cover letter: "I have 4 years with dementia clients and I\'m nearby."');
+    expect(hoisted.sent[1]).toContain('Note to the family: "I have 4 years with dementia clients and I\'m nearby."');
     await handleApplyFlowStep(PHONE, CHAT, "yes send it", session());
     expect(hoisted.adds[0].data.coverLetter).toBe("I have 4 years with dementia clients and I'm nearby.");
   });
@@ -119,7 +119,7 @@ describe("Apply flow — the Apply for Position modal", () => {
     await handleApplyFlowStep(PHONE, CHAT, "never mind", session());
     expect(hoisted.adds).toHaveLength(0);
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).applyFlowStep).toBeUndefined();
-    expect(hoisted.sent.at(-1)).toContain("nothing was sent");
+    expect(hoisted.sent.at(-1)).toContain("I didn't send anything");
     await startApplyFlow(PHONE, CHAT, session(), { caregiverId: "cg1", jobId: "job1" });
     await handleApplyFlowStep(PHONE, CHAT, "skip", session());
     await handleApplyFlowStep(PHONE, CHAT, "CANCEL", session());
@@ -137,7 +137,7 @@ describe("Apply flow — the Apply for Position modal", () => {
     expect(facts).toContain("Your Profile\nExperience: 3-5 years");
     expect(facts).toContain("Client's budget: $26/hr");
     expect(facts).toContain("the family sees it with the application");
-    expect(facts).toContain("Nothing is sent until the care provider replies SUBMIT");
+    expect(facts).toContain("Nothing is sent until the care provider says yes");
   });
 
   it("the site's gate stands in for Apply Now: background check, then transport docs for a Transportation job (nothing written)", async () => {
@@ -173,18 +173,18 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
   it("asks the date, then the time from the site's picker, then SEND writes the site's proposal (the time itself doesn't move)", async () => {
     const r = await startInterviewRescheduleFlow(PHONE, CHAT, session(), { caregiverId: "cg1", interviewId: "iv1" });
     expect(r.started).toBe(true);
-    expect(hoisted.sent[0]).toContain("Reschedule your interview with Basra Yousuf (Senior care in San Jose)");
-    expect(hoisted.sent[0]).toContain("What date?");
+    expect(hoisted.sent[0]).toContain("Sure, let's find a new time for your interview with Basra Yousuf (Senior care in San Jose)");
+    expect(hoisted.sent[0]).toContain("What day works for you?");
 
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "9/28", session());
-    expect(hoisted.sent[1]).toContain("What time? Interviews run between 9:00 AM and 6:00 PM");
+    expect(hoisted.sent[1]).toContain("And what time? Anything between 9 AM and 6 PM");
 
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "10:15am", session()); // not a picker slot
-    expect(hoisted.sent[2]).toContain("Sorry, I didn't quite catch that.");
+    expect(hoisted.sent[2]).toContain("Sorry, I'm not sure I followed.");
 
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "10:30am", session());
-    expect(hoisted.sent[3]).toContain("New time: Monday, September 28 at 10:30 AM");
-    expect(hoisted.sent[3]).toContain("Reply SEND to propose it to Basra Yousuf");
+    expect(hoisted.sent[3]).toContain("So that's Monday, September 28 at 10:30 AM");
+    expect(hoisted.sent[3]).toContain("Want me to send that to Basra Yousuf?");
 
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "SEND", session());
     const iv = hoisted.docState.get("video_interviews/iv1");
@@ -193,7 +193,7 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
     expect(iv.scheduledTime).toBe("2099-09-27T17:00:00.000Z"); // unchanged until the family confirms
     expect(iv.status).toBe("accepted");
     expect(iv.rescheduledViaAgent).toBeUndefined();
-    expect(hoisted.sent[4]).toBe("New time proposed — waiting on the family to confirm");
+    expect(hoisted.sent[4]).toBe("Sent. I'll let you know as soon as Basra Yousuf answers.");
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).interviewRescheduleFlowStep).toBeUndefined();
   });
 
@@ -201,7 +201,7 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
   it("a question at the date, time or confirm step is briefed with the interview, its CURRENT time, what was chosen so far and the picker's rules", async () => {
     await startInterviewRescheduleFlow(PHONE, CHAT, session(), { caregiverId: "cg1", interviewId: "iv1" });
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "when is it now?", session());
-    expect(hoisted.sent.at(-1)).toBe("Answer. What date? (e.g. 9/28 or next Monday)");
+    expect(hoisted.sent.at(-1)).toBe("Answer. What day works for you?");
     let facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
     expect(facts).toContain('Interview with Basra Yousuf for "Senior care in San Jose", currently Sunday, September 27 at 10:00 AM.');
     expect(facts).toContain("No new date chosen yet.");
@@ -209,13 +209,13 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).interviewRescheduleFlowStep).toBe("rs_date");
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "9/28", session());
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "can I pick 7pm?", session());
-    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. What time\? Interviews run between 9:00 AM and 6:00 PM/);
+    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. And what time\? Anything between 9 AM and 6 PM/);
     facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
     expect(facts).toContain("New date chosen so far: 2099-09-28; the time is still to be chosen.");
     expect(facts).toContain("Interviews run between 9:00 AM and 6:00 PM Pacific, on the hour or half hour");
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "10:30am", session());
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "will she be told right away?", session());
-    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. New time: Monday, September 28 at 10:30 AM/);
+    expect(hoisted.sent.at(-1)).toMatch(/^Answer\. So that's Monday, September 28 at 10:30 AM/);
     facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
     expect(facts).toContain("New time chosen so far: Monday, September 28 at 10:30 AM.");
     expect(hoisted.docState.get("video_interviews/iv1").reschedulePendingTime).toBeUndefined(); // nothing proposed by a question
@@ -224,7 +224,7 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
   it("date and time in one message skips straight to the confirmation", async () => {
     await startInterviewRescheduleFlow(PHONE, CHAT, session(), { caregiverId: "cg1", interviewId: "iv1" });
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "9/28 at 9am", session());
-    expect(hoisted.sent[1]).toContain("New time: Monday, September 28 at 9:00 AM");
+    expect(hoisted.sent[1]).toContain("So that's Monday, September 28 at 9:00 AM");
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).interviewRescheduleFlowStep).toBe("rs_confirm");
   });
 
@@ -233,7 +233,7 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "9/28 at 9am", session());
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "cancel", session());
     expect(hoisted.docState.get("video_interviews/iv1").reschedulePendingTime).toBeUndefined();
-    expect(hoisted.sent.at(-1)).toContain("nothing was sent");
+    expect(hoisted.sent.at(-1)).toContain("I didn't send anything");
     hoisted.docState.set("video_interviews/iv1", { caregiverId: "cg1", status: "accepted", reschedulePendingTime: "x", rescheduledBy: "caregiver", clientName: "B" });
     expect((await startInterviewRescheduleFlow(PHONE, CHAT, session(), { caregiverId: "cg1", interviewId: "iv1" })).reason).toBe("own_proposal_out");
   });

@@ -37,7 +37,7 @@ beforeEach(() => { hoisted.docs.clear(); hoisted.updates.length = 0; hoisted.ses
 describe("applicant notice → VIEW / INTERVIEW / DECLINE", () => {
   it("VIEW texts the profile link and keeps the decision parked", async () => {
     expect(await handlePendingDecisionReply("+1", "chat", "VIEW", session(pd()))).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("Tap to view Imran's profile: https://eviacares.com/p/cg-imran\n\nReply INTERVIEW to request an interview, or DECLINE.");
+    expect(hoisted.sent.at(-1)).toBe("Here's Imran's profile: https://eviacares.com/p/cg-imran\n\nWant to set up an interview with Imran, or pass on this one?");
     expect(hoisted.updates.filter((u) => u.path.startsWith("job_applications/"))).toEqual([]);
   });
   it("INTERVIEW starts the site's interview flow for that care provider, linked to the application", async () => {
@@ -46,17 +46,17 @@ describe("applicant notice → VIEW / INTERVIEW / DECLINE", () => {
   });
   it("DECLINE names the care provider and asks YES/NO; YES runs the page's Decline write and texts its toast — the care provider is not messaged", async () => {
     expect(await handlePendingDecisionReply("+1", "chat", "Decline", session(pd()))).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe('Decline Imran\'s application to "Senior care in San Jose"? Reply YES or NO.');
+    expect(hoisted.sent.at(-1)).toBe('Just checking, do you want to decline Imran\'s application to "Senior care in San Jose"?');
     const parked = hoisted.sessionSets.at(-1).pendingDecision;
     expect(parked).toMatchObject({ kind: "job_application_decline", recordId: "app1", options: ["YES", "NO"], party: "Imran Ali" });
     expect(await handlePendingDecisionReply("+1", "chat", "yes", session(parked))).toBe("handled");
     expect(hoisted.updates.filter((u) => u.path.startsWith("job_applications/"))).toEqual([{ path: "job_applications/app1", d: { status: "rejected", declinedAt: "__ts__" } }]);
-    expect(hoisted.sent.at(-1)).toBe("Applicant declined");
+    expect(hoisted.sent.at(-1)).toBe("Done, I've declined Imran's application.");
   });
   it("NO keeps the application; an already-decided application is reported, not rewritten", async () => {
     const parked = parkedDecision("job_application_decline", "app1", "declining it", "client", Date.now(), "Imran Ali");
     expect(await handlePendingDecisionReply("+1", "chat", "NO", session(parked))).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("Okay — Imran's application stays as it is.");
+    expect(hoisted.sent.at(-1)).toBe("Okay, I'll leave Imran's application as it is.");
     hoisted.docs.set("job_applications/app1", { ...APP, status: "rejected" });
     expect(await handlePendingDecisionReply("+1", "chat", "YES", session(parked))).toBe("handled");
     expect(hoisted.sent.at(-1)).toBe("Imran's application is already rejected.");

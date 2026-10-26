@@ -209,7 +209,7 @@ export const onVideoInterviewWrite = functions.firestore
           title: 'New Interview Request',
           body,
           data: { interviewId: context.params.interviewId },
-        }, `${body} Reply ACCEPT or DECLINE, or PROPOSE a different time.`, iv, { stamp: {
+        }, `${body} Want to accept, decline, or propose a different time?`, iv, { stamp: {
           ...noticedInterview(context.params.interviewId),
           ...parkDecision(parkedDecision("interview_request", context.params.interviewId, `an interview request from ${after.clientName || 'a family'}`, "caregiver")),
         } });
@@ -245,7 +245,7 @@ export const onVideoInterviewWrite = functions.firestore
             title: 'New Time Proposed',
             body: `${after.caregiverName || 'Your care provider'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
-          }, `${after.caregiverName || 'Your care provider'} proposed a new interview time: ${displayTime}. Reply CONFIRM, KEEP to keep the current time, or suggest another time.`,
+          }, `${after.caregiverName || 'Your care provider'} proposed a new interview time: ${displayTime}. Want to confirm it, keep the current time, or suggest another?`,
           { ...iv, transitionType: `interview_proposed:${after.reschedulePendingTime}` },
           { textOwnedElsewhere: !!after.rescheduledViaAgent, stamp: { ...noticedInterview(context.params.interviewId),
             ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.caregiverName || 'your care provider'} proposed (${displayTime})`, "client", Date.now(), after.caregiverName || undefined)) } });
@@ -255,7 +255,7 @@ export const onVideoInterviewWrite = functions.firestore
             title: 'New Time Proposed',
             body: `${after.clientName || 'The family'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
-          }, `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply CONFIRM, KEEP to keep the current time, or PROPOSE another time.`,
+          }, `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Want to confirm it, keep the current time, or propose another?`,
           { ...iv, transitionType: `interview_proposed:${after.reschedulePendingTime}` },
           { textOwnedElsewhere: !!after.rescheduledViaAgent, stamp: { ...noticedInterview(context.params.interviewId),
             ...parkDecision(parkedDecision("interview_proposal", context.params.interviewId, `a new interview time ${after.clientName || 'the family'} proposed (${displayTime})`, "caregiver", Date.now(), after.clientName || undefined)) } });
@@ -439,7 +439,7 @@ export const onJobApplicationCreate = functions.firestore
         title: 'New Applicant',
         body: `${data.caregiverName} applied to your post: "${data.jobTitle}".`,
         data: { applicationId: context.params.applicationId, jobId: data.jobId },
-      }, `${applicantName} applied to your post: "${data.jobTitle || 'your care request'}". Reply VIEW for their profile, INTERVIEW to request an interview, or DECLINE.`,
+      }, `${applicantName} applied to your post "${data.jobTitle || 'your care request'}". Want to see their profile, set up an interview, or pass?`,
       { sourcePath: `job_applications/${context.params.applicationId}`, eventId: context.eventId as string | undefined, transitionType: 'job_application_created' },
       { stamp: parkDecision(parkedDecision("job_application", context.params.applicationId, `${applicantName}'s application to "${data.jobTitle || 'your post'}"`, "client", Date.now(), applicantName)) });
     } catch (err) {

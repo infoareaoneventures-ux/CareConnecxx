@@ -9,6 +9,7 @@ CLAUDE.md is the canonical guide for *how* the code works (stack, conventions, E
 1. [`context/project-overview.md`](context/project-overview.md) — what we're building, goals, scope, and **release-gating success criteria**.
 2. [`context/ui-context.md`](context/ui-context.md) — theme, color tokens, typography, component conventions.
 3. [`context/progress-tracker.md`](context/progress-tracker.md) — current phase, completed work, ranked backlog, open questions.
+4. [`context/evia-voice.md`](context/evia-voice.md) — how Evia's fixed text sounds (flows, notices, gates): a question, not a reply protocol; guarded by `functions/src/agents/__tests__/eviaVoice.test.ts`.
 
 **Update `context/progress-tracker.md` after every meaningful implementation change.** If a change alters architecture, scope, or standards, update the relevant context file (or CLAUDE.md) before continuing. Do not add new point-in-time report files to the repo root — record status in the progress tracker.
 

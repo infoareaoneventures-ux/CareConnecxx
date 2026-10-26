@@ -73,7 +73,7 @@ export async function sendNewJobNotices(jobId: string, rawJob: Record<string, un
     let sent = false;
     try {
       sent = await sendViaInteractionAgent(sess.phone, {
-        content: `${body} Reply APPLY or DETAILS.`, urgency: "standard", sourceAgent: "new_job_notice", canDrop: false, fixedString: true,
+        content: `${body} Want the details, or want to apply?`, urgency: "standard", sourceAgent: "new_job_notice", canDrop: false, fixedString: true,
       });
     } catch (err) { console.error("[newJobNotice] text failed:", doc.id, err); }
     if (!sent) { result.dropped.push(doc.id); continue; }

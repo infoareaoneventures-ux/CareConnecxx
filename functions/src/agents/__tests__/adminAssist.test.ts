@@ -84,7 +84,7 @@ describe("admin assist consent (2026-10-22): a texted YES opens a one-hour windo
     expect(store.get(`agent_sessions/${PHONE}`)?.adminAssistConsentPending).toMatchObject({ uid: UID, adminName: "Hamse" });
     expect(sent[0].to).toBe(PHONE);
     expect(sent[0].text).toContain("Hi Anahi, this is Evia.");
-    expect(sent[0].text).toContain("Reply YES to allow it for the next hour, or NO.");
+    expect(sent[0].text).toContain("Say yes to allow it for the next hour, or no.");
     expect(audits[0]).toMatchObject({ eventType: "admin_assist_requested", userId: UID, data: { adminName: "Hamse" } });
   });
 

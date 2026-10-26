@@ -1432,8 +1432,8 @@ export async function handleOnboardingStep(
       await sendMessage(chatId, await generateCaraMessage({
         audience: session.userType === "caregiver" ? "caregiver" : "family",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: "Something got into an unexpected state in the conversation. Warmly and lightly let them know, and ask them to reply START OVER to begin fresh. You MUST include the literal keyword \"START OVER\".",
-        fallback: "I think something went sideways. Reply START OVER to begin fresh.",
+        context: "Something got into an unexpected state in the conversation. Warmly and lightly let them know, and ask them to say start over to begin fresh. You MUST include the literal words \"start over\".",
+        fallback: "I think something went sideways. Say start over and we'll begin fresh.",
         maxTokens: 60,
       }));
   }
@@ -1460,7 +1460,7 @@ async function handleVerifyPhone(
   if (!looksLikeCode && norm !== "RESEND" && norm !== "START OVER" && norm !== "RESTART" && await isQuestionOrOther(text, "Please reply with the 6-digit verification code I just texted you.")) {
     const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Please reply with the 6-digit verification code I just texted you. (Reply RESEND if you didn't get it.)");
+    await sendMessage(chatId, "What's the 6-digit verification code I just texted you? If it didn't come through, say resend and I'll send another.");
     return;
   }
 
@@ -3801,7 +3801,7 @@ export async function confirmBgcheckConsent(
     // sendOnboardingLinkFailureMessage promised "I'll text the link once it's ready" and queued a link
     // resend, which was wrong here; say what happened and what to do, nothing more.
     if (chatId) {
-      await sendMessage(chatId, "Your authorization didn't go through on our side just now. Please tap Submit again on that page, or reply AUTHORIZE for a fresh link, and I'll get it sorted.").catch(() => {});
+      await sendMessage(chatId, "Your authorization didn't go through on our side just now. Tap Submit again on that page, or say authorize and I'll send a fresh link.").catch(() => {});
     }
     throw err;
   }

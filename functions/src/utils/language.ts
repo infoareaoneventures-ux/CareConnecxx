@@ -95,8 +95,8 @@ export const t = {
       ? (lang === "es" ? "intento" : "try")
       : (lang === "es" ? "intentos" : "tries");
     return lang === "es"
-      ? `Ese código no coincide. Te quedan ${attemptsLeft} ${tries}, o responde RESEND para recibir un código nuevo.`
-      : `That code doesn't match. ${attemptsLeft} ${tries} left, or reply RESEND to get a new code.`;
+      ? `Ese código no coincide. Te quedan ${attemptsLeft} ${tries}, o di "resend" para recibir un código nuevo.`
+      : `That code doesn't match. ${attemptsLeft} ${tries} left. Say resend if you'd like a new code.`;
   },
 
   crisis_medical: (lang: Language): string =>
@@ -121,8 +121,8 @@ export const t = {
 
   session_timeout_onboarding: (lang: Language): string =>
     lang === "es"
-      ? "Tu sesión expiró. No te preocupes — guardé tu progreso.\n\nResponde RESUME para continuar donde lo dejaste, o START OVER para empezar de nuevo."
-      : "Your session timed out. No worries — I saved your progress!\n\nReply RESUME to pick up where you left off, or START OVER to begin fresh.",
+      ? "Tu sesión expiró. No te preocupes, guardé tu progreso.\n\n¿Quieres continuar donde lo dejaste o empezar de nuevo? Di \"resume\" o \"start over\"."
+      : "Your session timed out. No worries, I saved your progress!\n\nWant to pick up where you left off, or start over? Say resume, or start over.",
 
   session_timeout_generic: (lang: Language): string =>
     lang === "es"

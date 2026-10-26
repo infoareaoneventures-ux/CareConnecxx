@@ -41,11 +41,20 @@ const CONVERTED = [
   "agents/caregiverFamilies.ts",
   "agents/caregiverCancelShiftHandler.ts",
   "agents/caregiverSettings.ts",
+  // Batch 5 (lifecycle notices, shift reminders, payout/dunning, link cooldown, session fallbacks, consent)
+  "agents/adminAssist.ts",
+  "agents/gateLinkCooldown.ts",
+  "agents/actions/sendOnboardingLinkAction.ts",
+  "notifications/caregiverAccountEvents.ts",
+  "scheduled/shiftEndReminder.ts",
+  "scheduled/thirtyMinShiftReminder.ts",
+  "billing/reviewShiftHours.ts",
+  "stripe.ts",
+  "stripeConnectWebhook.ts",
 ];
 
 /** Still on the old grammar — the next batches (context/evia-voice.md, Rollout). Shrinks as batches land. */
 const PENDING = [
-  "agents/adminAssist.ts",
   "agents/bookingFlow.ts",
   "agents/cancelFlow.ts",
   "agents/correctionFlow.ts",
@@ -58,18 +67,23 @@ const PENDING = [
   "agents/rescheduleFlow.ts",
   "agents/reviewFlow.ts",
   "agents/visitRequestFlow.ts",
-  "linq/webhooks.ts",
+  "billing/approvalNoticeText.ts",
   "mcp/server.ts",
   "scheduled/pendingTimesheetNudge.ts",
   "scheduled/staleSessionNudge.ts",
 ];
 
-/** Carrier / consent protocol text (TCPA opt-in, STOP) — the wording is the protocol, not Evia's voice. */
+/** Protocol text whose exact words ARE the rule — carrier / TCPA consent (YES / STOP), the recovery APPROVE, the crisis NOTIFY. */
 const EXEMPT = [
   "triggers/userCreated.ts",
+  "linq/webhooks.ts",
+  "utils/language.ts",
+  "accountRecovery.ts",
 ];
 
-const SCAN_DIRS = ["agents", "triggers", "scheduled", "mcp", "linq"];
+const SCAN_DIRS = ["agents", "triggers", "scheduled", "mcp", "linq", "notifications", "billing", "utils"];
+/** Root-level modules that text people. */
+const SCAN_FILES = ["stripe.ts", "stripeConnectWebhook.ts", "accountRecovery.ts"];
 
 /** The old grammar, toward a user. */
 const ROBOTIC: RegExp[] = [
@@ -95,6 +109,7 @@ const NOT_USER_FACING = [
   /^\s*context: /,
   /\breply NONE\b/,
   /\bReply JSON\b/,
+  /\breply \{/,
   /\bReply (YES|NO) (if|for|only|when)\b/,
   /\b(asked|texted) (the|a) (user|person|new client)\b/,
   /text message say/,
@@ -124,8 +139,9 @@ function roboticLines(file: string): string[] {
 describe("Evia's voice — no reply-protocol grammar in converted files", () => {
   const rel = (file: string) => path.relative(src, file).replace(/\\/g, "/");
   const offenders = new Map<string, string[]>();
-  for (const dir of SCAN_DIRS) {
-    for (const file of listTs(path.join(src, dir))) {
+  const scanned = [...SCAN_DIRS.flatMap((dir) => listTs(path.join(src, dir))), ...SCAN_FILES.map((f) => path.join(src, f))];
+  {
+    for (const file of scanned) {
       const hits = roboticLines(file);
       if (hits.length && !EXEMPT.includes(rel(file))) offenders.set(rel(file), hits);
     }

@@ -81,7 +81,7 @@ export function isAssistActive(state: Partial<AdminAssistState> | undefined, now
 
 export function consentRequestText(firstName: string | undefined): string {
   const hi = firstName ? `Hi ${firstName}, this is Evia.` : "Hi, this is Evia.";
-  return `${hi} Our team is about to help with your account by phone, at your request. Reply YES to allow it for the next hour, or NO.`;
+  return `${hi} Our team is about to help with your account by phone, at your request. Is that okay with you? Say yes to allow it for the next hour, or no.`;
 }
 
 export const CONSENT_GRANTED_TEXT =

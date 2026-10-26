@@ -66,8 +66,8 @@ describe("the run", () => {
     const now = END + GRACE_MS + 60_000;
     expect(await runShiftEndReminders(now)).toEqual({ running: 1, missed: 1, skipped: 1 });
     expect(hoisted.sends.map((s) => s.out.content)).toEqual([
-      "H M's visit was scheduled to end at 7:45 PM and is still in progress. Text FINISH when you're done, or open it here: https://eviacares.com/care-provider/bookings?tab=active&visit=running",
-      "Your 7:30 PM visit with Basra Yousuf wasn't started. If you did the visit, reply LOG to log the hours. If not, no action needed.",
+      "H M's visit was scheduled to end at 7:45 PM and is still in progress. Say finish when you're done, or open it here: https://eviacares.com/care-provider/bookings?tab=active&visit=running",
+      "Your 7:30 PM visit with Basra Yousuf wasn't started. If you did the visit, say log and I'll log the hours. If not, nothing to do.",
     ]);
     expect(hoisted.sends.every((s) => s.out.canDrop === false)).toBe(true);
     expect(hoisted.bells.map((b) => [b.type, b.recipientId, b.sourcePath, b.data.shiftId])).toEqual([

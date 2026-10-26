@@ -724,7 +724,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     dunningMsg =
       "We weren't able to process your Evia membership payment after several tries, " +
       `so your membership is now at risk of being canceled. To keep your access, please update your ` +
-      `payment method at ${billingUrl} today. Reply HELP if you need a hand.`;
+      `payment method at ${billingUrl} today. If you need a hand, just ask.`;
   } else if (attemptCount <= 1) {
     dunningMsg =
       "Heads up — we couldn't process your Evia membership payment. " +
@@ -735,7 +735,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
       "We still haven't been able to process your Evia membership payment. " +
       `Please update your payment method at ${billingUrl} to avoid an interruption.` +
       (nextRetryDate ? ` Next retry: ${nextRetryDate}.` : "") +
-      " Reply HELP if you need assistance.";
+      " If you need a hand, just ask.";
   }
 
   // Caregiver: one bell + one text per attempt, same words, through the
@@ -1017,7 +1017,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription, even
       await sendViaInteractionAgent(phone, {
         content:
           "Your Evia membership has been cancelled. " +
-          `You can reactivate anytime at ${billingUrl} — reply HELP if you need a hand.`,
+          `You can reactivate anytime at ${billingUrl}. If you need a hand, just ask.`,
         urgency:     "immediate",
         sourceAgent: "billing",
         canDrop:     false,

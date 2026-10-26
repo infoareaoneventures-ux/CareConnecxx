@@ -97,7 +97,7 @@ export async function runSendOnboardingLinkAction(
         instruction:
           `NO link was sent this turn — do NOT claim you just sent one. That ${linkType} link already went out ` +
           `about ${minsText} ago. Tell the user it was sent about ${minsText} ago and to give it a moment to ` +
-          `arrive; if it still hasn't come through, they can reply LINK and it will be resent instantly.`,
+          `arrive; if it still hasn't come through, they can say "link" and it will be resent instantly.`,
       };
     }
   }

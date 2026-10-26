@@ -264,7 +264,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
 
     expect(linkParts()).toHaveLength(0);
     const out = sentText();
-    expect(out).toContain("reply LINK");
+    expect(out).toContain("say link");
     expect(out).toContain("about 2 minutes ago");
     // Truthfulness: no completed-action claim of a send that didn't happen.
     expect(out).not.toContain("just sent");
@@ -278,7 +278,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
     await handleOnboardingStep(PHONE, CHAT, "can you send it again?", session);
 
     expect(linkParts()).toHaveLength(0);
-    expect(sentText()).toContain("reply LINK");
+    expect(sentText()).toContain("say link");
     expect(sentText()).not.toContain("just sent");
   });
 
@@ -293,13 +293,13 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
 
     // Second LINK, same window — no second card, and the copy is TRUTHFUL:
     // it acknowledges the recent resend with a minutes count and points at the
-    // window reset. It must NOT re-promise "reply LINK" (the hatch is spent)
+    // window reset. It must NOT re-promise "say link" (the hatch is spent)
     // and must NOT claim a fresh send happened this turn.
     sentMessages.length = 0;
     await handleOnboardingStep(PHONE, CHAT, "LINK", stored());
     expect(linkParts()).toHaveLength(0);
     const out = sentText();
-    expect(out).not.toContain("reply LINK");
+    expect(out).not.toContain("say link");
     expect(out).not.toContain("just sent");
     expect(out).not.toContain("just resent");
     expect(out).toContain("I resent that link about 1 minute ago");
@@ -319,7 +319,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
     await handleOnboardingStep(PHONE, CHAT, "hm okay", stored() ?? session);
 
     expect(linkParts()).toHaveLength(0);
-    expect(sentText()).toContain("reply LINK");
+    expect(sentText()).toContain("say link");
     expect(sentText()).toContain("about 1 minute ago");
     expect(sentText()).not.toContain("just sent");
   });
@@ -331,7 +331,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
     await handleOnboardingStep(PHONE, CHAT, "hello anyone there", session);
 
     expect(linkParts()).toHaveLength(0);
-    expect(sentText()).toContain("reply LINK");
+    expect(sentText()).toContain("say link");
   });
 
   it("an `other` inbound 11+ minutes after the stamp resends again (window expired)", async () => {
@@ -357,7 +357,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
     expect(sentMessages.length).toBeGreaterThan(0);
     expect(linkParts().some((u) => u.includes("/pay/"))).toBe(true);
     // No in-cooldown copy on the question path.
-    expect(sentText()).not.toContain("reply LINK and I'll resend it");
+    expect(sentText()).not.toContain("say link and I'll resend it");
   });
 
   it("corrupt cooldown state fails OPEN — resend proceeds", async () => {
@@ -422,7 +422,7 @@ describe("U9 — membership / MVR checkout resends", () => {
     await handleOnboardingStep(PHONE, CHAT, "hey", session);
 
     expect(sentText()).not.toContain("pay/stale");
-    expect(sentText()).not.toContain("reply LINK");
+    expect(sentText()).not.toContain("say link");
     expect(sentText().toLowerCase()).toContain("came through");
   });
 
@@ -442,7 +442,7 @@ describe("U9 — membership / MVR checkout resends", () => {
     await handleOnboardingStep(PHONE, CHAT, "link", stored());
     expect(linkParts()).toHaveLength(0);
     const out = sentText();
-    expect(out).not.toContain("reply LINK");
+    expect(out).not.toContain("say link");
     expect(out).not.toContain("just sent");
     expect(out).toContain("I resent that link about 1 minute ago");
     expect(out).toMatch(/send it again in about \d+ minutes?/);
@@ -460,7 +460,7 @@ describe("U9 — membership / MVR checkout resends", () => {
 
     expect(linkParts()).toHaveLength(0);
     expect(sentText().toLowerCase()).toContain("came through");
-    expect(sentText()).not.toContain("reply LINK");
+    expect(sentText()).not.toContain("say link");
     expect(stored()?.gateLinkResentAt?.[MEMBERSHIP_STEP]).toBeUndefined();
     expect(stored()?.gateLinkBypassUsedAt?.[MEMBERSHIP_STEP]).toBeUndefined();
   });
@@ -484,7 +484,7 @@ describe("U9 — membership / MVR checkout resends", () => {
     expect(out.toLowerCase()).toContain("came through");
     expect(out).not.toContain("I sent that link");
     expect(out).not.toContain("I resent that link");
-    expect(out).not.toContain("reply LINK");
+    expect(out).not.toContain("say link");
     // Stale stamps untouched — no fresh bypass/send was recorded.
     expect(stored()?.gateLinkBypassUsedAt?.[MEMBERSHIP_STEP]).toBe(session.gateLinkBypassUsedAt[MEMBERSHIP_STEP]);
   });
@@ -500,7 +500,7 @@ describe("U12 — removed caregiver_awaiting_identity step", () => {
     // The absorber default replied (START OVER escape hatch) — no crash, no
     // silent drop, and the cursor was left alone (no state wipe).
     expect(sentMessages.length).toBeGreaterThan(0);
-    expect(sentText()).toContain("START OVER");
+    expect(sentText()).toContain("start over");
     expect(stored()?.onboardingStep).toBe("caregiver_awaiting_identity");
     expect(checkrInvite).not.toHaveBeenCalled();
   });

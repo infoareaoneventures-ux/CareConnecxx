@@ -222,7 +222,7 @@ export async function reviewShiftHoursAs(uid: string, data: ReviewShiftHoursInpu
       { appointmentId, proposedTotalHours: proposed.totalHours },
     );
     // The caregiver has 24 hours to answer — the bell alone was easy to miss.
-    await textCaregiver(shift.caregiverId, `${shift.clientName ?? "The family"} proposed a correction to your hours: ${fmtHours(proposed.totalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)})${proposed.lineItemsTotal !== (Number(shift.lineItemsTotal) || 0) ? ` and changed the additional charges to $${proposed.lineItemsTotal.toFixed(2)} (from $${(Number(shift.lineItemsTotal) || 0).toFixed(2)})` : ""}${proposalReason ? ` — "${proposalReason}"` : ""}. Reply REVIEW to accept it or send a counter. It auto-accepts in 24 hours.`);
+    await textCaregiver(shift.caregiverId, `${shift.clientName ?? "The family"} proposed a correction to your hours: ${fmtHours(proposed.totalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)})${proposed.lineItemsTotal !== (Number(shift.lineItemsTotal) || 0) ? ` and changed the additional charges to $${proposed.lineItemsTotal.toFixed(2)} (from $${(Number(shift.lineItemsTotal) || 0).toFixed(2)})` : ""}${proposalReason ? ` — "${proposalReason}"` : ""}. Want to accept it or send a counter? Say review and we'll go through it. It auto-accepts in 24 hours.`);
     return { success: true };
   }
 

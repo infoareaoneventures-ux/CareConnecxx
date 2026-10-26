@@ -127,7 +127,7 @@ describe("sendOnboardingLinkAction", () => {
       // Truthful relay material: when it went out + the LINK escape hatch;
       // never an executed-send claim.
       expect(result.instruction).toContain("3 minutes ago");
-      expect(result.instruction).toContain("reply LINK");
+      expect(result.instruction).toContain('say "link"');
       expect(result.instruction).toContain("NO link was sent this turn");
       // The suppressed send never touched the action ledger/audit trail.
       expect(logAgentAction).not.toHaveBeenCalled();

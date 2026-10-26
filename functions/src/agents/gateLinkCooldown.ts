@@ -70,7 +70,7 @@ export function gateLinkCooldownMinutes(
  * action claim ("just resent it"); the only forward promise is the LINK hatch.
  */
 export function gateLinkCooldownCopy(minutes: number): string {
-  return `I sent that link about ${minutes} minute${minutes === 1 ? "" : "s"} ago — if it hasn't come through, reply LINK and I'll resend it.`;
+  return `I sent that link about ${minutes} minute${minutes === 1 ? "" : "s"} ago. If it hasn't come through, say link and I'll resend it.`;
 }
 
 /**

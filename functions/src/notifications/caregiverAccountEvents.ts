@@ -120,7 +120,7 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       };
     }
     case "membership_payment_failed": {
-      const manage = "reply MANAGE MEMBERSHIP for your Stripe billing link";
+      const manage = "say manage membership and I'll send your Stripe billing link";
       if (ctx.finalAttempt) {
         return {
           title: "Membership payment failed",
@@ -147,7 +147,7 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       return {
         title: "Membership ending",
         body: `Your Evia membership is set to end on ${ctx.date ?? "your renewal date"}. You keep everything until then, and you can reactivate anytime from the Membership page: ${membership}`,
-        text: `Your Evia membership is set to end on ${ctx.date ?? "your renewal date"}. You keep everything until then, and you can reactivate anytime — reply MANAGE MEMBERSHIP for your Stripe billing link.`,
+        text: `Your Evia membership is set to end on ${ctx.date ?? "your renewal date"}. You keep everything until then, and you can reactivate anytime. Say manage membership and I'll send your Stripe billing link.`,
       };
     case "membership_reactivated":
       return { title: "Membership reactivated", body: `Your Evia membership is active again.${ctx.date ? ` Next billing date: ${ctx.date}.` : ""}` };
@@ -155,13 +155,13 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       return {
         title: "Membership cancelled",
         body: `Your Evia membership has been cancelled. You can reactivate anytime from the Membership page: ${membership}`,
-        text: "Your Evia membership has been cancelled. You can reactivate anytime — reply ACTIVATE for your membership link.",
+        text: "Your Evia membership has been cancelled. You can reactivate anytime. Say activate and I'll send your membership link.",
       };
     case "membership_revoked":
       return {
         title: "Membership inactive",
         body: `Your membership is no longer active. Activate your membership to apply to jobs and get booked: ${membership}`,
-        text: "Your membership is no longer active. Activate your membership to apply to jobs and get booked — reply ACTIVATE for your membership link.",
+        text: "Your membership is no longer active. Activate it to apply to jobs and get booked. Say activate and I'll send your membership link.",
       };
 
     case "bgcheck_consent_received":
@@ -209,7 +209,7 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       return {
         title: "Your membership renews soon",
         body: `Your Evia membership renews on ${ctx.date ?? "your renewal date"} for ${ctx.amount ?? caregiverAnnualDisplay()}. If your card has changed, update it under Manage. ${membership}`,
-        text: `Your Evia membership renews on ${ctx.date ?? "your renewal date"} for ${ctx.amount ?? caregiverAnnualDisplay()}. If your card has changed, reply MANAGE MEMBERSHIP for your Stripe billing link.`,
+        text: `Your Evia membership renews on ${ctx.date ?? "your renewal date"} for ${ctx.amount ?? caregiverAnnualDisplay()}. If your card has changed, say manage membership and I'll send your Stripe billing link.`,
       };
     case "renewal_refresh_reminder":
       return {
@@ -271,13 +271,13 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       return {
         title: "Payouts set up",
         body: `Your payout account is set up — earnings land in your bank automatically after each paid visit. ${appLink("/care-provider/payments")}`,
-        text: "Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.",
+        text: "Your payout account is set up. Earnings land in your bank automatically after each paid visit. Say payouts anytime to see your balance.",
       };
     case "payouts_disabled":
       return {
         title: "Payouts need attention",
         body: `Your payout account needs attention — open Payout Setup on your dashboard to finish: ${dash}`,
-        text: "Your payout account needs attention — reply SETUP for your Stripe link to finish.",
+        text: "Your payout account needs attention. Say setup and I'll send your Stripe link to finish it.",
       };
 
     case "now_bookable":
@@ -290,7 +290,7 @@ export function caregiverAccountEventCopy(kind: CaregiverAccountEventKind, ctx: 
       const until = ctx.indefinite || !ctx.date ? "until you reactivate" : `until ${ctx.date}`;
       const back = ctx.indefinite || !ctx.date ? "Reactivate anytime" : "Reactivate sooner anytime";
       const line = `Your account is paused ${until}. You won't show up for new matches; existing visits, bookings and interviews are unchanged.`;
-      return { title: "Your account is paused", body: `${line} ${back}: ${membership}`, text: `${line} ${back} — reply REACTIVATE.` };
+      return { title: "Your account is paused", body: `${line} ${back}: ${membership}`, text: `${line} ${back}, just say reactivate.` };
     }
     case "account_reactivated":
       return { title: "You're active again", body: "You're active again — you'll show up for new matches." };

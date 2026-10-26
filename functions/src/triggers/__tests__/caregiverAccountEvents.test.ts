@@ -147,7 +147,7 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
     expect(hoisted.bells[0]).toMatchObject({ recipientId: "cg1", transitionType: "payouts_enabled", title: "Payouts set up" });
     // The bell links to the Payments page; the text finishes by text (2026-10-03) — same event, channel-appropriate words.
     expect(hoisted.bells[0].body).toContain("/care-provider/payments");
-    expect(hoisted.sent[0].content).toBe("Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.");
+    expect(hoisted.sent[0].content).toBe("Your payout account is set up. Earnings land in your bank automatically after each paid visit. Say payouts anytime to see your balance.");
     const again = await notifyCaregiverAccountEvent("cg1", "payouts_enabled", { eventId: "evt1" });
     expect(again).toEqual({ bell: false, text: false });
     expect(hoisted.sent).toHaveLength(1);
@@ -169,7 +169,7 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
     await (onCaregiverAccountChange as any)(pauseChange, { params: { uid: "cg1" }, eventId: "fs-pause-1" });
     expect(hoisted.bells.map((b) => [b.type, b.transitionType])).toEqual([["account_paused", "account_paused"]]);
     expect(hoisted.bells[0].body).toContain("https://eviacares.com/care-provider/settings");
-    expect(hoisted.sent.map((s) => s.content)).toEqual(["Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime — reply REACTIVATE."]);
+    expect(hoisted.sent.map((s) => s.content)).toEqual(["Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime, just say reactivate."]);
     // A retried invocation of the same event sends nothing more.
     await (onCaregiverAccountChange as any)(pauseChange, { params: { uid: "cg1" }, eventId: "fs-pause-1" });
     expect(hoisted.sent).toHaveLength(1);

@@ -1324,7 +1324,7 @@ const handleInboundInner = traceable(
     // nudge them to choose before processing normally
     if (checkpoint && session.onboardingStep !== "complete") {
       await sendMessage(chatId,
-        "You have a saved onboarding session. Reply RESUME to continue, or START OVER to begin fresh."
+        "You have a saved session from before. Want to pick up where you left off, or start over? Say resume, or start over."
       );
       return;
     }
@@ -1561,7 +1561,7 @@ const handleInboundInner = traceable(
       // rather than crashing through qaAgent.
       await sendMessage(chatId,
         "Something's off with this account — I can't find your details. " +
-        "Reply START OVER and I'll get you set up again."
+        "Say start over and I'll get you set up again."
       );
       console.error("handleInbound: complete session with no userId and no users record", { phone });
       return;

@@ -30,20 +30,20 @@ describe("caregiverAccountEventCopy — membership notices", () => {
   it("payment failed (3 attempts): the bell links to the Membership tab, the text says MANAGE MEMBERSHIP", () => {
     const first = caregiverAccountEventCopy("membership_payment_failed", { attempt: 1, nextRetry: "Oct 5" });
     expect(first.body).toContain(TAB);
-    expect(first.text).toBe("Heads up — we couldn't process your Evia membership payment. No action needed if your card just needs a moment; to update your card, reply MANAGE MEMBERSHIP for your Stripe billing link. We'll retry on Oct 5.");
+    expect(first.text).toBe("Heads up — we couldn't process your Evia membership payment. No action needed if your card just needs a moment; to update your card, say manage membership and I'll send your Stripe billing link. We'll retry on Oct 5.");
     const again = caregiverAccountEventCopy("membership_payment_failed", { attempt: 2, nextRetry: "Oct 9" });
-    expect(again.text).toContain("reply MANAGE MEMBERSHIP for your Stripe billing link. Next retry: Oct 9.");
+    expect(again.text).toContain("say manage membership and I'll send your Stripe billing link. Next retry: Oct 9.");
     const final = caregiverAccountEventCopy("membership_payment_failed", { attempt: 4, finalAttempt: true });
     expect(final.text).toContain("at risk of being canceled");
-    expect(final.text).toContain("reply MANAGE MEMBERSHIP");
+    expect(final.text).toContain("say manage membership");
     expect(final.text).not.toContain("eviacares.com");
   });
 
   it("ending / cancelled / revoked: the text offers the keyword, never the redirecting Membership URL", () => {
     expect(caregiverAccountEventCopy("membership_cancel_scheduled", { date: "Monday, March 3" }).text)
-      .toBe("Your Evia membership is set to end on Monday, March 3. You keep everything until then, and you can reactivate anytime — reply MANAGE MEMBERSHIP for your Stripe billing link.");
-    expect(caregiverAccountEventCopy("membership_cancelled").text).toBe("Your Evia membership has been cancelled. You can reactivate anytime — reply ACTIVATE for your membership link.");
-    expect(caregiverAccountEventCopy("membership_revoked").text).toBe("Your membership is no longer active. Activate your membership to apply to jobs and get booked — reply ACTIVATE for your membership link.");
+      .toBe("Your Evia membership is set to end on Monday, March 3. You keep everything until then, and you can reactivate anytime. Say manage membership and I'll send your Stripe billing link.");
+    expect(caregiverAccountEventCopy("membership_cancelled").text).toBe("Your Evia membership has been cancelled. You can reactivate anytime. Say activate and I'll send your membership link.");
+    expect(caregiverAccountEventCopy("membership_revoked").text).toBe("Your membership is no longer active. Activate it to apply to jobs and get booked. Say activate and I'll send your membership link.");
     for (const k of ["membership_cancel_scheduled", "membership_cancelled", "membership_revoked"] as const) {
       expect(caregiverAccountEventCopy(k).body).toContain(TAB);
       expect(caregiverAccountEventCopy(k).body).not.toContain("/care-provider/membership");
@@ -86,8 +86,8 @@ describe("caregiverAccountEventCopy — membership notices", () => {
         expect((c.text ?? "") + " " + c.body).not.toMatch(/document|upload/i);
       }
     }
-    expect(caregiverAccountEventCopy("payouts_enabled").text).toBe("Your payout account is set up — earnings land in your bank automatically after each paid visit. Reply PAYOUTS anytime to see your balance.");
-    expect(caregiverAccountEventCopy("payouts_disabled").text).toBe("Your payout account needs attention — reply SETUP for your Stripe link to finish.");
+    expect(caregiverAccountEventCopy("payouts_enabled").text).toBe("Your payout account is set up. Earnings land in your bank automatically after each paid visit. Say payouts anytime to see your balance.");
+    expect(caregiverAccountEventCopy("payouts_disabled").text).toBe("Your payout account needs attention. Say setup and I'll send your Stripe link to finish it.");
     for (const k of ["bgcheck_link_expired", "bgcheck_revoked", "payouts_enabled", "payouts_disabled"] as const) {
       expect(caregiverAccountEventCopy(k, { consentUrl: url }).body).toContain("eviacares.com");
       expect(caregiverAccountEventCopy(k, { consentUrl: url }).text).not.toContain("dashboard");
@@ -99,13 +99,13 @@ describe("caregiverAccountEventCopy — account paused / reactivated (B7, 2026-1
   it("paused until a date: the page's sentence; bell → Settings (the Reactivate button), text → the REACTIVATE keyword; nothing existing is touched", () => {
     const c = caregiverAccountEventCopy("account_paused", { date: "2026-11-01" });
     expect(c.title).toBe("Your account is paused");
-    expect(c.text).toBe("Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime — reply REACTIVATE.");
+    expect(c.text).toBe("Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime, just say reactivate.");
     expect(c.body).toBe(`Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime: ${TAB}`);
     expect(c.text).not.toMatch(/SETTINGS/);
   });
   it("paused with no end date: until you reactivate", () => {
     const c = caregiverAccountEventCopy("account_paused", { indefinite: true });
-    expect(c.text).toBe("Your account is paused until you reactivate. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate anytime — reply REACTIVATE.");
+    expect(c.text).toBe("Your account is paused until you reactivate. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate anytime, just say reactivate.");
     expect(c.body).toContain(TAB);
   });
   it("reactivated: one wording for bell and text", () => {

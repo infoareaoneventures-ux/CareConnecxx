@@ -215,7 +215,7 @@ export const stripeConnectWebhook = functions
                     } else {
                         const failedBody = `Your payout of $${amountDollars} could not be deposited. Please check your bank account details.`;
                         await payoutNotice(caregiverId, event.id, payout.id, "payout_failed", "Payout Failed", failedBody,
-                            `Evia: ${failedBody} Reply SETUP for your Stripe link to update them.`);
+                            `Evia: ${failedBody} Say setup and I'll send your Stripe link to update them.`);
                     }
                 }
             } else {

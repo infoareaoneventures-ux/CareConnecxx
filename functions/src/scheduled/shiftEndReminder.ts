@@ -47,11 +47,11 @@ export function shouldRemind(endMs: number | null, nowMs: number, alreadySent: b
 
 export function stillRunningText(v: FirebaseFirestore.DocumentData, shiftId: string): string {
   const who = visitSeniorName(v, "your client");
-  return `${who}'s visit was scheduled to end at ${formatHHMMForDisplay(String(v.endTime ?? ""))} and is still in progress. Text FINISH when you're done, or open it here: ${visitPageLink(shiftId)}`;
+  return `${who}'s visit was scheduled to end at ${formatHHMMForDisplay(String(v.endTime ?? ""))} and is still in progress. Say finish when you're done, or open it here: ${visitPageLink(shiftId)}`;
 }
 export function missedText(v: FirebaseFirestore.DocumentData): string {
   const family = String(v.clientName || visitSeniorName(v, "the family"));
-  return `Your ${formatHHMMForDisplay(String(v.startTime ?? ""))} visit with ${family} wasn't started. If you did the visit, reply LOG to log the hours. If not, no action needed.`;
+  return `Your ${formatHHMMForDisplay(String(v.startTime ?? ""))} visit with ${family} wasn't started. If you did the visit, say log and I'll log the hours. If not, nothing to do.`;
 }
 /** The bell's copy: the page's wording (Past Bookings shows the visit as Missed with a Log Hours button), never a text keyword (C18). */
 export function stillRunningBell(v: FirebaseFirestore.DocumentData): string {

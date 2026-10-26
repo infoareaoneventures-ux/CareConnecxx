@@ -47,7 +47,7 @@ describe("the 30-minute reminder", () => {
       await (sendThirtyMinShiftReminders as any)();
       expect(hoisted.sends).toHaveLength(1);
       expect(hoisted.sends[0].out).toMatchObject({ fixedString: true, canDrop: false, sourceAgent: "thirty_min_shift_reminder" });
-      expect(hoisted.sends[0].out.content).toContain("Text START when your shift starts.");
+      expect(hoisted.sends[0].out.content).toContain("Say start when you get there.");
       expect(hoisted.bells).toHaveLength(1);
       expect(hoisted.bells[0]).toMatchObject({ sourcePath: "shifts/v1", eventId: "thirty-min-reminder", recipientId: "cg1", type: "shift_starting_soon", title: "Visit starting soon", data: { shiftId: "v1" } });
       expect(hoisted.bells[0].body).toBe("H M's visit starts at 9:00 AM – 12:00 PM at 12 Elm St. Start it from your Bookings page.");

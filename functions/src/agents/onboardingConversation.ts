@@ -1644,20 +1644,6 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       const firstQ = await familyFirstQuestion({ ...session, userType: "client" } as AgentSession);
       await sendMessage(chatId, `Thanks, ${knownName}. ${firstQ ?? "How often do you need care — occasional, part-time, or full-time?"}`);
       return;
-      // (unreachable — kept so the surrounding block's shape is unchanged)
-      const msgKnown = await generateCaraMessage({
-        audience: "family",
-        context: `${knownName} just said they're looking for care for a loved one, and you already know their name is ${knownName}. ` +
-          `You ALREADY introduced yourself — never say "I'm Evia" or re-introduce yourself. ` +
-          `Warmly acknowledge them BY NAME — do NOT ask their name again — then ask the wizard's first question: how often ` +
-          `they need care — occasional, part-time, or full-time. Mention — once, casually — that they ` +
-          `can also just send a voice memo instead of typing, and you'll listen.`,
-        fallback: `Thanks, ${knownName}. How often do you need care — occasional, part-time, or full-time? (And if typing it all out is a pain, just send me a voice memo — I'll listen.)`,
-        maxTokens: 80,
-        emotionalDirective,
-      });
-      await sendMessage(chatId, msgKnown);
-      return;
     }
     await updateSession(phone, { onboardingStep: "family_ask_name", userType: "client" });
     // Same as above: the script's first question, fixed text.

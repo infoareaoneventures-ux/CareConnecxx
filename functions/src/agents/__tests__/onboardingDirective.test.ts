@@ -109,11 +109,10 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("never re-introduce");
   });
 
-  it("offers the voice-memo option once, never repeated", () => {
+  it("never pitches voice memos (founder, 2026-10-26: memos work without a pitch; the first question stays the question)", () => {
     const d = buildOnboardingDirective("client", {}).toLowerCase();
-    expect(d).toContain("voice memo");
-    expect(d).toContain("offer once");
-    expect(d).toContain("never repeat the offer");
+    expect(d).not.toContain("voice memo");
+    expect(d).not.toContain("tap-and-hold");
   });
 
   it("handles self-seekers: senior = sender, direct address, never asks who they're caring for", () => {

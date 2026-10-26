@@ -297,7 +297,6 @@ export function buildOnboardingDirective(
     `  - MULTIPLE LOVED ONES: first person → seniorName/relationship (+ ageRange for a child); everyone else → save_onboarding_field("additionalRecipients", [{name, relationship, ageRange for a child}]).`,
     `  - caregiversNeeded is a light, easy-to-skip question — most families need just one care provider covering their schedule, so frame it that way ("most families just need one care provider — is that right for you, or are you looking to cover more ground with a couple people?"). If they don't have an answer or seem unsure, save 1 and move on — never insist.`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I assist you today", or call yourself an AI assistant.`,
-    `  - Voice memos: offer ONCE warmly if their replies look effortful — "if typing is a pain, you can tap-and-hold to send a voice memo." Never repeat the offer.`,
     ``,
     `WHAT TO DO THIS TURN:`,
     `  ${action}`,

@@ -100,11 +100,10 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("never re-introduce");
   });
 
-  it("offers the voice-memo option once, never repeated", () => {
+  it("never pitches voice memos (founder, 2026-10-26: memos work without a pitch)", () => {
     const d = buildCaregiverOnboardingDirective({}).toLowerCase();
-    expect(d).toContain("voice memo");
-    expect(d).toContain("once per conversation");
-    expect(d).toContain("never repeat it");
+    expect(d).not.toContain("voice memo");
+    expect(d).not.toContain("tap-and-hold");
   });
 
   it("handles the story front-load: extract everything, save each field, skip ahead", () => {

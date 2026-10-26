@@ -113,7 +113,8 @@ function dayHeader(dateStr: string, today: string, grid: Grid): string {
 
 export interface LastCalendarList { at: string; items: Array<{ number: number; kind: "shift" | "interview"; id: string; status: string; clientName: string; date: string }> }
 type Built = { text: string; items: LastCalendarList["items"] };
-const FOOTER = "Reply VISIT n or INTERVIEW n for details. TODAY, TOMORROW, WEEK, NEXT WEEK or MONTH for another view.";
+// Evia's voice (2026-10-26): the page's buttons as plain questions; the keywords (VISIT n, INTERVIEW n, TODAY, …) still work exactly as before.
+const FOOTER = "Want details on one? Say visit or interview and its number. For another view, say today, tomorrow, week, next week or month.";
 
 function numbered(list: CalEvent[], start = 0): { lines: string[]; items: LastCalendarList["items"] } {
   const lines: string[] = []; const items: LastCalendarList["items"] = [];
@@ -186,12 +187,12 @@ export function listText(filter: ListFilter, shifts: CalShift[], interviews: Cal
     const built = numbered(list, n); n += list.length; items.push(...built.items);
     if (!shownDates.includes(d)) continue;
     const visible = built.lines.slice(0, 2); const hidden = built.lines.length - visible.length;
-    blocks.push([`${fmtDate(d)}${d === today ? " (today)" : ""}`, ...visible, ...(hidden > 0 ? [`+${hidden} more that day — reply TODAY or TOMORROW, or ask me for that day.`] : [])].join("\n"));
+    blocks.push([`${fmtDate(d)}${d === today ? " (today)" : ""}`, ...visible, ...(hidden > 0 ? [`+${hidden} more that day. Say today or tomorrow, or ask me for that day.`] : [])].join("\n"));
   }
   const label: Record<ListFilter, string> = { all: "All", upcoming: "Upcoming", "this-week": "This Week", "this-month": "This Month", "last-30": "Last 30 Days" };
   const remaining = Math.max(0, dates.length - (start + shownDates.length));
   return {
-    text: [`Calendar · ${label[filter]}`, "", ...(blocks.length ? [blocks.join("\n\n")] : ["No events for this period"]), "", `${FOOTER}${remaining > 0 ? " Reply MORE for more days." : ""}`].join("\n"),
+    text: [`Calendar · ${label[filter]}`, "", ...(blocks.length ? [blocks.join("\n\n")] : ["No events for this period"]), "", `${FOOTER}${remaining > 0 ? " There are more days too, just say more." : ""}`].join("\n"),
     items, remaining,
   };
 }
@@ -221,12 +222,12 @@ export function shiftDetailText(shift: CalShift, booking: Doc | null, opts: { ga
   if (shift.status === "scheduled") {
     const mins = startsInMinutes(shift, nowMs);
     const canStart = mins !== null && mins <= START_WINDOW_MINUTES && status !== "overdue";
-    if (status === "overdue") lines.push("This visit was missed — reply LOG to log the hours.");
-    else if (canStart) lines.push(opts.anotherInProgress ? FINISH_FIRST_LINE : opts.gate && opts.gate !== "transport" ? caregiverGateText(opts.gate) : "Reply START to start this shift.");
+    if (status === "overdue") lines.push("This visit was missed. Say log and I'll log the hours.");
+    else if (canStart) lines.push(opts.anotherInProgress ? FINISH_FIRST_LINE : opts.gate && opts.gate !== "transport" ? caregiverGateText(opts.gate) : "Say start when you're there and I'll start this shift.");
     else lines.push(`Start available ${START_WINDOW_MINUTES} min before the shift.`);
-    if (status !== "overdue") lines.push("Reply CANCEL SHIFT to cancel it.");
+    if (status !== "overdue") lines.push("If you need to cancel it, say cancel shift.");
   } else if (shift.status === "in-progress") {
-    lines.push("In progress — reply DONE n to check off a task, NOTE followed by anything the family should see, TASKS to re-list, or FINISH when the visit is over.");
+    lines.push("In progress. Tell me what you've finished as you go, send any notes the family should see, say tasks to see the list again, or finish when the visit is over.");
   } else if (shift.status === "completed") {
     lines.push("Shift Completed");
     const log = (Array.isArray(shift.notesLog) ? shift.notesLog : []) as Array<{ at?: string; text?: string }>;
@@ -236,7 +237,7 @@ export function shiftDetailText(shift: CalShift, booking: Doc | null, opts: { ga
   } else if (shift.status === "cancelled") {
     lines.push("Shift Cancelled");
   } else if (shift.status === "needs_replacement") {
-    lines.push("You cancelled this visit — the family is picking a replacement.");
+    lines.push("You cancelled this visit, so the family is picking a replacement.");
   }
   lines.push(`To message ${shift.clientName || "the family"}, just tell me what to send.`);
   const ec = booking?.emergencyContact as { name?: string; relationship?: string; phone?: string } | undefined;
@@ -267,18 +268,21 @@ export function interviewDetailText(row: CaregiverInterviewRow, job: Doc | null)
   if (row.notes) lines.push(`Notes: ${row.notes}`);
   if (row.proposal) lines.push("", row.proposal.banner);
   lines.push("");
+  // The row's buttons as ONE question (Evia's voice, 2026-10-26); the parked words (ACCEPT / DECLINE / CONFIRM / KEEP) still match exactly.
+  const choices: string[] = [];
   const acts: string[] = [];
   for (const a of row.actions) {
-    if (a === "Accept") acts.push("Reply ACCEPT to accept");
-    else if (a === "Decline") acts.push("DECLINE to decline");
-    else if (a === "Propose different time") acts.push("or tell me a different time to propose");
-    else if (a === "Accept new time") acts.push("Reply CONFIRM to take the new time");
-    else if (a === "Keep current time") acts.push("KEEP to keep the current time");
+    if (a === "Accept") choices.push("accept it");
+    else if (a === "Decline") choices.push("decline it");
+    else if (a === "Propose different time") choices.push("propose a different time");
+    else if (a === "Accept new time") choices.push("confirm the new time");
+    else if (a === "Keep current time") choices.push("keep the current one");
     else if (a === "Join video call" && row.joinVideoCall) acts.push(`Join: ${row.joinVideoCall}`);
-    else if (a === "Cancel") acts.push("Tell me if you need to cancel this interview");
+    else if (a === "Cancel") acts.push("Tell me if you need to cancel this interview.");
     else if (a === "Activate Membership" || a === "Complete Verification") acts.push(caregiverGateText(a === "Activate Membership" ? "membership" : "background"));
   }
-  if (acts.length) lines.push(acts.join(". ").replace(/\.\./g, ".") + (acts[acts.length - 1].endsWith(".") ? "" : "."));
+  if (choices.length) lines.push(`Want to ${choices.length > 1 ? `${choices.slice(0, -1).join(", ")}, or ${choices[choices.length - 1]}` : choices[0]}?`);
+  for (const a of acts) lines.push(a);
   lines.push(`To message ${row.clientName}, just tell me what to send.`);
   return lines.join("\n");
 }
@@ -365,13 +369,13 @@ export async function handleCalendarKeyword(phone: string, chatId: string, careg
   const iv = /^INTERVIEW\s+(\d+)$/i.exec(raw);
   if (iv) {
     const ref = resolveCalendarRef(session, Number(iv[1]), "interview");
-    if (!ref) { await sendMessage(chatId, `I don't have an interview ${iv[1]} on the last list — reply CALENDAR to see this week.`); return "handled"; }
+    if (!ref) { await sendMessage(chatId, `I don't see an interview ${iv[1]} on the list I sent. Say calendar and I'll show this week.`); return "handled"; }
     await sendCalendarInterviewDetail(chatId, caregiverId, ref.id); return "handled";
   }
   const visit = /^VISIT\s+(\d+)$/i.exec(raw);
   if (visit && calendarListIsLatest(session)) {
     const ref = resolveCalendarRef(session, Number(visit[1]));
-    if (!ref) { await sendMessage(chatId, `I don't have a visit ${visit[1]} on the last list — reply CALENDAR to see this week.`); return "handled"; }
+    if (!ref) { await sendMessage(chatId, `I don't see a visit ${visit[1]} on the list I sent. Say calendar and I'll show this week.`); return "handled"; }
     if (ref.kind === "interview") await sendCalendarInterviewDetail(chatId, caregiverId, ref.id);
     else await sendCalendarShiftDetail(chatId, caregiverId, ref.id);
     return "handled";

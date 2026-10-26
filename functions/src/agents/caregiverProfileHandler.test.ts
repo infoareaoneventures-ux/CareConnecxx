@@ -95,7 +95,7 @@ describe("caregiverProfileHandler", () => {
     it("confirm step (bio) — same exit; the proposed bio is dropped, not saved", async () => {
       hoisted.backOut.mockResolvedValueOnce(true);
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "actually forget it", { profileUpdateStep: "confirm", profileUpdateField: "bio", profileUpdateValue: "A new bio." }, CHAT);
-      expect(hoisted.backOut).toHaveBeenCalledWith("actually forget it", expect.stringMatching(/Reply YES to save this change/));
+      expect(hoisted.backOut).toHaveBeenCalledWith("actually forget it", expect.stringMatching(/Want me to save this change/));
       expect(sendMessage.mock.calls).toEqual([[CHAT, PROFILE_BACKED_OUT]]);
       expect(updateMock.mock.calls.every((c) => !("bio" in c[0]))).toBe(true);
     });
@@ -103,7 +103,7 @@ describe("caregiverProfileHandler", () => {
       parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce('{"hourlyRate":28}');
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "change my rate to $28", {}, CHAT, "rates");
       expect(hoisted.backOut).not.toHaveBeenCalled();
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/Reply YES to save/);
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/Want me to save that/);
     });
     it("a bio answer is not a back-out — collect proceeds to the confirm", async () => {
       parseWithClaude.mockResolvedValueOnce("NO");
@@ -127,7 +127,7 @@ describe("caregiverProfileHandler", () => {
       const text = sendMessage.mock.calls.at(-1)?.[1] as string;
       expect(text).toContain("1 Person: $28/hr");
       expect(text).toContain("Up to 1 client at once");
-      expect(text).toMatch(/Reply YES to save/);
+      expect(text).toMatch(/Want me to save that/);
     });
 
     it("collect step — only zero is refused (the rate is theirs — no floor, no ceiling, 2026-10-04)", async () => {
@@ -332,7 +332,7 @@ describe("caregiverProfileHandler", () => {
       const text = sendMessage.mock.calls.at(-1)?.[1] as string;
       expect(text).toContain('"hospice" isn\'t one of the services on the list');
       expect(text).toContain("Your services will be: Dementia / Memory Care, Medication Reminders Only, Companionship");
-      expect(text).toContain("Reply YES");
+      expect(text).toContain("Want me to save that?");
     });
 
     it("confirm YES writes the one list to services + skills (+ careKinds derived from them, 2026-10-19) — the page's write, nothing more", async () => {
@@ -346,7 +346,7 @@ describe("caregiverProfileHandler", () => {
       const write = updateMock.mock.calls.find(c => c[0].services)?.[0];
       expect(Object.keys(write).sort()).toEqual(["careKinds", "services", "skills"]);
       expect(write.careKinds).toEqual(["senior"]);
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toContain("Done — your services now read: Personal Care, Companionship");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toContain("Done, your services now read: Personal Care, Companionship");
     });
 
     it("medical care is never added — steered to Medication Reminders Only with the menu, nothing proposed", async () => {
@@ -477,12 +477,12 @@ describe("caregiverProfileHandler", () => {
         { profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: "2026-07-12" },
         CHAT, "pause",
       );
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No — your existing bookings stay exactly as they are.\n\nPause your account until 2026-07-12? Reply YES to pause, or NO to cancel.");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No — your existing bookings stay exactly as they are.\n\nPause your account until 2026-07-12? Should I go ahead?");
       expect(briefing()).toContain("Audience: care provider");
-      expect(briefing()).toContain("Pause your account until 2026-07-12? Reply YES to pause, or NO to cancel.");
+      expect(briefing()).toContain("Pause your account until 2026-07-12? Should I go ahead?");
       expect(briefing()).toContain("It does NOT cancel anything that already exists");
-      expect(briefing()).toContain("Fully reversible anytime: text REACTIVATE, or use the Reactivate button on the Account Settings page");
-      expect(briefing()).toContain("Nothing is paused until the care provider replies YES");
+      expect(briefing()).toContain("Fully reversible anytime: say reactivate, or use the Reactivate button on the Account Settings page");
+      expect(briefing()).toContain("Nothing is paused until the care provider says yes");
       expect(briefing()).toContain("NEVER say you changed, updated, saved, fixed, cancelled, sent or removed anything");
       expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ pausedUntil: expect.anything() }));
     });
@@ -499,7 +499,7 @@ describe("caregiverProfileHandler", () => {
       parseWithClaude.mockResolvedValueOnce("YES");
       hoisted.quickComplete.mockResolvedValueOnce("No minimum here — it's saved as written.");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "is it long enough?", { profileUpdateStep: "confirm", profileUpdateField: "bio", profileUpdateValue: "Warm and patient." }, CHAT, "bio");
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No minimum here — it's saved as written.\n\nSo — want me to save this bio?\n\n\"Warm and patient.\"");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No minimum here — it's saved as written.\n\nJust checking, want me to save this bio?\n\n\"Warm and patient.\"");
       expect(briefing()).toContain("There is no minimum length on either door (founder, 2026-10-19) and a cap of 1,000 characters");
       expect(briefing()).toContain("\"Warm and patient.\"");
       expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ bio: expect.anything() }));
@@ -526,15 +526,15 @@ describe("caregiverProfileHandler", () => {
       // services
       parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("__parse_error__");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "mm", { profileUpdateStep: "confirm", profileUpdateField: "skills", profileUpdateValue: JSON.stringify(["Companionship"]) }, CHAT, "skills");
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("So — save these services: Companionship? Reply YES or NO.");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("Just checking, should I save these services: Companionship?");
       // pause
       parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("__parse_error__");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "mm", { profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: "indefinite" }, CHAT, "pause");
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("Pause your account indefinitely? Reply YES to pause, or NO to cancel.");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("Pause your account indefinitely? Should I go ahead?");
       // bio
       parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("__parse_error__");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "mm", { profileUpdateStep: "confirm", profileUpdateField: "bio", profileUpdateValue: "Warm." }, CHAT, "bio");
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("So — want me to save this bio?\n\n\"Warm.\"");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("Just checking, want me to save this bio?\n\n\"Warm.\"");
       // rates
       parseWithClaude.mockResolvedValueOnce("NO").mockResolvedValueOnce("__parse_error__");
       await handleCaregiverProfileUpdate(CG_ID, PHONE, "mm", { profileUpdateStep: "confirm", profileUpdateField: "rates", profileUpdateValue: JSON.stringify({ hourlyRate: 28 }) }, CHAT, "rates");

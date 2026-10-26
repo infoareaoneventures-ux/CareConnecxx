@@ -67,7 +67,7 @@ describe("settingsPageText — the sections word for word", () => {
       "Account Basics · Member since 9/26/2026",
       "First name: Mahad", "Last name: not set", "Date of birth: not set",
       `Gender: not set (tell me to set it: ${GENDER_OPTIONS.join(", ")})`,
-      "Recovery email: hamse143@gmail.com (Not confirmed yet, reply RESEND EMAIL LINK)",
+      "Recovery email: hamse143@gmail.com (Not confirmed yet, say resend email link and I'll send it again)",
       "Phone number: +14088745451 (to change it, tell me, and a secure link goes to your recovery email)",
       "Address: 20 Descanso dr, san jose, CA, 95134 (tell me a new address to update it)",
       "",
@@ -83,7 +83,7 @@ describe("settingsPageText — the sections word for word", () => {
       "",
       "Blocked Users: Pat Lee (tell me to unblock someone)",
       "",
-      "Pause your account: taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime. Reply PAUSE, or PAUSE 2026-11-01 to resume on a date.",
+      "Pause your account: taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime. Say pause, or pause 2026-11-01 to come back on a date.",
       "",
       "Deleting your account is permanent and cannot be undone. To delete it, tell me and I'll confirm with you first.",
     ].join("\n"));
@@ -101,9 +101,9 @@ describe("settingsPageText — the sections word for word", () => {
     expect(t).toContain("Membership & verification");
     expect(t).not.toMatch(/document|DOCUMENTS|upload|Expires/i);
     expect(t).toContain("Blocked Users: You haven't blocked anyone.");
-    expect(t).toContain("Your account is paused. You'll automatically become active again on 2026-11-01. Reactivate sooner anytime. Reply REACTIVATE.");
+    expect(t).toContain("Your account is paused. You'll automatically become active again on 2026-11-01. Reactivate sooner anytime. Say reactivate whenever you're ready.");
     hoisted.docs.set("caregivers/cg1", { pausedUntil: "2099-12-31" });
-    expect(settingsPageText(await loadSettingsPage("cg1"))).toContain("Your account is paused. You won't show up for new matches until you reactivate. Fully reversible anytime. Reply REACTIVATE.");
+    expect(settingsPageText(await loadSettingsPage("cg1"))).toContain("Your account is paused. You won't show up for new matches until you reactivate. Fully reversible anytime. Say reactivate whenever you're ready.");
   });
 });
 
@@ -113,10 +113,10 @@ describe("keywords — the page's buttons through the same server paths", () => 
     expect(hoisted.sent[0]).toContain("Account Settings");
     expect(await handleSettingsKeyword("+1", "chat", "cg1", "RESEND EMAIL LINK")).toBe("handled");
     expect(hoisted.resend).toHaveBeenCalledWith("cg1");
-    expect(hoisted.sent[1]).toBe("Confirmation link re-sent to ha***@gmail.com — tap it from that inbox (check Junk too).");
+    expect(hoisted.sent[1]).toBe("Confirmation link re-sent to ha***@gmail.com. Tap it from that inbox (check Junk too).");
     hoisted.resend.mockResolvedValueOnce({ sentTo: null } as any);
     await handleSettingsKeyword("+1", "chat", "cg1", "resend email");
-    expect(hoisted.sent[2]).toBe("Your recovery email is already confirmed — nothing to resend.");
+    expect(hoisted.sent[2]).toBe("Your recovery email is already confirmed, so there's nothing to resend.");
   });
   it("PAUSE never writes on the keyword alone (A6, 2026-10-11): bare PAUSE asks until when, PAUSE <date> asks YES/NO — the same parked pause flow as the tool path; a past date is refused; REACTIVATE = the page's button; other words pass through", async () => {
     hoisted.updates.length = 0;
@@ -124,17 +124,17 @@ describe("keywords — the page's buttons through the same server paths", () => 
     expect(hoisted.pause).not.toHaveBeenCalled();
     expect(hoisted.updates.at(-1)).toMatchObject({ path: "agent_sessions/+1", data: { profileUpdateStep: "collect", profileUpdateField: "pause" } });
     expect(typeof hoisted.updates.at(-1)!.data.stateExpiresAt).toBe("string");
-    expect(hoisted.sent.at(-1)).toBe("When would you like to pause until? (e.g. \"until July 12\", \"for two weeks\", \"indefinitely\")");
+    expect(hoisted.sent.at(-1)).toBe("When would you like to pause until? You can say a date, for two weeks, or indefinitely.");
     await handleSettingsKeyword("+1", "chat", "cg1", "PAUSE 2099-01-15");
     expect(hoisted.pause).not.toHaveBeenCalled();
     expect(hoisted.updates.at(-1)).toMatchObject({ path: "agent_sessions/+1", data: { profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: "2099-01-15" } });
-    expect(hoisted.sent.at(-1)).toBe("Pause your account until 2099-01-15? You won't receive job matches during this time. Reply YES to pause, or NO to cancel.");
+    expect(hoisted.sent.at(-1)).toBe("Pause your account until 2099-01-15? You won't receive job matches during this time. Should I go ahead?");
     await handleSettingsKeyword("+1", "chat", "cg1", "pause 2020-01-01");
     expect(hoisted.sent.at(-1)).toContain("That date has already passed");
     expect(hoisted.pause).not.toHaveBeenCalled();
     expect(await handleSettingsKeyword("+1", "chat", "cg1", "REACTIVATE")).toBe("handled");
     expect(hoisted.reactivate).toHaveBeenCalledWith("cg1", { phone: "+1" }); // this door texts its own line → the write stamps the session (B7)
-    expect(hoisted.sent.at(-1)).toBe("You're active again — you'll start showing up for new matches.");
+    expect(hoisted.sent.at(-1)).toBe("You're active again. You'll start showing up for new matches.");
     expect(await handleSettingsKeyword("+1", "chat", "cg1", "what's my rate")).toBe("passthrough");
   });
 });

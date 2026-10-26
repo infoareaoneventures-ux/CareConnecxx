@@ -33,20 +33,21 @@ const CONVERTED = [
   "agents/caregiverMembership.ts",
   "agents/caregiverAccessGate.ts",
   "scheduled/caregiverTimesheetReminders.ts",
+  // Batch 4 (profile, availability, calendar, families, cancel a shift, settings)
+  "agents/caregiverMyProfile.ts",
+  "agents/caregiverProfileHandler.ts",
+  "agents/availabilityHandler.ts",
+  "agents/caregiverCalendar.ts",
+  "agents/caregiverFamilies.ts",
+  "agents/caregiverCancelShiftHandler.ts",
+  "agents/caregiverSettings.ts",
 ];
 
 /** Still on the old grammar — the next batches (context/evia-voice.md, Rollout). Shrinks as batches land. */
 const PENDING = [
   "agents/adminAssist.ts",
-  "agents/availabilityHandler.ts",
   "agents/bookingFlow.ts",
   "agents/cancelFlow.ts",
-  "agents/caregiverCalendar.ts",
-  "agents/caregiverCancelShiftHandler.ts",
-  "agents/caregiverFamilies.ts",
-  "agents/caregiverMyProfile.ts",
-  "agents/caregiverProfileHandler.ts",
-  "agents/caregiverSettings.ts",
   "agents/correctionFlow.ts",
   "agents/familyIntakeScript.ts",
   "agents/familyRelay.ts",
@@ -74,7 +75,7 @@ const SCAN_DIRS = ["agents", "triggers", "scheduled", "mcp", "linq"];
 const ROBOTIC: RegExp[] = [
   /\bReply (with a number|[A-Z]{2,}\b)/,
   /\breply (JOBS|MORE|YES|NO|SUBMIT|SEND|CANCEL|SKIP|ACCEPT|DECLINE|VIEW|INTERVIEW|DETAILS|APPLY|CONFIRM|KEEP|PROPOSE|REVIEW|COUNTER|START|DONE|FINISH)\b/,
-  /"(apply|hide|accept|decline|submit) (to |\$\{)?\d?/,
+  /"(apply|hide|accept|decline|submit) (to )?(\d|\$\{)/,
   / — reply /,
 ];
 
@@ -93,6 +94,7 @@ const NOT_USER_FACING = [
   /toContain|toBe\(|toMatch|expect\(/,
   /^\s*context: /,
   /\breply NONE\b/,
+  /\bReply JSON\b/,
   /\bReply (YES|NO) (if|for|only|when)\b/,
   /\b(asked|texted) (the|a) (user|person|new client)\b/,
   /text message say/,

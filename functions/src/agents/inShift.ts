@@ -43,7 +43,7 @@ export { START_WINDOW_MINUTES, startsInMinutes, visitLine, finishFirstText };
 
 // One visit at a time (founder, 2026-10-07: "they shouldn't start two shifts at the same time") — the twin of
 // utils/shiftStart.ts on the site's three Start Shift buttons. Same words (finishFirstText is the shared rule's).
-export const FINISH_FIRST_LINE = "Finish your current visit first (text FINISH), then START this one.";
+export const FINISH_FIRST_LINE = "Finish your current visit first (say finish), then start this one.";
 
 /** The real Bookings page opened at this visit (login required — the link carries no secret). */
 export const visitPageLink = (shiftId: string) => `${getAppUrl()}/care-provider/bookings?tab=active&visit=${encodeURIComponent(shiftId)}`;

@@ -34,8 +34,8 @@ async function clearParkedFlow(phone: string, flow: ParkedFlow): Promise<void> {
 // The flow's own "nothing changed" line — the same sentence its handler sends on
 // a back-out, so CANCEL reads the same at every step of that flow.
 const PARKED_FLOW_CANCEL_LINE: Partial<Record<ParkedFlow, string>> = {
-  profileUpdateStep: "No problem — your profile wasn't changed.",
-  availabilityStep:  "Okay — your availability wasn't changed.",
+  profileUpdateStep: "No problem, your profile wasn't changed.",
+  availabilityStep:  "Okay, your availability wasn't changed.",
 };
 
 // ── Parked question (sweep C20, 2026-10-11) ──────────────────────────────────

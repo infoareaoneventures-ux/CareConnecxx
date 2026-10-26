@@ -153,12 +153,12 @@ export function myProfileText(page: MyProfilePage): string {
   lines.push(page.ratingLabel);
   // No Transportation chip in the hero line (2026-10-06): it is a service, listed under Care Services once live.
   lines.push([page.location, page.hourlyRate > 0 ? `$${page.hourlyRate}/hr` : ""].filter(Boolean).join(" · ") || "—");
-  lines.push(page.hasPhoto ? "Photo: on file (reply PHOTO to change it)" : "Photo: none yet (reply PHOTO to add one)");
+  lines.push(page.hasPhoto ? "Photo: on file (say photo to change it)" : "Photo: none yet (say photo to add one)");
 
   lines.push("", `About ${first}`);
   lines.push(page.bio || "Add a bio to introduce yourself to families.");
   lines.push(`Languages: ${page.languages.join(", ")}`);
-  lines.push("Reply BIO to edit your bio, or LANGUAGES to change your languages.");
+  lines.push("Want to change your bio or your languages? Just say bio, or languages.");
 
   lines.push("", "Care Services");
   // Each list that has any of their services, under its own name — ALWAYS named, even when only one list has
@@ -169,7 +169,7 @@ export function myProfileText(page: MyProfilePage): string {
   } else {
     lines.push("No services added yet.");
   }
-  lines.push("Reply SERVICES to add or remove one.");
+  lines.push("Want to add or remove one? Just say services.");
 
   lines.push("", "Rates");
   if (page.rates.length) for (const r of page.rates) lines.push(`${r.label}: $${r.rate}/hr`);
@@ -177,17 +177,17 @@ export function myProfileText(page: MyProfilePage): string {
   const exp = formatExperience(page.experience);
   const max = page.maxClients;
   lines.push([exp, max ? `Up to ${max} client${max !== "1" ? "s" : ""} at once` : ""].filter(Boolean).join(" · ") || "—");
-  lines.push("Reply RATES to edit your rates, experience or max clients.");
+  lines.push("Want to change your rates, experience or how many clients at once? Just say rates.");
 
   lines.push("", "Weekly Availability");
   lines.push(`Looking for: ${page.jobTypes.length ? page.jobTypes.map(jobTypeLabel).join(", ") : "No job types selected."}`);
   lines.push(page.hasAvailability ? gridText(page.grid) : "No availability set yet.");
-  lines.push("Reply LOOKING FOR to change the job type, or AVAILABILITY to edit the schedule.");
+  lines.push("Want to change the job type or your schedule? Just say looking for, or availability.");
 
   lines.push("", "Location & Travel");
-  lines.push(page.location ? `Lives in ${page.location}` : "Add your address in Account Settings (reply SETTINGS).");
+  lines.push(page.location ? `Lives in ${page.location}` : "Add your address in Account Settings (say settings).");
   lines.push(`Willing to travel within ${page.serviceRadius} miles`);
-  lines.push("Reply TRAVEL to change the distance.");
+  lines.push("Want to change the distance? Just say travel.");
 
   lines.push("", "Reviews");
   const rv = page.reviews;

@@ -70,7 +70,7 @@ describe("Care Services grouped by kind — derived from the ticked services (20
     expect(one).not.toContain("Child care:");
     expect(one).not.toContain("Care type:");
     expect(t).not.toContain("Care type:");
-    expect(t).toContain("Reply SERVICES to add or remove one.");
+    expect(t).toContain("Want to add or remove one? Just say services.");
     expect(t).not.toContain("change the care type");
   });
 });
@@ -86,12 +86,12 @@ describe("loadMyProfilePage + myProfileText — the page's sections in order", (
     expect(page.rates).toEqual([{ label: "1 Person", rate: 25 }, { label: "2 People", rate: 30 }]);
     expect(page.reviews.recommendPct).toBe(50);
     const t = myProfileText(page);
-    const order = ["My Profile", "Mahad · Background check complete", "4.5 (2 reviews)", "san jose, CA · $25/hr", "Photo: on file (reply PHOTO to change it)",
-      "About Mahad", "I'm a great care provider and happy to help anyone", "Languages: English", "Reply BIO to edit your bio, or LANGUAGES",
-      "Care Services", "Senior care: Medication Reminders Only, Companionship, Transportation", "Reply SERVICES",
-      "Rates", "1 Person: $25/hr", "2 People: $30/hr", "3-5 years experience · Up to 1 client at once", "Reply RATES",
-      "Weekly Availability", "Looking for: Occasional", "Mon", "Reply LOOKING FOR to change the job type, or AVAILABILITY",
-      "Location & Travel", "Lives in san jose, CA", "Willing to travel within 25 miles", "Reply TRAVEL",
+    const order = ["My Profile", "Mahad · Background check complete", "4.5 (2 reviews)", "san jose, CA · $25/hr", "Photo: on file (say photo to change it)",
+      "About Mahad", "I'm a great care provider and happy to help anyone", "Languages: English", "Want to change your bio or your languages? Just say bio",
+      "Care Services", "Senior care: Medication Reminders Only, Companionship, Transportation", "Just say services",
+      "Rates", "1 Person: $25/hr", "2 People: $30/hr", "3-5 years experience · Up to 1 client at once", "Just say rates",
+      "Weekly Availability", "Looking for: Occasional", "Mon", "Want to change the job type or your schedule? Just say looking for",
+      "Location & Travel", "Lives in san jose, CA", "Willing to travel within 25 miles", "Just say travel",
       "Reviews", "4.5 overall (2 reviews)", "50% of clients would recommend", "Punctuality: 5.0", "Professionalism: 4.0", 'Basra · 5★ · "Wonderful with mom" · 2026-09-30'];
     let at = -1;
     for (const s of order) { const i = t.indexOf(s, at + 1); expect(i, `"${s}" missing or out of order`).toBeGreaterThan(at); at = i; }
@@ -103,14 +103,14 @@ describe("loadMyProfilePage + myProfileText — the page's sections in order", (
     const t = myProfileText(await loadMyProfilePage("cg1"));
     expect(t).toContain("New Care Provider · Background check pending");
     expect(t).toContain("No reviews yet");
-    expect(t).toContain("Photo: none yet (reply PHOTO to add one)");
+    expect(t).toContain("Photo: none yet (say photo to add one)");
     expect(t).toContain("Add a bio to introduce yourself to families.");
     expect(t).toContain("Languages: English");
     expect(t).toContain("No services added yet.");
     expect(t).toContain("No rate set yet.");
     expect(t).toContain("Looking for: No job types selected.");
     expect(t).toContain("No availability set yet.");
-    expect(t).toContain("Add your address in Account Settings (reply SETTINGS).");
+    expect(t).toContain("Add your address in Account Settings (say settings).");
     expect(t).toContain("Willing to travel within 10 miles");
     expect(t).toContain("Reviews from families will appear here after completed jobs.");
   });

@@ -53,8 +53,9 @@ export interface CancelOption {
   count?:     number;
 }
 
-const CONFIRM_VISIT   = "Cancel this shift only? The rest of your booking stays active. Reply YES to cancel, or NO to keep it.";
-const CONFIRM_BOOKING = "Cancel this shift and all future scheduled shifts for this booking? Reply YES to cancel, or NO to keep it.";
+// Evia's voice (2026-10-26): a strict yes still cancels; YES / NO exact first, then the classifier.
+const CONFIRM_VISIT   = "Just checking, do you want to cancel this shift only? The rest of your booking stays active.";
+const CONFIRM_BOOKING = "Just checking, do you want to cancel this shift and all the future shifts for this booking?";
 
 const CLEAR = {
   cancelStep:          admin.firestore.FieldValue.delete(),
@@ -71,7 +72,7 @@ export function optionLine(o: CancelOption): string {
   return `${fmtDate(o.date)} at ${fmtTime(o.startTime)}${o.endTime ? ` – ${fmtTime(o.endTime)}` : ""} — ${o.clientName} (this visit only)`;
 }
 const confirmFor = (o: CancelOption) => `${optionLine(o)}.\n\n${o.kind === "booking" ? CONFIRM_BOOKING : CONFIRM_VISIT}`;
-const listText = (opts: CancelOption[]) => `What do you need to cancel?\n${opts.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n\nReply with the number, or CANCEL to back out.`;
+const listText = (opts: CancelOption[]) => `What do you need to cancel?\n${opts.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n\nJust tell me the number, or say never mind to leave everything as it is.`;
 
 // A mid-flow question is answered FROM what is on the caregiver's screen (founder 2026-10-11): the dialog or the
 // numbered list they were just sent, plus what the page's cancel actually does — never a static sentence the
@@ -203,12 +204,12 @@ export async function handleCaregiverCancelShift(
     const options: CancelOption[] = (() => { try { return JSON.parse((session.cancelCandidates as string) ?? "[]"); } catch { return []; } })();
     if (options.length === 0) {
       await sessionRef.update({ cancelStep: "identify_shift", cancelCandidates: admin.firestore.FieldValue.delete() });
-      await sendMessage(chatId, "Something went wrong — let me start over. What do you need to cancel?");
+      await sendMessage(chatId, "Something went wrong on my end, let me start over. What do you need to cancel?");
       return;
     }
     if (text.trim().toUpperCase() === "CANCEL") {
       await sessionRef.update(CLEAR);
-      await sendMessage(chatId, "No problem — your shifts are unchanged.");
+      await sendMessage(chatId, "No problem, your shifts are unchanged.");
       return;
     }
 
@@ -228,31 +229,31 @@ export async function handleCaregiverCancelShift(
         await sessionRef.update(CLEAR);
         if (chosen.kind === "booking") {
           const r = await cancelBookingLikeThePage(caregiverId, chosen.id);
-          if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That booking's next visit is already ${r.status} — nothing to cancel.` : "That booking isn't on your bookings any more."); return; }
-          await sendMessage(chatId, `${r.toast} — ${chosen.clientName}, ${r.count} visit${r.count === 1 ? "" : "s"}. The family has been notified.`);
+          if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That booking's next visit is already ${r.status}, so there's nothing to cancel.` : "That booking isn't on your bookings any more."); return; }
+          await sendMessage(chatId, `${r.toast} (${chosen.clientName}, ${r.count} visit${r.count === 1 ? "" : "s"}). The family has been told.`);
           return;
         }
         const r = await cancelShiftLikeThePage(chosen.id, "caregiver", caregiverId);
-        if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That shift is already ${r.status} — nothing to cancel.` : "That shift isn't on your bookings any more."); return; }
+        if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That shift is already ${r.status}, so there's nothing to cancel.` : "That shift isn't on your bookings any more."); return; }
         await sendMessage(chatId, r.status === "needs_replacement"
-          ? `Cancelled — ${optionLine(chosen)}. It starts within 24 hours, so the family is being offered a replacement care provider.`
-          : `Cancelled — ${optionLine(chosen)}. The family has been notified.`);
+          ? `Cancelled: ${optionLine(chosen)}. It starts within 24 hours, so the family is being offered a replacement care provider.`
+          : `Cancelled: ${optionLine(chosen)}. The family has been told.`);
         return;
       }
       if (decision === "NO") {
         // A worded "never mind" leaves the flow entirely; a bare NO still goes back to the list.
-        if (options.length > 1 && norm !== "NO" && await isBackOutRequest(text, confirm)) { await sessionRef.update(CLEAR); await sendMessage(chatId, "No problem — your shifts are unchanged."); return; }
-        if (options.length === 1) { await sessionRef.update(CLEAR); await sendMessage(chatId, "Okay — keeping it. Your shifts are unchanged."); return; }
+        if (options.length > 1 && norm !== "NO" && await isBackOutRequest(text, confirm)) { await sessionRef.update(CLEAR); await sendMessage(chatId, "No problem, your shifts are unchanged."); return; }
+        if (options.length === 1) { await sessionRef.update(CLEAR); await sendMessage(chatId, "Okay, keeping it. Your shifts are unchanged."); return; }
         await sessionRef.update({ cancelShiftId: admin.firestore.FieldValue.delete(), cancelKind: admin.firestore.FieldValue.delete(), cancelShiftDate: admin.firestore.FieldValue.delete(), cancelShiftClientId: admin.firestore.FieldValue.delete() });
-        await sendMessage(chatId, `Okay — keeping that one.\n${options.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n\nReply with another number, or CANCEL to back out.`);
+        await sendMessage(chatId, `Okay, keeping that one.\n${options.map((o) => `${o.index}. ${optionLine(o)}`).join("\n")}\n\nTell me another number, or say never mind to leave everything as it is.`);
         return;
       }
       await sendMessage(chatId, confirm);
       return;
     }
 
-    const reAskPick = `Reply with the number of what to cancel (1–${options.length}), or CANCEL to back out.`;
-    if (await isBackOutRequest(text, reAskPick)) { await sessionRef.update(CLEAR); await sendMessage(chatId, "No problem — your shifts are unchanged."); return; }
+    const reAskPick = `Which one do you need to cancel? Tell me the number (1–${options.length}), or say never mind to leave everything as it is.`;
+    if (await isBackOutRequest(text, reAskPick)) { await sessionRef.update(CLEAR); await sendMessage(chatId, "No problem, your shifts are unchanged."); return; }
     // The screen is the numbered list they were just sent; the facts are what cancelling does (nothing yet).
     if (await isQuestionOrOther(text, reAskPick)) {
       const facts = `The numbered list on their screen:\n${listText(options)}\n\nNothing is cancelled by picking a number — a YES/NO dialog follows. ${CANCEL_RULES}`;
@@ -261,12 +262,12 @@ export async function handleCaregiverCancelShift(
     }
     const pick = parseInt(text.trim(), 10);
     const option = options.find((o) => o.index === pick) ?? (Number.isNaN(pick) ? await resolveOptionFromText(text, options) : null);
-    if (!option) { await sendMessage(chatId, `Please reply with a number between 1 and ${options.length}, or CANCEL to back out.`); return; }
+    if (!option) { await sendMessage(chatId, `I need a number between 1 and ${options.length}, or say never mind to leave everything as it is.`); return; }
     await parkChoice(sessionRef, option, expires());
     await sendMessage(chatId, confirmFor(option));
     return;
   }
 
   await sessionRef.update(CLEAR);
-  await sendMessage(chatId, "Let's start over — what do you need to cancel?");
+  await sendMessage(chatId, "Let's start over. What do you need to cancel?");
 }

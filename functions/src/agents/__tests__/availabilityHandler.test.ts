@@ -42,7 +42,7 @@ describe("start", () => {
   it("days only → asks the modal's four blocks; remove → confirmation with the day cleared; nothing named → asks which day", async () => {
     hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"replace","days":["monday"]}');
     await handleAvailabilityUpdate("cg1", "+1", "change my Monday", {}, send);
-    expect(hoisted.sent.at(-1)).toMatch(/^Which time blocks are you available on Monday — Morning \(6am – 12pm\), Afternoon \(12pm – 6pm\), Evening \(6pm – 12am\), Overnight \(12am – 6am\)\? Reply the names, ALL, or NONE to clear that day\.$/);
+    expect(hoisted.sent.at(-1)).toMatch(/^Which time blocks are you available on Monday\? The choices are Morning \(6am – 12pm\), Afternoon \(12pm – 6pm\), Evening \(6pm – 12am\), Overnight \(12am – 6am\)\. Tell me the names, or say all, or none to clear that day\.$/);
     expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "awaiting_blocks", pendingDays: '["monday"]', pendingAction: "replace" });
     hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"remove","days":["monday"]}');
     await handleAvailabilityUpdate("cg1", "+1", "take Mondays off", {}, send);
@@ -108,7 +108,7 @@ describe("blocks → confirm → SAVE", () => {
   });
   it("CANCEL at either step leaves the record alone; a question re-shows the grid", async () => {
     await handleAvailabilityUpdate("cg1", "+1", "cancel", session, send);
-    expect(hoisted.sent.at(-1)).toBe("Okay — your availability wasn't changed.");
+    expect(hoisted.sent.at(-1)).toBe("Okay, your availability wasn't changed.");
     hoisted.parse.mockResolvedValueOnce("OTHER");
     await handleAvailabilityUpdate("cg1", "+1", "does this affect my bookings?", { availabilityStep: "confirm", pendingAvailability: JSON.stringify({ set: { monday: ["morning"] } }) }, send);
     expect(hoisted.sent.at(-1)).toMatch(/^Your availability would be:\nSun: —\nMon: Morning/);

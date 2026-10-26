@@ -53,7 +53,7 @@ function normalizeField(v: unknown): ProfileUpdateField | undefined {
 const answerMidFlow = (text: string, reAsk: string, facts: string) => answerMidFlowShared(text, reAsk, { audience: "caregiver", facts });
 
 // The My Profile page's facts, section by section — what each editor saves and the page's own rules.
-const SAVE_RULE = "Nothing is saved until the care provider replies YES to the recap; NO leaves the profile as it is.";
+const SAVE_RULE = "Nothing is saved until the care provider says yes to the recap; no leaves the profile as it is.";
 export const RATES_FACTS = (current: RatesDraft) =>
   `${RATE_RULE_TEXT} — any amount above $0 is fine, there is no floor and no ceiling; $${RATE_EXAMPLE} is only an example. ` +
   `The Rates section holds the hourly rate for 1 person, 2 people and 3+ people (2 and 3+ may be left unset), the years of experience ` +
@@ -76,18 +76,18 @@ export const BIO_FACTS =
 export const PAUSE_FACTS =
   "Pausing stops the care provider showing up for new matches without deleting the profile. It does NOT cancel anything that already exists — " +
   "upcoming visits, accepted bookings, interviews and messages all stay exactly as they are, and the care provider is still expected at them. " +
-  "Fully reversible anytime: text REACTIVATE, or use the Reactivate button on the Account Settings page. With an end date, the account becomes " +
-  "active again on that date automatically; with no date, it stays paused until reactivated. Nothing is paused until the care provider replies YES.";
+  "Fully reversible anytime: say reactivate, or use the Reactivate button on the Account Settings page. With an end date, the account becomes " +
+  "active again on that date automatically; with no date, it stays paused until reactivated. Nothing is paused until the care provider says yes.";
 
 
 // The same sentence the router sends for a bare CANCEL (routeCaregiver PARKED_FLOW_CANCEL_LINE).
-export const PROFILE_BACKED_OUT = "No problem — your profile wasn't changed.";
+export const PROFILE_BACKED_OUT = "No problem, your profile wasn't changed.";
 
 /** The question the care provider is looking at, for the back-out classifier's context (per editor and step). */
 function profileFlowQuestion(field: ProfileUpdateField, step: string, session: Record<string, unknown>): string {
   if (step === "confirm") {
-    if (field === "pause") return `Pause your account ${(session.profileUpdateValue as string) === "indefinite" || !session.profileUpdateValue ? "indefinitely" : `until ${session.profileUpdateValue}`}? Reply YES to pause, or NO to cancel.`;
-    return "Reply YES to save this change to your profile, NO to leave it as it is, or tell me another change.";
+    if (field === "pause") return `Pause your account ${(session.profileUpdateValue as string) === "indefinite" || !session.profileUpdateValue ? "indefinitely" : `until ${session.profileUpdateValue}`}? Should I go ahead?`;
+    return "Want me to save this change to your profile? Say yes, or no to leave it, or tell me another change.";
   }
   switch (field) {
     case "rates":     return RATES_Q;
@@ -96,7 +96,7 @@ function profileFlowQuestion(field: ProfileUpdateField, step: string, session: R
     case "languages": return LANGUAGES_Q;
     case "jobtype":   return JOB_TYPE_Q;
     case "travel":    return TRAVEL_Q;
-    case "pause":     return "When would you like to pause until? (e.g. \"until July 12\", \"for two weeks\", \"indefinitely\")";
+    case "pause":     return "When would you like to pause until? You can say a date, for two weeks, or indefinitely.";
     default:          return "What would you like to change?";
   }
 }
@@ -233,7 +233,7 @@ async function handleRatesUpdate(
   if (step === "confirm") {
     try { draft = { ...current, ...(JSON.parse((session.profileUpdateValue as string) ?? "{}") as Partial<RatesDraft>) }; } catch { /* keep current */ }
   }
-  const confirmLine = `Your Rates section would read:\n${ratesRecap(draft)}\n\nReply YES to save, NO to leave it as it is, or tell me another change.`;
+  const confirmLine = `Your Rates section would read:\n${ratesRecap(draft)}\n\nWant me to save that? Say yes, or no to leave it, or tell me another change.`;
   const reAsk = step === "confirm" ? confirmLine : RATES_Q;
   if (await isQuestionOrOther(text, reAsk)) {
     await sendMessage(chatId, await answerMidFlow(text, reAsk, RATES_FACTS(current)));
@@ -257,12 +257,12 @@ async function handleRatesUpdate(
         experience:          draft.experience,
         maxClients:          draft.maxClients,
       });
-      await sendMessage(chatId, `Done — your Rates section now reads:\n${ratesRecap(draft)}`);
+      await sendMessage(chatId, `Done, your Rates section now reads:\n${ratesRecap(draft)}`);
       return;
     }
     if (decision.toUpperCase().startsWith("NO")) {
       await clearProfileFlow(phone);
-      await sendMessage(chatId, "No problem — your rates weren't changed.");
+      await sendMessage(chatId, "No problem, your rates weren't changed.");
       return;
     }
     // CHANGE → fall through and parse the new values onto the draft
@@ -305,7 +305,7 @@ async function handleRatesUpdate(
     profileUpdateValue: JSON.stringify(next),
     stateExpiresAt:     FLOW_TTL(),
   });
-  await sendMessage(chatId, `Your Rates section would read:\n${ratesRecap(next)}\n\nReply YES to save, NO to leave it as it is, or tell me another change.`);
+  await sendMessage(chatId, `Your Rates section would read:\n${ratesRecap(next)}\n\nWant me to save that? Say yes, or no to leave it, or tell me another change.`);
 }
 
 // ── SKILLS ──────────────────────────────────────────────────────────────────
@@ -404,7 +404,7 @@ async function handleSkillsUpdate(
 
     if (proposed.join("|") === current.join("|")) {
       await clearProfileFlow(phone);
-      await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Your services already read: ${serviceLabels(current).join(", ") || "(none)"} — nothing to change.`);
+      await sendMessage(chatId, `${notes.join(" ")}${notes.length ? " " : ""}Your services already read: ${serviceLabels(current).join(", ") || "(none)"}, so there's nothing to change.`);
       return;
     }
 
@@ -416,7 +416,7 @@ async function handleSkillsUpdate(
     });
     await sendMessage(chatId,
       `${notes.join(" ")}${notes.length ? " " : ""}Your services will be: ${serviceLabels(proposed).join(", ") || "(none)"}.\n\n` +
-      `Reply YES to save that, or NO to leave them as they are.`,
+      `Want me to save that?`,
     );
     return;
   }
@@ -427,7 +427,7 @@ async function handleSkillsUpdate(
   })();
   const proposed = orderedCanonicalServices(Array.isArray(parked) ? parked : ((parked as { services?: unknown[] })?.services ?? []));
   const parkedKinds = Array.isArray(parked) ? kindsOfServices(proposed, CARE_KINDS) : kindsOfServices(proposed, CARE_KINDS);
-  const reAskConfirm = `So — save these services: ${serviceLabels(proposed).join(", ") || "(none)"}? Reply YES or NO.`;
+  const reAskConfirm = `Just checking, should I save these services: ${serviceLabels(proposed).join(", ") || "(none)"}?`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, SKILLS_FACTS));
     return;
@@ -442,9 +442,9 @@ async function handleSkillsUpdate(
       skills:             proposed,
       careKinds:          parkedKinds, // derived from the services, never asked (2026-10-19)
     });
-    await sendMessage(chatId, `Done — your services now read: ${serviceLabels(proposed).join(", ") || "(none)"}.`);
+    await sendMessage(chatId, `Done, your services now read: ${serviceLabels(proposed).join(", ") || "(none)"}.`);
   } else {
-    await sendMessage(chatId, "No problem — your services weren't changed.");
+    await sendMessage(chatId, "No problem, your services weren't changed.");
   }
 }
 
@@ -496,20 +496,20 @@ async function handleLanguagesUpdate(
     await db.collection("agent_sessions").doc(phone).update({
       profileUpdateStep: "confirm", profileUpdateField: "languages", profileUpdateValue: JSON.stringify(proposed), stateExpiresAt: FLOW_TTL(),
     });
-    await sendMessage(chatId, `${note}Your languages will be: ${proposed.join(", ")}.\n\nReply YES to save that, or NO to leave them as they are.`);
+    await sendMessage(chatId, `${note}Your languages will be: ${proposed.join(", ")}.\n\nWant me to save that?`);
     return;
   }
   const proposed = (() => { try { return JSON.parse((session.profileUpdateValue as string) ?? "[]") as string[]; } catch { return [] as string[]; } })();
-  const reAskConfirm = `So — save these languages: ${proposed.join(", ")}? Reply YES or NO.`;
+  const reAskConfirm = `Just checking, should I save these languages: ${proposed.join(", ")}?`;
   if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, LANGUAGES_FACTS)); return; }
   const d = await yesNo(text);
   if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
   await clearProfileFlow(phone);
   if (d === "YES" && proposed.length) {
     await db.collection("caregivers").doc(caregiverId).update({ languages: proposed });
-    await sendMessage(chatId, `Done — your languages now read: ${proposed.join(", ")}.`);
+    await sendMessage(chatId, `Done, your languages now read: ${proposed.join(", ")}.`);
   } else {
-    await sendMessage(chatId, "No problem — your languages weren't changed.");
+    await sendMessage(chatId, "No problem, your languages weren't changed.");
   }
 }
 
@@ -533,11 +533,11 @@ async function handleJobTypeUpdate(
       return;
     }
     await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "confirm", profileUpdateField: "jobtype", profileUpdateValue: id, stateExpiresAt: FLOW_TTL() });
-    await sendMessage(chatId, `Looking for: ${jobTypeLabel(id)}.\n\nReply YES to save that, or NO to leave it as it is.`);
+    await sendMessage(chatId, `Looking for: ${jobTypeLabel(id)}.\n\nWant me to save that?`);
     return;
   }
   const id = String(session.profileUpdateValue ?? "");
-  const reAskConfirm = `So — set Looking for to ${jobTypeLabel(id)}? Reply YES or NO.`;
+  const reAskConfirm = `Just checking, should I set Looking for to ${jobTypeLabel(id)}?`;
   if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, JOB_TYPE_FACTS)); return; }
   const d = await yesNo(text);
   if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
@@ -545,9 +545,9 @@ async function handleJobTypeUpdate(
   if (d === "YES" && JOB_TYPE_OPTIONS.some((j) => j.id === id)) {
     // The page's Save writes jobTypes as a one-element array of the hyphenated id.
     await db.collection("caregivers").doc(caregiverId).update({ jobTypes: [id] });
-    await sendMessage(chatId, `Done — Looking for: ${jobTypeLabel(id)}.`);
+    await sendMessage(chatId, `Done, Looking for: ${jobTypeLabel(id)}.`);
   } else {
-    await sendMessage(chatId, "No problem — nothing changed.");
+    await sendMessage(chatId, "No problem, nothing changed.");
   }
 }
 
@@ -567,20 +567,20 @@ async function handleTravelUpdate(
       return;
     }
     await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "confirm", profileUpdateField: "travel", profileUpdateValue: String(radius), stateExpiresAt: FLOW_TTL() });
-    await sendMessage(chatId, `Willing to travel within ${radius} miles.\n\nReply YES to save that, or NO to leave it as it is.`);
+    await sendMessage(chatId, `Willing to travel within ${radius} miles.\n\nWant me to save that?`);
     return;
   }
   const radius = Number(session.profileUpdateValue ?? 0);
-  const reAskConfirm = `So — set your travel distance to ${radius} miles? Reply YES or NO.`;
+  const reAskConfirm = `Just checking, should I set your travel distance to ${radius} miles?`;
   if (await isQuestionOrOther(text, reAskConfirm)) { await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, TRAVEL_FACTS)); return; }
   const d = await yesNo(text);
   if (d === "OTHER") { await sendMessage(chatId, reAskConfirm); return; }
   await clearProfileFlow(phone);
   if (d === "YES" && TRAVEL_OPTIONS.includes(radius)) {
     await db.collection("caregivers").doc(caregiverId).update({ serviceRadius: radius });
-    await sendMessage(chatId, `Done — willing to travel within ${radius} miles.`);
+    await sendMessage(chatId, `Done, willing to travel within ${radius} miles.`);
   } else {
-    await sendMessage(chatId, "No problem — nothing changed.");
+    await sendMessage(chatId, "No problem, nothing changed.");
   }
 }
 
@@ -631,7 +631,7 @@ async function handleBioUpdate(
 
   // confirm
   const proposedBio = (session.profileUpdateValue as string) ?? "";
-  const reAskConfirm = `So — want me to save this bio?\n\n"${proposedBio}"`;
+  const reAskConfirm = `Just checking, want me to save this bio?\n\n"${proposedBio}"`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, BIO_FACTS));
     return;
@@ -643,9 +643,9 @@ async function handleBioUpdate(
     await db.collection("caregivers").doc(caregiverId).update({
       bio:              proposedBio,
     });
-    await sendMessage(chatId, "Done — your bio is updated.");
+    await sendMessage(chatId, "Done, your bio is updated.");
   } else {
-    await sendMessage(chatId, "No problem — your bio wasn't changed.");
+    await sendMessage(chatId, "No problem, your bio wasn't changed.");
   }
 }
 
@@ -663,7 +663,7 @@ async function handlePhotoUpdate(
 
   await clearProfileFlow(phone);
   await sendMessage(chatId,
-    "Tap to upload a new profile photo — it'll bring you right back here when you're done:",
+    "Here's where to upload a new profile photo. It'll bring you right back here when you're done:",
   );
   await sendMessage(chatId, { parts: [{ type: "link", value: photoUrl }] });
 }
@@ -716,7 +716,7 @@ async function handlePauseAccount(
     const untilLabel = until === "indefinite" ? "indefinitely" : `until ${until}`;
     await sendMessage(chatId,
       `Pause your account ${untilLabel}? You won't receive job matches during this time. ` +
-      `Reply YES to pause, or NO to cancel.`,
+      `Should I go ahead?`,
     );
     return;
   }
@@ -724,7 +724,7 @@ async function handlePauseAccount(
   // confirm
   const until = (session.profileUpdateValue as string) ?? "indefinite";
   const untilLabel = until === "indefinite" ? "indefinitely" : `until ${until}`;
-  const reAskConfirm = `Pause your account ${untilLabel}? Reply YES to pause, or NO to cancel.`;
+  const reAskConfirm = `Pause your account ${untilLabel}? Should I go ahead?`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, PAUSE_FACTS));
     return;
@@ -740,10 +740,10 @@ async function handlePauseAccount(
     // This door texts its own "Done" line below, so the shared write stamps the session
     // and the lifecycle notice (B7) keeps the bell only — one text per event.
     await pauseCaregiver(caregiverId, until, { phone });
-    const backWhen = until === "indefinite" ? "Text REACTIVATE whenever you're ready to come back." : `You'll be reactivated on ${until}. Text REACTIVATE sooner if your plans change.`;
-    await sendMessage(chatId, `Done — your account is paused. ${backWhen}`);
+    const backWhen = until === "indefinite" ? "Say reactivate whenever you're ready to come back." : `You'll be reactivated on ${until}. Say reactivate sooner if your plans change.`;
+    await sendMessage(chatId, `Done, your account is paused. ${backWhen}`);
   } else {
-    await sendMessage(chatId, "No problem — your account is still active.");
+    await sendMessage(chatId, "No problem, your account is still active.");
   }
 }
 

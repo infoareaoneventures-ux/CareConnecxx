@@ -77,7 +77,7 @@ describe("views", () => {
 
   it("Day: the day's Available blocks, events by time, cancelled hidden, numbered", () => {
     const d = dayText(TODAY, shifts(), ivs(), grid(), TODAY);
-    expect(d.text).toBe("Wed, Sep 30, 2026 (today)\nAvailable: Evening\n\n1. 7:30 PM – 7:45 PM · Basra Yousuf · Scheduled\n\nReply VISIT n or INTERVIEW n for details. TODAY, TOMORROW, WEEK, NEXT WEEK or MONTH for another view.");
+    expect(d.text).toBe("Wed, Sep 30, 2026 (today)\nAvailable: Evening\n\n1. 7:30 PM – 7:45 PM · Basra Yousuf · Scheduled\n\nWant details on one? Say visit or interview and its number. For another view, say today, tomorrow, week, next week or month.");
     expect(d.items).toEqual([{ number: 1, kind: "shift", id: "a", status: "scheduled", clientName: "Basra Yousuf", date: TODAY }]);
     expect(dayText("2026-10-01", shifts(), ivs(), grid(), TODAY).text).toContain("Not marked available this day.\n\nNothing scheduled.");
   });
@@ -98,7 +98,7 @@ describe("views", () => {
     expect(listText("this-week", shifts(), ivs(), TODAY).items).toHaveLength(4);
     const paged = listText("all", [...shifts(), ...Array.from({ length: 6 }, (_, i) => ({ id: `x${i}`, caregiverId: "cg1", date: `2026-11-0${i + 1}`, startTime: "08:00", status: "scheduled", clientName: "Z" }))] as any[], ivs(), TODAY, { perPage: 5 });
     expect(paged.remaining).toBe(4);
-    expect(paged.text).toMatch(/Reply MORE for more days\.$/);
+    expect(paged.text).toMatch(/There are more days too, just say more\.$/);
   });
 });
 
@@ -113,29 +113,29 @@ describe("detail panels", () => {
       "Scheduled · Basra Yousuf", "Mon, Jan 5, 2099 · 7:30 PM – 7:45 PM", "$25/hr", "12 Elm St", "No pets",
       "Booking note: Always call me if anything's off", "Visit note: Use the side door",
       "", "Tasks 0/2", "H M (parent)", "Note: Likes tea at 3.", "Tasks:", "1. occasional help", "2. Mobility Assistance — Transfer Assist",
-      "", "Start available 15 min before the shift.", "Reply CANCEL SHIFT to cancel it.", "To message Basra Yousuf, just tell me what to send.",
+      "", "Start available 15 min before the shift.", "If you need to cancel it, say cancel shift.", "To message Basra Yousuf, just tell me what to send.",
       "", "Emergency contact: Ali · son · 555-1212",
     ].join("\n"));
   });
   it("in progress / completed / missed / gated read like the panel's states", () => {
     const base = { id: "a", caregiverId: "cg1", date: "2026-09-30", startTime: "19:30", endTime: "19:45", clientName: "B", careRecipients: [], tasksCompleted: [] } as any;
-    expect(shiftDetailText({ ...base, status: "in-progress", startedAt: "2026-10-01T02:31:00.000Z" }, null)).toContain("Started Sep 30, 7:31:00 PM\n\nIn progress — reply DONE n to check off a task, NOTE followed by anything the family should see, TASKS to re-list, or FINISH when the visit is over.");
+    expect(shiftDetailText({ ...base, status: "in-progress", startedAt: "2026-10-01T02:31:00.000Z" }, null)).toContain("Started Sep 30, 7:31:00 PM\n\nIn progress. Tell me what you've finished as you go, send any notes the family should see, say tasks to see the list again, or finish when the visit is over.");
     expect(shiftDetailText({ ...base, status: "completed", startedAt: "2026-10-01T02:31:00.000Z", completedAt: "2026-10-01T02:45:00.000Z", completionNotes: "All good.", notesLog: [{ at: "2026-10-01T02:40:00.000Z", text: "Ate well." }] }, null)).toContain("Shift Completed\nVisit notes\n• 7:40 PM — Ate well.\nCare Provider note\nAll good.");
-    expect(shiftDetailText({ ...base, status: "scheduled", date: "2000-01-01" }, null)).toContain("This visit was missed — reply LOG to log the hours.");
+    expect(shiftDetailText({ ...base, status: "scheduled", date: "2000-01-01" }, null)).toContain("This visit was missed. Say log and I'll log the hours.");
     const soon = new Date(Date.now() + 5 * 60_000);
     const la = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(soon).reduce((o: any, p) => ({ ...o, [p.type]: p.value }), {});
     const startable = { ...base, status: "scheduled", date: `${la.year}-${la.month}-${la.day}`, startTime: `${la.hour === "24" ? "00" : la.hour}:${la.minute}`, endTime: "23:59" };
-    expect(shiftDetailText(startable, null)).toContain("Reply START to start this shift.");
+    expect(shiftDetailText(startable, null)).toContain("Say start when you're there and I'll start this shift.");
     // One visit at a time (2026-10-07): with another visit open the panel says finish first instead.
-    expect(shiftDetailText(startable, null, { anotherInProgress: true })).toContain("Finish your current visit first (text FINISH), then START this one.");
-    expect(shiftDetailText(startable, null, { anotherInProgress: true })).not.toContain("Reply START to start this shift.");
+    expect(shiftDetailText(startable, null, { anotherInProgress: true })).toContain("Finish your current visit first (say finish), then start this one.");
+    expect(shiftDetailText(startable, null, { anotherInProgress: true })).not.toContain("Say start when you're there and I'll start this shift.");
     expect(shiftDetailText(startable, null, { gate: "membership" })).toContain("Membership required");
   });
   it("an interview: status, time, type, job details, the Jobs-tab actions as reply words", () => {
     const text = interviewDetailText(ivRow("iv1", "2026-09-28T16:00:00.000Z", "pending", "requested", { notes: "Bring references" }), { careTypes: ["Companionship"], daysOfWeek: ["Mon", "Wed"], timeOfDay: ["morning"], jobFrequency: "part-time", rate: 26, city: "Seattle", state: "WA" });
-    expect(text).toBe("Interview · Pending · Basra Yousuf\nMon, Sep 28 · 9:00 AM\nVideo Call\nSeattle, WA\nCompanionship\nDays: Mon, Wed\nTime: Morning\npart time · $26/hr\nNotes: Bring references\n\nReply ACCEPT to accept. DECLINE to decline. or tell me a different time to propose.\nTo message Basra Yousuf, just tell me what to send.");
+    expect(text).toBe("Interview · Pending · Basra Yousuf\nMon, Sep 28 · 9:00 AM\nVideo Call\nSeattle, WA\nCompanionship\nDays: Mon, Wed\nTime: Morning\npart time · $26/hr\nNotes: Bring references\n\nWant to accept it, decline it, or propose a different time?\nTo message Basra Yousuf, just tell me what to send.");
     const acc = interviewDetailText(ivRow("iv2", "2026-09-28T16:00:00.000Z", "accepted", "accepted", { joinVideoCall: "https://meet.google.com/abc", actions: ["Join video call", "Cancel"] }), null);
-    expect(acc).toContain("Join: https://meet.google.com/abc. Tell me if you need to cancel this interview.");
+    expect(acc).toContain("Join: https://meet.google.com/abc\nTell me if you need to cancel this interview.");
   });
 });
 

@@ -23,12 +23,13 @@ import {
 const db = admin.firestore();
 const FLOW_TTL_MS = 30 * 60 * 1000;
 
-export const WHICH_DAYS_Q = "Which day(s) would you like to update? For example \"Monday\", \"Monday and Wednesday\", or \"weekdays\".";
-export const CONFIRM_LINE = "Reply SAVE to save this, or CANCEL to leave it as it is.";
+// Evia's voice (2026-10-26): questions, not a reply protocol — SAVE / YES, CANCEL / NO, ALL / NONE still work exactly as before.
+export const WHICH_DAYS_Q = "Which days would you like to update? You can say Monday, Monday and Wednesday, or weekdays.";
+export const CONFIRM_LINE = "Want me to save that?";
 // The same sentence the router sends for a bare CANCEL (routeCaregiver PARKED_FLOW_CANCEL_LINE).
-export const BACKED_OUT = "Okay — your availability wasn't changed.";
+export const BACKED_OUT = "Okay, your availability wasn't changed.";
 const blocksQ = (days: string[], action: string) =>
-  `Which time blocks ${action === "add" ? "should I add for" : "are you available on"} ${days.map(cap).join(", ")} — ${BLOCK_CHOICES}? Reply the names, ALL, or NONE to clear ${days.length === 1 ? "that day" : "those days"}.`;
+  `Which time blocks ${action === "add" ? "should I add for" : "are you available on"} ${days.map(cap).join(", ")}? The choices are ${BLOCK_CHOICES}. Tell me the names, or say all, or none to clear ${days.length === 1 ? "that day" : "those days"}.`;
 const cap = (d: string) => d.charAt(0).toUpperCase() + d.slice(1);
 
 async function isQuestionOrOther(text: string): Promise<boolean> {
@@ -65,7 +66,7 @@ export async function handleAvailabilityUpdate(
 
   if (step === "start") {
     if (await isBackOutRequest(text, WHICH_DAYS_Q)) { await clear(); await sendMessage(BACKED_OUT); return; }
-    if (await isQuestionOrOther(text)) { await sendMessage(`I can update your availability — it's the same grid as Update Availability on your Calendar. ${WHICH_DAYS_Q}`); return; }
+    if (await isQuestionOrOther(text)) { await sendMessage(`I can update your availability, it's the same grid as Update Availability on your Calendar. ${WHICH_DAYS_Q}`); return; }
     const raw = await parseWithClaude(
       `The care provider wants to change their weekly availability. Extract the days and the action. Return ONLY JSON: {"action":"add"|"remove"|"replace","days":["monday",...],"blocks":["morning","afternoon","evening","overnight"]}. ` +
       `"weekdays" = monday..friday, "weekends" = saturday+sunday, "every day" = all seven. "remove"/"not available"/"take off" = remove. "add" when they add hours. Otherwise "replace". ` +
@@ -107,7 +108,7 @@ export async function handleAvailabilityUpdate(
         text, 100,
       ).catch(() => "");
       try { const p = JSON.parse(raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "")); if (Array.isArray(p)) blocks = p.map((b) => String(b).toLowerCase()).filter((b): b is BlockId => (BLOCK_IDS as string[]).includes(b)); } catch { /* unparsed */ }
-      if (blocks === null) { await sendMessage(`Sorry, I didn't quite catch that. ${blocksQ(days, action)}`); return; }
+      if (blocks === null) { await sendMessage(`Sorry, I'm not sure I followed. ${blocksQ(days, action)}`); return; }
     }
     const current = await loadGrid();
     const patch: GridPatch = blocks.length === 0 ? { set: Object.fromEntries(days.map((d) => [d, [] as string[]])) } : action === "add" ? { add: Object.fromEntries(days.map((d) => [d, blocks!])) } : { set: Object.fromEntries(days.map((d) => [d, blocks!])) };
@@ -123,7 +124,7 @@ export async function handleAvailabilityUpdate(
     if (norm === "SAVE" || norm === "YES" || norm === "CONFIRM" || norm === "SAVE AVAILABILITY") decision = "save";
     else if (norm === "CANCEL" || norm === "NO") decision = "cancel";
     else {
-      const v = await parseWithClaude("Evia asked the care provider to reply SAVE to save their availability or CANCEL. Classify the reply: SAVE, CANCEL, or OTHER (a question or a change).", text, 5).catch(() => "OTHER");
+      const v = await parseWithClaude("Evia showed the care provider their new availability grid and asked \"Want me to save that?\". Classify the reply: SAVE (yes / go ahead / save it), CANCEL (no / never mind / leave it), or OTHER (a question or a change).", text, 5).catch(() => "OTHER");
       decision = v.toUpperCase().startsWith("SAVE") ? "save" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (decision === "other") { await sendMessage(`Your availability would be:\n${gridText(proposed)}\n\n${CONFIRM_LINE}`); return; }

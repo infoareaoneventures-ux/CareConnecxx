@@ -96,9 +96,9 @@ export function familiesText(list: FamilyEntry[], opts: { tab: "active" | "past"
   const blocks = shown.map((f, i) => familyCardLines(from + i + 1, f).join("\n"));
   const header = `${opts.tab === "active" ? `My Families · Active (${filtered.length})` : "My Families · Past"}${q ? ` · "${opts.query!.trim()}"` : ""}`;
   const footer = [
-    `Reply FAMILY n for care details. To message a family, just tell me what to send.`,
-    opts.tab === "active" ? "Reply PAST FAMILIES for past families." : "Reply FAMILIES for active families.",
-    remaining > 0 ? "Reply MORE for more." : "",
+    "Want the care details for one? Say family and its number. To message a family, just tell me what to send.",
+    opts.tab === "active" ? "Say past families to see the ones you've worked with before." : "Say families to see your active ones.",
+    remaining > 0 ? "There are more too, just say more." : "",
   ].filter(Boolean).join(" ");
   return { text: [header, "", blocks.join("\n\n"), "", footer].join("\n"), items, shown: shown.length, remaining };
 }
@@ -183,7 +183,7 @@ export async function handleFamiliesKeyword(phone: string, chatId: string, careg
   const m = /^FAMILY\s+(\d+)$/i.exec(raw);
   if (m) {
     const ref = resolveFamilyRef(session, { number: Number(m[1]) });
-    if (!ref) { await sendMessage(chatId, `I don't have a family ${m[1]} on the last list — reply FAMILIES to see them.`); return "handled"; }
+    if (!ref) { await sendMessage(chatId, `I don't see a family ${m[1]} on the list I sent. Say families and I'll send it again.`); return "handled"; }
     await sendFamilyDetails(chatId, caregiverId, ref); return "handled";
   }
   return "passthrough";

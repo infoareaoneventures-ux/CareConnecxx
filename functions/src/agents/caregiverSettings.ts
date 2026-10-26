@@ -97,7 +97,7 @@ export function settingsPageText(page: SettingsPage): string {
   lines.push(`First name: ${dash(page.firstName)}`, `Last name: ${dash(page.lastName)}`, `Date of birth: ${dash(page.dob)}`);
   lines.push(`Gender: ${dash(page.gender)} (tell me to set it: ${GENDER_OPTIONS.join(", ")})`);
   lines.push(page.email
-    ? `Recovery email: ${page.email} (${page.emailVerified ? "Confirmed" : "Not confirmed yet, reply RESEND EMAIL LINK"})`
+    ? `Recovery email: ${page.email} (${page.emailVerified ? "Confirmed" : "Not confirmed yet, say resend email link and I'll send it again"})`
     : "Recovery email: not set (tell me an email to add one)");
   lines.push(`Phone number: ${dash(page.phone)} (to change it, tell me, and a secure link goes to your recovery email)`);
   const a = page.address;
@@ -109,9 +109,9 @@ export function settingsPageText(page: SettingsPage): string {
   lines.push("");
   if (page.isPaused) {
     const dated = page.pausedUntil && page.pausedUntil !== "2099-12-31";
-    lines.push(`Your account is paused. ${dated ? `You'll automatically become active again on ${page.pausedUntil}. Reactivate sooner anytime.` : "You won't show up for new matches until you reactivate. Fully reversible anytime."} Reply REACTIVATE.`);
+    lines.push(`Your account is paused. ${dated ? `You'll automatically become active again on ${page.pausedUntil}. Reactivate sooner anytime.` : "You won't show up for new matches until you reactivate. Fully reversible anytime."} Say reactivate whenever you're ready.`);
   } else {
-    lines.push("Pause your account: taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime. Reply PAUSE, or PAUSE 2026-11-01 to resume on a date.");
+    lines.push("Pause your account: taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime. Say pause, or pause 2026-11-01 to come back on a date.");
   }
   lines.push("", "Deleting your account is permanent and cannot be undone. To delete it, tell me and I'll confirm with you first.");
   return lines.join("\n");
@@ -130,12 +130,12 @@ export async function sendResendEmailLink(chatId: string, caregiverId: string): 
   try {
     const { resendEmailConfirmation, maskEmail } = await import("../accountRecovery");
     const r = await resendEmailConfirmation(caregiverId);
-    if (r.sentTo) { await sendMessage(chatId, `Confirmation link re-sent to ${maskEmail(r.sentTo)} — tap it from that inbox (check Junk too).`); return true; }
-    await sendMessage(chatId, "Your recovery email is already confirmed — nothing to resend.");
+    if (r.sentTo) { await sendMessage(chatId, `Confirmation link re-sent to ${maskEmail(r.sentTo)}. Tap it from that inbox (check Junk too).`); return true; }
+    await sendMessage(chatId, "Your recovery email is already confirmed, so there's nothing to resend.");
     return false;
   } catch (err) {
     console.error("[caregiverSettings] resend email link failed:", err);
-    await sendMessage(chatId, "I couldn't resend the confirmation link right now — reply RESEND EMAIL LINK again in a moment.");
+    await sendMessage(chatId, "I couldn't resend the confirmation link just now. Ask me again in a moment.");
     return false;
   }
 }
@@ -148,7 +148,7 @@ export async function sendResendEmailLink(chatId: string, caregiverId: string): 
 export async function reactivateFromSettings(chatId: string, caregiverId: string, phone?: string): Promise<boolean> {
   const { reactivateCaregiver } = await import("./pauseAccount");
   await reactivateCaregiver(caregiverId, { phone });
-  await sendMessage(chatId, "You're active again — you'll start showing up for new matches.");
+  await sendMessage(chatId, "You're active again. You'll start showing up for new matches.");
   return true;
 }
 
@@ -165,15 +165,15 @@ export async function handleSettingsKeyword(phone: string, chatId: string, careg
   const pause = /^PAUSE(?: ACCOUNT)?(?: (\d{4}-\d{2}-\d{2}))?$/.exec(upper);
   if (pause) {
     const until = pause[1];
-    if (until && until < new Date().toISOString().slice(0, 10)) { await sendMessage(chatId, "That date has already passed — give me a future date (YYYY-MM-DD), or reply PAUSE to pause until you reactivate."); return "handled"; }
+    if (until && until < new Date().toISOString().slice(0, 10)) { await sendMessage(chatId, "That date has already passed. Give me a date that's still ahead, or say pause to pause until you reactivate."); return "handled"; }
     const stateExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     if (!until) {
       await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "collect", profileUpdateField: "pause", stateExpiresAt });
-      await sendMessage(chatId, "When would you like to pause until? (e.g. \"until July 12\", \"for two weeks\", \"indefinitely\")");
+      await sendMessage(chatId, "When would you like to pause until? You can say a date, for two weeks, or indefinitely.");
       return "handled";
     }
     await db.collection("agent_sessions").doc(phone).update({ profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: until, stateExpiresAt });
-    await sendMessage(chatId, `Pause your account until ${until}? You won't receive job matches during this time. Reply YES to pause, or NO to cancel.`);
+    await sendMessage(chatId, `Pause your account until ${until}? You won't receive job matches during this time. Should I go ahead?`);
     return "handled";
   }
   if (upper === "REACTIVATE" || upper === "REACTIVATE ACCOUNT" || upper === "UNPAUSE") { await reactivateFromSettings(chatId, caregiverId, phone); return "handled"; }

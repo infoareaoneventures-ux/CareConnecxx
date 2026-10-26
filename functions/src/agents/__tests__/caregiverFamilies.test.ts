@@ -56,7 +56,7 @@ describe("the cards", () => {
   it("name · pill · $rate/hr · days · Caring for; 2 per text + MORE; empty states are the page's; search by name", () => {
     const f = (n: string, cid: string, source: "active" | "past") => ({ clientId: cid, bookingId: "b" + cid, name: n, source, scheduleDays: ["Mon", "Wed"], rate: 25, bookingStatus: "accepted", careRecipients: RECIPIENTS as any });
     const t = familiesText([f("Basra Yousuf", "fam1", "active"), f("Tom Nguyen", "fam2", "active"), f("Ana Silva", "fam3", "active")], { tab: "active" });
-    expect(t.text).toBe("My Families · Active (3)\n\n1. Basra Yousuf · Active booking\n$25/hr\nMon · Wed\nCaring for: H M\n\n2. Tom Nguyen · Active booking\n$25/hr\nMon · Wed\nCaring for: H M\n\nReply FAMILY n for care details. To message a family, just tell me what to send. Reply PAST FAMILIES for past families. Reply MORE for more.");
+    expect(t.text).toBe("My Families · Active (3)\n\n1. Basra Yousuf · Active booking\n$25/hr\nMon · Wed\nCaring for: H M\n\n2. Tom Nguyen · Active booking\n$25/hr\nMon · Wed\nCaring for: H M\n\nWant the care details for one? Say family and its number. To message a family, just tell me what to send. Say past families to see the ones you've worked with before. There are more too, just say more.");
     expect(t.items.map((i) => `${i.number}:${i.clientId}`)).toEqual(["1:fam1", "2:fam2", "3:fam3"]);
     expect(t.remaining).toBe(1);
     expect(familiesText([], { tab: "active" }).text).toBe(EMPTY_ACTIVE);
@@ -90,7 +90,7 @@ describe("keywords", () => {
     expect(await handleFamiliesKeyword("+1", "chat", "cg1", "FAMILY 1", { lastFamilyList: list })).toBe("handled");
     expect(hoisted.sent.at(-1)).toMatch(/^Basra Yousuf — Care details\n\nH M — parent\n/);
     expect(await handleFamiliesKeyword("+1", "chat", "cg1", "family 4", { lastFamilyList: list })).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/don't have a family 4/);
+    expect(hoisted.sent.at(-1)).toMatch(/don't see a family 4/);
     expect(await handleFamiliesKeyword("+1", "chat", "cg1", "PAST FAMILIES", {})).toBe("handled");
     expect(hoisted.sent.at(-1)).toMatch(/^My Families · Past\n\n1\. Tom Nguyen · Past booking/);
     expect(await handleFamiliesKeyword("+1", "chat", "cg1", "who do I work with", {})).toBe("passthrough");

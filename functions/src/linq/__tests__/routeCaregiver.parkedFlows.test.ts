@@ -199,7 +199,7 @@ describe("bare CANCEL backs out of the parked modal, not into the cancel-shift f
     expect(session().profileUpdateField).toBeUndefined();
     expect(session().stateExpiresAt).toBeUndefined();
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage.mock.calls[0][1]).toBe("No problem — your profile wasn't changed.");
+    expect(sendMessage.mock.calls[0][1]).toBe("No problem, your profile wasn't changed.");
     expect(handleCaregiverCancelShift).not.toHaveBeenCalled();
     expect(handleCaregiverProfileUpdate).not.toHaveBeenCalled();
   });
@@ -209,7 +209,7 @@ describe("bare CANCEL backs out of the parked modal, not into the cancel-shift f
     const r = await routeCaregiverMessage(ctx("CANCEL"));
     expect(r).toBe("handled");
     expect(session().availabilityStep).toBeUndefined();
-    expect(sendMessage.mock.calls[0][1]).toBe("Okay — your availability wasn't changed.");
+    expect(sendMessage.mock.calls[0][1]).toBe("Okay, your availability wasn't changed.");
     expect(handleCaregiverCancelShift).not.toHaveBeenCalled();
     expect(handleAvailabilityUpdate).not.toHaveBeenCalled();
   });

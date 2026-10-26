@@ -202,7 +202,7 @@ describe("jp_ask_recipients", () => {
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.jobPostingData.careRecipients).toBeUndefined();
     expect(stored.jobPostingStep).toBe("jp_ask_recipients");
-    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I didn't quite catch that");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I'm not sure I followed");
   });
 
   // 2026-09-07 (live-caught): "it's someone new, my mother" correctly never
@@ -383,7 +383,7 @@ describe("jp_ask_caregivers_needed", () => {
 
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.jobPostingData.caregiversNeeded).toBeUndefined();
-    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I didn't quite catch that");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I'm not sure I followed");
   });
 });
 
@@ -516,7 +516,7 @@ describe("jp_confirm_post (live-caught: a bare 'yes' never actually posted the j
 
     const classifySystem = (messagesCreate.mock.calls[0][0] as { system: string }).system;
     expect(classifySystem).not.toContain("someone else");
-    expect(classifySystem).toContain("Confirming whether to post this job");
+    expect(classifySystem).toContain("Should I post this job");
   });
 });
 

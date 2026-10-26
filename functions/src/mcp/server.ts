@@ -1305,7 +1305,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "respond_to_booking_request",
     description:
       "The care provider Bookings page's Requests tab, Accept / Decline buttons — the ONLY way a care provider answers a family's booking request. " +
-      "Pass the request's number from show_booking_requests (\"accept 1\", \"decline 2\"); with no number it uses the request whose details were just shown. " +
+      "Pass the request's number from show_booking_requests (accept 1, decline 2); with no number it uses the request whose details were just shown. " +
       "Accept is gated exactly like the page (membership, then background check); Decline never is. Declining asks the care provider to confirm first " +
       "(the page's confirm dialog) — you get a confirmation request back, not a result. The tool texts the page's toast itself; the family is told by the " +
       "same triggers the site's buttons fire. Send nothing else this turn.",
@@ -2096,7 +2096,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "show_past_bookings",
     description:
       "The care provider Bookings page's Past Bookings tab — this tool TEXTS it itself: one card per past booking (family · N completed · N missed · N cancelled), " +
-      "two visits per card (a completed visit with its actual Started – Ended stamps and duration; a missed visit with 'reply LOG n'; a cancelled visit), numbered across the tab; " +
+      "two visits per card (a completed visit with its actual Started – Ended stamps and duration; a missed visit with 'say log n'; a cancelled visit), numbered across the tab; " +
       "2 cards per text, MORE for the rest; PAST VISITS shows every visit. Pass visitNumber to text ONE completed visit's detail (scheduled + actual times, tasks per recipient done / not done, " +
       "visit notes, closing note) — the page's click-through. Call it for 'my past visits', 'what did I do last week', 'which visits got cancelled', 'did I miss a shift'. Send nothing else this turn.",
     input_schema: {
@@ -5260,7 +5260,7 @@ async function executeToolCall(
       if (!sess) return toolError("NOT_FOUND", "No Evia conversation found for this care provider");
       const { sendCaregiverActiveBookings } = await import("../agents/caregiverActiveBookings");
       const r = await sendCaregiverActiveBookings(sess.phone, sess.chatId, caregiverId as string, { more: more === true, allVisits: allVisits === true });
-      return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, bookings: r.items, note: "The bookings were texted in full — send nothing else this turn. They can reply MORE for the rest." };
+      return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, bookings: r.items, note: "The bookings were texted in full — send nothing else this turn. They can say more for the rest." };
     }
 
     // ── show_families (the My Families page, texted — 2026-09-30) ──
@@ -5279,7 +5279,7 @@ async function executeToolCall(
         return { success: ok, clientId: ref.clientId, note: "The family's details were texted — send nothing else this turn." };
       }
       const r = await fam.sendCaregiverFamilies(sess.phone, sess.chatId, caregiverId as string, { tab: tab === "past" ? "past" : "active", query: typeof query === "string" ? query : undefined, more: more === true });
-      return { success: true, sent: true, tab: r.tab, count: r.count, total: r.total, remaining: r.remaining, families: r.families, note: "The families were texted — send nothing else this turn. They can reply FAMILY n, PAST FAMILIES / FAMILIES, or MORE; to message one, call send_client_message with that family's clientId." };
+      return { success: true, sent: true, tab: r.tab, count: r.count, total: r.total, remaining: r.remaining, families: r.families, note: "The families were texted — send nothing else this turn. They can say family n, PAST FAMILIES / FAMILIES, or MORE; to message one, call send_client_message with that family's clientId." };
     }
 
     // ── show_calendar (the My Calendar page, texted — 2026-09-30) ──
@@ -5304,7 +5304,7 @@ async function executeToolCall(
         : v === "list" ? { view: "list", filter: (["all", "upcoming", "this-week", "this-month", "last-30"] as const).find((x) => x === filter) ?? "upcoming", more: more === true }
         : { view: "week", offset: typeof offset === "number" ? Math.trunc(offset) : 0 };
       const r = await cal.sendCaregiverCalendar(sess.phone, sess.chatId, caregiverId as string, req);
-      return { success: true, sent: true, view: req.view, count: r.count, remaining: r.remaining, events: r.items, note: "The calendar was texted — send nothing else this turn. They can reply VISIT n / INTERVIEW n, TODAY, TOMORROW, WEEK, NEXT WEEK, MONTH, or MORE." };
+      return { success: true, sent: true, view: req.view, count: r.count, remaining: r.remaining, events: r.items, note: "The calendar was texted — send nothing else this turn. They can say visit n / INTERVIEW n, TODAY, TOMORROW, WEEK, NEXT WEEK, MONTH, or MORE." };
     }
 
     // ── show_past_bookings (the Past Bookings tab, texted — 2026-09-29) ──
@@ -5323,7 +5323,7 @@ async function executeToolCall(
         return { success: ok, shiftId: ref.shiftId, note: "The visit's detail was texted — send nothing else this turn." };
       }
       const r = await pb.sendCaregiverPastBookings(sess.phone, sess.chatId, caregiverId as string, { more: more === true, allVisits: allVisits === true });
-      return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, visits: r.items, note: "The past bookings were texted — send nothing else this turn. They can reply VISIT n, LOG n, PAST VISITS or MORE." };
+      return { success: true, sent: true, count: r.count, total: r.total, remaining: r.remaining, visits: r.items, note: "The past bookings were texted — send nothing else this turn. They can say visit n, LOG n, PAST VISITS or MORE." };
     }
 
     // ── start_log_hours_flow (Past Bookings › Log Hours — 2026-09-29) ──

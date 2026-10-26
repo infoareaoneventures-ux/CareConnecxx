@@ -309,7 +309,7 @@ describe("startBookingFlow", () => {
       expect(messagesCreate).toHaveBeenCalled();
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.bookingFlowStep).toBe("bk_ask_interview");
-      expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("didn't quite catch");
+      expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("not sure I followed");
     });
 
     it("auto-links with no ask at all when exactly one interview is eligible", async () => {
@@ -545,7 +545,7 @@ describe("bk_confirm_recipients", () => {
     await handleBookingFlowStep(PHONE, CHAT, "hmm not sure", session({ bookingFlowStep: "bk_confirm_recipients" }));
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_confirm_recipients");
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("didn't quite catch that");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("not sure I followed");
   });
 });
 
@@ -559,7 +559,7 @@ describe("bk_ask_rate", () => {
 
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_rate");
-    expect(String(sendMessage.mock.calls[0][1])).toContain("didn't quite catch");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("not sure I followed");
   });
 
   it("extracts a real rate and advances to the days question", async () => {
@@ -631,7 +631,7 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     await handleBookingFlowStep(PHONE, CHAT, "no thanks", session({ bookingFlowStep: "bk_ask_message", bookingFlowData: stored.bookingFlowData }));
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_confirm");
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Reply YES to send it");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Say yes and I'll send it");
   });
 
   it("\"no set schedule yet\" sends the site's Ongoing / No schedule set state — skips days, start, times and ongoing", async () => {
@@ -666,7 +666,7 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_times");
     expect(stored.bookingFlowData.dayTimes).toBeUndefined();
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("didn't quite catch");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("not sure I followed");
   });
 
   it("a job post with a known end date skips the ongoing question entirely", async () => {
@@ -965,7 +965,7 @@ describe("bk_confirm", () => {
     modelReplies(JSON.stringify({ action: "other" }), "YES", "Interviews usually run 15-30 minutes.");
     await handleBookingFlowStep(PHONE, CHAT, "how long does the interview usually take", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
     const sentTexts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
-    expect(sentTexts.at(-1)).toContain("Confirming whether to send this booking request");
+    expect(sentTexts.at(-1)).toContain("Should I send this booking request");
     expect(sentTexts.some((t) => t.includes("Here's your booking request:"))).toBe(false);
   });
 
@@ -1281,6 +1281,6 @@ describe("buildBookingRecap", () => {
     // asserting an absence nobody needs stated.
     expect(recap).not.toContain("Notes: None");
     expect(recap).toContain("Care location: 1 Elm St, Springfield, CA, 90000 (Smoking household)");
-    expect(recap).toContain("Reply YES to send it to Basra Yousuf");
+    expect(recap).toContain("Say yes and I'll send it to Basra Yousuf");
   });
 });

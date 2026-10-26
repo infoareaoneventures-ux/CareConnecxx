@@ -86,6 +86,6 @@ export function buildApprovalNoticeText(p: ApprovalNoticePayload): string {
         : "because the total is over $500";
     lines.push(`This one needs your approval — it won't auto-approve ${reason}.`);
   }
-  lines.push("Reply APPROVE to release payment, or tell me the correct clock-in and clock-out and I'll propose a correction.");
+  lines.push("Want to release the payment? Say approve. Or tell me the correct clock-in and clock-out and I'll propose a correction.");
   return lines.join("\n");
 }

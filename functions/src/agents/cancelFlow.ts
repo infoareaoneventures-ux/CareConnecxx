@@ -28,7 +28,7 @@ export interface CancelFlowData {
   pickIndex?: number; // 0-based into options
 }
 
-const CX_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const CX_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 const BARE_NO = new Set(["NO", "N", "NOPE", "NAH"]);
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
@@ -107,16 +107,16 @@ async function handleBackOut(phone: string, chatId: string, session: AgentSessio
     audience: "family",
     language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
     context: "The family decided not to cancel anything after all. Warmly confirm nothing was changed and everything stays as scheduled.",
-    fallback: "No problem — nothing was cancelled. Everything stays as scheduled.",
+    fallback: "No problem, nothing was cancelled. Everything stays as scheduled.",
     maxTokens: 70,
   }));
 }
 
 function PICK_QUESTION(d: CancelFlowData): string {
-  return `Here's what you can cancel right now:\n\n${d.options.map((o, i) => `${i + 1}. ${o.label}`).join("\n")}\n\nWhich one? Reply with a number.`;
+  return `Here's what you can cancel right now:\n\n${d.options.map((o, i) => `${i + 1}. ${o.label}`).join("\n")}\n\nWhich one? Just tell me the number.`;
 }
 function CONFIRM_QUESTION(o: CancelOption): string {
-  return `${o.confirmText}\n\nReply YES to cancel it, or NO to keep it.`;
+  return `${o.confirmText}\n\nJust checking, do you want to cancel it?`;
 }
 
 async function resolveByText(text: string, d: CancelFlowData): Promise<number | null> {

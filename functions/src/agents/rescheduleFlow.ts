@@ -51,7 +51,7 @@ export interface RescheduleFlowData {
   newEnd?: string;
 }
 
-const RS_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const RS_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 const BARE_NO = new Set(["NO", "N", "NOPE", "NAH"]);
 
 // ── Model plumbing (same shape as replacementFlow.ts so tests drive it identically) ─
@@ -179,7 +179,7 @@ function proposedWindow(d: RescheduleFlowData): string {
 }
 
 function PICK_QUESTION(d: RescheduleFlowData): string {
-  return `Here are your upcoming scheduled visits:\n\n${visitList(d)}\n\nWhich one would you like to move? Reply with a number.`;
+  return `Here are your upcoming scheduled visits:\n\n${visitList(d)}\n\nWhich one would you like to move? Just tell me the number.`;
 }
 
 function TIME_QUESTION(d: RescheduleFlowData): string {
@@ -188,7 +188,7 @@ function TIME_QUESTION(d: RescheduleFlowData): string {
 
 function RECAP(d: RescheduleFlowData): string {
   return `Move the ${currentWindow(d)} visit with ${d.caregiverName} to ${proposedWindow(d)}?\n\n` +
-    `${d.caregiverName} will need to accept before anything changes. Reply YES to send it, NO to leave it as is, or tell me a different day/time.`;
+    `${d.caregiverName} will need to accept before anything changes. Should I send it? Say yes, or tell me a different day or time.`;
 }
 
 // ── Entry ─────────────────────────────────────────────────────────────────────
@@ -447,7 +447,7 @@ async function handleRsConfirm(phone: string, chatId: string, text: string, sess
         return;
       }
       await updateStep(phone, "rs_pick");
-      await sendMessage(chatId, `Sure — which visit instead?\n\n${visitList(data)}\n\nReply with a number.`);
+      await sendMessage(chatId, `Sure, which visit instead?\n\n${visitList(data)}\n\nJust tell me the number.`);
       return;
     }
     case "change_time": {

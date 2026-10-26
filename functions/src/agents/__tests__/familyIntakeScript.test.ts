@@ -77,14 +77,14 @@ describe("the family intake follows the site: one step list, first unanswered st
     const stagedOpen = { ...base, ...dataFromRoster([{ relationship: "self", name: "Hamse" }, { relationship: "child", name: "Mahad K", ageRange: "toddler" }]) };
     expect(nextFamilyStep(stagedOpen)).toBe("family_ask_more_people"); // the cycle: asked again after each person until NO / a number / four
     const staged = { ...base, ...dataFromRoster([{ relationship: "self", name: "Hamse" }, { relationship: "child", name: "Mahad K", ageRange: "toddler" }]), rosterCountConfirmed: true };
-    expect(nextFamilyStep(staged)).toBe("family_ask_providers_count"); // the site's "How many care providers do you need?"
+    expect(nextFamilyStep(staged)).toBe("family_ask_providers_count"); // the site's "How many care providers do you need, 1 to 4?"
     expect(nextFamilyStep({ ...staged, caregiversNeeded: 1 })).toBe("family_ask_emergency");
     // ONE person named → the site's "How many people need care?" counter is asked before moving on
     const four = { ...base, ...dataFromRoster([{ relationship: "self", name: "H" }, { relationship: "parent", name: "A" }, { relationship: "parent", name: "B" }, { relationship: "spouse", name: "C" }]) };
     expect(nextFamilyStep(four)).toBe("family_ask_providers_count"); // four people: no further "anyone else?"
     const onlyMom = { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) };
     expect(nextFamilyStep(onlyMom)).toBe("family_ask_more_people");
-    expect(familyQuestion("family_ask_more_people", onlyMom)).toBe("Is there anyone else who needs care? Reply NO, or tell me who.");
+    expect(familyQuestion("family_ask_more_people", onlyMom)).toBe("Is there anyone else who needs care? If not, just say no. Otherwise tell me who.");
     expect(nextFamilyStep({ ...onlyMom, rosterCountConfirmed: true })).toBe("family_ask_providers_count");
     // a person the counter added, relationship still to be asked, in the site's words
     const placeholder = { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }, { relationship: "unknown", name: "" }]), rosterCountConfirmed: true };
@@ -224,7 +224,7 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     await say("Mahad K");
     expect(sent.at(-1)).toContain("Mahad K, got it. Which stage is Mahad K at");
     await say("toddler");
-    expect(sent.at(-1)).toContain("Toddler, got it. How many care providers do you need? Reply 1, 2, 3, or 4.");
+    expect(sent.at(-1)).toContain("Toddler, got it. How many care providers do you need, 1 to 4? Most families need 1.");
     await say("1");
     expect(sent.at(-1)).toContain("1 care provider, got it. Who should we contact in case of an emergency?");
     await say("contact s s 4088745451");
@@ -264,9 +264,9 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     expect(sent.at(-1)).toBe("Who else needs care? Your relationship to them — Myself, Parent, Spouse or Partner, Adult child, Child, or Other.");
     expect(deps.isQuestionOrOther).not.toHaveBeenCalled();
     await say("myself");
-    expect(sent.at(-1)).toBe("Care for Hamse MM and you, got it. Is there anyone else who needs care? Reply NO, or tell me who.");
+    expect(sent.at(-1)).toBe("Care for Hamse MM and you, got it. Is there anyone else who needs care? If not, just say no. Otherwise tell me who.");
     await say("no");
-    expect(sent.at(-1)).toContain("Nobody else, got it. How many care providers do you need?");
+    expect(sent.at(-1)).toContain("Nobody else, got it. How many care providers do you need, 1 to 4?");
     // adding another later, at the providers step, still works through the side reader; here: a fresh session at the count step
     const { deps: d2, sent: s2, merged: m2 } = makeDeps(['{"people":[{"relationship":"adult child","name":""}]}'], base);
     await runFamilyIntakeTurn(d2, { phone: "+1", chatId: "c", text: "adult child too", session: { onboardingData: {} } });
@@ -363,7 +363,7 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     const session: any = { onboardingData: {} };
     const say = async (text: string) => { await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text, session }); session.onboardingData = Object.assign({}, session.onboardingData, ...merged); };
     await say("my mom Rosa Diaz");
-    expect(sent.at(-1)).toContain("Care for Rosa Diaz, got it. Is there anyone else who needs care? Reply NO, or tell me who.");
+    expect(sent.at(-1)).toContain("Care for Rosa Diaz, got it. Is there anyone else who needs care? If not, just say no. Otherwise tell me who.");
     await say("2");
     expect(sent.at(-1)).toContain("2 people, got it. What is your relationship to care recipient 2? Myself, Parent, Spouse or Partner, Adult child, Child, or Other.");
     await say("my son");
@@ -371,13 +371,13 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     await say("he's an adult");
     expect(sent.at(-1)).toContain("An adult, got it. What's your adult child's name?");
     await say("Sam Diaz");
-    expect(sent.at(-1)).toContain("Sam Diaz, got it. How many care providers do you need?");
+    expect(sent.at(-1)).toContain("Sam Diaz, got it. How many care providers do you need, 1 to 4?");
     const all = Object.assign({}, ...merged);
     expect(all.additionalRecipients).toEqual([{ name: "Sam Diaz", relationship: "adult child" }]);
     // "no" at the count question confirms a single person
     const { deps: d2, sent: s2 } = makeDeps(["unknown", '{"count":1,"others":""}'], { ...base, ...dataFromRoster([{ relationship: "parent", name: "Rosa Diaz" }]) });
     await runFamilyIntakeTurn(d2, { phone: "+1", chatId: "c", text: "no, just her", session: { onboardingData: {} } });
-    expect(s2.at(-1)).toContain("Nobody else, got it. How many care providers do you need?");
+    expect(s2.at(-1)).toContain("Nobody else, got it. How many care providers do you need, 1 to 4?");
   });
 
   it("a correction at any step changes the roster instead of becoming job text", async () => {

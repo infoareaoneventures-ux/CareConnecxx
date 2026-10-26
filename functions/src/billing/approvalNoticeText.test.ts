@@ -33,7 +33,7 @@ describe("buildApprovalNoticeText", () => {
     expect(t).toContain("Service fee (9%, $1 minimum): $1.00"); // the floor applied, so the label says so
     expect(t).toContain("Charged to your card: $1.06");
     expect(t).toMatch(/Auto-approves .*Sep 18.* unless you review it first\./);
-    expect(t).toContain("Reply APPROVE to release payment, or tell me the correct clock-in and clock-out");
+    expect(t).toContain("Want to release the payment? Say approve. Or tell me the correct clock-in and clock-out");
     expect(t).not.toContain("DISPUTE");
   });
 

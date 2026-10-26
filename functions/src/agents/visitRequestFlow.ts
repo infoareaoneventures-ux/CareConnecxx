@@ -52,7 +52,7 @@ export interface VisitRequestFlowData {
   warnings?: string[];
 }
 
-const VR_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const VR_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 const BARE_NO = new Set(["NO", "N", "NOPE", "NAH", "NONE", "SKIP"]);
 
 // ── Model plumbing (same shape as rescheduleFlow.ts so tests drive it identically) ─
@@ -162,12 +162,12 @@ function fullDays(days: readonly string[]): string {
   return days.map((d) => ABBR_TO_FULL[d] ?? d).join(", ");
 }
 function CAREGIVER_QUESTION(d: VisitRequestFlowData): string {
-  return `Which care provider is this visit for?\n\n${d.caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\nReply with a number.`;
+  return `Which care provider is this visit for?\n\n${d.caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\nJust tell me the number.`;
 }
 function BOOKING_QUESTION(d: VisitRequestFlowData): string {
   const cg = chosenCaregiver(d);
   const list = (cg?.bookings ?? []).map((b, i) => `${i + 1}. ${b.jobTitle}${b.address ? ` — ${b.address}` : ""}`).join("\n");
-  return `Which of your bookings with ${cg?.name ?? "them"} should this be added to?\n\n${list}\n\nReply with a number.`;
+  return `Which of your bookings with ${cg?.name ?? "them"} should this be added to?\n\n${list}\n\nJust tell me the number.`;
 }
 function DAYS_QUESTION(d: VisitRequestFlowData): string {
   const b = chosenBooking(d);
@@ -179,13 +179,13 @@ function DAYS_QUESTION(d: VisitRequestFlowData): string {
 function TIMES_QUESTION(d: VisitRequestFlowData): string {
   const days = d.days ?? [];
   return days.length === 1
-    ? `What time on ${ABBR_TO_FULL[days[0]]}? (e.g. "9am to 1pm", or two blocks like "9–11 and 2–4")`
-    : `What times? You can give one time for all of them (e.g. "9am to 1pm each day") or per day (e.g. "${days.map((a) => `${a} 9–1`).join(", ")}").`;
+    ? `What time on ${ABBR_TO_FULL[days[0]]}? Something like 9am to 1pm, or two blocks like 9 to 11 and 2 to 4.`
+    : `What times? You can give one time for all of them, like 9am to 1pm each day, or per day, like ${days.map((a) => `${a} 9 to 1`).join(", ")}.`;
 }
-const START_QUESTION = 'When should this start? (e.g. "this week", "September 22", or "today")';
+const START_QUESTION = 'When should this start? You can say this week, today, or a date like September 22.';
 const END_QUESTION = "Is this ongoing, or should it end on a certain date?";
 function NOTES_QUESTION(d: VisitRequestFlowData): string {
-  return `Any notes for ${d.caregiverName ?? "the care provider"}? Reply NO to skip.`;
+  return `Any notes for ${d.caregiverName ?? "the care provider"}? If not, just say no.`;
 }
 // "Tuesday 2:00 PM–3:00 PM (1h)" — the modal shows each day's hours next to it.
 function describeDayLine(d: VisitRequestFlowData, a: string): string {
@@ -208,7 +208,7 @@ export function buildVisitRequestRecap(d: VisitRequestFlowData): string {
     `Notes: ${d.notes ? `"${d.notes}"` : "None"}`,
     ...(d.warnings?.length ? ["", ...d.warnings.map((w) => `Note: ${w}`)] : []),
     "",
-    `${d.caregiverName} will need to accept before these visits are added. Reply YES to send it, NO to cancel, or tell me what to change.`,
+    `${d.caregiverName} will need to accept before these visits are added. Does that look right? Say yes and I'll send it, or tell me what to change.`,
   ].join("\n");
 }
 

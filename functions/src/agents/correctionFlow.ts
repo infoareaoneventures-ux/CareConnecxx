@@ -65,7 +65,7 @@ export interface CorrectionFlowData {
   chargesAddressed?: boolean;
 }
 
-const CF_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const CF_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 const BARE_NO = new Set(["NO", "N", "NOPE", "NAH", "NONE", "SKIP"]);
 // The question says "reply KEEP" — a stated one-word protocol, like YES/NO.
 const BARE_KEEP = new Set(["KEEP", "SAME", "UNCHANGED", "LEAVE IT", "KEEP IT"]);
@@ -159,7 +159,7 @@ async function handleBackOut(phone: string, chatId: string, session: AgentSessio
     audience: "family",
     language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
     context: "The family decided not to send the timesheet correction after all. Warmly confirm nothing was sent and the timesheet is still waiting for their review as submitted.",
-    fallback: "No problem — I haven't sent anything. The timesheet is still waiting for your review as submitted.",
+    fallback: "No problem, I haven't sent anything. The timesheet is still waiting for your review as submitted.",
     maxTokens: 80,
   }));
 }
@@ -216,15 +216,15 @@ function describeRow(r: CorrectionRow): string {
   return `${r.caregiverName} — ${when}${clock(r.clockIn)}–${clock(r.clockOut)} (${fmtDuration(hoursBetween(r.clockIn, r.clockOut))})${r.status === "caregiver_counter_proposed" ? " · counter received" : ""}`;
 }
 function PICK_QUESTION(d: CorrectionFlowData): string {
-  return `Which timesheet?\n\n${d.rows.map((r, i) => `${i + 1}. ${describeRow(r)}`).join("\n")}\n\nReply with a number.`;
+  return `Which timesheet?\n\n${d.rows.map((r, i) => `${i + 1}. ${describeRow(r)}`).join("\n")}\n\nJust tell me the number.`;
 }
 function START_QUESTION(r: CorrectionRow): string {
-  return `${first(r.caregiverName)} submitted ${clock(r.clockIn)}–${clock(r.clockOut)}${r.date ? ` on ${formatDateWithWeekday(r.date)}` : ""}. What should the clock-in be? (e.g. "10:05 PM" — or reply KEEP to leave it at ${clock(r.clockIn)})`;
+  return `${first(r.caregiverName)} submitted ${clock(r.clockIn)}–${clock(r.clockOut)}${r.date ? ` on ${formatDateWithWeekday(r.date)}` : ""}. What should the clock-in be? For example 10:05 PM, or say keep to leave it at ${clock(r.clockIn)}.`;
 }
 function END_QUESTION(r: CorrectionRow): string {
-  return `And the clock-out? (submitted ${clock(r.clockOut)} — reply KEEP to leave it)`;
+  return `And the clock-out? Submitted ${clock(r.clockOut)}, say keep to leave it.`;
 }
-const REASON_QUESTION = "Why the correction? This goes to the care provider with your proposal — optional, reply NO to skip.";
+const REASON_QUESTION = "Why the correction? This goes to the care provider with your proposal. If you'd rather not add one, just say no.";
 
 // ── Additional charges: the modal lets the family adjust each amount or remove a charge ──
 type LineItem = { type?: string; label?: string; note?: string; amount?: number };
@@ -245,7 +245,7 @@ export function describeChargeChanges(r: CorrectionRow, d: Pick<CorrectionFlowDa
 function CHARGES_QUESTION(r: CorrectionRow): string {
   const list = r.lineItems.map((li) => `${chargeName(li)} ${money(Number(li.amount) || 0)}`).join(", ");
   const ex = chargeName(r.lineItems[0]);
-  return `Additional charges on this timesheet: ${list}. Keep them, change an amount, or remove one? (e.g. "${ex} $10", "remove ${ex}", or KEEP)`;
+  return `Additional charges on this timesheet: ${list}. Keep them, change an amount, or remove one? You can say ${ex} 10, remove ${ex}, or keep.`;
 }
 // The family's words → the modal's edited list. Every label is validated
 // against the caregiver's own items (a name that isn't there is ignored, an
@@ -320,7 +320,7 @@ export function buildCounterText(r: CorrectionRow): string {
   const chargeText = r.lineItems.length || counterItems.length ? describeChargeChanges({ ...r, lineItems: r.lineItems.length ? r.lineItems : counterItems }, { proposedLineItems: counterItems }) : "";
   const charges = chargeText ? ` · charges: ${chargeText}` : "";
   const yours = r.proposed ? ` You proposed ${clock(r.proposed.start)}–${clock(r.proposed.end)}.` : "";
-  return `${first(r.caregiverName)} sent a counter on the ${r.date ? formatDateWithWeekday(r.date) : ""} timesheet: ${clock(c.start)}–${clock(c.end)} (${fmtDuration(amount.totalHours)}) · ${money(amount.grossPay)}${charges} (${money(amount.totalCharge)} charged incl. ${money(amount.serviceFee)} service fee).${c.note ? ` Their note: "${c.note}"` : ""}${yours}\n\nReply ACCEPT to accept their counter (payment goes through at that amount), or ESCALATE to send it to our team to resolve.`.replace("  ", " ");
+  return `${first(r.caregiverName)} sent a counter on the ${r.date ? formatDateWithWeekday(r.date) : ""} timesheet: ${clock(c.start)}–${clock(c.end)} (${fmtDuration(amount.totalHours)}) · ${money(amount.grossPay)}${charges} (${money(amount.totalCharge)} charged incl. ${money(amount.serviceFee)} service fee).${c.note ? ` Their note: "${c.note}"` : ""}${yours}\n\nWant to accept their counter, or send it to our team to resolve? Say accept (payment goes through at that amount) or escalate.`.replace("  ", " ");
 }
 
 // ── Times: the family's words → an ISO instant on the visit's date ───────────
@@ -680,7 +680,7 @@ async function handleRespondCounter(phone: string, chatId: string, text: string,
   if (!action) {
     if (await isBackOutRequest(text, question)) {
       await clearFlow(phone);
-      await sendMessage(chatId, "No problem — nothing changed. The counter is still waiting for you on the Timesheets page.");
+      await sendMessage(chatId, "No problem, nothing changed. The counter is still waiting for you on the Timesheets page.");
       return;
     }
     const raw = await parseWithClaude(

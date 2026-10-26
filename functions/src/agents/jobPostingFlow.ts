@@ -353,7 +353,7 @@ export const JP_MIDFLOW_FALLBACK = "Good question — I don't want to guess on t
 // user's real answer — so a correction attempt was not just ignored, it was
 // overwritten with a fabricated value the user never said. Re-asking instead
 // means nothing gets merged/advanced until a real, recognized answer lands.
-const JP_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const JP_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
 async function answerQuestionMidFlow(phone: string, text: string, session: AgentSession): Promise<string> {
   // 2026-09-07 (live-caught): this used to ground itself in the ACCOUNT's
@@ -541,7 +541,7 @@ async function handleJpAskRecipients(
   const uid = (session as any).userId as string | undefined;
   const options = uid ? await fetchRecipientOptions(uid, onboardingData) : [];
   const listText = formatRecipientOptions(options);
-  const REASK = `Who is this job for?\n\n${listText}\n\nReply with a name or number (a few is fine, e.g. "1, 2") — or tell me someone new and how they're related to you.`;
+  const REASK = `Who is this job for?\n\n${listText}\n\nTell me a name or number (a few is fine), or tell me someone new and how they're related to you.`;
 
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
@@ -646,7 +646,7 @@ async function finishRecipientSelection(
   await updateJobStep(phone, "jp_ask_caregivers_needed");
   const names = chosen.map((r) => r.isSelf ? "you" : r.firstName).join(" and ");
   await sendMessage(chatId,
-    `Got it — care for ${names}.\n\nHow many care providers do you need for this job? (Most families need just 1 — reply a number 1-4)`
+    `Got it — care for ${names}.\n\nHow many care providers do you need for this job? Most families need just 1, and anywhere from 1 to 4 is fine.`
   );
 }
 
@@ -698,7 +698,7 @@ async function handleJpAskRecipientRelationship(
 async function handleJpAskCaregiversNeeded(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  const REASK = "How many care providers do you need for this job? (Most families need just 1 — reply a number 1-4)";
+  const REASK = "How many care providers do you need for this job? Most families need just 1, and anywhere from 1 to 4 is fine.";
   let n = bareNumberPick(text, 4);
   if (n === null) {
     if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
@@ -727,7 +727,7 @@ async function handleJpAskCaregiversNeeded(
   const listText = formatLocationOptions(locations);
   await sendMessage(chatId,
     `Got it — ${n} care provider${n === 1 ? "" : "s"}.\n\nWhich address is this for?\n\n${listText}\n\n` +
-    (locations.length ? "Reply with a number, or a new street address + zip code." : "Reply with the street address + zip code.")
+    (locations.length ? "Just tell me the number, or a new street address and zip code." : "Tell me the street address and zip code.")
   );
 }
 
@@ -739,7 +739,7 @@ async function handleJpAskLocation(
   const locations = uid ? await fetchLocationOptions(uid, onboardingData) : [];
   const listText = formatLocationOptions(locations);
   const REASK = `Which address is this for?\n\n${listText}\n\n` +
-    (locations.length ? "Reply with a number, or a new street address + zip code." : "Reply with the street address + zip code.");
+    (locations.length ? "Just tell me the number, or a new street address and zip code." : "Tell me the street address and zip code.");
 
   let matchedIndex: number | null = bareNumberPick(text, locations.length);
   let newStreet: string | null = null;
@@ -795,7 +795,7 @@ async function handleJpAskLocation(
     await updateJobStep(phone, "jp_ask_location_environment");
     await sendMessage(chatId,
       `Got it — ${newStreet}.\n\nA couple quick home questions: Are there any pets in the home? And does anyone smoke in the home?\n\n` +
-      "(e.g. \"yes dog, no smoking\" or \"no pets, no smoke\" or \"cat yes, smoke no\")"
+      "You can answer both at once, like yes a dog and no smoking."
     );
     return;
   }
@@ -892,7 +892,7 @@ function postCareKinds(recipients: readonly JobRecipient[]): CareKind[] {
 
 // ONE stage per child, set on the child (2026-10-18 late): asked only for a child on THIS post who has none yet,
 // one at a time, by the child's first name when the post names more than one child — never a multi-select.
-const RATE_Q = `What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`;
+const RATE_Q = `What hourly rate are you offering? You can give a number, like $20, or say flexible.`;
 const childrenOnPost = (recipients: JobRecipient[]): JobRecipient[] => recipients.filter(isChildRecipient);
 function nextStageQuestion(recipients: JobRecipient[]): { child: JobRecipient; question: string } | null {
   const children = childrenOnPost(recipients);
@@ -973,14 +973,14 @@ async function handleJpAskFrequency(
   await mergeJobData(phone, { jobFrequency: frequency });
   await updateJobStep(phone, "jp_ask_start");
   await sendMessage(chatId,
-    `${label[frequency] ?? "Got it"}! When would you like care to start? (e.g. "next Monday", "ASAP", or a specific date)`
+    `${label[frequency] ?? "Got it"}! When would you like care to start? You can say next Monday, as soon as possible, or a specific date.`
   );
 }
 
 async function handleJpAskStart(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  const REASK = `When would you like care to start? (e.g. "next Monday", "ASAP", or a specific date)`;
+  const REASK = `When would you like care to start? You can say next Monday, as soon as possible, or a specific date.`;
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1013,14 +1013,14 @@ async function handleJpAskStart(
   await mergeJobData(phone, { jobStartDate: stored });
   await updateJobStep(phone, "jp_ask_days");
   await sendMessage(chatId,
-    `Got it — starting ${formatDateForDisplay(stored)}! Which days work best?\n\n(e.g. "Mon, Wed, Fri" or "weekdays" or "every day")`
+    `Got it — starting ${formatDateForDisplay(stored)}! Which days work best? You can say Mon, Wed, Fri, or weekdays, or every day.`
   );
 }
 
 async function handleJpAskDays(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  const REASK = "Which days work best? (e.g. \"Mon, Wed, Fri\" or \"weekdays\")";
+  const REASK = "Which days work best? You can say Mon, Wed, Fri, or weekdays.";
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1091,7 +1091,7 @@ async function handleJpAskTime(
   const listText = formatRecipientOptions(options);
   await sendMessage(chatId,
     `${timeLabel} — noted!\n\nWho is this job for?\n\n${listText}\n\n` +
-    "Reply with a name or number (a few is fine) — or tell me someone new and how they're related to you."
+    "Tell me a name or number (a few is fine), or tell me someone new and how they're related to you."
   );
 }
 
@@ -1178,7 +1178,7 @@ async function handleJpAskCareNeeds(
 async function handleJpAskRate(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  const REASK = "What hourly rate are you offering? (e.g. \"$20\", \"18 an hour\", \"flexible\")";
+  const REASK = "What hourly rate are you offering? You can give a number, like $20, or say flexible.";
   if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1244,14 +1244,14 @@ async function handleJpAskDescription(
   const jobData = await getJobData(phone);
   const summary = buildJobSummary(jobData, session);
   await sendMessage(chatId,
-    `Here's your job post:\n\n${summary}\n\nReply YES to post it for care providers to see, or NO to start over.`
+    `Here's your job post:\n\n${summary}\n\nDoes that look right? Say yes and I'll post it for care providers to see, or tell me what to change.`
   );
 }
 
 async function handleJpConfirmPost(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  const CONFIRM_REASK = "Confirming whether to post this job for care providers to see — reply YES to post it, or NO to start over.";
+  const CONFIRM_REASK = "Should I post this job for care providers to see? Say yes to post it, or no to hold off.";
 
   // 2026-09-14 — same fix as bookingFlow.ts's handleBkConfirm: a bare,
   // unambiguous affirmative can never reasonably mean "cancel", so it skips
@@ -1302,7 +1302,7 @@ async function handleJpConfirmPost(
     const jobData = await getJobData(phone);
     const summary = buildJobSummary(jobData, session);
     await sendMessage(chatId,
-      `Just to confirm — here's your job post:\n\n${summary}\n\nReply YES to post it or NO to cancel.`
+      `Just to confirm, here's your job post:\n\n${summary}\n\nShould I post it?`
     );
     return;
   }

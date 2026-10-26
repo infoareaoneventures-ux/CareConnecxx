@@ -137,8 +137,8 @@ export const sendPendingTimesheetNudges = functions.pubsub
         const message = isCounter && count === 1
           ? await generateCaraMessage({
             audience: "family",
-            context: `${cgName} sent a counter on their hours from ${dateLabel}${amount ? ` (${amount})` : ""} and it is waiting for the family's answer — ${cgName} isn't paid until they accept it or escalate it to Evia's team. Gently nudge them; they can reply ACCEPT or ESCALATE, or ask to see it. One or two warm sentences.`,
-            fallback: `${cgName}'s counter on their hours${amount ? ` (${amount})` : ""} is waiting for your answer — reply ACCEPT to accept it or ESCALATE to send it to our team, or ask me to pull it up.`,
+            context: `${cgName} sent a counter on their hours from ${dateLabel}${amount ? ` (${amount})` : ""} and it is waiting for the family's answer — ${cgName} isn't paid until they accept it or escalate it to Evia's team. Gently nudge them; they can say accept or escalate, or ask to see it. One or two warm sentences.`,
+            fallback: `${cgName}'s counter on their hours${amount ? ` (${amount})` : ""} is waiting for your answer. Want to accept it, or send it to our team? Say accept or escalate, or ask me to pull it up.`,
             maxTokens: 100,
           })
           : await generateCaraMessage({

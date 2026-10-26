@@ -203,7 +203,7 @@ describe("startReplacementFlow", () => {
     expect(r).toEqual({ started: true, reason: "past_visit" });
     const sent = String(sendMessage.mock.calls[0][1]);
     expect(sent).toContain("has already passed without a replacement");
-    expect(sent).toContain("Reply YES to skip it");
+    expect(sent).toContain("skip it");
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).replacementFlowStep).toBe("rp_skip_confirm");
   });
 
@@ -215,7 +215,7 @@ describe("startReplacementFlow", () => {
     expect(r.reason).toBe("no_candidates");
     const sent = String(sendMessage.mock.calls[0][1]);
     expect(sent).toContain("couldn't find anyone available to cover the Tuesday, September 15, 2026, 11:00 AM–1:00 PM visit");
-    expect(sent).toContain("Reply YES to skip it");
+    expect(sent).toContain("skip it");
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.replacementFlowStep).toBe("rp_skip_confirm");
     expect(stored.replacementFlowData.candidates).toEqual([]);
@@ -234,7 +234,7 @@ describe("rp_skip_confirm — the site's Skip button", () => {
     expect(hoisted.docState.get("shifts/sh1").status).toBe("needs_replacement");
     const sent = String(sendMessage.mock.calls.at(-1)![1]);
     expect(sent).toContain("Skip the Tuesday, September 15, 2026, 11:00 AM–1:00 PM visit?");
-    expect(sent).toContain("Reply YES to skip it");
+    expect(sent).toContain("skip it");
   });
 
   it("'no need for a replacement, just skip it' at the pick step is read as skip by the model and asks for confirmation", async () => {
@@ -290,7 +290,7 @@ describe("rp_pick", () => {
     expect(stored.replacementFlowData.caregiverName).toBe("Maria Santos");
     const recap = String(sendMessage.mock.calls.at(-1)![1]);
     expect(recap).toContain("Send a replacement request to Maria Santos ($28/hr · $30.52/hr billed) for Tuesday, September 15, 2026, 11:00 AM–1:00 PM?");
-    expect(recap).toContain("Reply YES to send it");
+    expect(recap).toContain("Say yes and I'll send it");
   });
 
   it("a name plus a new time picks the candidate and carries the changed time into the recap", async () => {

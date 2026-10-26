@@ -250,7 +250,7 @@ describe("the LATE classifier runs only when a visit is near (C21)", () => {
     const r = await routeCaregiverMessage(ctx("running about 10 min late, traffic"));
     expect(r).toBe("handled");
     expect(lateClassifierCalls()).toHaveLength(1);
-    expect(sendMessage.mock.calls.some((c) => /Send to Basra Yousuf as your message/.test(String(c[1])))).toBe(true);
+    expect(sendMessage.mock.calls.some((c) => /Want me to send this to Basra Yousuf as your message/.test(String(c[1])))).toBe(true);
   });
 
   it("a completed visit today does not count", async () => {

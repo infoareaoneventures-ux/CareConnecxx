@@ -188,7 +188,7 @@ describe("startRescheduleFlow", () => {
     expect(sess().rescheduleFlowData).toMatchObject({ shiftId: "sh-wed", newDate: "2026-09-17", newStart: "10:00", newEnd: "15:00" });
     const recap = lastSent();
     expect(recap).toContain("Move the Wednesday, September 16, 2026, 11:00 AM–1:00 PM visit with Basra Yousuf to Thursday, September 17, 2026, 10:00 AM–3:00 PM?");
-    expect(recap).toContain("Reply YES");
+    expect(recap).toContain("Should I send it? Say yes");
     // Nothing written yet.
     expect(hoisted.docState.get("shifts/sh-wed").reschedulePendingDate).toBeUndefined();
   });

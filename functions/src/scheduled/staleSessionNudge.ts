@@ -79,7 +79,7 @@ const CAREGIVER_FIELD_QUESTIONS: Record<string, string> = {
   availability:   "Which days of the week and times of day (morning, afternoon, evening, overnight) are you available?",
   specialties:    `Which care services do you offer? ${SERVICE_LABELS.join(", ")}.`,
   yearsExperience: `How many years of care experience do you have? (${EXPERIENCE_BUCKETS.join(", ")})`,
-  hourlyRate:     `What's your hourly rate? (for example $${RATE_EXAMPLE})`,
+  hourlyRate:     `What's your hourly rate? For example $${RATE_EXAMPLE}.`,
   serviceRadius:  `How far are you willing to travel for work? (${TRAVEL_RADIUS_OPTIONS.join(", ")} miles)`,
   email:          "What's your email address?",
   bio:            "Tell families a bit about yourself — a few lines about your experience and how you care for people.",
@@ -88,7 +88,7 @@ const CLIENT_FIELD_QUESTIONS: Record<string, string> = {
   careFrequency:        "How often do you need care — occasional, part-time, or full-time?",
   homeStreet:           "What's your home street address and ZIP code?",
   homeZipCode:          "What's your home street address and ZIP code?",
-  sameAsHomeAddress:    "Will the care take place at your home address? Reply YES or NO.",
+  sameAsHomeAddress:    "Will the care take place at your home address?",
   city:                 "What's the ZIP code where care will take place?",
   zipCode:              "What's the ZIP code where care will take place?",
   startDate:            "When would you like care to start, and which days of the week?",
@@ -141,7 +141,7 @@ async function planNudge(session: Record<string, unknown>, nudgeNumber: number):
   const firstName = String(data.firstName ?? data.name ?? "").trim().split(/\s+/)[0] ?? "";
   const greeting  = firstName ? `Hey ${firstName}!` : "Hey there!";
   const userType  = session.userType as string | undefined;
-  const last      = nudgeNumber >= MAX_NUDGES ? " This is my last reminder — reply whenever you're ready and we'll pick up right here." : "";
+  const last      = nudgeNumber >= MAX_NUDGES ? " This is my last reminder. Text me whenever you're ready and we'll pick up right here." : "";
 
   if (!userType || step === "ask_role" || step === "verify_phone") {
     const namePart = firstName ? ` ${firstName}` : "";
@@ -166,7 +166,7 @@ async function planNudge(session: Record<string, unknown>, nudgeNumber: number):
       const q = field ? CAREGIVER_FIELD_QUESTIONS[field] : undefined;
       if (q) return { text: `${greeting} Your care provider profile stopped at ${label}. ${q}${last}` };
     }
-    return { text: `${greeting} Your care provider profile stopped at ${label}. Reply here and I'll pick up right there.${last}` };
+    return { text: `${greeting} Your care provider profile stopped at ${label}. Just text me back and I'll pick up right there.${last}` };
   }
 
   // family
@@ -177,7 +177,7 @@ async function planNudge(session: Record<string, unknown>, nudgeNumber: number):
   }
   const stepQ = CLIENT_STEP_QUESTIONS[step];
   if (stepQ) return { text: `${greeting} You stopped at ${label}. ${stepQ}${last}` };
-  return { text: `${greeting} You stopped at ${label}. Reply here and I'll pick up right there.${last}` };
+  return { text: `${greeting} You stopped at ${label}. Just text me back and I'll pick up right there.${last}` };
 }
 
 // The same reminder in the website's notification bell (founder, 2026-09-26:

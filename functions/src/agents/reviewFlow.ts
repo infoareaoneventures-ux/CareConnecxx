@@ -50,16 +50,16 @@ export interface ReviewFlowData {
 
 export type ReviewFlowStep = "rv_ask_rating" | "rv_ask_categories" | "rv_ask_comment" | "rv_ask_recommend" | "rv_confirm";
 
-const RV_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const RV_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
 const first = (full: string) => (full.trim().split(/\s+/)[0] || "your care provider");
 
 // ── Questions (the modal's fields, in its order) ─────────────────────────────
 export const RATING_QUESTION = (name: string) => `How was your experience with ${first(name)}? Overall rating, 1 to 5 stars.`;
 export const CATEGORIES_QUESTION = () =>
-  `Want to rate by category too? Punctuality, Professionalism, Communication, Quality of Care — reply with four numbers 1 to 5 in that order (e.g. "5 4 5 5"), or "skip".`;
+  `Want to rate by category too? Punctuality, Professionalism, Communication, Quality of Care. Give me four numbers from 1 to 5 in that order, like 5 4 5 5, or say skip.`;
 export const COMMENT_QUESTION = () => `Your review — a few sentences about your experience (${REVIEW_COMMENT_MIN} to ${REVIEW_COMMENT_MAX} characters).`;
-export const RECOMMEND_QUESTION = (name: string) => `Would you recommend ${first(name)}? Reply YES or NO.`;
+export const RECOMMEND_QUESTION = (name: string) => `Would you recommend ${first(name)}?`;
 
 // ── Pure helpers (tested) ────────────────────────────────────────────────────
 export function isValidRating(n: unknown): n is number {
@@ -87,7 +87,7 @@ export function buildReviewRecap(data: ReviewFlowData): string {
     `Your review: "${data.comment ?? ""}"`,
     `Would recommend: ${data.wouldRecommend ? "Yes" : "No"}`,
     ``,
-    `Reply YES to submit it, or tell me what to change.`,
+    `Does that look right? Say yes and I'll post it, or tell me what to change.`,
   ].join("\n");
 }
 
@@ -149,7 +149,7 @@ async function clearFlow(phone: string): Promise<void> {
 
 async function handleBackOut(phone: string, chatId: string, data: ReviewFlowData): Promise<void> {
   await clearFlow(phone);
-  await sendMessage(chatId, `No problem — nothing was posted. The Leave a Review button stays on ${first(data.caregiverName)}'s profile whenever you'd like.`);
+  await sendMessage(chatId, `No problem, nothing was posted. The Leave a Review button stays on ${first(data.caregiverName)}'s profile whenever you'd like.`);
 }
 
 // ── The write (the modal's Submit Review) ────────────────────────────────────
@@ -321,7 +321,7 @@ async function handleRvAskRecommend(phone: string, chatId: string, text: string)
   await sendMessage(chatId, buildReviewRecap(updated));
 }
 
-const CONFIRM_FALLBACK = "Confirming whether to post this review — reply YES to submit it, or NO to cancel.";
+const CONFIRM_FALLBACK = "Should I post this review? Say yes to post it, or no to hold off.";
 
 async function handleRvConfirm(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
   const data = await getFlowData(phone);

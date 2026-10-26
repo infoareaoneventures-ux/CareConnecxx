@@ -292,8 +292,8 @@ export function familyQuestion(step: FamilyStep, d: Data): string {
     // The site's counter, in text form (founder, 2026-10-20: a yes/no beats "how many in total"); a number still works.
     case "family_ask_more_people": return d.rosterAddPending === true
       ? `Who else needs care? Your relationship to them — ${RELATIONSHIP_OPTIONS_TEXT.replace("Myself, ", "Myself, ")}.`
-      : "Is there anyone else who needs care? Reply NO, or tell me who.";
-    case "family_ask_providers_count": return `How many care providers do you need? Reply 1, 2, 3, or 4. (Most families need 1.)`;
+      : "Is there anyone else who needs care? If not, just say no. Otherwise tell me who.";
+    case "family_ask_providers_count": return `How many care providers do you need, 1 to 4? Most families need 1.`;
     case "family_ask_emergency": return "Who should we contact in case of an emergency? Their name and phone number.";
     case "family_ask_emergency_phone": return `What's ${String(d.emergencyContactName ?? "their")}'s phone number?`;
     case "family_ask_emergency_relationship": {

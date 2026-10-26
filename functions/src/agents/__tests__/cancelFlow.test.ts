@@ -129,7 +129,7 @@ describe("startCancelFlow", () => {
     expect(r.started).toBe(true);
     expect(sess().cancelFlowStep).toBe("cx_confirm");
     expect(lastSent()).toContain("Cancel only the Wednesday, September 16, 2026, 8:00 PM–9:30 PM visit with Basra Yousuf? The rest of the booking stays active.");
-    expect(lastSent()).toContain("Reply YES to cancel it");
+    expect(lastSent()).toContain("Just checking, do you want to cancel it?");
   });
 
   it("nothing cancellable → says so honestly and does not start", async () => {

@@ -110,7 +110,7 @@ describe("startCorrectionFlow — the Review submitted hours modal, opened", () 
     const r = await startCorrectionFlow(PHONE, CHAT, session(), { initialText: "can you change the clock in time" });
     expect(r.started).toBe(true);
     expect(sess().correctionFlowStep).toBe("cf_ask_start");
-    expect(lastSent()).toBe('Basra submitted 10:03 PM–10:38 PM on Thursday, September 17, 2026. What should the clock-in be? (e.g. "10:05 PM" — or reply KEEP to leave it at 10:03 PM)');
+    expect(lastSent()).toBe('Basra submitted 10:03 PM–10:38 PM on Thursday, September 17, 2026. What should the clock-in be? For example 10:05 PM, or say keep to leave it at 10:03 PM.');
   });
 
   it("the family's words already carry both times → straight to the reason question", async () => {
@@ -151,7 +151,7 @@ describe("the steps, then YES → the modal's Send correction", () => {
     await handleCorrectionFlowStep(PHONE, CHAT, "10:05", session());
     expect(sess().correctionFlowStep).toBe("cf_ask_end");
     expect(sess().correctionFlowData.proposedStart).toBe("2026-09-18T05:05:00.000Z");
-    expect(lastSent()).toContain("Clock-in 10:05 PM, got it. And the clock-out? (submitted 10:38 PM");
+    expect(lastSent()).toContain("Clock-in 10:05 PM, got it. And the clock-out? Submitted 10:38 PM");
 
     // 9:30 PM is before the 10:05 PM clock-in — the modal's "End must be after start."
     modelReplies(JSON.stringify({ time: "21:30" }));
@@ -228,8 +228,8 @@ describe("counter waiting — the modal's two buttons only", () => {
     expect(q).toContain("Basra sent a counter on the Thursday, September 17, 2026 timesheet: 10:03 PM–10:35 PM (0:31:33)");
     expect(q).toContain('Their note: "I stayed until 10:35, the door needed locking"');
     expect(q).toContain("You proposed 10:05 PM–10:30 PM.");
-    expect(q).toContain("Reply ACCEPT to accept their counter");
-    expect(q).toContain("or ESCALATE");
+    expect(q).toContain("Want to accept their counter");
+    expect(q).toContain("or escalate");
     await handleCorrectionFlowStep(PHONE, CHAT, "ACCEPT", session());
     expect(reviewShiftHoursAs).toHaveBeenCalledWith(UID, { appointmentId: "sh-1", action: "accept_counter" });
     expect(sess().correctionFlowStep).toBeUndefined();

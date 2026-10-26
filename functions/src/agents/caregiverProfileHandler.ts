@@ -677,7 +677,7 @@ async function handlePauseAccount(
   const step = (session.profileUpdateStep as string) ?? "collect";
 
   if (step === "collect") {
-    const reAsk = "When would you like to pause until? (e.g. \"until July 12\", \"for two weeks\", \"indefinitely\")";
+    const reAsk = "When would you like to pause until? You can say a date, for two weeks, or indefinitely.";
     if (await isQuestionOrOther(text, reAsk)) {
       await sendMessage(chatId, await answerMidFlow(text, reAsk, PAUSE_FACTS));
       return;

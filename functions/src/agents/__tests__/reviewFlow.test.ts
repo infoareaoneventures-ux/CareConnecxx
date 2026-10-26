@@ -26,7 +26,7 @@ describe("the modal's field rules", () => {
   });
   it("questions follow the modal's order and use the first name", () => {
     expect(RATING_QUESTION("Basra Ali")).toBe("How was your experience with Basra? Overall rating, 1 to 5 stars.");
-    expect(RECOMMEND_QUESTION("Basra Ali")).toBe("Would you recommend Basra? Reply YES or NO.");
+    expect(RECOMMEND_QUESTION("Basra Ali")).toBe("Would you recommend Basra?");
   });
 });
 

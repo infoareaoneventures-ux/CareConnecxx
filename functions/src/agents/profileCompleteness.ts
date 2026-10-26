@@ -80,9 +80,9 @@ export async function sendOnboardingOffer(
 
   const opener = hasMissedFromSandbox
     ? "You're right — we never finished setting up your account. I have your number on file but not your name or what you're looking for. " +
-      "Want to do that now? Takes about 2 minutes over text — just reply YES and we'll go."
+      "Want to do that now? It takes about 2 minutes over text. Just say yes and we'll go."
     : "Looks like we never finished setting up your account properly. " +
-      "Want to do that now? Takes about 2 minutes over text — just reply YES and we'll go.";
+      "Want to do that now? It takes about 2 minutes over text. Just say yes and we'll go.";
 
   await sendMessage(chatId, opener);
   await db.collection("agent_sessions").doc(phone).update({
@@ -106,7 +106,7 @@ export async function classifyOfferReply(text: string): Promise<"accept" | "decl
 
   try {
     const raw = await quickComplete(
-      "Evia just asked the user 'Want to set up your account now? Reply YES to go.' " +
+      "Evia just asked the user 'Want to set up your account now? Just say yes and we'll go.' " +
       "Classify their reply. Reply with exactly one word:\n" +
       "ACCEPT — they want to do it (yes, sure, ok, let's go, fine, whatever)\n" +
       "DECLINE — they refuse or defer (no, not now, later, busy, skip)\n" +

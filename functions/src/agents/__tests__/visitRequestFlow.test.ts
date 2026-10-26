@@ -254,7 +254,7 @@ describe("vr_ask_start / vr_ask_end / vr_ask_notes", () => {
     expect(recap).toContain("Days & times: Thursday 9:00 AM–1:00 PM (4h)");
     expect(recap).toContain("Starting: Tuesday, September 22, 2026 (ongoing)");
     expect(recap).toContain("Notes: None");
-    expect(recap).toContain("Reply YES to send it");
+    expect(recap).toContain("Say yes and I'll send it");
   });
 });
 

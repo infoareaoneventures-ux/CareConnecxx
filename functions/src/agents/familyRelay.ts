@@ -137,7 +137,7 @@ const FLOW_TTL_MS = 30 * 60 * 1000;
 type PendingChoice = { candidates: FamilyRef[]; text?: string };
 type PendingConfirm = { clientId: string; clientName: string; text: string };
 
-export const confirmRelayPrompt = (family: string, text: string) => `Send to ${family} as your message: "${text}"? Reply YES or NO.`;
+export const confirmRelayPrompt = (family: string, text: string) => `Want me to send this to ${family} as your message? "${text}"`;
 async function parkRelayConfirm(phone: string, fam: FamilyRef, text: string): Promise<void> {
   await db.collection("agent_sessions").doc(phone).set({ pendingRelayConfirm: { clientId: fam.clientId, clientName: fam.clientName, text }, pendingFamilyChoice: admin.firestore.FieldValue.delete(), stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() }, { merge: true });
 }
@@ -171,7 +171,7 @@ export async function handleLateKeyword(phone: string, chatId: string, caregiver
       await say(r.ok ? `Sent to ${r.clientName} as your message.` : r.message);
       return "handled";
     }
-    if (upper === "NO" || upper === "N" || upper === "CANCEL") { await clear(); await say("Okay — nothing sent."); return "handled"; }
+    if (upper === "NO" || upper === "N" || upper === "CANCEL") { await clear(); await say("Okay, nothing sent."); return "handled"; }
     // A question is answered from what is on their screen, then the confirm is re-asked (nothing sent either way).
     const confirmQ = confirmRelayPrompt(confirm.clientName, confirm.text);
     if (await isQuestionOrOther(raw, confirmQ)) { await say(await answerMidFlow(raw, confirmQ, { audience: "caregiver", facts: RELAY_FACTS(confirm.clientName, confirm.text) })); return "handled"; }
@@ -180,7 +180,7 @@ export async function handleLateKeyword(phone: string, chatId: string, caregiver
   }
 
   if (choice?.candidates?.length) {
-    if (upper === "NO" || upper === "CANCEL") { await clear(); await say("Okay — nothing sent."); return "handled"; }
+    if (upper === "NO" || upper === "CANCEL") { await clear(); await say("Okay, nothing sent."); return "handled"; }
     const picked = resolveFamilyChoice(choice.candidates, raw);
     if (!picked) { await say(whichFamilyPrompt(choice.candidates)); return "handled"; }
     if (choice.text) {
@@ -193,7 +193,7 @@ export async function handleLateKeyword(phone: string, chatId: string, caregiver
     return "handled";
   }
   if (pending) {
-    if (upper === "NO" || upper === "CANCEL") { await clear(); await say("Okay — nothing sent."); return "handled"; }
+    if (upper === "NO" || upper === "CANCEL") { await clear(); await say("Okay, nothing sent."); return "handled"; }
     // "What should I tell <family>?" — a question is answered (who the family is, where the words go) and the question
     // re-asked; only a non-question reply is relayed (2026-10-11: before this, a question was texted to the family verbatim).
     const family = pending.clientName || "the family";

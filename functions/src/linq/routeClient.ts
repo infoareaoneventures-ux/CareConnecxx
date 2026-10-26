@@ -79,7 +79,7 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
       );
     } else {
       await sendMessage(chatId,
-        "I wasn't able to find a phone number in that message. Please reply with your emergency contact's name and phone number (e.g. 'John Smith 555-000-1234')."
+        "I didn't catch a phone number in that. What's your emergency contact's name and phone number? Something like John Smith 555-000-1234."
       );
       await db.collection("agent_sessions").doc(phone).update({ awaitingEmergencyContactUpdate: true });
     }

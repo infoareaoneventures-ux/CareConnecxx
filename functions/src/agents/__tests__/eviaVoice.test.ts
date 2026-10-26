@@ -51,10 +51,7 @@ const CONVERTED = [
   "billing/reviewShiftHours.ts",
   "stripe.ts",
   "stripeConnectWebhook.ts",
-];
-
-/** Still on the old grammar — the next batches (context/evia-voice.md, Rollout). Shrinks as batches land. */
-const PENDING = [
+  // Batch 6 (the family side)
   "agents/bookingFlow.ts",
   "agents/cancelFlow.ts",
   "agents/correctionFlow.ts",
@@ -73,12 +70,16 @@ const PENDING = [
   "scheduled/staleSessionNudge.ts",
 ];
 
+/** Still on the old grammar — the next batches (context/evia-voice.md, Rollout). Shrinks as batches land. */
+const PENDING: string[] = []; // every file is converted (batch 6, 2026-10-26) — a new offender must be converted, not listed
+
 /** Protocol text whose exact words ARE the rule — carrier / TCPA consent (YES / STOP), the recovery APPROVE, the crisis NOTIFY. */
 const EXEMPT = [
   "triggers/userCreated.ts",
   "linq/webhooks.ts",
   "utils/language.ts",
   "accountRecovery.ts",
+  "agents/defaultPromptAugmenters.ts", // model prompt text only
 ];
 
 const SCAN_DIRS = ["agents", "triggers", "scheduled", "mcp", "linq", "notifications", "billing", "utils"];
@@ -91,7 +92,14 @@ const ROBOTIC: RegExp[] = [
   /\breply (JOBS|MORE|YES|NO|SUBMIT|SEND|CANCEL|SKIP|ACCEPT|DECLINE|VIEW|INTERVIEW|DETAILS|APPLY|CONFIRM|KEEP|PROPOSE|REVIEW|COUNTER|START|DONE|FINISH)\b/,
   /"(apply|hide|accept|decline|submit) (to )?(\d|\$\{)/,
   / — reply /,
+  /\bPlease reply\b/,
+  /\bReply here\b/,
 ];
+/** Softer tells, checked only on a line that visibly sends text (a prompt to the model may legitimately carry examples). */
+const SOFT: RegExp[] = [
+  /\(e\.g\. \\?"/,  // a parenthetical quoted example — say it in plain words instead
+];
+const OUTBOUND = /sendMessage\(|\bsay\(|_Q(UESTION)? ?=|REASK|retry:|fallback:|\btext:|content:|lines\.push\(|return `|return "/;
 
 /** A line that is a comment, or an instruction to the MODEL (a classifier / extraction prompt), not a text to a person. */
 const NOT_USER_FACING = [
@@ -102,7 +110,11 @@ const NOT_USER_FACING = [
   /\bor NONE\b/,
   /\bone word\b/i,
   /\bReply with (that|it|the|a JSON|ONLY)/,
-  /\b(if|whether|when) (the|their|she|he|they|a|this|it)\b/,
+  /\b(if|whether|when) (the|their|she|he|they|a|this|it)\b/i,
+  /→/,
+  /\b(Extract|Return|Decide|Map|Parse|Resolve) \b/,
+  /\bNEVER\b/,
+  /\b(The|A) (family|user|care provider|person|message|caller) (was|is|asked|said|wants|names)\b/,
   /\b(quickComplete|parseWithClaude|parse|classify\w*)\(/,
   /\bprompt\b/i,
   /toContain|toBe\(|toMatch|expect\(/,
@@ -131,7 +143,7 @@ function roboticLines(file: string): string[] {
   const hits: string[] = [];
   lines.forEach((line, i) => {
     if (NOT_USER_FACING.some((re) => re.test(line))) return;
-    if (ROBOTIC.some((re) => re.test(line))) hits.push(`${i + 1}: ${line.trim().slice(0, 140)}`);
+    if (ROBOTIC.some((re) => re.test(line)) || (OUTBOUND.test(line) && SOFT.some((re) => re.test(line)))) hits.push(`${i + 1}: ${line.trim().slice(0, 140)}`);
   });
   return hits;
 }

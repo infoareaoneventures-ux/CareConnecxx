@@ -262,7 +262,7 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         const d = session.onboardingData ?? {};
         return `How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`;
       },
-      retry: () => "Hmm, I didn't catch that. What days and hours do you need care? (e.g. \"Mon–Fri, 9am to 3pm\" or \"3 days a week, mornings\")",
+      retry: () => "Hmm, I'm not sure I followed. What days and hours do you need care? Something like Mon to Fri, 9am to 3pm, or 3 days a week, mornings.",
       async nextQuestion(session) {
         const dSched = session.onboardingData ?? {};
         const seniorSched = (dSched.seniorName as string) ?? "your loved one";

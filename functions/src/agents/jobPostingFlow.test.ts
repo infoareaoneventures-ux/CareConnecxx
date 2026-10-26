@@ -209,7 +209,7 @@ describe("jobPostingFlow — output guard (U2, R2)", () => {
 
     await handleJobPostingStep(PHONE, CHAT, "occasional", FREQ_SESSION);
 
-    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I didn't quite catch that");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I'm not sure I followed");
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("briefing context");
     // Failure path never advances the step — no jobPostingStep write at all.
     expect(hoisted.updateMock).not.toHaveBeenCalledWith(
@@ -232,7 +232,7 @@ describe("jobPostingFlow — output guard (U2, R2)", () => {
 
     await handleJobPostingStep(PHONE, CHAT, "regularly", FREQ_SESSION);
 
-    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I didn't quite catch that");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I'm not sure I followed");
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("Part-time");
     expect(hoisted.updateMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ jobPostingStep: expect.anything() })

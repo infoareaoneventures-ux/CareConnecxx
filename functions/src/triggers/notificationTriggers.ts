@@ -745,7 +745,7 @@ export const onShiftStatusChanged = functions.firestore
           title: 'New Time Proposed',
           body: `${after.caregiverName || 'Your care provider'} proposed moving this visit to ${displayTime}. Please confirm.`,
           data: { shiftId },
-        }, `${after.caregiverName || 'Your care provider'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`, proposedKey);
+        }, `${after.caregiverName || 'Your care provider'} proposed moving this visit to ${displayTime}. Want to confirm it, or suggest another time?`, proposedKey);
       } else if (after.rescheduledBy === 'client' && after.caregiverId) {
         // The Active Bookings strip's three buttons as the reply words (B1,
         // 2026-10-11): the decision is parked so ACCEPT / DECLINE run the page's

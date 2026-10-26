@@ -150,7 +150,7 @@ export interface ResendOption {
   whenLabel?: string;
 }
 
-const BK_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const BK_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
@@ -264,7 +264,7 @@ async function handleBookingBackOut(phone: string, chatId: string, session: Agen
     audience: "family",
     language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
     context: "The family decided not to send the booking request after all. Warmly confirm nothing was sent, and let them know you're here whenever they're ready.",
-    fallback: "No problem — I haven't sent anything. Let me know whenever you're ready.",
+    fallback: "No problem, I haven't sent anything. Let me know whenever you're ready.",
     maxTokens: 70,
   }));
 }
@@ -466,7 +466,7 @@ function RESEND_PICK_QUESTION(options: ResendOption[]): string {
   const lines = options.map((o, i) =>
     `${i + 1}. ${o.caregiverName}${o.jobTitle ? ` — ${o.jobTitle}` : ""}${o.whenLabel ? ` (${o.whenLabel})` : ""} — ${o.statusLabel}`
   );
-  return `Which booking request would you like to resend?\n\n${lines.join("\n")}\n\nReply with a number.`;
+  return `Which booking request would you like to resend?\n\n${lines.join("\n")}\n\nJust tell me the number.`;
 }
 
 // Pre-fill the flow from the existing request exactly as the site pre-fills
@@ -845,7 +845,7 @@ export async function handleBookingFlowStep(
 // known job-post rate is offered as a suggestion, never silently assumed.
 const RATE_QUESTION = (jobPostRate?: number) =>
   `What's the agreed hourly rate for this booking?` +
-  (jobPostRate ? ` (Your job post lists $${jobPostRate}/hr — reply with that, or the different rate you agreed on.)` : "");
+  (jobPostRate ? ` (Your job post lists $${jobPostRate}/hr. Say that, or the different rate you agreed on.)` : "");
 
 async function handleBkAskRate(
   phone: string, chatId: string, text: string, session: AgentSession,
@@ -899,7 +899,7 @@ async function advanceToDays(phone: string, chatId: string, data: BookingFlowDat
 const DAYS_QUESTION = (jobPostDays?: string[]) =>
   'What days of the week would you like — e.g. "every Tue and Thu", "weekdays", "every day", or just one day ' +
   "like \"Friday\"? If there's no set schedule yet — it's ongoing and you'll work out days later — just say so." +
-  (jobPostDays?.length ? ` (Your job post lists ${jobPostDays.join(", ")} — reply with that, or different days.)` : "");
+  (jobPostDays?.length ? ` (Your job post lists ${jobPostDays.join(", ")}. Say that, or different days.)` : "");
 
 async function handleBkAskDays(
   phone: string, chatId: string, text: string, session: AgentSession,
@@ -943,7 +943,7 @@ async function handleBkAskDays(
 
 // ── Step: start date (matches the site's own separate Start date field) ────
 
-const START_DATE_QUESTION = 'What date would you like this to start? (e.g. "tomorrow", "this Friday", "March 5")';
+const START_DATE_QUESTION = 'What date would you like this to start? You can say tomorrow, this Friday, or a date like March 5.';
 
 async function handleBkAskStartDate(
   phone: string, chatId: string, text: string, session: AgentSession,
@@ -979,9 +979,9 @@ async function handleBkAskStartDate(
 
 const TIMES_QUESTION = (days: string[]) =>
   days.length > 1
-    ? `What time should each day run? One time for all works (e.g. "9am to 5pm"), or different times per day ` +
-      `(e.g. "${days[0]} 9am-5pm, ${days[1]} 10am-2pm") — every day needs its own start and end time.`
-    : `What time should this run? (e.g. "9am to 3pm")`;
+    ? `What time should each day run? One time for all of them works, like 9am to 5pm, or give each day its own, ` +
+      `like ${days[0]} 9am to 5pm and ${days[1]} 10am to 2pm. Every day needs a start and an end time.`
+    : `What time should this run? Something like 9am to 3pm.`;
 
 async function handleBkAskTimes(
   phone: string, chatId: string, text: string, session: AgentSession,
@@ -1032,8 +1032,8 @@ async function handleBkAskTimes(
 // days were picked (even a single one-time visit still shows it). ─────────
 
 const ONGOING_QUESTION =
-  "Is this an ongoing arrangement with no end date, or does it have a specific end date — e.g. if this is just a " +
-  "single one-time visit, say so? (e.g. \"ongoing\", \"just this once\", or \"through December 1\")";
+  "Is this ongoing with no end date, or does it end on a certain date? If it's just a single one-time visit, say so. " +
+  "You can say ongoing, just this once, or a date like through December 1.";
 
 async function advanceFromTimes(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const data = await getFlowData(phone);
@@ -1095,7 +1095,7 @@ async function advanceToLocation(phone: string, chatId: string, session: AgentSe
     await updateStep(phone, "bk_ask_location");
     await sendMessage(chatId,
       `Which address is this for?\n\n${formatCareLocationOptions(locRes.options)}\n\n` +
-      "Reply with a number, or the street name."
+      "Just tell me the number, or the street name."
     );
     return;
   }
@@ -1115,7 +1115,7 @@ async function promptLocationEdit(phone: string, chatId: string, session: AgentS
   await updateStep(phone, "bk_ask_location");
   await sendMessage(chatId,
     options.length
-      ? `Which address should this be instead?\n\n${formatCareLocationOptions(options)}\n\nReply with a number, or a new street address + zip.`
+      ? `Which address should this be instead?\n\n${formatCareLocationOptions(options)}\n\nJust tell me the number, or a new street address and zip.`
       : "Where should this care take place instead? (street address + zip)"
   );
 }
@@ -1138,7 +1138,7 @@ async function promptRecipientEdit(phone: string, chatId: string, session: Agent
   await updateStep(phone, "bk_ask_recipients");
   await sendMessage(chatId,
     options.length
-      ? `Who should this booking be for?\n\n${formatRecipientOptions(options)}\n\nReply with one or more numbers (e.g. "1, 2").`
+      ? `Who should this booking be for?\n\n${formatRecipientOptions(options)}\n\nTell me one or more numbers, like 1, 2.`
       : "Who is this booking for?"
   );
 }
@@ -1228,7 +1228,7 @@ async function handleBkAskRecipients(
 // no note attached, same as leaving the site's textarea empty.
 
 const MESSAGE_QUESTION = (caregiverName: string) =>
-  `Want to include a note for ${caregiverName}? Reply with what you'd like to say, or "no" to skip.`;
+  `Want to include a note for ${caregiverName}? Tell me what you'd like to say, or just say no.`;
 
 async function handleBkAskMessage(
   phone: string, chatId: string, text: string, session: AgentSession,
@@ -1424,7 +1424,7 @@ export function buildBookingRecap(data: BookingFlowData): string {
   const locationTags = data.lifestylePreferences?.length ? ` (${data.lifestylePreferences.join(", ")})` : "";
   const ec = data.emergencyContact;
   const ecLine = ec?.phone ? `${ec.name || "On file"}${ec.relationship ? ` (${ec.relationship})` : ""} — ${ec.phone}` : "Not on file";
-  const messageLine = data.message ? `"${data.message}"` : "None — reply with a note if you'd like to add one";
+  const messageLine = data.message ? `"${data.message}"` : "None (tell me a note if you'd like to add one)";
 
   return [
     `Here's your booking request:`,
@@ -1444,11 +1444,11 @@ export function buildBookingRecap(data: BookingFlowData): string {
     `Emergency contact: ${ecLine}`,
     `Message to ${data.caregiverName}: ${messageLine}`,
     ``,
-    `Reply YES to send it to ${data.caregiverName}, or NO to cancel.`,
+    `Does that look right? Say yes and I'll send it to ${data.caregiverName}, or tell me what to change.`,
   ].join("\n");
 }
 
-const CONFIRM_QUESTION_FALLBACK = "Confirming whether to send this booking request — reply YES to send it, or NO to cancel.";
+const CONFIRM_QUESTION_FALLBACK = "Should I send this booking request to the care provider? Say yes to send it, or no to leave it.";
 
 async function classifyBkConfirmReply(text: string): Promise<any | null> {
   const raw = await parseWithClaude(
@@ -1547,7 +1547,7 @@ async function handleBkConfirm(
     // during initial collection, so nothing needs clearing here.
     await mergeFlowData(phone, { editingFromConfirm: true });
     await updateStep(phone, "bk_ask_days");
-    await sendMessage(chatId, "No problem — let's redo the schedule.");
+    await sendMessage(chatId, "No problem, let's redo the schedule.");
     await sendMessage(chatId, DAYS_QUESTION(data.jobPostDays));
     return;
   }
@@ -1634,7 +1634,7 @@ async function handleBkConfirm(
       // No per-recipient care plan on file to attach this to (fail-soft —
       // shouldn't normally happen once resolveRecipientAttribution always
       // populates careRecipients).
-      await sendMessage(chatId, "I couldn't find a care plan to update that on — reply YES to send as-is, or NO to cancel.");
+      await sendMessage(chatId, "I couldn't find a care plan to update that on. Want me to send it as is? Say yes, or no to hold off.");
       return;
     }
     let targetIndex = 0;
@@ -1694,7 +1694,7 @@ async function handleBkConfirm(
     }
     const recipients = data.careRecipients ?? [];
     if (!recipients.length) {
-      await sendMessage(chatId, "I couldn't find a care plan to update that on — reply YES to send as-is, or NO to cancel.");
+      await sendMessage(chatId, "I couldn't find a care plan to update that on. Want me to send it as is? Say yes, or no to hold off.");
       return;
     }
     let targetIndex = 0;

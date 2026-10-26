@@ -53,7 +53,7 @@ export interface ReplacementFlowData {
   newEnd?: string;
 }
 
-const RP_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const RP_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 const BARE_NO = new Set(["NO", "N", "NOPE", "NAH"]);
 // The site's second button. Offered by name in the question, so a bare
 // "SKIP" is a protocol word here (like YES/NO), not intent parsing.
@@ -157,7 +157,7 @@ async function handleReplacementBackOut(phone: string, chatId: string, session: 
     audience: "family",
     language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
     context: "The family decided not to send a replacement request for their cancelled visit after all. Confirm nothing was sent and that the visit still shows Needs Replacement; invite them to text you whenever they want to pick it back up. Never send them to the website.",
-    fallback: "No problem — I haven't sent anything. The visit still shows Needs Replacement. Text me whenever you want to pick this back up.",
+    fallback: "No problem, I haven't sent anything. The visit still shows Needs Replacement. Text me whenever you want to pick this back up.",
     maxTokens: 80,
   }));
 }
@@ -179,15 +179,15 @@ function candidateList(d: ReplacementFlowData): string {
 // The modal's two decisions in one question: who, and keep or change the
 // pre-filled Date / Start / End.
 function PICK_QUESTION(d: ReplacementFlowData): string {
-  return `Which one would you like to send the request to? Reply with a name or number.\n\n` +
+  return `Which one would you like to send the request to? Just tell me the name or number.\n\n` +
     `I'll keep the visit as is — ${describeVisitWindow({ date: d.visitDate, startTime: d.visitStart, endTime: d.visitEnd })} — unless you tell me a different day or time. ` +
-    `Or reply SKIP to cancel this visit without a replacement.`;
+    `Or say skip to cancel this visit without a replacement.`;
 }
 
 // The site's Skip button, confirmed before it happens.
 function SKIP_QUESTION(d: ReplacementFlowData): string {
   return `Skip the ${describeVisitWindow({ date: d.visitDate, startTime: d.visitStart, endTime: d.visitEnd })} visit? It'll be cancelled with no replacement — the rest of the booking stays as is.\n\n` +
-    `Reply YES to skip it, or NO to keep it as Needs Replacement.`;
+    `Just checking, do you want to skip it?`;
 }
 
 function TIME_QUESTION(d: ReplacementFlowData): string {
@@ -196,7 +196,7 @@ function TIME_QUESTION(d: ReplacementFlowData): string {
 
 function RECAP(d: ReplacementFlowData): string {
   return `Send a replacement request to ${d.caregiverName}${d.caregiverRate ? ` ($${d.caregiverRate}/hr · $${billedHourly(d.caregiverRate).toFixed(2)}/hr billed)` : ""} for ${effectiveWindow(d)}?\n\n` +
-    `Reply YES to send it, NO to cancel, or tell me what to change (a different care provider or day/time).`;
+    `Does that look right? Say yes and I'll send it, or tell me what to change (a different care provider, or the day or time).`;
 }
 
 // ── Entry ─────────────────────────────────────────────────────────────────────
@@ -231,7 +231,7 @@ export async function startReplacementFlow(
     });
     await sendMessage(chatId,
       `The ${describeVisitWindow({ date: past.visitDate, startTime: past.visitStart, endTime: past.visitEnd })} visit has already passed without a replacement, so there's nothing to cover now. ` +
-      `Want me to skip it so it drops off your bookings? Reply YES to skip it, or NO to leave it as is.`);
+      `Want me to skip it so it drops off your bookings?`);
     return { started: true, reason: "past_visit" };
   }
   const candidates = await findReplacementCandidates(clientId, shift.caregiverId as string, shift as { careRecipients?: Array<{ careNeeds?: string[] }> });
@@ -251,7 +251,7 @@ export async function startReplacementFlow(
     await sendMessage(chatId,
       `I couldn't find anyone available to cover the ${describeVisitWindow({ date: empty.visitDate, startTime: empty.visitStart, endTime: empty.visitEnd })} visit right now. ` +
       `Want me to skip it instead? It'll be cancelled with no replacement — the rest of the booking stays as is.\n\n` +
-      `Reply YES to skip it, or NO to leave it as Needs Replacement and I'll let you know if someone opens up.`);
+      `Say yes to skip it, or no to leave it as Needs Replacement and I'll let you know if someone opens up.`);
     return { started: true, reason: "no_candidates" };
   }
 
@@ -442,7 +442,7 @@ async function handleRpConfirm(phone: string, chatId: string, text: string, sess
         return goToRecap(phone, chatId);
       }
       await updateStep(phone, "rp_pick");
-      await sendMessage(chatId, `Sure — who would you like instead?\n\n${candidateList(data)}\n\nReply with a name or number.`);
+      await sendMessage(chatId, `Sure, who would you like instead?\n\n${candidateList(data)}\n\nJust tell me the name or number.`);
       return;
     }
     case "change_time": {
@@ -498,11 +498,11 @@ async function handleRpSkipConfirm(phone: string, chatId: string, text: string, 
 async function declineSkip(phone: string, chatId: string, _session: AgentSession, data: ReplacementFlowData): Promise<void> {
   if (data.candidates.length > 0) {
     await updateStep(phone, "rp_pick");
-    await sendMessage(chatId, `Okay — the visit stays as Needs Replacement. ${PICK_QUESTION(data)}`);
+    await sendMessage(chatId, `Okay, the visit stays as Needs Replacement. ${PICK_QUESTION(data)}`);
     return;
   }
   await clearFlow(phone);
-  await sendMessage(chatId, "Okay — I'll leave it as Needs Replacement and let you know if someone opens up. You can also use Find Replacement or Skip on your My Bookings page anytime.");
+  await sendMessage(chatId, "Okay, I'll leave it as Needs Replacement and let you know if someone opens up. You can also use Find Replacement or Skip on your My Bookings page anytime.");
 }
 
 async function commitSkip(phone: string, chatId: string, session: AgentSession, data: ReplacementFlowData): Promise<void> {

@@ -994,7 +994,7 @@ export async function handleOnboardingStep(
     } else {
       await sendMessage(chatId,
         "You're on our waitlist for when Evia expands to your area — I'll reach out the moment we do. " +
-        "If you're actually in Santa Clara County and I got that wrong, reply START OVER and we'll try again. 💙"
+        "If you're actually in Santa Clara County and I got that wrong, say start over and we'll try again. 💙"
       );
       return;
     }
@@ -1457,7 +1457,7 @@ async function handleVerifyPhone(
   // If the message looks more like a question than an OTP code or RESEND/STOP keyword,
   // answer it and re-prompt instead of failing the OTP attempt.
   const looksLikeCode = /^\s*\d{4,6}\s*$/.test(text);
-  if (!looksLikeCode && norm !== "RESEND" && norm !== "START OVER" && norm !== "RESTART" && await isQuestionOrOther(text, "Please reply with the 6-digit verification code I just texted you.")) {
+  if (!looksLikeCode && norm !== "RESEND" && norm !== "START OVER" && norm !== "RESTART" && await isQuestionOrOther(text, "What's the 6-digit verification code I just texted you?")) {
     const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "What's the 6-digit verification code I just texted you? If it didn't come through, say resend and I'll send another.");
@@ -2061,7 +2061,7 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     if (!isNone && await isQuestionOrOther(text, "What should the note say instead?")) {
       // A question mid-step is answered; the note question stays parked.
       const answer = await answerQuestionMidFlow(text, session, phone);
-      await sendMessage(chatId, `${answer}\n\nWhat should the note say instead? (Reply NONE to remove it.)`);
+      await sendMessage(chatId, `${answer}\n\nWhat should the note say instead? (Say none to remove it.)`);
       return;
     }
     await clear();
@@ -2207,7 +2207,7 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
     const given = await noteReplacementFromReply(text);
     if (given === null) {
       await db.collection("agent_sessions").doc(phone).set({ clientIntakeAwaitingNote: true }, { merge: true }).catch(() => {});
-      await sendMessage(chatId, "Sure — what should the note say instead? Care Providers browsing jobs can read it, so leave out contact info, medical details and addresses. (Reply NONE to remove it.)");
+      await sendMessage(chatId, "Sure — what should the note say instead? Care Providers browsing jobs can read it, so leave out contact info, medical details and addresses. (Say none to remove it.)");
       return;
     }
     await mergeOnboardingData(phone, { jobDescription: given });
@@ -5015,7 +5015,7 @@ async function handleJobAskStart(
   const d = session.onboardingData ?? {};
   await sendMessage(chatId,
     `Your membership is active! 🎉 Let's find the perfect care provider for ${(d.seniorName as string) ?? "your loved one"}.\n\n` +
-    `When would you like care to start? (e.g. "next Monday", "ASAP", "June 1")`
+    `When would you like care to start? You can say next Monday, as soon as possible, or a date like June 1.`
   );
   await updateSession(phone, { onboardingStep: "job_ask_frequency" });
 }
@@ -5060,7 +5060,7 @@ async function handleJobAskDays(
   await mergeOnboardingData(phone, { jobFrequency: frequency });
   await updateSession(phone, { onboardingStep: "job_ask_time" });
   await sendMessage(chatId,
-    `${freqLabel[frequency] ?? "Got it"}! Which days work best?\n\n(e.g. "Mon, Wed, Fri" or "weekdays" or "every day")`
+    `${freqLabel[frequency] ?? "Got it"}! Which days work best? You can say Mon, Wed, Fri, or weekdays, or every day.`
   );
 }
 
@@ -5070,7 +5070,7 @@ async function handleJobAskTime(
   if (await isQuestionOrOther(text, "Which days work best?")) {
     const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Which days work best? (e.g. \"Mon, Wed, Fri\" or \"weekdays\")");
+    await sendMessage(chatId, "Which days work best? You can say Mon, Wed, Fri, or weekdays.");
     return;
   }
   const raw = await parseWithClaude(
@@ -5196,7 +5196,7 @@ async function handleJobAskEnvironment(
   await updateSession(phone, { onboardingStep: "job_ask_rate" });
   await sendMessage(chatId,
     `${levelLabel[careLevel] ?? "Got it"}. Two quick things about the home: Are there pets? Is it a smoking household?\n\n` +
-    `(e.g. "dog, non-smoking" or "no pets, non-smoking")`
+    `You can answer both at once, like a dog and non-smoking.`
   );
 }
 
@@ -5229,8 +5229,8 @@ async function handleJobAskRate(
   await sendMessage(chatId,
     `Got it — ${petsLabel}, ${smokeLabel}. What hourly rate are you hoping to pay?\n\n` +
     (city
-      ? `Most families in ${city} pay ${rateText}. Reply with a number or "flexible".`
-      : `Most families pay ${rateText}. Reply with a number or "flexible".`)
+      ? `Most families in ${city} pay ${rateText}. Tell me a number, or say flexible.`
+      : `Most families pay ${rateText}. Tell me a number, or say flexible.`)
   );
 }
 
@@ -5301,7 +5301,7 @@ async function handleJobConfirmPost(
       `💛 ${needsArr}\n` +
       `📊 ${levelLabel.charAt(0).toUpperCase() + levelLabel.slice(1)} care\n` +
       `💰 ${rateLabel} · ${payLabel}\n\n` +
-      `Shall I post this? Reply YES to go live, or NO to make a change.`
+      `Shall I post this? Say yes to go live, or tell me what to change.`
     );
     return;
   }
@@ -5348,7 +5348,7 @@ async function handleJobConfirmPost(
       "No problem! Let's go through it again. When would you like care to start?"
     );
   } else {
-    await sendMessage(chatId, "Just reply YES to post or NO to make a change.");
+    await sendMessage(chatId, "Just say yes to post it, or tell me what to change.");
   }
 }
 

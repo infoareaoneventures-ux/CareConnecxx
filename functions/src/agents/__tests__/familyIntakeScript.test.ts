@@ -294,6 +294,8 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     const all = Object.assign({}, ...merged);
     expect(all.careNeeds).toEqual(["Baby Care", "School & Homework", "Light Housekeeping"]);
     expect(all.careNeedsKindsOffered).toEqual(["senior", "child"]);
+    // the mapper is told whose post it is (live 2026-10-26: "bathing" on a child-care post came back as Personal Care)
+    expect(deps.canonicalizeCareNeeds).toHaveBeenLastCalledWith(expect.anything(), { kinds: ["senior", "child"] });
     // care types saved on the site (no offered record) are never re-asked
     const fromSite = { ...site, careNeedsKindsOffered: undefined };
     delete (fromSite as any).careNeedsKindsOffered;

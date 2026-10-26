@@ -157,22 +157,39 @@ function strings(v: unknown): string[] {
  * services. Never throws; never returns anything outside PRIMARY_SERVICES in
  * `matched`. See the header for the four buckets.
  */
-export async function mapCaregiverServices(raw: unknown): Promise<ServiceMapping> {
+/** Who the words are about, when the caller knows (a child-care post, a senior-care post) — the names follow. */
+export interface ServiceMapOptions { kinds?: readonly string[] }
+// The senior service and its child-list twin: "bathing" on a child-care post is Bathing & Dressing, never
+// Personal Care (live 2026-10-26: "Meals bathing" for a toddler came back as Personal Care / Meal Preparation
+// and was then rejected as "not on Mahad's list").
+const CHILD_TWIN: Record<string, string> = {
+  "Personal Care": "Bathing & Dressing",
+  "Meal Preparation": "Meals & Snacks",
+  "Light Housekeeping": "Tidying & Laundry",
+};
+export async function mapCaregiverServices(raw: unknown, opts: ServiceMapOptions = {}): Promise<ServiceMapping> {
   const terms = cleanRaw(raw);
   if (!terms.length) return { ...EMPTY };
+  const kinds = opts.kinds ?? [];
+  const only = kinds.length ? (kinds.every((k) => k === "child") ? "child" : kinds.every((k) => k === "senior") ? "senior" : null) : null;
+  const toKind = (s: string): string => (only === "child" ? (CHILD_TWIN[s] ?? s) : s);
 
   const direct = new Set<string>();
   const rest: string[] = [];
   for (const term of terms) {
     const exact = serviceFromNameOrLabel(term);
     const hit = exact ?? DIRECT_HITS[term.toLowerCase().trim()];
-    if (hit) direct.add(hit);
+    if (hit) direct.add(toKind(hit));
     else rest.push(term);
   }
   if (!rest.length) return { ...EMPTY, matched: orderedCanonicalServices([...direct]) };
 
   const enumList = CANONICAL_SERVICES.map((s) => `"${s}"`).join(", ");
+  const whoHint = only === "child"
+    ? "These words are about a CHILD (a child-care post), so use the child names: bathing / dressing / potty → Bathing & Dressing, meals / snacks / feeding → Meals & Snacks, tidying / laundry → Tidying & Laundry, watching / minding → Supervision. "
+    : only === "senior" ? "These words are about an ADULT (a senior-care post), so use the senior names. " : "";
   const reply = await parseWithClaude(
+    whoHint +
     "You sort a care provider's words about the care she offers into a FIXED list of services — eight for seniors and eight for children (Transportation is on both). " +
       `Allowed services (use these exact strings): [${enumList}]. ` +
       'Reply with raw JSON only: {"services": [allowed strings her words clearly describe], ' +
@@ -205,7 +222,7 @@ export async function mapCaregiverServices(raw: unknown): Promise<ServiceMapping
         parsedOk = true;
       } else if (parsed && typeof parsed === "object") {
         const o = parsed as Record<string, unknown>;
-        services = strings(o.services);
+        services = strings(o.services).map(toKind);
         medical = strings(o.medical);
         unmapped = strings(o.unmapped);
         parsedOk = true;

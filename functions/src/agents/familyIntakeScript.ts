@@ -348,7 +348,7 @@ export interface FamilyIntakeDeps {
   parseWithClaude: (prompt: string, text: string) => Promise<string>;
   isQuestionOrOther: (text: string, currentQuestion: string) => Promise<boolean>;
   answerQuestionMidFlow: (text: string, session: any, phone: string) => Promise<string>;
-  canonicalizeCareNeeds: (terms: unknown) => Promise<{ careNeeds: string[]; medical: string[]; unmapped: string[] }>;
+  canonicalizeCareNeeds: (terms: unknown, opts?: { kinds?: readonly string[] }) => Promise<{ careNeeds: string[]; medical: string[]; unmapped: string[] }>;
   lookupZipPlace: (zip: string) => Promise<{ city: string; state: string } | null>;
   evaluateServiceArea: (args: { city?: string | null; zip?: string | null }) => "in" | "out" | "need_zip";
   parkOutOfArea: (args: { phone: string; role: "client"; city: string; zipCode: string; name?: string; onboardingData?: Data }) => Promise<void>;
@@ -712,7 +712,8 @@ async function readNeeds(deps: FamilyIntakeDeps, text: string, d: Data): Promise
     return { fields: { careNeedsKindsOffered: offeredNow }, ack: "Nothing more, got it." };
   }
   if (!needsWords.length) needsWords = [text];
-  const c = await deps.canonicalizeCareNeeds(needsWords);
+  // Whose post this is decides the names ("bathing" on a child-care post is Bathing & Dressing — live 2026-10-26).
+  const c = await deps.canonicalizeCareNeeds(needsWords, { kinds: offeredNow });
   if (!c.careNeeds.length) return null;
   const merged = followUp ? Array.from(new Set([...existing, ...c.careNeeds])) : c.careNeeds;
   const notes: string[] = [];
@@ -817,7 +818,7 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
   if (typeof p.smokingHousehold === "boolean" && !skip.has("smokingHousehold")) fields.smokingHousehold = p.smokingHousehold;
   if (typeof p.email === "string" && /^\S+@\S+\.\S+$/.test(p.email.trim()) && !skip.has("email")) fields.email = p.email.trim().toLowerCase();
   if (Array.isArray(p.careNeeds) && p.careNeeds.length && !skip.has("careNeeds")) {
-    const c = await deps.canonicalizeCareNeeds(p.careNeeds).catch(() => ({ careNeeds: [] as string[], medical: [], unmapped: [] }));
+    const c = await deps.canonicalizeCareNeeds(p.careNeeds, { kinds: rosterKinds(d) }).catch(() => ({ careNeeds: [] as string[], medical: [], unmapped: [] }));
     if (c.careNeeds.length) fields.careNeeds = c.careNeeds;
   }
   let roster: RosterPerson[] | undefined; let capped: boolean | undefined;

@@ -516,9 +516,13 @@ export async function handleJobPostingStep(
   session: AgentSession
 ): Promise<void> {
   let step = (session as any).jobPostingStep as string ?? "";
+  // An edit in progress (from the recap, or a correction mid-flow) sits on a step whose field is already
+  // filled — the stored step is the truth then, never the derived one (2026-10-26).
+  const jd = (session as any).jobPostingData as Record<string, unknown> | undefined;
+  const editInProgress = jd?.editingFromConfirm === true || (typeof jd?.resumeStep === "string" && jd.resumeStep.length > 0);
   // U13 (DARK): derive the step from collected fields when the flag is on. Gate
   // step (jp_confirm_post) + all handlers unchanged; flag OFF ⇒ no change.
-  if (isJobPostingDispatchEnabled() && isDispatchableJobStep(step)) {
+  if (!editInProgress && isJobPostingDispatchEnabled() && isDispatchableJobStep(step)) {
     step = resolveJobStep((session as any).jobPostingData as Record<string, unknown> | undefined);
   }
   switch (step) {
@@ -623,7 +627,7 @@ async function handleJpAskRecipients(
     return;
   }
 
-  await finishRecipientSelection(phone, chatId, chosen);
+  await finishRecipientSelection(phone, chatId, session, chosen);
 }
 
 // A new person with their relationship known: "Other" is the one case the relationship can't settle,
@@ -644,13 +648,14 @@ async function addNewRecipientOrAskKind(
     await sendMessage(chatId, `Got it. ${OTHER_KIND_QUESTION} (Adult / Child)`);
     return;
   }
-  await finishRecipientSelection(phone, chatId, [...chosen, { firstName: first, lastName: last, relationship, isSelf: false }]);
+  await finishRecipientSelection(phone, chatId, _session, [...chosen, { firstName: first, lastName: last, relationship, isSelf: false }]);
 }
 
 async function finishRecipientSelection(
-  phone: string, chatId: string, chosen: JobRecipient[]
+  phone: string, chatId: string, session: AgentSession, chosen: JobRecipient[]
 ): Promise<void> {
   await mergeJobData(phone, { careRecipients: chosen });
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_caregivers_needed");
   const names = chosen.map((r) => r.isSelf ? "you" : r.firstName).join(" and ");
   await sendMessage(chatId,
@@ -684,7 +689,7 @@ async function handleJpAskRecipientRelationship(
     const kind = /^child$/i.test(raw.trim()) ? "child" : /^senior$/i.test(raw.trim()) ? "senior" : null;
     if (!kind) { await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`); return; }
     await mergeJobData(phone, { awaitingRecipientKind: admin.firestore.FieldValue.delete(), pendingNewRecipientRelationship: admin.firestore.FieldValue.delete() });
-    await finishRecipientSelection(phone, chatId, [...existing, { firstName: first, lastName: last, relationship: "Other", isSelf: false, careKind: kind }]);
+    await finishRecipientSelection(phone, chatId, session, [...existing, { firstName: first, lastName: last, relationship: "Other", isSelf: false, careKind: kind }]);
     return;
   }
   const raw = await parseWithClaude(
@@ -717,7 +722,7 @@ async function handleJpAskCaregiversNeeded(
       return;
     }
     const raw = await parseWithClaude(
-      'Extract how many care providers the family needs, as a number from 1 to 4. "just one"/"one"/"1" = 1. Reply with only the number.',
+      'Extract how many care providers the family needs, as a number from 1 to 4. "just one"/"one"/"1" = 1. Reply with only the number, or NONE if the message states no count — never guess.',
       text
     );
     n = parseInt(raw, 10);
@@ -727,6 +732,7 @@ async function handleJpAskCaregiversNeeded(
     }
   }
   await mergeJobData(phone, { caregiversNeeded: n });
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_location");
 
   const uid = (session as any).userId as string | undefined;
@@ -786,6 +792,7 @@ async function handleJpAskLocation(
       // Silent default (no question asked — see the JP_STEP_ORDER comment).
       jobTitle: defaultJobTitle(loc.city || null),
     });
+    if (await resumeAfterEdit(phone, chatId, session)) return;
     await updateJobStep(phone, "jp_ask_care_needs");
     await sendMessage(chatId, `Got it — ${loc.street}.\n\n${await careNeedsQuestion(phone, session)}`);
     return;
@@ -859,6 +866,7 @@ async function handleJpAskLocationEnvironment(
   } catch (err) {
     console.warn("[jobPostingFlow] location flags write-back skipped:", err instanceof Error ? err.message : err);
   }
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_care_needs");
   await sendMessage(chatId,
     `Got it — ${petsInHome ? "pets, yes" : "no pets"}, ${smokingHousehold ? "smoking, yes" : "no smoking"}.\n\n${await careNeedsQuestion(phone, session)}`
@@ -909,7 +917,7 @@ function nextStageQuestion(recipients: JobRecipient[]): { child: JobRecipient; q
   return { child, question: stageQuestion(children.length > 1 ? child.firstName : null) };
 }
 /** After the care needs (and after each stage answer): the next child's stage, or on to the rate. */
-async function askNextStageOrRate(phone: string, chatId: string, recipients: JobRecipient[], prefix: string): Promise<void> {
+async function askNextStageOrRate(phone: string, chatId: string, session: AgentSession, recipients: JobRecipient[], prefix: string): Promise<void> {
   const next = nextStageQuestion(recipients);
   if (next) {
     await mergeJobData(phone, { awaitingStageFor: next.child.firstName });
@@ -917,6 +925,7 @@ async function askNextStageOrRate(phone: string, chatId: string, recipients: Job
     return;
   }
   await mergeJobData(phone, { awaitingStageFor: admin.firestore.FieldValue.delete() });
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_rate");
   await sendMessage(chatId, `${prefix}${RATE_Q}`);
 }
@@ -979,6 +988,7 @@ async function handleJpAskFrequency(
   }
   const label: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
   await mergeJobData(phone, { jobFrequency: frequency });
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_start");
   await sendMessage(chatId,
     `${label[frequency] ?? "Got it"}! When would you like care to start? You can say next Monday, as soon as possible, or a specific date.`
@@ -1019,6 +1029,7 @@ async function handleJpAskStart(
   // message...". A real date VALUE is never a full explanatory sentence.
   const stored = (startDate !== "__parse_error__" && !looksLikeExtractionRefusal(startDate)) ? startDate : text.trim();
   await mergeJobData(phone, { jobStartDate: stored });
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_days");
   await sendMessage(chatId,
     `Got it — starting ${formatDateForDisplay(stored)}! Which days work best? You can say Mon, Wed, Fri, or weekdays, or every day.`
@@ -1052,6 +1063,7 @@ async function handleJpAskDays(
     return;
   }
   await mergeJobData(phone, { jobDays: days });
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_time");
   await sendMessage(chatId,
     `${days.length === 7 ? "Every day" : days.join(", ")} — perfect! What time of day works best — ` +
@@ -1092,6 +1104,7 @@ async function handleJpAskTime(
   }
   const timeLabel = times.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(" & ");
   await mergeJobData(phone, { jobTimeOfDay: times });
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_recipients");
   const onboardingData = (session as any).onboardingData as Record<string, unknown> ?? {};
   const uid = (session as any).userId as string | undefined;
@@ -1144,14 +1157,14 @@ async function handleJpAskCareNeeds(
     const key = recipientPlanKey(pendingStage.child.firstName, pendingStage.child.lastName);
     const updated = recipients0.map((r) => (recipientPlanKey(r.firstName, r.lastName) === key ? { ...r, ageRange: id } : r));
     await mergeJobData(phone, { careRecipients: updated });
-    await askNextStageOrRate(phone, chatId, updated, `${pendingStage.child.firstName} · ${ageRangeLabel(id)} — noted! `);
+    await askNextStageOrRate(phone, chatId, session, updated, `${pendingStage.child.firstName} · ${ageRangeLabel(id)} — noted! `);
     return;
   }
 
   // Names or the family's words → the website's lists (the mapper both sides
   // share); medical care is never a need; off-list words are left off and said
   // so; nothing is stored underneath a category (2026-10-04).
-  const canon = await canonicalizeCareNeeds([text]);
+  const canon = await canonicalizeCareNeeds([text], { kinds });
   const notes: string[] = [];
   if (canon.medical.length) notes.push(`Care Providers here don't administer medication or give medical treatment, so "${canon.medical.join('", "')}" isn't a type of care I can add — the closest on the list is Medication Reminders Only (reminding when it's time, not giving them).`);
   if (canon.unmapped.length) notes.push(`"${canon.unmapped.join('", "')}" isn't one of the types of care on the list, so I've left it off.`);
@@ -1180,7 +1193,7 @@ async function handleJpAskCareNeeds(
   const city = (jobData0.city as string) || "";
   await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel, jobCareKinds: postKinds, jobTitle: defaultJobTitle(city || null, postKinds) });
   // A child on this post with no stage yet is asked for it here, one child at a time; otherwise the rate.
-  await askNextStageOrRate(phone, chatId, recipients0, `${needsLabel} — noted! `);
+  await askNextStageOrRate(phone, chatId, session, recipients0, `${needsLabel} — noted! `);
 }
 
 async function handleJpAskRate(
@@ -1197,11 +1210,11 @@ async function handleJpAskRate(
   const raw = await parseWithClaude(
     'Extract the hourly rate as a number. ' +
     'If the user says "flexible", "open", or "negotiable", return 0. ' +
-    'Otherwise extract the dollar amount and return only the number (e.g. 20, 18.50). ' +
-    'Return only the number or 0.',
+    'If the message states a dollar amount, return only the number (e.g. 20, 18.50). ' +
+    'If it states NEITHER an amount NOR that the rate is flexible, return NONE — never guess (live 2026-10-26: a stray "Toddler" here must not become a flexible rate).',
     text
   );
-  const rate = parseFloat(raw);
+  const rate = /^\s*NONE/i.test(raw) ? NaN : parseFloat(raw);
   if (isNaN(rate)) {
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;
@@ -1215,6 +1228,7 @@ async function handleJpAskRate(
   // jp_ask_pay_method (which used to ask "how would you prefer to pay" and
   // parse the answer) is gone; removed from JP_STEP_ORDER too.
   await mergeJobData(phone, { jobHourlyRate, jobPaymentMethod: "card" });
+  if (await resumeAfterEdit(phone, chatId, session)) return;
   await updateJobStep(phone, "jp_ask_description");
   await sendMessage(chatId,
     // The site's Details box, word for word (2026-10-17): its heading is the question, the one line under it is the warning.
@@ -1237,6 +1251,10 @@ async function handleJpAskDescription(
     await sendMessage(chatId, REASK);
     return;
   }
+  // "I didn't give you the rate" is not the job's details (live 2026-10-26: it was posted as the note) — a
+  // correction or objection about an earlier answer goes to that field, then this question is asked again.
+  const correction = await readJobPostEdit(text, "midflow");
+  if (correction.action in JP_EDIT_STEP) { await applyJobPostEdit(phone, chatId, session, correction, { from: "midflow", reask: REASK }); return; }
   const description = text.trim();
   // A limit, never a silent cut (founder, 2026-10-19) — the site's Details box stops at the same count.
   if (description.length > JOB_DESCRIPTION_MAX_CHARS) {
@@ -1249,11 +1267,135 @@ async function handleJpAskDescription(
   }
   await mergeJobData(phone, { jobDescription: description });
   await updateJobStep(phone, "jp_confirm_post");
+  await sendJobPostRecap(phone, chatId, session);
+}
+
+// ── Edits from the recap, and corrections mid-flow — the site's Edit buttons on its review step ──────────
+// (live 2026-10-26: "Change the rate to 20" at the recap re-showed the same recap; the recap said "tell me
+// what to change" and had no way to.) One structured read decides WHICH field and, when the message states
+// the new value, what it is; a value lands at once and the recap is shown again; without one the flow jumps
+// back to that step, and the step's own advance brings it straight back here (resumeAfterEdit).
+type JobPostEditAction = "confirm" | "cancel" | "other" | "edit_frequency" | "edit_start" | "edit_days" | "edit_time" | "edit_recipients" | "edit_count" | "edit_location" | "edit_home" | "edit_care_needs" | "edit_rate" | "edit_description";
+interface JobPostEdit { action: JobPostEditAction; newRate: number | null; newCount: number | null; newDescription: string | null; pets: boolean | null; smoking: boolean | null }
+const JP_EDIT_STEP: Record<string, string> = {
+  edit_frequency: "jp_ask_frequency", edit_start: "jp_ask_start", edit_days: "jp_ask_days", edit_time: "jp_ask_time",
+  edit_recipients: "jp_ask_recipients", edit_count: "jp_ask_caregivers_needed", edit_location: "jp_ask_location",
+  edit_home: "jp_ask_location_environment", edit_care_needs: "jp_ask_care_needs", edit_rate: "jp_ask_rate", edit_description: "jp_ask_description",
+};
+
+async function readJobPostEdit(text: string, where: "recap" | "midflow"): Promise<JobPostEdit> {
+  const none: JobPostEdit = { action: "other", newRate: null, newCount: null, newDescription: null, pets: null, smoking: null };
+  const raw = await parseWithClaude(
+    (where === "recap"
+      ? "The family is reviewing their job post summary before it goes live. Classify their reply. "
+      : "The family is mid-way through posting a job and was just asked for the job's details. Decide whether this message is instead a correction or objection about an EARLIER answer (the rate, the days, the time, the start, how often, who it is for, how many care providers, the address, pets / smoking, the types of care). If it is the details themselves, or anything else, it is \"other\". ") +
+    'Return ONLY a JSON object: {"action": string, "newRate": number or null, "newCount": number or null, "newDescription": string or null, "pets": true, false or null, "smoking": true, false or null}. ' +
+    'action is one of: "confirm" (yes / post it / looks good — only at the recap), "cancel" (no / start over / never mind — only at the recap), ' +
+    '"edit_rate" (the hourly rate or pay — set newRate to the dollar amount ONLY if this message states one; "flexible" → 0; "I didn\'t give you the rate" / "you never asked my rate" → edit_rate with newRate null), ' +
+    '"edit_days" (which days), "edit_time" (the time of day), "edit_start" (the start date), "edit_frequency" (occasional / part-time / full-time), ' +
+    '"edit_recipients" (who the job is for), "edit_count" (how many care providers — set newCount 1 to 4 when stated), "edit_location" (the address), ' +
+    '"edit_home" (pets or smoking — set pets / smoking when stated), "edit_care_needs" (the types of care), "edit_description" (the details text — set newDescription to the new text when the message gives it), ' +
+    'or "other". Never invent a value the message does not state.',
+    text,
+  ).catch(() => "");
+  const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) return none;
+  try {
+    const o = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+    const action = typeof o.action === "string" && (o.action === "confirm" || o.action === "cancel" || o.action in JP_EDIT_STEP) ? (o.action as JobPostEditAction) : "other";
+    const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : null);
+    return {
+      action, newRate: num(o.newRate), newCount: num(o.newCount),
+      newDescription: typeof o.newDescription === "string" && o.newDescription.trim() ? o.newDescription.trim() : null,
+      pets: typeof o.pets === "boolean" ? o.pets : null, smoking: typeof o.smoking === "boolean" ? o.smoking : null,
+    };
+  } catch { return none; }
+}
+
+/** The step's own question, for a jump back to it. */
+async function jpQuestionFor(step: string, phone: string, session: AgentSession): Promise<string> {
+  const uid = (session as any).userId as string | undefined;
+  const onboardingData = ((session as any).onboardingData as Record<string, unknown>) ?? {};
+  switch (step) {
+    case "jp_ask_frequency": return "How often do you need help? Occasional (1–2 days a week), part-time (3–4 days), or full-time (5+)?";
+    case "jp_ask_start": return "When would you like care to start? You can say next Monday, as soon as possible, or a specific date.";
+    case "jp_ask_days": return "Which days work best? You can say Mon, Wed, Fri, or weekdays.";
+    case "jp_ask_time": return "What time of day works best? Mornings, afternoons, evenings, overnight, or a mix?";
+    case "jp_ask_recipients": {
+      const options = uid ? await fetchRecipientOptions(uid, onboardingData) : [];
+      return `Who is this job for?\n\n${formatRecipientOptions(options)}\n\nTell me a name or number (a few is fine), or tell me someone new and how they're related to you.`;
+    }
+    case "jp_ask_caregivers_needed": return "How many care providers do you need for this job? Most families need just 1, and anywhere from 1 to 4 is fine.";
+    case "jp_ask_location": {
+      const locations = uid ? await fetchLocationOptions(uid, onboardingData) : [];
+      return `Which address is this for?\n\n${formatLocationOptions(locations)}\n\n${locations.length ? "Just tell me the number, or a new street address and zip code." : "Tell me the street address and zip code."}`;
+    }
+    case "jp_ask_location_environment": return "Are there pets in the home? Does anyone smoke in the home?";
+    case "jp_ask_care_needs": return careNeedsQuestion(phone, session);
+    case "jp_ask_rate": return RATE_Q;
+    default: return `What else should care providers know about this job? A sentence or two is great. ${JOB_DESCRIPTION_PUBLIC_LINE}`;
+  }
+}
+
+async function sendJobPostRecap(phone: string, chatId: string, session: AgentSession, prefix = ""): Promise<void> {
   const jobData = await getJobData(phone);
   const summary = buildJobSummary(jobData, session);
-  await sendMessage(chatId,
-    `Here's your job post:\n\n${summary}\n\nDoes that look right? Say yes and I'll post it for care providers to see, or tell me what to change.`
-  );
+  await sendMessage(chatId, `${prefix}Here's your job post:\n\n${summary}\n\nDoes that look right? Say yes and I'll post it for care providers to see, or tell me what to change.`);
+}
+
+/**
+ * After a step that was re-entered from an edit: back to the recap (an edit from the recap), or back to the
+ * question the correction interrupted (a correction mid-flow). False when the flow is simply moving forward.
+ */
+async function resumeAfterEdit(phone: string, chatId: string, session: AgentSession): Promise<boolean> {
+  const jobData = await getJobData(phone);
+  if (jobData.editingFromConfirm === true) {
+    await mergeJobData(phone, { editingFromConfirm: admin.firestore.FieldValue.delete() });
+    await updateJobStep(phone, "jp_confirm_post");
+    await sendJobPostRecap(phone, chatId, session, "Updated. ");
+    return true;
+  }
+  if (typeof jobData.resumeStep === "string" && jobData.resumeStep) {
+    const step = jobData.resumeStep;
+    await mergeJobData(phone, { resumeStep: admin.firestore.FieldValue.delete() });
+    await updateJobStep(phone, step);
+    await sendMessage(chatId, `Thanks. ${await jpQuestionFor(step, phone, session)}`);
+    return true;
+  }
+  return false;
+}
+
+async function applyJobPostEdit(
+  phone: string, chatId: string, session: AgentSession, edit: JobPostEdit, where: { from: "recap" } | { from: "midflow"; reask: string },
+): Promise<void> {
+  const step = JP_EDIT_STEP[edit.action];
+  // A value in the message lands at once.
+  const landed = async (ack: string): Promise<void> => {
+    if (where.from === "recap") { await sendJobPostRecap(phone, chatId, session, `${ack} `); return; }
+    await sendMessage(chatId, `${ack} ${where.reask}`);
+  };
+  if (edit.action === "edit_rate" && edit.newRate !== null && edit.newRate >= 0) {
+    await mergeJobData(phone, { jobHourlyRate: edit.newRate, jobPaymentMethod: "card" });
+    return landed(edit.newRate > 0 ? `Rate updated to $${edit.newRate}/hr.` : "Rate set to flexible.");
+  }
+  if (edit.action === "edit_count" && edit.newCount !== null && edit.newCount >= 1 && edit.newCount <= 4) {
+    await mergeJobData(phone, { caregiversNeeded: edit.newCount });
+    return landed(`Care providers needed: ${edit.newCount}.`);
+  }
+  if (edit.action === "edit_home" && (edit.pets !== null || edit.smoking !== null)) {
+    await mergeJobData(phone, { ...(edit.pets !== null ? { petsInHome: edit.pets } : {}), ...(edit.smoking !== null ? { smokingHousehold: edit.smoking } : {}) });
+    return landed("Home details updated.");
+  }
+  if (edit.action === "edit_description" && edit.newDescription) {
+    if (edit.newDescription.length > JOB_DESCRIPTION_MAX_CHARS) { await sendMessage(chatId, `That's ${edit.newDescription.length.toLocaleString("en-US")} characters and the job details hold up to ${JOB_DESCRIPTION_MAX_CHARS.toLocaleString("en-US")}. Could you send a shorter version?`); return; }
+    if (isMedicationInstruction(edit.newDescription)) { await sendMessage(chatId, `${MEDICATION_INSTRUCTION_MESSAGE} What should the details say instead?`); return; }
+    await mergeJobData(phone, { jobDescription: edit.newDescription });
+    return landed("Details updated.");
+  }
+  // No value given → that step's question; its advance comes straight back here.
+  await mergeJobData(phone, where.from === "recap" ? { editingFromConfirm: true } : { resumeStep: "jp_ask_description" });
+  await updateJobStep(phone, step);
+  await sendMessage(chatId, `Sure. ${await jpQuestionFor(step, phone, session)}`);
 }
 
 async function handleJpConfirmPost(
@@ -1271,6 +1413,13 @@ async function handleJpConfirmPost(
     norm = "YES";
   } else {
     if (await isBackOutRequest(text, CONFIRM_REASK)) return handleJobPostingBackOut(phone, chatId, session);
+    // The site's Edit buttons (live 2026-10-26: "change the rate to 20" went nowhere): a change named here is
+    // applied, or its step is re-asked and comes straight back to this recap.
+    const edit = await readJobPostEdit(text, "recap");
+    if (edit.action in JP_EDIT_STEP) { await applyJobPostEdit(phone, chatId, session, edit, { from: "recap" }); return; }
+    if (edit.action === "confirm") { norm = "YES"; }
+    else if (edit.action === "cancel") { norm = "NO"; }
+    else {
     // 2026-09-13 (live-caught, "it's keep repeating" — same fix given to
     // bookingFlow.ts/interviewFlow.ts's confirm steps): a real question gets
     // answered plus a short reminder, not the whole job-post summary again.
@@ -1288,6 +1437,7 @@ async function handleJpConfirmPost(
       'Reply with exactly YES or NO.',
       text
     );
+    }
   }
 
   if (norm.toUpperCase() === "NO") {

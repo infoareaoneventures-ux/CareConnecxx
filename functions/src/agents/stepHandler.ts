@@ -22,6 +22,9 @@ export async function isQuestionOrOther(text: string, currentQuestion?: string):
   const result = await parseWithClaude(
     context +
       "Reply YES if their message is a general question or off-topic comment unrelated to that question. " +
+      "Reply YES as well when the message objects to, corrects, or complains about something from EARLIER in the flow " +
+      "(\"you never asked me the rate\", \"I didn't give you the days\", \"that's not what I said\") — that is not an answer to this question " +
+      "(live 2026-10-26: \"I didn't give you the rate\" was saved as a job's details). " +
       "Reply NO if it is a direct answer to the question. Only reply YES or NO.",
     text,
     5,

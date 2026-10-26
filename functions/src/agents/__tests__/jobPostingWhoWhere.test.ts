@@ -537,16 +537,87 @@ describe("jp_confirm_post (live-caught: a bare 'yes' never actually posted the j
 
   it("the confirm-step classification prompt carries no leftover wording from an unrelated question", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA, userId: UID });
-    modelReplies("NO", "YES");
+    modelReplies('{"action":"other"}', "NO", "YES");
 
     // Not a bare "yes"-class word (see TRIVIAL_CONFIRM_WORDS in stepHandler.ts)
     // so this still exercises the real classify call being asserted on below —
     // a canonical bare "yes" now skips it entirely by design.
     await handleJobPostingStep(PHONE, CHAT, "looks good, post it", baseSession({ jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA }));
 
-    const classifySystem = (messagesCreate.mock.calls[0][0] as { system: string }).system;
+    const classifySystem = (messagesCreate.mock.calls[1][0] as { system: string }).system;
     expect(classifySystem).not.toContain("someone else");
     expect(classifySystem).toContain("Should I post this job");
+  });
+});
+
+// Live 2026-10-26 (Basra): "Change the rate to 20" at the recap re-showed the same recap — the recap said
+// "tell me what to change" and had no edit path; "I didn't give you the rate" at the details step was saved
+// as the job note; a stray "Toddler" at the rate step became a flexible rate.
+describe("recap edits + mid-flow corrections (live 2026-10-26)", () => {
+  const LIVE_JOB_DATA = { ...SCHEDULED, careRecipients: [ROSIE], caregiversNeeded: 1, streetAddress: "4746 Campbell Ave", city: "San Jose", state: "CA", zipCode: "95130", jobCareNeeds: ["Companionship"], jobDescription: "Help in the mornings." };
+  const recapSession = () => baseSession({ jobPostingStep: "jp_confirm_post", jobPostingData: { ...LIVE_JOB_DATA, jobHourlyRate: 0 } });
+  beforeEach(() => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_confirm_post", jobPostingData: { ...LIVE_JOB_DATA, jobHourlyRate: 0 }, userId: UID });
+  });
+
+  it("a change WITH its value at the recap lands at once and the recap is shown again", async () => {
+    modelReplies('{"action":"edit_rate","newRate":20}');
+    await handleJobPostingStep(PHONE, CHAT, "Change the rate to 20", recapSession());
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.jobHourlyRate).toBe(20);
+    expect(stored.jobPostingStep).toBe("jp_confirm_post");
+    const last = String(sendMessage.mock.calls.at(-1)?.[1]);
+    expect(last).toContain("Rate updated to $20/hr.");
+    expect(last).toContain("$20/hr");
+    expect(last).toContain("Does that look right?");
+  });
+
+  it("a change WITHOUT its value re-asks that step, and the step's advance comes straight back to the recap", async () => {
+    modelReplies('{"action":"edit_rate","newRate":null}');
+    await handleJobPostingStep(PHONE, CHAT, "I want to change the rate", recapSession());
+    let stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingStep).toBe("jp_ask_rate");
+    expect(stored.jobPostingData.editingFromConfirm).toBe(true);
+    expect(String(sendMessage.mock.calls.at(-1)?.[1])).toContain("What hourly rate are you offering?");
+
+    modelReplies("NO", "25");
+    await handleJobPostingStep(PHONE, CHAT, "25", baseSession({ jobPostingStep: "jp_ask_rate", jobPostingData: stored.jobPostingData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.jobHourlyRate).toBe(25);
+    expect(stored.jobPostingData.editingFromConfirm).toBeUndefined();
+    expect(stored.jobPostingStep).toBe("jp_confirm_post");
+    const last = String(sendMessage.mock.calls.at(-1)?.[1]);
+    expect(last).toContain("Updated. Here's your job post:");
+    expect(last).toContain("$25/hr");
+  });
+
+  it("at the details step, an objection about an earlier answer goes to that field and comes back to the details question — never saved as the note", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_ask_description", jobPostingData: { ...LIVE_JOB_DATA, jobHourlyRate: 0, jobDescription: undefined }, userId: UID });
+    modelReplies("NO", '{"action":"edit_rate","newRate":null}');
+    await handleJobPostingStep(PHONE, CHAT, "I didn't give you the rate", baseSession({ jobPostingStep: "jp_ask_description", jobPostingData: { ...LIVE_JOB_DATA, jobHourlyRate: 0, jobDescription: undefined } }));
+    let stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.jobDescription).toBeUndefined();
+    expect(stored.jobPostingStep).toBe("jp_ask_rate");
+    expect(stored.jobPostingData.resumeStep).toBe("jp_ask_description");
+    expect(String(sendMessage.mock.calls.at(-1)?.[1])).toContain("What hourly rate are you offering?");
+
+    modelReplies("NO", "20");
+    await handleJobPostingStep(PHONE, CHAT, "20", baseSession({ jobPostingStep: "jp_ask_rate", jobPostingData: stored.jobPostingData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.jobHourlyRate).toBe(20);
+    expect(stored.jobPostingData.resumeStep).toBeUndefined();
+    expect(stored.jobPostingStep).toBe("jp_ask_description");
+    expect(String(sendMessage.mock.calls.at(-1)?.[1])).toMatch(/^Thanks\. What else should care providers know about this job\?/);
+  });
+
+  it("the rate step re-asks when the message names neither a rate nor flexible — a stray word never becomes a flexible rate", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_ask_rate", jobPostingData: { ...LIVE_JOB_DATA, jobHourlyRate: undefined }, userId: UID });
+    modelReplies("NO", "NONE");
+    await handleJobPostingStep(PHONE, CHAT, "Toddler", baseSession({ jobPostingStep: "jp_ask_rate" }));
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.jobHourlyRate).toBeUndefined();
+    expect(stored.jobPostingStep).toBe("jp_ask_rate");
+    expect(String(sendMessage.mock.calls.at(-1)?.[1])).toContain("not sure I followed");
   });
 });
 

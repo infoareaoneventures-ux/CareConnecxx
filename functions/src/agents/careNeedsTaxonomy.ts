@@ -47,8 +47,8 @@ export function isCanonicalCareNeeds(terms: string[]): boolean {
  * anything else is sorted by the shared mapper and validated against the
  * eight (an invented label is dropped, never stored).
  */
-export async function canonicalizeCareNeeds(terms: unknown): Promise<CanonicalCareNeeds> {
-  const m = await mapCaregiverServices(terms);
+export async function canonicalizeCareNeeds(terms: unknown, opts: { kinds?: readonly string[] } = {}): Promise<CanonicalCareNeeds> {
+  const m = await mapCaregiverServices(terms, opts);
   return { careNeeds: m.matched, careNeedDetails: {}, medical: m.medical, unmapped: m.unmapped, unresolved: m.unresolved };
 }
 

@@ -23,7 +23,7 @@ import { coerceClientRate, isFieldFilled } from "./onboardingContract";
 import { normalizeStartDateToISO, formatWizardPhone, mapTimeOfDayToWizardValues } from "./clientJobPostingContract";
 import {
   type FamilyIntakeDeps, type RosterPerson, rosterFromData, dataFromRoster, normalizeRelationship, normalizeDayCodes,
-  normalizeFrequency, isValidZip, personPhrase, readRoster, MAX_PROVIDERS, isChildPerson,
+  normalizeFrequency, isValidZip, personPhrase, readRoster, MAX_PROVIDERS, isChildPerson, rosterKinds,
 } from "./familyIntakeScript";
 
 type Data = Record<string, unknown>;
@@ -178,13 +178,13 @@ export async function applyRecapEdit(deps: FamilyIntakeDeps, d: Data, edit: Reca
     const addW = words(edit.careNeeds.add), removeW = words(edit.careNeeds.remove), replaceW = words(edit.careNeeds.replace);
     let next = [...existing];
     if (replaceW.length) {
-      const c = await deps.canonicalizeCareNeeds(replaceW);
+      const c = await deps.canonicalizeCareNeeds(replaceW, { kinds: rosterKinds(d) });
       if (c.careNeeds.length) { next = c.careNeeds; notes.push(`care types: ${c.careNeeds.map(serviceLabel).join(", ")}`); }
       const unmappedR = c.unmapped.filter((w) => !c.careNeeds.some((n) => n.toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(n.toLowerCase())));
       if (unmappedR.length) notes.push(`${unmappedR.join(", ")} isn't one of the services on the list, so I left it off`);
     }
     if (addW.length) {
-      const c = await deps.canonicalizeCareNeeds(addW);
+      const c = await deps.canonicalizeCareNeeds(addW, { kinds: rosterKinds(d) });
       for (const n of c.careNeeds) if (!next.includes(n)) next.push(n);
       if (c.careNeeds.length) notes.push(`added ${c.careNeeds.map(serviceLabel).join(", ")}`);
       if (c.medical.length) notes.push(`${c.medical.join(", ")} is medical care, which care providers here don't do, so I left it off`);
@@ -193,7 +193,7 @@ export async function applyRecapEdit(deps: FamilyIntakeDeps, d: Data, edit: Reca
       if (unmappedA.length) notes.push(`${unmappedA.join(", ")} isn't one of the services on the list, so I left it off`);
     }
     if (removeW.length) {
-      const c = await deps.canonicalizeCareNeeds(removeW);
+      const c = await deps.canonicalizeCareNeeds(removeW, { kinds: rosterKinds(d) });
       const gone = c.careNeeds.filter((n) => next.includes(n));
       next = next.filter((n) => !gone.includes(n));
       if (gone.length) notes.push(`removed ${gone.map(serviceLabel).join(", ")}`);

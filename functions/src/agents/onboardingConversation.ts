@@ -909,7 +909,7 @@ function familyIntakeDeps(): FamilyIntakeDeps {
     parseWithClaude: (prompt, text) => parseWithClaude(prompt, text),
     isQuestionOrOther: (text, q) => isQuestionOrOther(text, q),
     answerQuestionMidFlow: (text, session, phone) => answerQuestionMidFlow(text, session as AgentSession, phone),
-    canonicalizeCareNeeds: async (terms) => { const c = await canonicalizeCareNeeds(terms); return { careNeeds: c.careNeeds, medical: c.medical, unmapped: c.unmapped }; },
+    canonicalizeCareNeeds: async (terms, opts) => { const c = await canonicalizeCareNeeds(terms, opts); return { careNeeds: c.careNeeds, medical: c.medical, unmapped: c.unmapped }; },
     lookupZipPlace: async (zip) => { const p = await lookupZipPlace(zip); return p ? { city: p.city, state: p.state } : null; },
     evaluateServiceArea: (args) => evaluateServiceArea(args),
     parkOutOfArea: (args) => parkOutOfArea(args),
@@ -5237,21 +5237,28 @@ async function handleJobAskRate(
 async function handleJobAskPayMethod(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text, "What hourly rate are you hoping to pay? (or \"flexible\")")) {
+  if (await isQuestionOrOther(text, "What hourly rate are you hoping to pay? Tell me a number, or say flexible.")) {
     const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "What hourly rate are you hoping to pay? (or \"flexible\")");
+    await sendMessage(chatId, "What hourly rate are you hoping to pay? Tell me a number, or say flexible.");
     return;
   }
   const raw = await parseWithClaude(
     'Extract an hourly pay rate. If the user says flexible, open, negotiable, or similar, return "flexible". ' +
-    'Otherwise extract just the number (e.g. 20, 22.50). Return only the number or the word flexible.',
+    'If the message states a dollar amount, return just the number (e.g. 20, 22.50). ' +
+    'If it states NEITHER an amount NOR that the rate is flexible, return NONE — never guess. Return only the number, the word flexible, or NONE.',
     text
   );
-  let hourlyRate: number | "flexible" = "flexible";
-  if (raw !== "flexible") {
+  // Never a silent "flexible" for a message that said neither (the same bug as the scripted job post's rate step, 2026-10-26).
+  const rawNorm = raw.trim().toLowerCase();
+  let hourlyRate: number | "flexible" | null = rawNorm.startsWith("flexible") ? "flexible" : null;
+  if (hourlyRate === null) {
     const n = parseFloat(raw);
     if (!isNaN(n) && n >= 5 && n <= 200) hourlyRate = n;
+  }
+  if (hourlyRate === null) {
+    await sendMessage(chatId, "Sorry, I'm not sure I followed. What hourly rate are you hoping to pay? Tell me a number, or say flexible.");
+    return;
   }
   const rateLabel = hourlyRate === "flexible" ? "flexible rate" : `$${hourlyRate}/hr`;
   const d = session.onboardingData ?? {};

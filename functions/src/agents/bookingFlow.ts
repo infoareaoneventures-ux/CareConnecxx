@@ -859,7 +859,7 @@ async function handleBkAskRate(
     return;
   }
   const raw = await parseWithClaude(
-    "Extract the hourly rate as a number (e.g. \"$20\", \"18 an hour\" → 18). Reply with only the number.",
+    "Extract the hourly rate as a number (e.g. \"$20\", \"18 an hour\" → 18). Reply with only the number, or NONE if the message states no rate — never guess.",
     text
   );
   const rate = parseFloat(raw);

@@ -178,4 +178,13 @@ describe("Evia's voice — no reply-protocol grammar in converted files", () => 
   it("converted files are not also listed as pending", () => {
     expect(CONVERTED.filter((f) => PENDING.includes(f))).toEqual([]);
   });
+
+  // The model's own free replies are not fixed text — the system prompt carries the same rule,
+  // once per audience (family, care provider), so an improvised question reads the same way.
+  it("both audience prompts tell the model to give examples in plain words, never a quoted list or 'Reply X to Y'", () => {
+    const qa = fs.readFileSync(path.join(src, "agents/qaAgent.ts"), "utf8");
+    const rule = "ASKING (Evia's voice): When you give an example of what someone can say, say it in plain words";
+    expect(qa.split(rule).length - 1).toBe(2);
+    expect(qa).toContain('never a bracketed list of quoted options and never "Reply X to Y"');
+  });
 });

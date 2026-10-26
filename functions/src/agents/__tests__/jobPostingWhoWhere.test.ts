@@ -14,6 +14,13 @@ const hoisted = vi.hoisted(() => {
 
   const resolveSentinels = (cur: Record<string, any>, k: string, v: any) => {
     if (v && typeof v === "object" && (v as any).__delete) { delete cur[k]; return; }
+    // Firestore rejects a FieldValue.delete() nested inside a map in update() ("must appear at the
+    // top level") — the live 2026-10-26 crash. The mock throws the same way so a regression is caught.
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const inner of Object.values(v as Record<string, unknown>)) {
+        if (inner && typeof inner === "object" && (inner as any).__delete) throw new Error("FieldValue.delete() must appear at the top level of your update data");
+      }
+    }
     cur[k] = v;
   };
 
@@ -45,7 +52,8 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock("firebase-admin", () => {
   const firestoreFn = Object.assign(() => ({ collection: hoisted.collectionMock }), {
-    FieldValue: { delete: () => ({ __delete: true }) },
+    // The real sentinel is one shared object with isEqual(); the code detects it that way.
+    FieldValue: (() => { const DELETE: any = { __delete: true, isEqual: (o: unknown) => o === DELETE }; return { delete: () => DELETE }; })(),
   });
   const stub = { apps: [{}], initializeApp: () => ({}), firestore: firestoreFn };
   return { __esModule: true, default: stub, ...stub };
@@ -256,6 +264,28 @@ describe("jp_ask_recipient_relationship", () => {
       { firstName: "David", lastName: "", relationship: "Parent", isSelf: false },
     ]);
     expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed");
+  });
+
+  // Live 2026-10-26 (Basra): "M mahad son" → Other → "Is this person an adult or a child?" → "Child" got the typing
+  // dots and then nothing. The step cleared its pending flags with FieldValue.delete() INSIDE the nested
+  // jobPostingData map, which Firestore rejects, so the handler threw before it could reply.
+  it("Other → Adult / Child: the answer finishes the recipient with its care kind and clears the pending flags without nesting a delete marker (live 2026-10-26)", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      jobPostingStep: "jp_ask_recipient_relationship",
+      jobPostingData: { ...SCHEDULED, careRecipients: [], pendingNewRecipientFirstName: "Mahad", pendingNewRecipientLastName: "", pendingNewRecipientRelationship: "Other", awaitingRecipientKind: true },
+    });
+    modelReplies("NO", "CHILD");
+
+    await handleJobPostingStep(PHONE, CHAT, "Child", baseSession({ jobPostingStep: "jp_ask_recipient_relationship" }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.careRecipients).toEqual([
+      { firstName: "Mahad", lastName: "", relationship: "Other", isSelf: false, careKind: "child" },
+    ]);
+    expect(stored.jobPostingData.awaitingRecipientKind).toBeUndefined();
+    expect(stored.jobPostingData.pendingNewRecipientRelationship).toBeUndefined();
+    expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed");
+    expect(String(sendMessage.mock.calls.at(-1)?.[1])).toContain("care for Mahad");
   });
 });
 

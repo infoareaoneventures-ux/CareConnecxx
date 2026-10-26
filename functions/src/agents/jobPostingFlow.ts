@@ -424,9 +424,17 @@ async function getJobData(phone: string): Promise<Record<string, unknown>> {
 async function mergeJobData(phone: string, data: Record<string, unknown>): Promise<void> {
   const snap = await db.collection("agent_sessions").doc(phone).get();
   const existing = (snap.data()?.jobPostingData ?? {}) as Record<string, unknown>;
-  await db.collection("agent_sessions").doc(phone).update({
-    jobPostingData: { ...existing, ...data },
-  });
+  // The patch is merged into ONE nested map, so a FieldValue.delete() inside it is not allowed
+  // by Firestore ("must appear at the top level") and the whole update throws — live 2026-10-26
+  // (Basra): the Adult / Child answer on a job post got the typing dots and then nothing. A delete
+  // marker means "drop this key": remove it from the merged map instead of writing it.
+  const merged: Record<string, unknown> = { ...existing };
+  const deleteSentinel = admin.firestore.FieldValue.delete();
+  for (const [k, v] of Object.entries(data)) {
+    const isDelete = !!v && typeof v === "object" && typeof (v as { isEqual?: unknown }).isEqual === "function" && (v as { isEqual: (o: unknown) => boolean }).isEqual(deleteSentinel);
+    if (isDelete) delete merged[k]; else merged[k] = v;
+  }
+  await db.collection("agent_sessions").doc(phone).update({ jobPostingData: merged });
 }
 
 async function updateJobStep(phone: string, step: string): Promise<void> {

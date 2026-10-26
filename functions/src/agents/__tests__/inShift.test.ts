@@ -82,14 +82,14 @@ describe("startVisit — the Start Shift button", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(hoisted.updates[0]).toEqual({ path: "shifts/s1", data: { status: "in-progress", startedAt: "__ts__", updatedAt: "__ts__" } });
-    expect(r.text).toMatch(/^Started \d{1,2}:\d{2} [AP]M — .+ with Basra Yousuf\.\nBooking note: This is an additional shift\nVisit note: testing as additional shift\n\nMai \(Mother\)\nNote: Likes her tea at 3\.\nTasks:\n1\. Companionship\n2\. Mobility Assistance — Transfer Assist\n3\. Mobility Assistance — Walking\n\nReply DONE 1 \(or DONE 1, 3\) as you finish, NOTE followed by anything the family should see, and FINISH when the visit is over\.\nPrefer the page\? Open this visit: https?:\/\/\S+\/care-provider\/bookings\?tab=active&visit=s1$/);
+    expect(r.text).toMatch(/^Started \d{1,2}:\d{2} [AP]M — .+ with Basra Yousuf\.\nBooking note: This is an additional shift\nVisit note: testing as additional shift\n\nMai \(Mother\)\nNote: Likes her tea at 3\.\nTasks:\n1\. Companionship\n2\. Mobility Assistance — Transfer Assist\n3\. Mobility Assistance — Walking\n\nAs you go, just tell me what you've finished \(like "done with 1 and 3"\), send any notes the family should see, and tell me when the visit is over\.\nPrefer the page\? Open this visit: https?:\/\/\S+\/care-provider\/bookings\?tab=active&visit=s1$/);
   });
   it("one visit at a time (2026-10-07): another visit in progress → refused by name, nothing written", async () => {
     shift("open", { status: "in-progress", clientName: "Basra Yousuf", date: "2099-09-28", startTime: "09:00", endTime: "10:00" });
     shift("s2", { clientName: "Ali Hassan" });
     const r = await startVisit("cg1", "s2");
     expect(r.ok).toBe(false);
-    if (!r.ok) { expect(r.reason).toBe("another_in_progress"); expect(r.message).toContain("Finish your visit with Basra Yousuf first"); expect(r.message).toContain("text FINISH"); }
+    if (!r.ok) { expect(r.reason).toBe("another_in_progress"); expect(r.message).toContain("Finish your visit with Basra Yousuf first"); expect(r.message).toContain("Say finish"); }
     expect(hoisted.updates.filter((u) => u.path === "shifts/s2")).toEqual([]);
     // Starting the open visit itself still reads "already in progress" (it is not "another" visit).
     const same = await startVisit("cg1", "open");
@@ -140,7 +140,7 @@ describe("checkTasks / addVisitNote / endVisit — in progress only, the page's 
     const e = await endVisit("cg1", undefined, "Good visit.");
     expect(e.ok).toBe(true);
     expect(hoisted.updates.at(-1)).toEqual({ path: "shifts/s1", data: { status: "completed", completedAt: "__ts__", updatedAt: "__ts__", completionNotes: "Good visit." } });
-    if (e.ok) expect(e.text).toMatch(/^Ended \d{1,2}:\d{2} [AP]M — .+\. Tasks 2\/3\. Your closing note is on the visit\. Thank you\. Reply SUBMIT to submit your hours\.$/);
+    if (e.ok) expect(e.text).toMatch(/^Ended \d{1,2}:\d{2} [AP]M — .+\. Tasks 2\/3\. Your closing note is on the visit\. Thank you! When you're ready, say submit and I'll send your hours in for payment\.$/);
   });
   it("nothing in progress → each refuses without writing", async () => {
     shift("s1", { status: "scheduled", date: businessTodayStr() });
@@ -163,7 +163,7 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "DONE 2", {})).toBe("handled");
     expect(hoisted.sent.at(-1)).toBe("Checked off: Mobility Assistance — Transfer Assist (1/3 done).");
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "Note: she walked twice", {})).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("Noted — the family can see it on the visit.");
+    expect(hoisted.sent.at(-1)).toBe("Noted. The family can see it on the visit.");
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "done", {})).toBe("handled");
     expect(hoisted.sent.at(-1)).toMatch(/^Done with a task\?/);
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "FINISH", {})).toBe("handled");
@@ -196,7 +196,7 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
     shift("s1", { date, startTime: time, endTime: "23:59", clientName: "Basra Yousuf" });
     shift("s2", { date, startTime: time, endTime: "23:59", clientName: "Tom Nguyen" });
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "START", {})).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/^Which visit\? Reply 1 for .*Basra Yousuf.*, Reply 2 for .*Tom Nguyen/);
+    expect(hoisted.sent.at(-1)).toMatch(/^Which visit\? 1 for .*Basra Yousuf.*, or 2 for .*Tom Nguyen/);
     const choice = hoisted.sessionWrites.at(-1).pendingVisitChoice;
     expect(choice.candidates.map((c: any) => c.shiftId)).toEqual(["s1", "s2"]);
     expect(hoisted.docs.get("shifts/s1").status).toBe("scheduled");
@@ -223,7 +223,7 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
   it("TASKS re-lists the checklist mid-visit with what is done", async () => {
     shift("s1", { status: "in-progress", date: businessTodayStr(), tasksCompleted: ["0_Companionship"] });
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "tasks", {})).toBe("handled");
-    expect(hoisted.sent[0]).toBe("Tasks (1/3 done):\n\nMai (Mother)\nTasks:\n1. Companionship — done\n2. Mobility Assistance — Transfer Assist\n3. Mobility Assistance — Walking\n\nReply DONE with a number to check one off.");
+    expect(hoisted.sent[0]).toBe("Tasks (1/3 done):\n\nMai (Mother)\nTasks:\n1. Companionship — done\n2. Mobility Assistance — Transfer Assist\n3. Mobility Assistance — Walking\n\nTell me a number when you've finished one and I'll check it off.");
   });
   it("SKIP ends without a note; anything else falls through", async () => {
     shift("s1", { status: "in-progress", date: businessTodayStr() });

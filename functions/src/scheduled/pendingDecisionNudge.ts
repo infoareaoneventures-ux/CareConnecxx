@@ -95,10 +95,11 @@ export interface PendingItem {
   label: string;
 }
 
+// Evia's voice (2026-10-26): the choices as a question; the parked words still match.
 const REPLY: Record<string, string> = {
-  interview_request: "Reply ACCEPT or DECLINE, or PROPOSE a different time.",
-  booking_request:   "Reply ACCEPT or DECLINE, or DETAILS to see the full request.",
-  amendment:         "Reply ACCEPT or DECLINE.",
+  interview_request: "Want to accept it, decline it, or propose a different time?",
+  booking_request:   "Want to accept it, decline it, or see the full request?",
+  amendment:         "Want to accept it, or decline?",
 };
 
 export interface NudgeLoadOptions { /** Only the replacement requests (the 10-minute expiry sweep's call). */ only?: "replacement" }

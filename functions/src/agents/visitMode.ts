@@ -140,7 +140,7 @@ export async function handleVisitModeMessage(
   switch (c.kind) {
     case "task_done":
     case "task_undo": {
-      if (!c.tasks?.length) { await say(`Which task? ${items.map((t) => `${t.number}. ${t.label}`).join(", ")}. Reply DONE with its number.`); return "handled"; }
+      if (!c.tasks?.length) { await say(`Which task? ${items.map((t) => `${t.number}. ${t.label}`).join(", ")}. Tell me the number.`); return "handled"; }
       const r = await checkTasks(caregiverId, shiftId, { numbers: c.tasks, completed: c.kind === "task_done" });
       const parts = [r.ok ? r.text : r.message];
       if (r.ok && c.kind === "task_done" && c.note) {
@@ -162,8 +162,8 @@ export async function handleVisitModeMessage(
       await say(END_PROMPT);
       return "handled";
     case "ambiguous": {
-      const which = c.tasks?.length ? ` (${c.tasks.map((n) => `DONE ${n}`).join(" or ")})` : "";
-      await say(`Is that a note for the family, or a task you finished? Reply NOTE followed by the note to save it for the family, or DONE with the task number${which}.`);
+      const which = c.tasks?.length ? ` (${c.tasks.join(" or ")})` : "";
+      await say(`Is that a note for the family, or a task you finished? Say note and the note to save it for the family, or done and the task number${which}.`);
       return "handled";
     }
     case "question": {
@@ -207,10 +207,10 @@ async function handleArrival(
   ).catch(() => "OTHER");
   if (!verdict.trim().toUpperCase().startsWith("ARRIVED")) return "passthrough";
   if (mins <= START_WINDOW_MINUTES) {
-    await say(`Start is open for your ${fmtTime(String(v.shift.startTime ?? ""))} visit with ${String(v.shift.clientName || "the family")}. Text START to begin it.`);
+    await say(`Start is open for your ${fmtTime(String(v.shift.startTime ?? ""))} visit with ${String(v.shift.clientName || "the family")}. Say start when you're ready.`);
   } else {
     const opensMs = nowMs + (mins - START_WINDOW_MINUTES) * 60_000;
-    await say(`You're early — Start opens at ${clock(opensMs)} for the ${fmtTime(String(v.shift.startTime ?? ""))} visit. Text START then.`);
+    await say(`You're early. Start opens at ${clock(opensMs)} for the ${fmtTime(String(v.shift.startTime ?? ""))} visit. Say start then.`);
   }
   return "handled";
 }

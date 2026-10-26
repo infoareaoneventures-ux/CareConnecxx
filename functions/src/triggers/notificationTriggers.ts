@@ -116,8 +116,8 @@ function bookingRequestText(id: string, doc: Record<string, unknown>, lead: stri
   // A replacement request dies after 30 minutes (shiftGenerator.ts
   // expireStaleShiftReplacements) — the family is then free to ask someone
   // else, so the caregiver is told the clock up front (B6, 2026-10-11).
-  const clock = doc.isShiftReplacement === true ? " This request expires in 30 minutes." : "";
-  return `${lead}\n\n${lines.join("\n").replace(/\n{3,}/g, "\n\n")}\n\nReply ACCEPT or DECLINE.${clock}`;
+  const clock = doc.isShiftReplacement === true ? " Heads up, this one expires in 30 minutes." : "";
+  return `${lead}\n\n${lines.join("\n").replace(/\n{3,}/g, "\n\n")}\n\nWant to accept it, or decline?${clock}`;
 }
 
 // Resolves true only when the text actually went (handed to the transport or to
@@ -586,7 +586,7 @@ export const onBookingRequestWrite = functions.firestore
             const { resolveCaregiverPhone } = await import('../utils/caregiverPhone');
             const { expireParkedDecision } = await import('../agents/decisionNotices');
             const cgPhone = await resolveCaregiverPhone(after.caregiverId);
-            if (cgPhone) await expireParkedDecision(cgPhone, context.params.bookingId, { kind: 'booking_request', line: `${family}'s replacement request has expired — nothing was sent.` });
+            if (cgPhone) await expireParkedDecision(cgPhone, context.params.bookingId, { kind: 'booking_request', line: `${family}'s replacement request has already expired, so nothing was sent.` });
           } catch (err) { console.error('[onBookingRequestWrite] expire park failed:', err); }
           await tell('caregiver', after.caregiverId, {
             type: 'booking_request_expired',
@@ -647,7 +647,7 @@ export const onBookingAmendmentWrite = functions.firestore
             ? `${after.clientName || 'A family'} would like to add a visit on ${formatDateForDisplay(after.startDate)}.`
             : `${after.clientName || 'A family'} would like to add ${days} to your regular schedule.`}\n\n${
             amendmentCardLines({ ...(after as Record<string, unknown>), id: context.params.amendmentId } as Parameters<typeof amendmentCardLines>[0]).join("\n")
-          }\n\nReply ACCEPT or DECLINE.`,
+          }\n\nWant to accept it, or decline?`,
         { ...am, transitionType: 'amendment_request_created' },
         { stamp: parkDecision(parkedDecision("amendment", context.params.amendmentId, `a schedule change from ${after.clientName || 'a family'}`, "caregiver", Date.now(), after.clientName)) });
         return;
@@ -761,7 +761,7 @@ export const onShiftStatusChanged = functions.firestore
           title: 'New Time Proposed',
           body: `${family} proposed moving this visit to ${displayTime}. Please confirm.`,
           data: { shiftId },
-        }, `${family} proposed moving your visit on ${currentTime} to ${displayTime}. Reply ACCEPT or DECLINE, or PROPOSE a different time.`, proposedKey,
+        }, `${family} proposed moving your visit on ${currentTime} to ${displayTime}. Want to accept the new time, keep the current one, or propose another?`, proposedKey,
         { stamp: { lastNoticedShiftId: shiftId, ...parkDecision(parkedDecision("shift_proposal", shiftId, `a new visit time ${family} proposed (${displayTime})`, "caregiver", Date.now(), after.clientName || undefined)) } });
       }
       return;

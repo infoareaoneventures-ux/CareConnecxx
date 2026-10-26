@@ -175,8 +175,8 @@ export function activeCardLines(g: ActiveGroup, opts: { schedulePaused?: boolean
     if (s.status === "scheduled" && s.reschedulePendingDate) {
       const when = `${fmtDate(String(s.reschedulePendingDate))}, ${fmtTime(s.reschedulePendingStartTime as string | undefined)}${s.reschedulePendingEndTime ? ` – ${fmtTime(s.reschedulePendingEndTime as string)}` : ""}`;
       out.push(s.rescheduledBy === "client"
-        ? `  ${base.clientName || "The family"} proposed moving this visit to ${when} — reply ACCEPT or DECLINE, or PROPOSE a different time.`
-        : `  You proposed moving this visit to ${when} — waiting on the family to confirm. Reply WITHDRAW to take it back.`);
+        ? `  ${base.clientName || "The family"} proposed moving this visit to ${when}. Want to accept the new time, keep the current one, or propose another?`
+        : `  You proposed moving this visit to ${when}. I'll let you know when the family answers, or say withdraw to take it back.`);
     }
     // The page's "Show reschedule history (N)" — one line per past change.
     const history = Array.isArray(s.rescheduleHistory) ? (s.rescheduleHistory as Array<Record<string, any>>) : [];
@@ -195,7 +195,7 @@ export function activeCardLines(g: ActiveGroup, opts: { schedulePaused?: boolean
     }
   }
   const hidden = upcoming.length - shownVisits.length;
-  if (hidden > 0) out.push(`+${hidden} more visit${hidden === 1 ? "" : "s"} — reply VISITS to see them all.`);
+  if (hidden > 0) out.push(`+${hidden} more visit${hidden === 1 ? "" : "s"}. Say visits and I'll show them all.`);
   return out;
 }
 
@@ -213,8 +213,8 @@ export function activeBookingsText(groups: ActiveGroup[], infoByBooking: Map<str
     const [head, ...rest] = activeCardLines(g, { schedulePaused: info?.schedulePaused === true, allVisits: opts.allVisits === true, ...(info && "bookingNote" in info ? { bookingNote: info.bookingNote } : {}) });
     return [`${from + i + 1}. ${head}`, ...rest].join("\n").replace(/\n{3,}/g, "\n\n");
   });
-  const footer = remaining > 0 ? "Reply MORE to see more." : "";
-  return { text: [from === 0 ? "Active bookings:" : "More bookings:", "", blocks.join("\n\n"), ...(footer ? ["", footer] : [])].join("\n"), shown, remaining };
+  const footer = remaining > 0 ? "There are more too, just say more and I'll keep going." : "";
+  return { text: [from === 0 ? "Here are your active bookings:" : "Here are the next ones:", "", blocks.join("\n\n"), ...(footer ? ["", footer] : [])].join("\n"), shown, remaining };
 }
 
 export async function sendCaregiverActiveBookings(phone: string, chatId: string, caregiverId: string, opts: { more?: boolean; allVisits?: boolean } = {}) {

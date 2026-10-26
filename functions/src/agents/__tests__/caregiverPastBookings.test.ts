@@ -66,14 +66,14 @@ describe("the tab — the page's queries, grouping, badges and rows", () => {
     expect(groups[0].shifts.map((s) => s.id)).toEqual(["miss", "cx", "done"]); // missed first, then date desc
     const { text, items } = pastTabText(groups, { allVisits: true });
     expect(text).toContain("Basra Yousuf · 1 completed · 1 missed · 1 cancelled");
-    expect(text).toContain("1. Sat, Jan 1, 2000 · 7:30 PM – 7:45 PM · Missed — reply LOG 1 to log hours");
+    expect(text).toContain("1. Sat, Jan 1, 2000 · 7:30 PM – 7:45 PM · Missed (say log 1 to log the hours)");
     expect(text).toContain("2. Sun, Oct 4, 2026 · 7:30 PM – 7:45 PM · Cancelled");
     expect(text).toContain("3. Mon, Sep 28, 2026 · Sep 28, 11:04:38 AM – Sep 28, 11:18:25 AM · 0:13:47 · Completed");
     expect(text).toContain("Fam Two · 1 completed\n4. Sun, Sep 20, 2026 · 7:30 PM – 7:45 PM · Completed"); // no stamps → scheduled times
     expect(items.map((i) => `${i.number}:${i.status}`)).toEqual(["1:missed", "2:cancelled", "3:completed", "4:completed"]);
     const two = pastTabText(groups).text;
-    expect(two).toContain("+1 more visit — reply PAST VISITS to see them all.");
-    expect(two.endsWith("Reply VISIT n for a completed visit's tasks and notes.")).toBe(true);
+    expect(two).toContain("+1 more visit. Say past visits and I'll show them all.");
+    expect(two.endsWith("Want the tasks and notes from a completed visit? Say visit and its number.")).toBe(true);
   });
   it("empty tab → the page's empty state; the send stores the number map", async () => {
     const r = await sendCaregiverPastBookings("+1", "chat", "cg1");
@@ -107,13 +107,13 @@ describe("Log Hours — the modal as a flow, ending in the page's write", () => 
     shift("done", { date: "2026-09-28", status: "completed" });
     const list = { items: [{ number: 1, shiftId: "miss", status: "missed", clientName: "Basra Yousuf" }, { number: 2, shiftId: "done", status: "completed", clientName: "Basra Yousuf" }] };
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "LOG 2", { lastPastBookingList: list })).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/already completed — Log Hours is only for a missed visit/);
+    expect(hoisted.sent.at(-1)).toMatch(/already completed, so there's nothing to log/);
     hoisted.access = { ok: false, block: "membership", caregiver: {} };
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "log 1", { lastPastBookingList: list })).toBe("handled");
     expect(hoisted.gateTexts).toEqual(["membership"]);
     hoisted.access = { ok: true, caregiver: {} };
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "LOG 1", { lastPastBookingList: list })).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("Log hours for Basra Yousuf, Sat, Jan 1, 2000. What time did you actually start? Reply a time like 7:30 PM, or KEEP for the scheduled 7:30 PM.");
+    expect(hoisted.sent.at(-1)).toBe("Let's log your hours for Basra Yousuf on Sat, Jan 1, 2000. What time did you actually start? If it was the scheduled 7:30 PM, just say same.");
     expect(hoisted.sessionWrites.at(-1)).toMatchObject({ logHoursFlowStep: "lh_start", logHoursFlowData: { shiftId: "miss", taskList: expect.any(Array) } });
     expect(hoisted.sessionWrites.at(-1).logHoursFlowData.taskList.map((t: any) => t.label)).toEqual(["occasional help", "Dementia / Memory Care", "Mobility Assistance — Transfer Assist"]);
   });
@@ -125,13 +125,13 @@ describe("Log Hours — the modal as a flow, ending in the page's write", () => 
     // start: KEEP is deterministic
     await handleLogHoursFlowStep("+1", "chat", "keep", session({ logHoursFlowStep: "lh_start", logHoursFlowData: base }));
     expect(hoisted.sessionWrites.at(-1)).toMatchObject({ logHoursFlowStep: "lh_end", logHoursFlowData: { startDate: "2000-01-01", startAt: "19:30" } });
-    expect(hoisted.sent.at(-1)).toBe("And what time did you finish? Reply a time, or KEEP for the scheduled 7:45 PM.");
+    expect(hoisted.sent.at(-1)).toBe("And what time did you finish? If it was the scheduled 7:45 PM, just say same.");
     // end: a spoken time → the classifier returns HH:MM
     hoisted.quick.mockResolvedValueOnce("20:05");
     await handleLogHoursFlowStep("+1", "chat", "about 8:05 pm", session({ logHoursFlowStep: "lh_end", logHoursFlowData: { ...base, startDate: "2000-01-01", startAt: "19:30" } }));
     expect(hoisted.sessionWrites.at(-1)).toMatchObject({ logHoursFlowStep: "lh_tasks", logHoursFlowData: { endDate: "2000-01-01", endAt: "20:05" } });
     // The recipient note sits under the name like the modal's Tasks Completed section (founder 2026-09-29).
-    expect(hoisted.sent.at(-1)).toMatch(/^Which tasks were done\?\nH M \(parent\)\nNote: testing for additional notes specific to the care recipient\nTasks:\n1\. occasional help\n2\. Dementia \/ Memory Care\n3\. Mobility Assistance — Transfer Assist\n\nReply the numbers/);
+    expect(hoisted.sent.at(-1)).toMatch(/^Which tasks were done\?\nH M \(parent\)\nNote: testing for additional notes specific to the care recipient\nTasks:\n1\. occasional help\n2\. Dementia \/ Memory Care\n3\. Mobility Assistance — Transfer Assist\n\nWhich ones did you get to\? Tell me the numbers, or say all or none/);
     // tasks by number
     const withTimes = { ...base, startDate: "2000-01-01", startAt: "19:30", endDate: "2000-01-01", endAt: "20:05" };
     await handleLogHoursFlowStep("+1", "chat", "1, 3", session({ logHoursFlowStep: "lh_tasks", logHoursFlowData: withTimes }));
@@ -139,7 +139,7 @@ describe("Log Hours — the modal as a flow, ending in the page's write", () => 
     // note → confirm
     hoisted.quick.mockResolvedValueOnce("NOTE");
     await handleLogHoursFlowStep("+1", "chat", "She was tired but fine.", session({ logHoursFlowStep: "lh_note", logHoursFlowData: { ...withTimes, tasks: ["0_occasional help", "0_Mobility Assistance_Transfer Assist"] } }));
-    expect(hoisted.sent.at(-1)).toBe("Log hours for Basra Yousuf, Sat, Jan 1, 2000:\nStarted Sat, Jan 1, 2000 7:30 PM · Ended Sat, Jan 1, 2000 8:05 PM · 0h 35m\nTasks done: 2/3\nNote: She was tired but fine.\n\nReply LOG to save, or CANCEL.");
+    expect(hoisted.sent.at(-1)).toBe("Log hours for Basra Yousuf, Sat, Jan 1, 2000:\nStarted Sat, Jan 1, 2000 7:30 PM · Ended Sat, Jan 1, 2000 8:05 PM · 0h 35m\nTasks done: 2/3\nNote: She was tired but fine.\n\nWant me to save that?");
     // LOG → the modal's write
     const full = { ...withTimes, tasks: ["0_occasional help", "0_Mobility Assistance_Transfer Assist"], note: "She was tired but fine." };
     await handleLogHoursFlowStep("+1", "chat", "Confirm", session({ logHoursFlowStep: "lh_confirm", logHoursFlowData: full })); // the page's word saves too, no classifier
@@ -148,7 +148,7 @@ describe("Log Hours — the modal as a flow, ending in the page's write", () => 
     expect(w).toMatchObject({ status: "completed", loggedManually: true, tasksCompleted: ["0_occasional help", "0_Mobility Assistance_Transfer Assist"], completionNotes: "She was tired but fine.", updatedAt: "__ts__" });
     expect(w.startedAt).toEqual({ __ms: Date.parse("2000-01-01T19:30:00-08:00") });
     expect(w.completedAt).toEqual({ __ms: Date.parse("2000-01-01T20:05:00-08:00") });
-    expect(hoisted.sent.at(-1)).toBe("Hours logged successfully. Reply SUBMIT to submit them for payment.");
+    expect(hoisted.sent.at(-1)).toBe("Saved, those hours are logged. When you're ready, say submit and I'll send them in for payment.");
     expect(hoisted.sessionWrites.at(-1)).toMatchObject({ logHoursFlowStep: "__delete__" });
   });
 
@@ -159,7 +159,7 @@ describe("Log Hours — the modal as a flow, ending in the page's write", () => 
     await handleLogHoursFlowStep("+1", "chat", "7pm", session({ logHoursFlowStep: "lh_end", logHoursFlowData: base }));
     expect(hoisted.sent.at(-1)).toMatch(/^The end has to be after the start \(7:30 PM\)\./);
     await handleLogHoursFlowStep("+1", "chat", "CANCEL", session({ logHoursFlowStep: "lh_confirm", logHoursFlowData: { ...base, endDate: "2000-01-01", endAt: "20:00", tasks: [], note: "" } }));
-    expect(hoisted.sent.at(-1)).toBe("Okay — nothing was logged. The visit still shows as missed.");
+    expect(hoisted.sent.at(-1)).toBe("No problem, I didn't log anything. The visit still shows as missed.");
     hoisted.docs.set("shifts/miss", { ...hoisted.docs.get("shifts/miss"), status: "completed" });
     await handleLogHoursFlowStep("+1", "chat", "LOG", session({ logHoursFlowStep: "lh_confirm", logHoursFlowData: { ...base, endDate: "2000-01-01", endAt: "20:00", tasks: [], note: "" } }));
     expect(hoisted.sent.at(-1)).toBe("That visit is already completed — nothing to log.");
@@ -177,24 +177,24 @@ describe("Log Hours — mid-flow questions are briefed with the visit and the ta
     shift("miss", { date: "2000-01-01", status: "scheduled" });
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
     await handleLogHoursFlowStep("+1", "chat", "what time was it scheduled to end?", session({ logHoursFlowStep: "lh_end", logHoursFlowData: { ...base, startDate: "2000-01-01", startAt: "19:30" } }));
-    expect(hoisted.sent.at(-1)).toBe("Answer. And what time did you finish? Reply a time, or KEEP for the scheduled 7:45 PM.");
+    expect(hoisted.sent.at(-1)).toBe("Answer. And what time did you finish? If it was the scheduled 7:45 PM, just say same.");
     expect(lastCall()[2]?.facts).toContain("Basra Yousuf, Sat, Jan 1, 2000, scheduled 7:30 PM – 7:45 PM");
     expect(lastCall()[2]?.facts).toContain("Actual start entered: Sat, Jan 1, 2000 7:30 PM.");
     expect(lastCall()[2]?.facts).toContain("Actual end: not entered yet.");
-    expect(lastCall()[2]?.facts).toContain("nothing is saved before LOG");
+    expect(lastCall()[2]?.facts).toContain("nothing is saved before that yes");
     expect(hoisted.sessionWrites).toHaveLength(0); // the step stays
     // tasks: the list on their screen is re-read from the visit (with the recipient's note), not just the short re-ask
     const withTimes = { ...base, startDate: "2000-01-01", startAt: "19:30", endDate: "2000-01-01", endAt: "20:05" };
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
     await handleLogHoursFlowStep("+1", "chat", "what does the transfer assist one mean?", session({ logHoursFlowStep: "lh_tasks", logHoursFlowData: withTimes }));
-    expect(hoisted.sent.at(-1)).toBe("Answer. Which tasks were done? Reply the numbers (e.g. 1, 3), ALL, or NONE.");
+    expect(hoisted.sent.at(-1)).toBe("Answer. Which tasks were done? Which ones did you get to? Tell me the numbers, or say all or none.");
     const facts = String(lastCall()[2]?.facts);
     expect(facts).toContain("The task list on their screen:\nWhich tasks were done?\nH M (parent)\nNote: testing for additional notes specific to the care recipient\nTasks:\n1. occasional help\n2. Dementia / Memory Care\n3. Mobility Assistance — Transfer Assist");
     expect(facts).toContain("Actual end entered: Sat, Jan 1, 2000 8:05 PM.");
     // note
     hoisted.quick.mockResolvedValueOnce("QUESTION");
     await handleLogHoursFlowStep("+1", "chat", "will the family see the note?", session({ logHoursFlowStep: "lh_note", logHoursFlowData: { ...withTimes, tasks: ["0_occasional help"] } }));
-    expect(hoisted.sent.at(-1)).toBe("Answer. Any notes about the visit? Reply with the note, or SKIP.");
+    expect(hoisted.sent.at(-1)).toBe("Answer. Any notes about the visit for the family? If not, just say no.");
     expect(lastCall()[2]?.facts).toContain("Tasks marked done: 1/3.");
     expect(lastCall()[2]?.facts).toContain("The note is saved on the visit with the logged hours, in the care provider's own words, and the family can see it.");
     expect(hoisted.updates.filter((u) => u.path === "shifts/miss")).toHaveLength(0);
@@ -205,24 +205,24 @@ describe("keywords", () => {
   it("PAST texts the tab; VISIT n texts a completed visit's detail; unknown numbers are explained", async () => {
     shift("done", { date: "2026-09-28", status: "completed", startTime: "11:00", endTime: "14:00", startedAt: "2026-09-28T18:04:38.000Z", completedAt: "2026-09-28T18:18:25.000Z" });
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "past", {})).toBe("handled");
-    expect(hoisted.sent[0]).toMatch(/^Past bookings:\n\nBasra Yousuf · 1 completed\n1\. Mon, Sep 28, 2026/);
+    expect(hoisted.sent[0]).toMatch(/^Here are your past bookings:\n\nBasra Yousuf · 1 completed\n1\. Mon, Sep 28, 2026/);
     const list = hoisted.sessionWrites.at(-1).lastPastBookingList;
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "VISIT 1", { lastPastBookingList: list })).toBe("handled");
     expect(hoisted.sent.at(-1)).toMatch(/^Mon, Sep 28, 2026 · Scheduled 11:00 AM – 2:00 PM\nStarted /);
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "visit 9", { lastPastBookingList: list })).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/don't have a visit 9/);
+    expect(hoisted.sent.at(-1)).toMatch(/don't see a visit 9/);
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "what's my schedule", {})).toBe("passthrough");
   });
   it("bare LOG (the missed-visit reminder's word): one missed visit → its flow; none → told; several → the tab + which one", async () => {
     shift("done", { date: "2026-09-28", status: "completed" });
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "LOG", {})).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/^You have no missed visits to log/);
+    expect(hoisted.sent.at(-1)).toMatch(/^You don't have any missed visits to log/);
     shift("miss", { date: "2000-01-01", status: "scheduled" });
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "log", {})).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/^Log hours for Basra Yousuf, Sat, Jan 1, 2000\./);
+    expect(hoisted.sent.at(-1)).toMatch(/^Let's log your hours for Basra Yousuf on Sat, Jan 1, 2000\./);
     shift("miss2", { date: "2000-01-02", status: "scheduled" });
     expect(await handlePastBookingsKeyword("+1", "chat", "cg1", "LOG HOURS", { logHoursFlowStep: undefined })).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("Which one? Reply LOG with the visit's number.");
-    expect(hoisted.sent.at(-2)).toMatch(/Missed — reply LOG 1 to log hours[\s\S]*Missed — reply LOG 2 to log hours/);
+    expect(hoisted.sent.at(-1)).toBe("Which one? Say log and the visit's number.");
+    expect(hoisted.sent.at(-2)).toMatch(/Missed \(say log 1 to log the hours\)[\s\S]*Missed \(say log 2 to log the hours\)/);
   });
 });

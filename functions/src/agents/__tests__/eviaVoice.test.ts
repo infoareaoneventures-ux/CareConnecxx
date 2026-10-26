@@ -17,6 +17,15 @@ const CONVERTED = [
   "agents/interviewFlow.ts",
   "agents/decisionNotices.ts",
   "triggers/newJobNotice.ts",
+  // Batch 2 (bookings + visits)
+  "agents/caregiverBookingRequests.ts",
+  "agents/caregiverActiveBookings.ts",
+  "agents/caregiverPastBookings.ts",
+  "agents/caregiverShiftProposal.ts",
+  "agents/inShift.ts",
+  "agents/visitMode.ts",
+  "scheduled/pendingDecisionNudge.ts",
+  "triggers/notificationTriggers.ts",
 ];
 
 /** Still on the old grammar — the next batches (context/evia-voice.md, Rollout). Shrinks as batches land. */
@@ -26,14 +35,11 @@ const PENDING = [
   "agents/bookingFlow.ts",
   "agents/cancelFlow.ts",
   "agents/caregiverAccessGate.ts",
-  "agents/caregiverActiveBookings.ts",
-  "agents/caregiverBookingRequests.ts",
   "agents/caregiverCalendar.ts",
   "agents/caregiverCancelShiftHandler.ts",
   "agents/caregiverFamilies.ts",
   "agents/caregiverMembership.ts",
   "agents/caregiverMyProfile.ts",
-  "agents/caregiverPastBookings.ts",
   "agents/caregiverPayouts.ts",
   "agents/caregiverProfileHandler.ts",
   "agents/caregiverSettings.ts",
@@ -41,7 +47,6 @@ const PENDING = [
   "agents/correctionFlow.ts",
   "agents/familyIntakeScript.ts",
   "agents/familyRelay.ts",
-  "agents/inShift.ts",
   "agents/instantPayoutHandler.ts",
   "agents/jobPostingFlow.ts",
   "agents/onboardingConversation.ts",
@@ -49,15 +54,12 @@ const PENDING = [
   "agents/replacementFlow.ts",
   "agents/rescheduleFlow.ts",
   "agents/reviewFlow.ts",
-  "agents/visitMode.ts",
   "agents/visitRequestFlow.ts",
   "linq/webhooks.ts",
   "mcp/server.ts",
   "scheduled/caregiverTimesheetReminders.ts",
-  "scheduled/pendingDecisionNudge.ts",
   "scheduled/pendingTimesheetNudge.ts",
   "scheduled/staleSessionNudge.ts",
-  "triggers/notificationTriggers.ts",
 ];
 
 /** Carrier / consent protocol text (TCPA opt-in, STOP) — the wording is the protocol, not Evia's voice. */

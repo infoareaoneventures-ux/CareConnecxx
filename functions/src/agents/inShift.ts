@@ -169,14 +169,14 @@ export async function startVisit(caregiverId: string, shiftId: unknown, nowMs = 
   const r = await startVisitShared({ caregiverId, shiftId: v.id, nowMs });
   if (!r.ok) {
     if (r.reason === "another_in_progress" && r.other) {
-      return { ok: false, reason: r.reason, message: `${r.message} (${visitLine(r.other.shift)}) — text FINISH when it's over, then START this one.` };
+      return { ok: false, reason: r.reason, message: `${r.message} (${visitLine(r.other.shift)}). Say finish when that one's over, then start this one.` };
     }
-    if (r.reason === "too_early") return { ok: false, reason: r.reason, message: `${r.message} Text START then.` };
+    if (r.reason === "too_early") return { ok: false, reason: r.reason, message: `${r.message} Say start then.` };
     if (r.reason === "membership" || r.reason === "background") return { ok: false, reason: r.reason, message: r.message, gate: r.reason, caregiver: r.caregiver };
     return { ok: false, reason: r.reason, message: r.message };
   }
   if (r.alreadyStarted) {
-    return { ok: true, shiftId: v.id, alreadyStarted: true, startedAt: String(shift.startedAt ?? ""), tasks, text: `This visit is already in progress — ${visitLine(shift)}.` };
+    return { ok: true, shiftId: v.id, alreadyStarted: true, startedAt: String(shift.startedAt ?? ""), tasks, text: `This visit is already in progress, ${visitLine(shift)}.` };
   }
   const started = clock(nowMs);
   const bookingSnap = shift.bookingRequestId ? await db.collection("booking_requests").doc(String(shift.bookingRequestId)).get().catch(() => null) : null;
@@ -184,9 +184,11 @@ export async function startVisit(caregiverId: string, shiftId: unknown, nowMs = 
   const lines = [`Started ${started} — ${visitLine(shift)}.`, ...noteLines(shift, bookingNote)];
   const blocks = recipientBlocks(shift, tasks, { withNotes: true });
   if (blocks.length) lines.push("", ...blocks);
+  // Evia's voice (2026-10-26): free text during the visit is read for meaning
+  // (visitMode.ts); DONE n / NOTE … / FINISH stay the fast path.
   lines.push("", tasks.length > 0
-    ? `Reply DONE 1 (or DONE 1, 3) as you finish, NOTE followed by anything the family should see, and FINISH when the visit is over.`
-    : "Text NOTE followed by anything the family should see, and FINISH when the visit is over.");
+    ? "As you go, just tell me what you've finished (like \"done with 1 and 3\"), send any notes the family should see, and tell me when the visit is over."
+    : "Send any notes the family should see as you go, and tell me when the visit is over.");
   lines.push(`Prefer the page? Open this visit: ${visitPageLink(v.id)}`);
   return { ok: true, shiftId: v.id, alreadyStarted: false, startedAt: new Date(nowMs).toISOString(), tasks, text: lines.join("\n") };
 }
@@ -205,12 +207,12 @@ export type TasksResult =
 export async function checkTasks(caregiverId: string, shiftId: unknown, sel: { numbers?: number[]; keys?: string[]; completed?: boolean }): Promise<TasksResult> {
   const v = await resolveVisit(caregiverId, shiftId, "in_progress");
   if (!v.ok) return { ok: false, reason: v.reason, message: v.message, candidates: v.candidates };
-  if (v.shift.status !== "in-progress") return { ok: false, reason: "not_in_progress", message: "Tasks can only be checked off while the visit is in progress — text START when you're there." };
+  if (v.shift.status !== "in-progress") return { ok: false, reason: "not_in_progress", message: "Tasks can only be checked off while the visit is in progress. Say start when you're there." };
   const items = taskItems(v.shift);
   const keys = new Set<string>();
   for (const n of sel.numbers ?? []) { const it = items.find((t) => t.number === n); if (!it) return { ok: false, reason: "bad_number", message: `There's no task ${n} — the list runs 1 to ${items.length}.` }; keys.add(it.key); }
   for (const k of sel.keys ?? []) keys.add(k);
-  if (keys.size === 0) return { ok: false, reason: "no_selection", message: "Which task? Reply DONE with its number." };
+  if (keys.size === 0) return { ok: false, reason: "no_selection", message: "Which task? Tell me its number." };
   const prev: string[] = Array.isArray(v.shift.tasksCompleted) ? (v.shift.tasksCompleted as string[]) : [];
   const complete = sel.completed ?? true;
   const next = complete ? [...new Set([...prev, ...keys])] : prev.filter((k) => !keys.has(k));
@@ -232,7 +234,7 @@ export async function addVisitNote(caregiverId: string, shiftId: unknown, noteTe
   if (v.shift.status !== "in-progress") return { ok: false, reason: "not_in_progress", message: "Visit notes can only be added while the visit is in progress." };
   const note = { at: new Date(nowMs).toISOString(), text, by: "caregiver" as const };
   await v.ref.update({ notesLog: admin.firestore.FieldValue.arrayUnion(note), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, shiftId: v.id, note, text: "Noted — the family can see it on the visit." };
+  return { ok: true, shiftId: v.id, note, text: "Noted. The family can see it on the visit." };
 }
 
 // ── End ──────────────────────────────────────────────────────────────────────
@@ -247,14 +249,16 @@ export async function endVisit(caregiverId: string, shiftId: unknown, closingNot
   const notes = String(closingNote ?? "").trim();
   const r = await endVisitShared({ caregiverId, shiftId: v.id, closingNote: notes, nowMs });
   if (!r.ok) return { ok: false, reason: r.reason, message: r.message };
-  if (r.alreadyCompleted) return { ok: true, shiftId: v.id, alreadyCompleted: true, completedAt: String(shift.completedAt ?? ""), text: `That visit is already ended — ${visitLine(shift)}.` };
+  if (r.alreadyCompleted) return { ok: true, shiftId: v.id, alreadyCompleted: true, completedAt: String(shift.completedAt ?? ""), text: `That visit already ended, ${visitLine(shift)}.` };
   const items = taskItems(shift);
   const doneCount = items.filter((t) => t.done).length;
-  return { ok: true, shiftId: v.id, alreadyCompleted: false, completedAt: new Date(nowMs).toISOString(), text: `Ended ${clock(nowMs)} — ${visitLine(shift)}.${items.length ? ` Tasks ${doneCount}/${items.length}.` : ""}${notes ? " Your closing note is on the visit." : ""} Thank you. Reply SUBMIT to submit your hours.` };
+  return { ok: true, shiftId: v.id, alreadyCompleted: false, completedAt: new Date(nowMs).toISOString(), text: `Ended ${clock(nowMs)} — ${visitLine(shift)}.${items.length ? ` Tasks ${doneCount}/${items.length}.` : ""}${notes ? " Your closing note is on the visit." : ""} Thank you! When you're ready, say submit and I'll send your hours in for payment.` };
 }
 
 // ── The texted keywords (routeCaregiver): START · DONE n · UNDO n · NOTE … · TASKS · FINISH · SKIP ──
-export const END_PROMPT = "Ending the visit — any closing note for the family? Reply with the note, or SKIP to end without one.";
+export const END_PROMPT = "Ending the visit. Any closing note for the family? If not, just say no.";
+/** The END question's "no note" words — the visit ends without one. CANCEL / never mind keep it in progress. */
+const END_NO_NOTE = new Set(["SKIP", "NO", "NONE", "NOPE", "NOTHING", "NO THANKS"]);
 
 // The parked END question expires like every other parked step (30 minutes, the shared idiom) — before 2026-10-11 it
 // never did, so a text sent hours later could end the visit as its closing note.
@@ -296,7 +300,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
   const choice = session.pendingVisitChoice as { candidates: Array<{ shiftId: string; line: string }>; keyword: string } | undefined;
   if (choice?.candidates?.length) {
     const clearChoice = () => db.collection("agent_sessions").doc(phone).update({ pendingVisitChoice: admin.firestore.FieldValue.delete() }).catch(() => {});
-    if (upper === "CANCEL" || upper === "NO") { await clearChoice(); await say("Okay — nothing changed."); return "handled"; }
+    if (upper === "CANCEL" || upper === "NO") { await clearChoice(); await say("Okay, nothing changed."); return "handled"; }
     const n = /^\d+$/.test(raw) ? Number(raw) : null;
     const lower = raw.toLowerCase();
     const byName = choice.candidates.filter((c) => c.line.toLowerCase().includes(lower));
@@ -311,17 +315,18 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     // An expired END question never consumes a later text as the closing note — it is dropped and the text goes on as usual.
     await db.collection("agent_sessions").doc(phone).update({ pendingShiftEnd: admin.firestore.FieldValue.delete() }).catch(() => {});
   } else if (pendingEnd?.shiftId) {
-    if (upper === "CANCEL" || upper === "NO") {
+    const noNote = END_NO_NOTE.has(upper.replace(/[^A-Z ]/g, "").replace(/\s+/g, " ").trim());
+    if (upper === "CANCEL") {
       await db.collection("agent_sessions").doc(phone).update({ pendingShiftEnd: admin.firestore.FieldValue.delete() }).catch(() => {});
-      await say("Okay — the visit stays in progress.");
+      await say("Okay, the visit stays in progress.");
       return "handled";
     }
-    if (upper !== "SKIP") {
+    if (!noNote) {
       // A question mid-step is answered FROM the step (the visit, what SKIP / a note / CANCEL do) and the END question is
       // re-asked — never saved as the closing note. (Before 2026-10-11 it went to the agent with the step silently still
       // open, so the caregiver's next unrelated text ended the visit as its closing note.)
       const kind = await quickComplete(
-        "A care provider was asked: \"Any closing note for the family? Reply with the note, or SKIP.\" Classify their reply: " +
+        "A care provider was asked: \"Any closing note for the family? If not, just say no.\" Classify their reply: " +
         "NOTE if it is the note itself (an observation about the visit or the person they cared for), QUESTION if it is a question or a request for something else. Reply with ONE word.",
         raw, { maxTokens: 3 },
       ).catch(() => "NOTE");
@@ -330,7 +335,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
         return "handled";
       }
     }
-    const r = await endVisit(caregiverId, pendingEnd.shiftId, upper === "SKIP" ? "" : raw);
+    const r = await endVisit(caregiverId, pendingEnd.shiftId, noNote ? "" : raw);
     await db.collection("agent_sessions").doc(phone).update({ pendingShiftEnd: admin.firestore.FieldValue.delete() }).catch(() => {});
     await say(r.ok ? r.text : r.message);
     return "handled";
@@ -358,13 +363,13 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
     const items = taskItems(v.shift);
     if (items.length === 0) { await say("This visit has no care plan tasks."); return "handled"; }
     const doneCount = items.filter((t) => t.done).length;
-    await say([`Tasks (${doneCount}/${items.length} done):`, "", ...recipientBlocks(v.shift, items, { withDone: true }), "", "Reply DONE with a number to check one off."].join("\n"));
+    await say([`Tasks (${doneCount}/${items.length} done):`, "", ...recipientBlocks(v.shift, items, { withDone: true }), "", "Tell me a number when you've finished one and I'll check it off."].join("\n"));
     return "handled";
   }
   const undo = /^UNDO\b\s*(.*)$/i.exec(raw);
   if (undo) {
     const numbers = (undo[1].match(/\d+/g) ?? []).map(Number);
-    if (numbers.length === 0) { await say("Which task should I un-check? Reply UNDO with its number (e.g. UNDO 2)."); return "handled"; }
+    if (numbers.length === 0) { await say("Which task should I un-check? Say undo and its number."); return "handled"; }
     const r = await checkTasks(caregiverId, undefined, { numbers, completed: false });
     if (!r.ok && r.reason === "ambiguous" && r.candidates) { await parkVisitChoice(phone, r.candidates, raw); await say(whichVisitPrompt(r.candidates)); return "handled"; }
     await say(r.ok ? r.text : r.message);
@@ -373,7 +378,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
   const done = /^DONE\b\s*(.*)$/i.exec(raw);
   if (done) {
     const numbers = (done[1].match(/\d+/g) ?? []).map(Number);
-    if (numbers.length === 0) { await say("Done with a task? Reply DONE with its number (e.g. DONE 2). Done with the visit? Reply FINISH."); return "handled"; }
+    if (numbers.length === 0) { await say("Done with a task? Tell me its number. Done with the whole visit? Say finish."); return "handled"; }
     const r = await checkTasks(caregiverId, undefined, { numbers });
     if (!r.ok && r.reason === "ambiguous" && r.candidates) { await parkVisitChoice(phone, r.candidates, raw); await say(whichVisitPrompt(r.candidates)); return "handled"; }
     await say(r.ok ? r.text : r.message);
@@ -389,7 +394,7 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
   return "passthrough";
 }
 
-export const whichVisitPrompt = (candidates: Array<{ line: string }>) => `Which visit? ${candidates.map((c, i) => `Reply ${i + 1} for ${c.line}`).join(", ")}.`;
+export const whichVisitPrompt = (candidates: Array<{ line: string }>) => `Which visit? ${candidates.map((c, i) => `${i + 1} for ${c.line}`).join(", or ")}.`;
 
 /**
  * The start text, or the refusal. A gate refusal (membership / background —
@@ -416,7 +421,7 @@ async function runKeywordOnShift(phone: string, chatId: string, caregiverId: str
     const v = await resolveVisit(caregiverId, shiftId, "in_progress");
     if (!v.ok) { await say(v.message); return; }
     const items = taskItems(v.shift); const doneCount = items.filter((t) => t.done).length;
-    await say(items.length ? [`Tasks (${doneCount}/${items.length} done):`, "", ...recipientBlocks(v.shift, items, { withDone: true }), "", "Reply DONE with a number to check one off."].join("\n") : "This visit has no care plan tasks.");
+    await say(items.length ? [`Tasks (${doneCount}/${items.length} done):`, "", ...recipientBlocks(v.shift, items, { withDone: true }), "", "Tell me a number when you've finished one and I'll check it off."].join("\n") : "This visit has no care plan tasks.");
     return;
   }
   const undo = /^UNDO\b\s*(.*)$/i.exec(keyword);

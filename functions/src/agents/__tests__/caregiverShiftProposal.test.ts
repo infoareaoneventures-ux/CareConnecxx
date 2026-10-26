@@ -141,12 +141,12 @@ describe("WITHDRAW by text — the strip's Withdraw button (B4)", () => {
   });
   it("nothing out → told; one out → withdrawn (the page's write) and confirmed naming the family and the time that stands", async () => {
     expect(await handleWithdrawKeyword("+1", "chat", CG, "WITHDRAW", {}, { say })).toBe("handled");
-    expect(hoisted.said).toEqual(["You don't have a reschedule proposal out on any visit — nothing to withdraw."]);
+    expect(hoisted.said).toEqual(["You don't have a proposal out on any visit, so there's nothing to withdraw."]);
     hoisted.said.length = 0;
     hoisted.docs.set("shifts/s1", ownProposal);
     expect(await handleWithdrawKeyword("+1", "chat", CG, "withdraw", {}, { say })).toBe("handled");
     expect(hoisted.updates[0]).toEqual({ path: "shifts/s1", data: { ...CLEARED, updatedAt: { __ts: true } } });
-    expect(hoisted.said).toEqual(["Withdrawn — your visit with Basra Yousuf stays at Mon, Oct 5, 2099, 11:00 AM – 2:00 PM."]);
+    expect(hoisted.said).toEqual(["Withdrawn. Your visit with Basra Yousuf stays at Mon, Oct 5, 2099, 11:00 AM – 2:00 PM."]);
     expect(hoisted.sessionSets).toHaveLength(0);
   });
   it("several out → 'Which visit?' parked (30 min); a number or the family's name picks; CANCEL backs out; anything else re-asks", async () => {
@@ -157,7 +157,7 @@ describe("WITHDRAW by text — the strip's Withdraw button (B4)", () => {
     expect(parked.candidates.map((c: any) => c.shiftId)).toEqual(["b", "a"]);
     expect(parked.expiresAt).toBe(new Date(1_000_000 + WITHDRAW_CHOICE_TTL_MS).toISOString());
     expect(hoisted.said[0]).toBe(whichProposalPrompt(parked.candidates));
-    expect(hoisted.said[0]).toMatch(/^Which visit\? Reply 1 for your visit with Basra Yousuf on Mon, Oct 5, 2099, 11:00 AM – 2:00 PM \(proposed Tue, Oct 6, 2099, 12:00 PM – 3:00 PM\), Reply 2 for your visit with Fam Two on /);
+    expect(hoisted.said[0]).toMatch(/^Which visit\? 1 for your visit with Basra Yousuf on Mon, Oct 5, 2099, 11:00 AM – 2:00 PM \(proposed Tue, Oct 6, 2099, 12:00 PM – 3:00 PM\), or 2 for your visit with Fam Two on /);
     expect(hoisted.updates).toHaveLength(0);
     hoisted.said.length = 0;
     const session = { pendingWithdrawChoice: parked };
@@ -165,14 +165,14 @@ describe("WITHDRAW by text — the strip's Withdraw button (B4)", () => {
     expect(hoisted.said[0]).toMatch(/^Which visit\?/);
     expect(await handleWithdrawKeyword("+1", "chat", CG, "2", session, { say, nowMs: 1_000_000 })).toBe("handled");
     expect(hoisted.updates[0].path).toBe("shifts/a");
-    expect(hoisted.said.at(-1)).toBe("Withdrawn — your visit with Fam Two stays at Mon, Oct 12, 2099, 11:00 AM – 2:00 PM.");
+    expect(hoisted.said.at(-1)).toBe("Withdrawn. Your visit with Fam Two stays at Mon, Oct 12, 2099, 11:00 AM – 2:00 PM.");
     expect(hoisted.sessionUpdates.at(-1)?.d).toEqual({ pendingWithdrawChoice: { __delete: true } });
     hoisted.updates.length = 0;
     expect(await handleWithdrawKeyword("+1", "chat", CG, "Basra", session, { say, nowMs: 1_000_000 })).toBe("handled");
     expect(hoisted.updates[0].path).toBe("shifts/b");
     hoisted.said.length = 0; hoisted.updates.length = 0;
     expect(await handleWithdrawKeyword("+1", "chat", CG, "CANCEL", session, { say, nowMs: 1_000_000 })).toBe("handled");
-    expect(hoisted.said).toEqual(["Okay — nothing changed."]);
+    expect(hoisted.said).toEqual(["Okay, nothing changed."]);
     expect(hoisted.updates).toHaveLength(0);
     // Expired pick → dropped, and the text routes on as if nothing were parked.
     expect(await handleWithdrawKeyword("+1", "chat", CG, "2", { pendingWithdrawChoice: { ...parked, expiresAt: new Date(1_000).toISOString() } }, { say, nowMs: 1_000_000 })).toBe("passthrough");

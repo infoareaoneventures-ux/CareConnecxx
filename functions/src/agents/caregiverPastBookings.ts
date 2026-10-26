@@ -41,7 +41,7 @@ const db = admin.firestore();
 export const PAGE_SIZE = 2;
 export const EMPTY_TEXT = "No past bookings. Completed and cancelled shifts will appear here.";
 const FLOW_TTL_MS = 60 * 60 * 1000;
-const DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
 type Doc = Record<string, unknown>;
 export interface PastShift extends Doc { id: string; date: string; status: string; startTime?: string; endTime?: string; clientName?: string; clientId?: string; bookingRequestId?: string }
@@ -107,7 +107,7 @@ export function badgeLine(g: PastGroup): string {
 }
 /** One row, numbered across the whole tab so VISIT n / LOG n are unambiguous. */
 export function rowLine(n: number, s: PastShift): string {
-  if (isMissed(s)) return `${n}. ${fmtDate(s.date)} · ${scheduledTimes(s)} · Missed — reply LOG ${n} to log hours`;
+  if (isMissed(s)) return `${n}. ${fmtDate(s.date)} · ${scheduledTimes(s)} · Missed (say log ${n} to log the hours)`;
   if (s.status === "completed") {
     const a = fmtStamp(s.startedAt), b = fmtStamp(s.completedAt), d = fmtDuration(s.startedAt, s.completedAt);
     const times = a && b ? `${a} – ${b}${d ? ` · ${d}` : ""}` : scheduledTimes(s);
@@ -133,11 +133,11 @@ export function pastTabText(groups: PastGroup[], opts: { from?: number; allVisit
     const visible = opts.allVisits ? g.shifts : g.shifts.slice(0, 2);
     const lines = [badgeLine(g), ...visible.map((s) => rowLine(numberFor.get(s.id)!, s))];
     const hidden = g.shifts.length - visible.length;
-    if (hidden > 0) lines.push(`+${hidden} more visit${hidden === 1 ? "" : "s"} — reply PAST VISITS to see them all.`);
+    if (hidden > 0) lines.push(`+${hidden} more visit${hidden === 1 ? "" : "s"}. Say past visits and I'll show them all.`);
     return lines.join("\n");
   });
-  const footer = [`Reply VISIT n for a completed visit's tasks and notes.`, remaining > 0 ? "Reply MORE for the next bookings." : ""].filter(Boolean).join(" ");
-  return { text: [from === 0 ? "Past bookings:" : "More past bookings:", "", blocks.join("\n\n"), "", footer].join("\n"), shown, remaining, items };
+  const footer = ["Want the tasks and notes from a completed visit? Say visit and its number.", remaining > 0 ? "There are more too, just say more and I'll keep going." : ""].filter(Boolean).join(" ");
+  return { text: [from === 0 ? "Here are your past bookings:" : "Here are the next ones:", "", blocks.join("\n\n"), "", footer].join("\n"), shown, remaining, items };
 }
 
 export async function sendCaregiverPastBookings(phone: string, chatId: string, caregiverId: string, opts: { more?: boolean; allVisits?: boolean } = {}) {
@@ -168,8 +168,8 @@ export function resolvePastRef(session: Record<string, unknown>, ref: { number?:
 
 // ── A completed visit, expanded (the page's click-through) ───────────────────
 export function visitDetailText(s: PastShift): string {
-  if (isMissed(s)) return `${fmtDate(s.date)} · ${scheduledTimes(s)} — this visit was missed. Reply LOG with its number to log the hours.`;
-  if (s.status !== "completed") return `${fmtDate(s.date)} · ${scheduledTimes(s)} — this visit was cancelled; there's nothing to show.`;
+  if (isMissed(s)) return `${fmtDate(s.date)} · ${scheduledTimes(s)}. This visit was missed. Say log and its number and I'll log the hours.`;
+  if (s.status !== "completed") return `${fmtDate(s.date)} · ${scheduledTimes(s)}. This visit was cancelled, so there's nothing to show.`;
   const lines = [`${fmtDate(s.date)} · Scheduled ${scheduledTimes(s)}`];
   const a = fmtStamp(s.startedAt), b = fmtStamp(s.completedAt), d = fmtDuration(s.startedAt, s.completedAt);
   if (a || b) lines.push(`Started ${a ?? "—"} · Ended ${b ?? "—"}${d ? ` · ${d}` : ""}`);
@@ -210,10 +210,13 @@ export interface LogHoursFlowData {
   tasks?: string[]; note?: string;
   taskList: Array<{ number: number; key: string; label: string; recipientName: string }>;
 }
-const START_Q = (d: LogHoursFlowData) => `Log hours for ${d.clientName}, ${fmtDate(d.date)}. What time did you actually start? Reply a time like 7:30 PM, or KEEP for the scheduled ${fmtTime(d.startTime)}.`;
-const END_Q = (d: LogHoursFlowData) => `And what time did you finish? Reply a time, or KEEP for the scheduled ${fmtTime(d.endTime)}.`;
-const TASKS_Q = (d: LogHoursFlowData, shift: Doc) => [`Which tasks were done?`, ...recipientBlocks(shift, taskItems(shift) as TaskItem[], { withNotes: true }), "", "Reply the numbers (e.g. 1, 3), ALL, or NONE."].join("\n");
-const NOTE_Q = "Any notes about the visit? Reply with the note, or SKIP.";
+// Evia's voice (2026-10-26): the questions a person would ask; KEEP / SAME, ALL /
+// NONE, SKIP / NO and LOG / YES still work exactly as before.
+const START_Q = (d: LogHoursFlowData) => `Let's log your hours for ${d.clientName} on ${fmtDate(d.date)}. What time did you actually start? If it was the scheduled ${fmtTime(d.startTime)}, just say same.`;
+const END_Q = (d: LogHoursFlowData) => `And what time did you finish? If it was the scheduled ${fmtTime(d.endTime)}, just say same.`;
+const TASKS_ASK = "Which ones did you get to? Tell me the numbers, or say all or none.";
+const TASKS_Q = (d: LogHoursFlowData, shift: Doc) => [`Which tasks were done?`, ...recipientBlocks(shift, taskItems(shift) as TaskItem[], { withNotes: true }), "", TASKS_ASK].join("\n");
+const NOTE_Q = "Any notes about the visit for the family? If not, just say no.";
 /** The Log Hours modal's facts at any step: the visit, what has been entered so far, the task list, and what LOG does. */
 const VISIT_FACTS = (d: LogHoursFlowData) => [
   `Log Hours is for a visit that was missed on the schedule: ${d.clientName}, ${fmtDate(d.date)}, scheduled ${fmtTime(d.startTime)} – ${fmtTime(d.endTime)}.`,
@@ -222,7 +225,7 @@ const VISIT_FACTS = (d: LogHoursFlowData) => [
   d.taskList.length ? `The visit's tasks, numbered: ${d.taskList.map((t) => `${t.number}. ${t.label}${t.recipientName ? ` (${t.recipientName})` : ""}`).join("; ")}.` : "The visit has no care plan tasks.",
   d.tasks ? `Tasks marked done: ${d.tasks.length}/${d.taskList.length}.` : "",
   d.note !== undefined ? (d.note ? `Note entered: "${d.note}".` : "No note.") : "",
-  "KEEP uses the scheduled time. LOG (on the final recap) marks the visit completed with these times, tasks and note — the modal's Log Hours — and then SUBMIT submits the hours for payment; nothing is saved before LOG. CANCEL leaves the visit as missed.",
+  "\"Same\" uses the scheduled time. Saying yes to the final recap marks the visit completed with these times, tasks and note — the modal's Log Hours — and then \"submit\" submits the hours for payment; nothing is saved before that yes. Saying no / cancel leaves the visit as missed.",
 ].filter(Boolean).join(" ");
 function totalLabel(d: LogHoursFlowData): string | null {
   const s = parseScheduledTimeMs(`${d.startDate}T${d.startAt}:00`), e = parseScheduledTimeMs(`${d.endDate}T${d.endAt}:00`);
@@ -237,7 +240,7 @@ const CONFIRM_Q = (d: LogHoursFlowData) => {
     `Started ${fmtDate(d.startDate ?? d.date)} ${fmtTime(d.startAt)} · Ended ${fmtDate(d.endDate ?? d.date)} ${fmtTime(d.endAt)}${totalLabel(d) ? ` · ${totalLabel(d)}` : ""}`,
     `Tasks done: ${doneCount}/${d.taskList.length}`,
     d.note ? `Note: ${d.note}` : "No note.",
-    "", "Reply LOG to save, or CANCEL.",
+    "", "Want me to save that?",
   ].join("\n");
 };
 
@@ -261,7 +264,7 @@ export async function startLogHoursFlow(phone: string, chatId: string, session: 
   const shift = snap.data() as Doc | undefined;
   if (!snap.exists || !shift || shift.caregiverId !== args.caregiverId) { await sendMessage(chatId, "That visit isn't on your Past Bookings tab."); return { started: false, reason: "not_found" }; }
   const asPast: PastShift = { ...shift, id: snap.id, date: String(shift.date ?? ""), status: String(shift.status ?? "") };
-  if (!isMissed(asPast) || shiftDisplayStatus(asPast) !== "overdue") { await sendMessage(chatId, `That visit is ${asPast.status === "completed" ? "already completed" : asPast.status} — Log Hours is only for a missed visit.`); return { started: false, reason: "not_missed" }; }
+  if (!isMissed(asPast) || shiftDisplayStatus(asPast) !== "overdue") { await sendMessage(chatId, `That visit is ${asPast.status === "completed" ? "already completed" : asPast.status}, so there's nothing to log. Logging hours is only for a missed visit.`); return { started: false, reason: "not_missed" }; }
   // The page swaps Log Hours for the gate button while blocked.
   const access = await checkCaregiverAccess(args.caregiverId);
   if (!access.ok && access.block !== "transport") { await textCaregiverGateBlock(phone, chatId, access.block, access.caregiver as Record<string, unknown>); return { started: false, reason: "gated" }; }
@@ -281,7 +284,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
   const data = (((session as unknown as Record<string, unknown>).logHoursFlowData ?? {}) as LogHoursFlowData);
   const ref = db.collection("agent_sessions").doc(phone);
   const clear = () => ref.update({ logHoursFlowStep: admin.firestore.FieldValue.delete(), logHoursFlowData: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
-  const cancelled = async () => { await clear(); await sendMessage(chatId, "Okay — nothing was logged. The visit still shows as missed."); };
+  const cancelled = async () => { await clear(); await sendMessage(chatId, "No problem, I didn't log anything. The visit still shows as missed."); };
   const next = async (patch: Partial<LogHoursFlowData>, stepName: string, question: string) => {
     await ref.update({ logHoursFlowStep: stepName, logHoursFlowData: { ...data, ...patch } });
     await sendMessage(chatId, question);
@@ -315,7 +318,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     return next(withEnd, "lh_tasks", TASKS_Q(data, (snap.data() ?? {}) as Doc));
   }
   if (step === "lh_tasks") {
-    const q = "Which tasks were done? Reply the numbers (e.g. 1, 3), ALL, or NONE.";
+    const q = `Which tasks were done? ${TASKS_ASK}`;
     if (await isBackOutRequest(text, q)) return cancelled();
     const norm = text.trim().toUpperCase();
     let keys: string[] | null = null;
@@ -325,12 +328,19 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
       const nums = (text.match(/\d+/g) ?? []).map(Number);
       if (nums.length) {
         const bad = nums.find((n) => !data.taskList.some((t) => t.number === n));
-        if (bad !== undefined) { await sendMessage(chatId, `There's no task ${bad} — the list runs 1 to ${data.taskList.length}. ${q}`); return; }
+        if (bad !== undefined) { await sendMessage(chatId, `There's no task ${bad}, the list runs 1 to ${data.taskList.length}. ${q}`); return; }
         keys = data.taskList.filter((t) => nums.includes(t.number)).map((t) => t.key);
       }
     }
+    const isQuestion = keys === null ? await isQuestionOrOther(text, q) : false;
+    if (keys === null && !isQuestion) {
+      // "all of them" / "none of those" / "I did everything" — the meaning, never a keyword scan.
+      const v = await parse("A care provider was asked which of the visit's numbered tasks were done, and could answer with numbers, \"all\" or \"none\". Classify: ALL (every task was done), NONE (none were), or OTHER (anything else — numbers are handled elsewhere, so treat a bare list of numbers as OTHER).", text);
+      if (v.toUpperCase().startsWith("ALL")) keys = data.taskList.map((t) => t.key);
+      else if (v.toUpperCase().startsWith("NONE")) keys = [];
+    }
     if (keys === null) {
-      if (await isQuestionOrOther(text, q)) {
+      if (isQuestion) {
         // The screen is the full task list (with the recipients' notes) they were just sent — re-read from the visit.
         const snap = await db.collection("shifts").doc(data.shiftId).get().catch(() => null);
         const screen = snap?.exists ? TASKS_Q(data, (snap.data() ?? {}) as Doc) : q;
@@ -346,7 +356,8 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     const norm = text.trim().toUpperCase();
     let note = "";
     if (norm !== "SKIP" && norm !== "NONE" && norm !== "NO") {
-      const kind = await parse("A care provider was asked: \"Any notes about the visit? Reply with the note, or SKIP.\" Classify: NOTE if the message is the note itself, QUESTION if it is a question or something else.", text);
+      const kind = await parse("A care provider was asked: \"Any notes about the visit for the family? If not, just say no.\" Classify: NOTE if the message is the note itself, QUESTION if it is a question or something else, NONE if they are declining to add one (\"nothing\", \"nope\", \"I'm good\").", text);
+      if (kind.toUpperCase().startsWith("NONE")) { const merged = { ...data, note: "" }; await ref.update({ logHoursFlowStep: "lh_confirm", logHoursFlowData: merged }); await sendMessage(chatId, CONFIRM_Q(merged)); return; }
       if (kind.toUpperCase().startsWith("Q")) { await sendMessage(chatId, await answerMidFlow(text, NOTE_Q, { facts: `${VISIT_FACTS(data)} The note is saved on the visit with the logged hours, in the care provider's own words, and the family can see it.` })); return; }
       note = text.trim();
     }
@@ -364,7 +375,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
     else {
-      const v = await parse("Evia asked the care provider to reply LOG to save the hours, or CANCEL. Classify: LOG (save), CANCEL (don't), or OTHER (a question / a change).", text);
+      const v = await parse("Evia showed the care provider the hours, tasks and note for a visit and asked \"Want me to save that?\". Classify: LOG (save — yes, go ahead, save it, log it), CANCEL (don't — no, hold off, never mind), or OTHER (a question / a change).", text);
       action = v.toUpperCase().startsWith("LOG") ? "log" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
@@ -385,7 +396,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
       await sendMessage(chatId, r.message);
       return;
     }
-    await sendMessage(chatId, "Hours logged successfully. Reply SUBMIT to submit them for payment."); // the page's toast + the Timesheets tab's next step
+    await sendMessage(chatId, "Saved, those hours are logged. When you're ready, say submit and I'll send them in for payment."); // the page's toast + the Timesheets tab's next step, in Evia's voice
     return;
   }
   await clear();
@@ -403,7 +414,7 @@ export async function handlePastBookingsKeyword(phone: string, chatId: string, c
   const visit = /^VISIT\s+(\d+)$/i.exec(raw);
   if (visit) {
     const r = resolvePastRef(session, { number: Number(visit[1]) });
-    if (!r) { await sendMessage(chatId, `I don't have a visit ${visit[1]} on the last list — reply PAST to see your past bookings.`); return "handled"; }
+    if (!r) { await sendMessage(chatId, `I don't see a visit ${visit[1]} on the list I sent. Say past and I'll send your past bookings again.`); return "handled"; }
     await sendPastVisitDetail(chatId, caregiverId, r.shiftId); return "handled";
   }
   // Bare LOG — what the missed-visit reminder announces (scheduled/shiftEndReminder.ts).
@@ -411,15 +422,15 @@ export async function handlePastBookingsKeyword(phone: string, chatId: string, c
   if (upper === "LOG" || upper === "LOG HOURS") {
     const missed = (await loadPastTab(caregiverId)).flatMap((g) => g.shifts).filter(isMissed);
     if (missed.length === 1) { await startLogHoursFlow(phone, chatId, session as unknown as AgentSession, { caregiverId, shiftId: missed[0].id }); return "handled"; }
-    if (missed.length === 0) { await sendMessage(chatId, "You have no missed visits to log — every past visit is already completed or cancelled."); return "handled"; }
+    if (missed.length === 0) { await sendMessage(chatId, "You don't have any missed visits to log. Every past visit is already completed or cancelled."); return "handled"; }
     await sendCaregiverPastBookings(phone, chatId, caregiverId, { allVisits: true });
-    await sendMessage(chatId, "Which one? Reply LOG with the visit's number.");
+    await sendMessage(chatId, "Which one? Say log and the visit's number.");
     return "handled";
   }
   const log = /^LOG\s+(\d+)$/i.exec(raw);
   if (log) {
     const r = resolvePastRef(session, { number: Number(log[1]) });
-    if (!r) { await sendMessage(chatId, `I don't have a visit ${log[1]} on the last list — reply PAST to see your past bookings.`); return "handled"; }
+    if (!r) { await sendMessage(chatId, `I don't see a visit ${log[1]} on the list I sent. Say past and I'll send your past bookings again.`); return "handled"; }
     await startLogHoursFlow(phone, chatId, session as unknown as AgentSession, { caregiverId, shiftId: r.shiftId }); return "handled";
   }
   return "passthrough";

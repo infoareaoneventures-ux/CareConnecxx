@@ -229,17 +229,16 @@ export const PAGE_SIZE = 2;
 // whole (the card AND what "View full details" expands to).
 // One request → the plain words (the notice parks the decision, so "accept"
 // runs the page's button); several → the number says which one.
-const footerFor = (count: number, gate: GateLabel, firstNumber: number) => {
-  if (count === 1) return gate ? GATE_FOOTER_ONE(gate) : "Reply ACCEPT or DECLINE.";
-  return gate ? GATE_FOOTER(gate, firstNumber) : `Reply ACCEPT or DECLINE with the number, e.g. "accept ${firstNumber}".`;
+// Evia's voice (2026-10-26): a question, not a reply protocol — ACCEPT / DECLINE
+// (with the number) still work exactly as before.
+const footerFor = (count: number, gate: GateLabel, _firstNumber: number) => {
+  if (count === 1) return gate ? GATE_FOOTER_ONE(gate) : "Want to accept it, or decline?";
+  return gate ? GATE_FOOTER(gate) : "Want to accept or decline one? Just tell me which number.";
 };
 export type GateLabel = "membership" | "background" | null;
-const GATE_FOOTER_ONE = (gate: GateLabel) =>
-  gate === "membership" ? `To accept you'll need to: Activate Membership. You can still reply DECLINE.`
-  : `To accept you'll need to: Complete Verification. You can still reply DECLINE.`;
-const GATE_FOOTER = (gate: GateLabel, n: number) =>
-  gate === "membership" ? `To accept you'll need to: Activate Membership. You can still reply "decline ${n}".`
-  : `To accept you'll need to: Complete Verification. You can still reply "decline ${n}".`;
+const GATE_NEED = (gate: GateLabel) => (gate === "membership" ? "activate your membership" : "complete your verification");
+const GATE_FOOTER_ONE = (gate: GateLabel) => `To accept, you'd need to ${GATE_NEED(gate)} first. You can still decline.`;
+const GATE_FOOTER = (gate: GateLabel) => `To accept, you'd need to ${GATE_NEED(gate)} first. You can still decline one, just tell me which number.`;
 
 export interface LastRequestList { at: string; items: Array<{ number: number; kind?: "request" | "amendment"; bookingRequestId: string; clientName: string }>; offset?: number; total?: number }
 
@@ -261,6 +260,7 @@ export function requestListText(input: BookingRequest[] | RequestsTabItem[], opt
   const shown = items.slice(from, from + PAGE_SIZE);
   const remaining = Math.max(0, items.length - (from + shown.length));
   if (shown.length === 0) return { text: "That's all your pending requests.", shown, remaining: 0 };
+  // (empty page: nothing more to show)
   const blocks = shown.map((it, i) => {
     if (it.kind === "amendment") {
       const [head, ...rest] = amendmentCardLines(it.amendment);
@@ -270,8 +270,8 @@ export function requestListText(input: BookingRequest[] | RequestsTabItem[], opt
     const details = requestDetailsLines(it.req);
     return [`${from + i + 1}. ${head}`, ...rest, ...(details.length ? ["", ...details] : [])].join("\n").replace(/\n{3,}/g, "\n\n");
   });
-  const footer = `${footerFor(items.length, opts.gate ?? null, from + 1)}${remaining > 0 ? " Reply MORE to see more." : ""}`;
-  return { text: [from === 0 ? "Booking requests:" : "More requests:", "", blocks.join("\n\n"), "", footer].join("\n"), shown, remaining };
+  const footer = `${footerFor(items.length, opts.gate ?? null, from + 1)}${remaining > 0 ? " There are more too, just say more and I'll keep going." : ""}`;
+  return { text: [from === 0 ? "Here are your booking requests:" : "Here are the next ones:", "", blocks.join("\n\n"), "", footer].join("\n"), shown, remaining };
 }
 
 export async function sendBookingRequestList(phone: string, chatId: string, caregiverId: string, opts: { more?: boolean; gate?: GateLabel } = {}) {
@@ -336,7 +336,7 @@ export async function respondToBookingRequest(caregiverId: string, id: string, d
   await db.collection("booking_requests").doc(id).update({ status, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
   // The page's toasts, naming the family — over text there is no card in view (founder, 2026-09-28).
   const who = r.req.clientName || "the family";
-  return { ok: true, status, toast: decision === "accept" ? `Booking request from ${who} accepted!` : `Request from ${who} declined`, clientName: r.req.clientName };
+  return { ok: true, status, toast: decision === "accept" ? `Accepted! ${who}'s booking is on your schedule now, and they've been told.` : `Okay, I've declined ${who}'s request. They'll be told.`, clientName: r.req.clientName };
 }
 
 // ── The amendment card's buttons — CaregiverBookingsPage.handleAcceptAmendment / Decline, verbatim ──
@@ -364,7 +364,7 @@ export async function declineAmendment(caregiverId: string, id: string): Promise
   const r = await loadAmendmentFor(caregiverId, id);
   if (!r.ok) return r;
   await r.ref.update({ status: "declined", respondedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, status: "declined", toast: `Schedule change from ${r.a.clientName || "the family"} declined.` };
+  return { ok: true, status: "declined", toast: `Okay, I've declined ${r.a.clientName || "the family"}'s schedule change. Their schedule stays as it was.` };
 }
 
 /** The Accept button: {status:'accepted', respondedAt} — the visits (and an ongoing change's merge into the booking's schedule) come from onBookingAmendmentAccepted. */
@@ -372,5 +372,5 @@ export async function acceptAmendment(caregiverId: string, id: string): Promise<
   const r = await loadAmendmentFor(caregiverId, id);
   if (!r.ok) return r;
   await r.ref.update({ status: "accepted", respondedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return { ok: true, status: "accepted", toast: `Schedule updated for ${r.a.clientName || "the family"} — new visits added.` };
+  return { ok: true, status: "accepted", toast: `Done, ${r.a.clientName || "the family"}'s schedule is updated and the new visits are on your calendar.` };
 }

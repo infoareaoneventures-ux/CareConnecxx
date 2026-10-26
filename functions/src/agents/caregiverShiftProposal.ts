@@ -142,9 +142,9 @@ export async function listPendingProposals(caregiverId: string, by: "client" | "
 export const WITHDRAW_CHOICE_TTL_MS = 30 * 60 * 1000;
 export interface PendingWithdrawChoice { candidates: Array<{ shiftId: string; line: string }>; at: string; expiresAt: string }
 export const whichProposalPrompt = (candidates: Array<{ line: string }>) =>
-  `Which visit? ${candidates.map((c, i) => `Reply ${i + 1} for ${c.line}`).join(", ")}.`;
+  `Which visit? ${candidates.map((c, i) => `${i + 1} for ${c.line}`).join(", or ")}.`;
 export const withdrawnLine = (r: Extract<ProposalDecisionResult, { ok: true }>) =>
-  `Withdrawn — your visit with ${r.clientName} stays at ${visitWhen(r.from)}.`;
+  `Withdrawn. Your visit with ${r.clientName} stays at ${visitWhen(r.from)}.`;
 
 export async function handleWithdrawKeyword(
   phone: string, chatId: string, caregiverId: string, text: string, session: Record<string, unknown>,
@@ -160,7 +160,7 @@ export async function handleWithdrawKeyword(
   if (choice?.candidates?.length) {
     if (Date.parse(choice.expiresAt) < nowMs) { await clearChoice(); }
     else {
-      if (upper === "CANCEL" || upper === "NO") { await clearChoice(); await deps.say("Okay — nothing changed."); return "handled"; }
+      if (upper === "CANCEL" || upper === "NO") { await clearChoice(); await deps.say("Okay, nothing changed."); return "handled"; }
       const n = /^\d+$/.test(raw) ? Number(raw) : null;
       const lower = raw.toLowerCase();
       const byName = lower.length >= 3 ? choice.candidates.filter((c) => c.line.toLowerCase().includes(lower)) : [];
@@ -168,17 +168,17 @@ export async function handleWithdrawKeyword(
       if (!picked) { await deps.say(whichProposalPrompt(choice.candidates)); return "handled"; }
       await clearChoice();
       const r = await withdrawOwnShiftProposal(caregiverId, picked.shiftId, "sms:withdraw");
-      await deps.say(r.ok ? withdrawnLine(r) : "That proposal isn't pending any more — nothing changed.");
+      await deps.say(r.ok ? withdrawnLine(r) : "That proposal isn't open anymore, so nothing changed.");
       return "handled";
     }
   }
 
   if (upper !== "WITHDRAW" && upper !== "WITHDRAW PROPOSAL" && upper !== "WITHDRAW IT") return "passthrough";
   const mine = await listPendingProposals(caregiverId, "caregiver");
-  if (mine.length === 0) { await deps.say("You don't have a reschedule proposal out on any visit — nothing to withdraw."); return "handled"; }
+  if (mine.length === 0) { await deps.say("You don't have a proposal out on any visit, so there's nothing to withdraw."); return "handled"; }
   if (mine.length === 1) {
     const r = await withdrawOwnShiftProposal(caregiverId, mine[0].shiftId, "sms:withdraw");
-    await deps.say(r.ok ? withdrawnLine(r) : "That proposal isn't pending any more — nothing changed.");
+    await deps.say(r.ok ? withdrawnLine(r) : "That proposal isn't open anymore, so nothing changed.");
     return "handled";
   }
   const candidates = mine.map((m) => ({ shiftId: m.shiftId, line: `${m.line} (proposed ${m.proposed})` }));

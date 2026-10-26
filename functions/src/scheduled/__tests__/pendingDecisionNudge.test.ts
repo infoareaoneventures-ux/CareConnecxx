@@ -79,7 +79,7 @@ describe("runPendingDecisionNudges", () => {
     hoisted.docs.set("video_interviews/iv1", { status: "requested", caregiverId: "cg1", clientName: "Basra Yousuf", jobTitle: "Senior care in San Jose", scheduledTime: "2099-03-28T16:00:00.000Z", createdAt: ago(NUDGE_DELAY_MS + 60_000) });
     const r = await runPendingDecisionNudges(NOW);
     expect(r).toEqual({ nudged: 1, bellKeptOptedOut: 0, dropped: 0, skipped: 0 });
-    expect(hoisted.sends[0].out.content).toMatch(/^Basra Yousuf's interview request for "Senior care in San Jose" \(.+\) is still waiting on you\. Reply ACCEPT or DECLINE, or PROPOSE a different time\.$/);
+    expect(hoisted.sends[0].out.content).toMatch(/^Basra Yousuf's interview request for "Senior care in San Jose" \(.+\) is still waiting on you\. Want to accept it, decline it, or propose a different time\?$/);
     expect(hoisted.bells[0]).toMatchObject({ sourcePath: "video_interviews/iv1", eventId: "decision-nudge-1", recipientId: "cg1", title: "Still waiting on you", data: { interviewId: "iv1" } });
     // Bell ⇄ text (C11): the text went first, the bell followed it.
     expect(hoisted.order).toEqual(["text", "bell"]);
@@ -105,9 +105,9 @@ describe("runPendingDecisionNudges", () => {
     const r = await runPendingDecisionNudges(NOW);
     expect(r).toEqual({ nudged: 3, bellKeptOptedOut: 0, dropped: 0, skipped: 1 });
     const texts = hoisted.sends.map((s) => s.out.content);
-    expect(texts).toContain("Fam A's booking request is still waiting on you. Reply ACCEPT or DECLINE, or DETAILS to see the full request.");
-    expect(texts.some((t) => t.startsWith("Fam B needs a replacement care provider on ") && t.endsWith("— the request is still waiting on you and expires in 10 minutes. Reply ACCEPT or DECLINE, or DETAILS to see the full request."))).toBe(true);
-    expect(texts).toContain("Fam D's schedule change request is still waiting on you. Reply ACCEPT or DECLINE.");
+    expect(texts).toContain("Fam A's booking request is still waiting on you. Want to accept it, decline it, or see the full request?");
+    expect(texts.some((t) => t.startsWith("Fam B needs a replacement care provider on ") && t.endsWith("— the request is still waiting on you and expires in 10 minutes. Want to accept it, decline it, or see the full request?"))).toBe(true);
+    expect(texts).toContain("Fam D's schedule change request is still waiting on you. Want to accept it, or decline?");
     expect(hoisted.sessionSets.map((s) => s.data.pendingDecision.kind).sort()).toEqual(["amendment", "booking_request", "booking_request"]);
   });
 

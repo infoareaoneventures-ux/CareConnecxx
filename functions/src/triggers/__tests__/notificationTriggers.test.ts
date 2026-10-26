@@ -539,7 +539,7 @@ describe("B1 — the family's proposed visit time parks the strip's reply words 
     const after  = { ...before, reschedulePendingDate: "2099-10-06", reschedulePendingStartTime: "12:00", reschedulePendingEndTime: "15:00", rescheduledBy: "client" };
     await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
     const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111");
-    expect(call?.[1].content).toBe("The Nguyen Family proposed moving your visit on Mon, Oct 5, 11:00 AM–2:00 PM to Tue, Oct 6, 12:00 PM–3:00 PM. Reply ACCEPT or DECLINE, or PROPOSE a different time.");
+    expect(call?.[1].content).toBe("The Nguyen Family proposed moving your visit on Mon, Oct 5, 11:00 AM–2:00 PM to Tue, Oct 6, 12:00 PM–3:00 PM. Want to accept the new time, keep the current one, or propose another?");
     const sess = hoisted.docState.get("agent_sessions/+15550001111");
     expect(sess.lastNoticedShiftId).toBe("s1");
     expect(sess.pendingDecision).toMatchObject({ kind: "shift_proposal", recordId: "s1", role: "caregiver", party: "The Nguyen Family", options: ["ACCEPT", "DECLINE", "PROPOSE"] });
@@ -583,7 +583,7 @@ describe("B6 — a replacement request that expired (30 minutes, nobody answered
     const line = "The Nguyen Family's replacement request for the visit on October 6, 2099 at 12:00 PM has expired — no reply came in time, so nothing was sent.";
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: line, urgency: "immediate", canDrop: false }));
     expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "booking_request_expired", title: "Replacement Request Expired", body: line, data: { bookingId: "rep1" }, transitionType: "booking_request_expired" }));
-    expect(expireParkedDecision).toHaveBeenCalledWith("+15550001111", "rep1", { kind: "booking_request", line: "The Nguyen Family's replacement request has expired — nothing was sent." });
+    expect(expireParkedDecision).toHaveBeenCalledWith("+15550001111", "rep1", { kind: "booking_request", line: "The Nguyen Family's replacement request has already expired, so nothing was sent." });
     // The park comes down before the text (the record IS expired, whatever the send does).
     expect(expireParkedDecision.mock.invocationCallOrder[0]).toBeLessThan(sendViaInteractionAgent.mock.invocationCallOrder[0]);
   });
@@ -604,6 +604,6 @@ describe("B6 — a replacement request that expired (30 minutes, nobody answered
   it("the replacement notice itself tells the care provider the 30-minute clock", async () => {
     await (onBookingRequestWrite as any)(change(null, "rep1", { ...rep, status: "pending" }), { params: { bookingId: "rep1" }, eventId: "e1" });
     const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111");
-    expect(call?.[1].content.endsWith("Reply ACCEPT or DECLINE. This request expires in 30 minutes.")).toBe(true);
+    expect(call?.[1].content.endsWith("Want to accept it, or decline? Heads up, this one expires in 30 minutes.")).toBe(true);
   });
 });

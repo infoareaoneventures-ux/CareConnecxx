@@ -117,7 +117,7 @@ describe("the card — header, schedule, note, care plan, upcoming visits with t
     const a = shift("a", { date: "2099-09-28", schedule: sch }) as any, b = shift("b", { date: "2099-10-05", schedule: sch }) as any, c = shift("c", { date: "2099-10-12", schedule: sch }) as any;
     const two = activeCardLines(groupActiveShifts([a, b, c])[0]);
     expect(two.filter((l) => /^(Mon|Sat|Sun|Tue|Wed|Thu|Fri), /.test(l))).toHaveLength(2);
-    expect(two.at(-1)).toBe("+1 more visit — reply VISITS to see them all.");
+    expect(two.at(-1)).toBe("+1 more visit. Say visits and I'll show them all.");
     const all = activeCardLines(groupActiveShifts([a, b, c])[0], { allVisits: true });
     expect(all.filter((l) => /^(Mon|Sat|Sun|Tue|Wed|Thu|Fri), /.test(l))).toHaveLength(3);
     expect(all.at(-1)).not.toMatch(/more visit/);
@@ -149,9 +149,9 @@ describe("the card — header, schedule, note, care plan, upcoming visits with t
     const lines = activeCardLines(g, { schedulePaused: true });
     expect(lines[0]).toBe("Basra Yousuf · Ongoing · Schedule paused — family's membership inactive");
     // B1 / B4 (2026-10-11): the strip's buttons as reply words — a parked decision (family's proposal) / the WITHDRAW keyword (yours).
-    expect(lines).toContain("  Basra Yousuf proposed moving this visit to Tue, Oct 6, 2099, 12:00 PM – 3:00 PM — reply ACCEPT or DECLINE, or PROPOSE a different time.");
+    expect(lines).toContain("  Basra Yousuf proposed moving this visit to Tue, Oct 6, 2099, 12:00 PM – 3:00 PM. Want to accept the new time, keep the current one, or propose another?");
     const mine = shift("r2", { date: "2099-10-05", startTime: "11:00", endTime: "14:00", reschedulePendingDate: "2099-10-07", reschedulePendingStartTime: "09:00", reschedulePendingEndTime: "11:00", rescheduledBy: "caregiver" }) as any;
-    expect(activeCardLines(groupActiveShifts([mine])[0])).toContain("  You proposed moving this visit to Wed, Oct 7, 2099, 9:00 AM – 11:00 AM — waiting on the family to confirm. Reply WITHDRAW to take it back.");
+    expect(activeCardLines(groupActiveShifts([mine])[0])).toContain("  You proposed moving this visit to Wed, Oct 7, 2099, 9:00 AM – 11:00 AM. I'll let you know when the family answers, or say withdraw to take it back.");
   });
 });
 
@@ -163,10 +163,10 @@ describe("sendCaregiverActiveBookings — 2 cards per text, MORE continues, numb
     hoisted.docs.set("booking_requests/br1", { schedulePausedAt: "2099-01-01", notes: "Ring the bell twice." });
     const r = await sendCaregiverActiveBookings("+1", "chat", "cg1");
     expect(r).toMatchObject({ sent: true, count: 2, total: 3, remaining: 1 });
-    expect(hoisted.sent[0]).toMatch(/^Active bookings:\n\n1\. Fam A · Ongoing\n/);
+    expect(hoisted.sent[0]).toMatch(/^Here are your active bookings:\n\n1\. Fam A · Ongoing\n/);
     expect(hoisted.sent[0]).toContain("2. Fam B · Ongoing · Schedule paused — family's membership inactive");
     expect(hoisted.sent[0]).toContain("Notes: Ring the bell twice."); // the booking's own note
-    expect(hoisted.sent[0].endsWith("Reply MORE to see more.")).toBe(true);
+    expect(hoisted.sent[0].endsWith("There are more too, just say more and I'll keep going.")).toBe(true);
     expect(hoisted.sessionWrites[0].data.lastActiveBookingList).toMatchObject({ items: [{ number: 1, bookingRequestId: "br0", clientName: "Fam A" }, { number: 2, bookingRequestId: "br1", clientName: "Fam B" }], offset: 2, total: 3 });
     // the visit ids behind the texted rows, for start_shift / update_shift_task / add_visit_note / complete_shift
     expect(r.visits).toEqual([
@@ -176,8 +176,8 @@ describe("sendCaregiverActiveBookings — 2 cards per text, MORE continues, numb
     hoisted.session = { lastActiveBookingList: hoisted.sessionWrites[0].data.lastActiveBookingList };
     const r2 = await sendCaregiverActiveBookings("+1", "chat", "cg1", { more: true });
     expect(r2).toMatchObject({ count: 1, remaining: 0 });
-    expect(hoisted.sent[1]).toMatch(/^More bookings:\n\n3\. Fam C · Ongoing\n/);
-    expect(hoisted.sent[1]).not.toContain("Reply MORE");
+    expect(hoisted.sent[1]).toMatch(/^Here are the next ones:\n\n3\. Fam C · Ongoing\n/);
+    expect(hoisted.sent[1]).not.toContain("just say more");
   });
   // B1 (2026-10-11): the card's "reply ACCEPT or DECLINE, or PROPOSE" is true — the one proposal on screen is parked.
   it("parks the family's proposal when exactly ONE is on screen (lastNoticedShiftId + shift_proposal); none when there are several", async () => {

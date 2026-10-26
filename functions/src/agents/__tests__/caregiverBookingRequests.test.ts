@@ -127,10 +127,10 @@ describe("View full details", () => {
     expect(t).toContain("Notes\nMom likes her tea at 3.");
   });
   it("the list footer is the buttons: accept/decline, or the gate button with decline still available", () => {
-    expect(requestListText([req()]).text.endsWith("Reply ACCEPT or DECLINE.")).toBe(true);
-    expect(requestListText([req(), req({ id: "br2" })]).text.endsWith('Reply ACCEPT or DECLINE with the number, e.g. "accept 1".')).toBe(true);
-    expect(requestListText([req()], { gate: "membership" }).text.endsWith("To accept you'll need to: Activate Membership. You can still reply DECLINE.")).toBe(true);
-    expect(requestListText([req()], { gate: "background" }).text).toContain("Complete Verification");
+    expect(requestListText([req()]).text.endsWith("Want to accept it, or decline?")).toBe(true);
+    expect(requestListText([req(), req({ id: "br2" })]).text.endsWith("Want to accept or decline one? Just tell me which number.")).toBe(true);
+    expect(requestListText([req()], { gate: "membership" }).text.endsWith("To accept, you'd need to activate your membership first. You can still decline.")).toBe(true);
+    expect(requestListText([req()], { gate: "background" }).text).toContain("complete your verification");
   });
 });
 
@@ -142,14 +142,14 @@ describe("the list", () => {
   it("numbers each request WHOLE (card + full details), two at a time, MORE for the rest", () => {
     const reqs = [1, 2, 3].map((n) => req({ id: `br${n}`, clientName: `Family ${n}` }));
     const p1 = requestListText(reqs);
-    expect(p1.text.startsWith("Booking requests:\n\n1. Family 1 · 4.8 client rating · Pending\n")).toBe(true);
+    expect(p1.text.startsWith("Here are your booking requests:\n\n1. Family 1 · 4.8 client rating · Pending\n")).toBe(true);
     expect(p1.text).toContain("$25/hr · Card (agreed rate)\n\nCare Recipient\nMai Nguyen — Mother\n"); // the card, then what View full details shows
     expect(p1.text).toContain("Emergency Contact\nLinh Nguyen (Daughter) · (408) 555-0100");
     expect(p1.text).toContain("\n\n2. Family 2");
     expect(p1.text).not.toContain("3. Family 3");
-    expect(p1.text.endsWith('Reply ACCEPT or DECLINE with the number, e.g. "accept 1". Reply MORE to see more.')).toBe(true);
+    expect(p1.text.endsWith("Want to accept or decline one? Just tell me which number. There are more too, just say more and I'll keep going.")).toBe(true);
     const p2 = requestListText(reqs, { from: 2 });
-    expect(p2.text.startsWith("More requests:\n\n3. Family 3")).toBe(true);
+    expect(p2.text.startsWith("Here are the next ones:\n\n3. Family 3")).toBe(true);
   });
   it("the query is the page's: caregiverId ==, newest first, then status === pending", async () => {
     hoisted.docs.set("booking_requests/old", { ...req(), caregiverId: "cg1", createdAt: "2026-09-01T00:00:00Z" });
@@ -182,13 +182,13 @@ describe("Accept / Decline — the page's exact writes", () => {
   it("accept writes {status:'accepted', updatedAt} and nothing else; toast is the page's", async () => {
     hoisted.docs.set("booking_requests/br1", { ...req(), caregiverId: "cg1" });
     const r = await respondToBookingRequest("cg1", "br1", "accept");
-    expect(r).toMatchObject({ ok: true, status: "accepted", toast: "Booking request from The Nguyen Family accepted!" });
+    expect(r).toMatchObject({ ok: true, status: "accepted", toast: "Accepted! The Nguyen Family's booking is on your schedule now, and they've been told." });
     expect(hoisted.updates).toEqual([{ path: "booking_requests/br1", data: { status: "accepted", updatedAt: "__serverTimestamp__" } }]);
   });
   it("decline writes {status:'declined', updatedAt}; toast 'Request declined'", async () => {
     hoisted.docs.set("booking_requests/br1", { ...req(), caregiverId: "cg1" });
     const r = await respondToBookingRequest("cg1", "br1", "decline");
-    expect(r).toMatchObject({ ok: true, status: "declined", toast: "Request from The Nguyen Family declined" });
+    expect(r).toMatchObject({ ok: true, status: "declined", toast: "Okay, I've declined The Nguyen Family's request. They'll be told." });
     expect(hoisted.updates[0].data).toEqual({ status: "declined", updatedAt: "__serverTimestamp__" });
   });
   it("refuses another care provider's request, a missing one, or one no longer pending", async () => {
@@ -259,7 +259,7 @@ describe("schedule-change cards — the page's card and its Accept/Decline, verb
     hoisted.docs.set("booking_amendments/am1", amendment({ newDays: { Fri: [{ start: "09:00", end: "11:00" }] } }));
     hoisted.docs.set("booking_requests/br1", { clientId: "fam1", clientName: "The Nguyen Family", caregiverName: "Maria", schedule: { ongoing: true, startDate: "2099-01-01", dayShiftTimes: { Mon: [{ start: "09:00", end: "13:00" }] } } });
     const r = await acceptAmendment("cg1", "am1");
-    expect(r).toEqual({ ok: true, status: "accepted", toast: "Schedule updated for The Nguyen Family — new visits added." });
+    expect(r).toEqual({ ok: true, status: "accepted", toast: "Done, The Nguyen Family's schedule is updated and the new visits are on your calendar." });
     expect(hoisted.updates).toEqual([{ path: "booking_amendments/am1", data: { status: "accepted", respondedAt: "__serverTimestamp__" } }]);
     expect(hoisted.sets).toHaveLength(0);
     expect(hoisted.docs.get("booking_requests/br1").schedule.dayShiftTimes).toEqual({ Mon: [{ start: "09:00", end: "13:00" }] });

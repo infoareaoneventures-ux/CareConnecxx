@@ -87,7 +87,7 @@ describe("visit mode — free text while a visit is in progress", () => {
     reply({ kind: "note", note: "finished the shower", recipient: "Hamse" });
     expect(await handleVisitModeMessage("+1", "chat", "cg1", "Hamse finished the shower", session())).toBe("handled");
     expect(hoisted.docs.get("shifts/v1").notesLog).toEqual({ __arrayUnion: expect.objectContaining({ text: "Hamse: finished the shower" }) });
-    expect(hoisted.sent.at(-1)).toBe("Noted — the family can see it on the visit.");
+    expect(hoisted.sent.at(-1)).toBe("Noted. The family can see it on the visit.");
   });
 
   it("could be a task or a note → ONE question, nothing written", async () => {
@@ -95,7 +95,7 @@ describe("visit mode — free text while a visit is in progress", () => {
     reply({ kind: "ambiguous", tasks: [2] });
     expect(await handleVisitModeMessage("+1", "chat", "cg1", "dinner", session())).toBe("handled");
     expect(hoisted.sent.at(-1)).toContain("Is that a note for the family, or a task you finished?");
-    expect(hoisted.sent.at(-1)).toContain("DONE 2");
+    expect(hoisted.sent.at(-1)).toContain("the task number (2)");
     expect(hoisted.updates.filter((u) => u.path === "shifts/v1")).toEqual([]);
   });
 
@@ -136,13 +136,13 @@ describe("visit mode — free text while a visit is in progress", () => {
     hoisted.quick.mockResolvedValueOnce("ARRIVED");
     expect(await handleVisitModeMessage("+1", "chat", "cg1", "I'm here at the house", session())).toBe("handled");
     expect(hoisted.docs.get("shifts/s1").status).toBe("scheduled"); // START is the clock-in — nothing starts on an arrival
-    expect(hoisted.sent.at(-1)).toMatch(/^Start is open for your .* visit with Basra Yousuf\. Text START to begin it\.$/);
+    expect(hoisted.sent.at(-1)).toMatch(/^Start is open for your .* visit with Basra Yousuf\. Say start when you're ready\.$/);
     // Early: Start opens 15 minutes before.
     const later = la(new Date(Date.now() + 40 * 60_000));
     hoisted.docs.set("shifts/s1", { ...hoisted.docs.get("shifts/s1"), date: later.date, startTime: later.time });
     hoisted.quick.mockResolvedValueOnce("ARRIVED");
     expect(await handleVisitModeMessage("+1", "chat", "cg1", "I'm here", session())).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/^You're early — Start opens at .* for the .* visit\. Text START then\.$/);
+    expect(hoisted.sent.at(-1)).toMatch(/^You're early\. Start opens at .* for the .* visit\. Say start then\.$/);
     expect(hoisted.docs.get("shifts/s1").status).toBe("scheduled");
     // Not an arrival → passthrough.
     hoisted.quick.mockResolvedValueOnce("OTHER");

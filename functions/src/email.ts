@@ -189,7 +189,7 @@ function caregiverWelcomeHtml(name: string): string {
     </p>
   `;
 
-  return emailWrapper(body, `<p style="margin:0;">You're receiving this because you created an Evia care provider account.</p>`);
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because you created a care provider account on Evia.</p>`);
 }
 
 function passwordResetHtml(name: string, resetUrl: string): string {

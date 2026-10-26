@@ -47,7 +47,7 @@ const STEP_DEFS: StepDef[] = [
     label: 'Identity',
     shortLabel: 'Identity',
     title: 'Verify your identity',
-    description: 'A quick ID check keeps our care providers and community safe.',
+    description: 'A quick ID check keeps care providers and families safe.',
     cta: 'Start Identity Check',
     icon: ShieldCheck,
     action: 'start-identity',

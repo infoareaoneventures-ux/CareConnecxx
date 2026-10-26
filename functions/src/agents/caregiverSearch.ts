@@ -336,7 +336,7 @@ export async function presentCaregiverSearch(args: PresentCaregiverSearchArgs): 
     // FindCaregivers.tsx EmptyState — same two messages.
     await sendMessage(args.chatId, active.length > 0
       ? `No care providers match your filters (${active.join(", ")}). Try widening your distance, raising your rate, or removing some specialties — just tell me what to change.`
-      : "No care providers available yet — we're growing our care provider network in your area. Want me to post a care request so matching care providers can apply directly?");
+      : "No care providers available yet — more are joining in your area. Want me to post a care request so matching care providers can apply directly?");
     return { status: "empty", total: 0, hasFilters: active.length > 0 };
   }
   if (shown.length === 0) {

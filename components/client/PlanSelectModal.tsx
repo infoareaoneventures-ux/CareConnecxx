@@ -110,7 +110,7 @@ export function PlanSelectModal({ onClose, currentPriceId, caregiverName, caregi
           {/* ── Left panel — plan selection ─────────────────────────── */}
           <div className="flex-1 p-6">
             <p className="text-sm text-slate-500 mb-6">
-              Full access to Evia care providers and on-demand booking. Plus a 9% service fee on each visit — the care provider keeps 100% of their rate.
+              Full access to care providers on Evia and on-demand booking. Plus a 9% service fee on each visit — the care provider keeps 100% of their rate.
             </p>
 
             {/* Plan radio cards */}

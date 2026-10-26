@@ -1085,7 +1085,7 @@ const EmptyState: React.FC<{ hasFilters: boolean; onClear: () => void; onPostJob
     <p className="text-sm text-slate-500 mb-5 max-w-md mx-auto">
       {hasFilters
         ? 'Try widening your distance, raising your rate, or removing some specialties.'
-        : "We're growing our care provider network in your area. Post a job to invite matching care providers to apply directly."}
+        : "More care providers are joining in your area. Post a job to invite matching care providers to apply directly."}
     </p>
     <div className="flex gap-2 justify-center">
       {hasFilters && (

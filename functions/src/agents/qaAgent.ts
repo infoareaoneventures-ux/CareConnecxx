@@ -1000,7 +1000,7 @@ export function buildCaregiverSystemPrompt(
   const contextSection = ctxLines.length ? `\n${ctxLines.join("\n")}\n` : "";
 
   return [
-    `You ARE Evia — a care coordinator texting with ${name}, one of our care providers.`,
+    `You ARE Evia — a care coordinator texting with ${name}, a care provider on Evia (care providers are independent — never "our" care providers).`,
     CARE_PROVIDER_TERM_RULE,
     `IDENTITY: Speak in first person. Never refer to yourself as "Evia" in the third person. Never say "reach out to Evia", "the Evia team will help", or anything that treats Evia as a separate entity. You ARE Evia.`,
     // LAUNCH: wording pending counsel review (R15)

@@ -66,12 +66,12 @@ export const WHATS_INCLUDED = [
 export const DRIVER_CARD_TEXT: Record<DriverCard, string> = {
   // AccountStandingSection.DRIVER_CARD_TEXT, "title — body". States what happened, never an approval (founder, 2026-10-04).
   approved: "Driving record check cleared.",
-  consent: "Authorize your driving record check. Transportation is on your profile. Authorize the driving record check to start it, included in your membership. Reply AUTHORIZE for the link.",
+  consent: "Authorize your driving record check. Transportation is on your profile. Authorize the driving record check to start it, included in your membership. Say authorize and I'll send the link.",
   not_approved: "Driving record not approved. Your driving record check didn't meet the requirement for Transportation jobs. Non-driving jobs aren't affected.",
   review: "Driving record under review. Your driving record check came back needing a review. Transportation is off your profile for now. Non-driving jobs aren't affected.",
   pending: "Driving record check in progress. Finish the short form in the email you received. Transportation shows on your profile once it clears.",
   included: "Driving record check included. Watch your email for a short form to complete.",
-  offer: "Offer transportation? Add Transportation to your services. Your membership already covers the driving record check. Reply SERVICES to add it.",
+  offer: "Offer transportation? Add Transportation to your services. Your membership already covers the driving record check. Say services and I'll add it with you.",
 };
 
 const toDate = (v: unknown): Date | null => {
@@ -159,8 +159,8 @@ export function bgCardText(tab: MembershipTab): string {
   switch (b.kind) {
     case "consent":
       return b.renewal
-        ? "Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check within 7 days to stay bookable. Reply AUTHORIZE for the link."
-        : "Background check: Start your background check. Authorize your background check, it takes about 2 minutes. Your SSN and date of birth go directly to Checkr, never to Evia. Reply AUTHORIZE for the link.";
+        ? "Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check within 7 days to stay bookable. Say authorize and I'll send the link."
+        : "Background check: Start your background check. Authorize your background check, it takes about 2 minutes. Your SSN and date of birth go directly to Checkr, never to Evia. Say authorize and I'll send the link.";
     case "cleared":
       return `Background check: Cleared${b.clearedOn ? ` ${b.clearedOn}` : ""}${b.refreshRunning ? ", this year's refresh is running" : ""}${renewal}`;
     case "in_progress":
@@ -193,7 +193,7 @@ export function membershipSectionLines(tab: MembershipTab): string[] {
       tab.status === "canceled"
         ? "Your membership was canceled. Renew to access jobs and platform features."
         : "Activate your membership to start accepting bookings and applying for jobs.",
-      `Reply ACTIVATE for your membership link (${caregiverAnnualDisplay()}).`,
+      `Say activate and I'll send your membership link (${caregiverAnnualDisplay()}).`,
     );
   } else {
     const label = STATUS_LABEL[tab.status ?? ""] ?? tab.status ?? "";
@@ -201,7 +201,7 @@ export function membershipSectionLines(tab: MembershipTab): string[] {
     if (tab.cancelAtPeriodEnd) lines.push(`⚠ Cancels on ${tab.periodEnd ? longDate(tab.periodEnd) : "the end of your term"}`);
     else if (tab.periodEnd) lines.push(`Renews ${longDate(tab.periodEnd)}`);
     lines.push("What's included:", ...WHATS_INCLUDED.map((l) => `✓ ${l}`));
-    lines.push("Manage membership: update payment method, cancel, or view invoices via Stripe, reply MANAGE MEMBERSHIP for your link.");
+    lines.push("Manage membership: to update your card, cancel, or see invoices, say manage membership and I'll send your Stripe link.");
   }
   lines.push("", bgCardText(tab), "", driverCardText(tab));
   return lines;
@@ -225,18 +225,18 @@ export async function sendMembershipPortalLink(chatId: string, caregiverId: stri
     ]);
     try {
       const url = await createCaregiverBillingPortalUrl(getStripeClient(), caregiverId, appLink("/care-provider/settings"));
-      await sendMessage(chatId, `Manage your membership (update payment method, cancel, or view invoices) — this link signs you in to Stripe: ${url}`);
+      await sendMessage(chatId, `Here's your membership link to update your card, cancel, or see invoices. It signs you in to Stripe: ${url}`);
       return true;
     } catch (err) {
       if (err instanceof NoBillingAccountError) {
-        await sendMessage(chatId, "No billing account found. Please purchase a membership first — reply ACTIVATE for your membership link.");
+        await sendMessage(chatId, "I don't see a billing account yet. Say activate and I'll send your membership link first.");
         return false;
       }
       throw err;
     }
   } catch (err) {
     console.error("[caregiverMembership] portal link failed:", err);
-    await sendMessage(chatId, "Billing portal unavailable right now. Please try again later.");
+    await sendMessage(chatId, "I couldn't open your billing page just now. Try again in a little while.");
     return false;
   }
 }
@@ -245,16 +245,16 @@ export async function sendMembershipPortalLink(chatId: string, caregiverId: stri
 export async function sendMembershipActivateLink(phone: string, chatId: string, caregiverId: string): Promise<boolean> {
   const tab = await loadMembershipTab(caregiverId);
   if (tab.isActive) {
-    await sendMessage(chatId, "Your membership is already active — reply MANAGE MEMBERSHIP to update your card, cancel, or see invoices.");
+    await sendMessage(chatId, "Your membership is already active. Say manage membership if you want to update your card, cancel, or see invoices.");
     return false;
   }
   try {
     const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
     const r = await runSendOnboardingLinkAction({ phone, linkType: "caregiver_membership" }, { caller: "sms_agent", role: "caregiver", phone });
     if (r.sent) return true;
-    if (r.throttled) { await sendMessage(chatId, `Your membership link went out about ${r.minutesSinceLastSend ?? "a few"} minutes ago — tap that one, or reply LINK and I'll resend it.`); return false; }
+    if (r.throttled) { await sendMessage(chatId, `Your membership link went out about ${r.minutesSinceLastSend ?? "a few"} minutes ago. Tap that one, or say link and I'll resend it.`); return false; }
   } catch (err) { console.error("[caregiverMembership] activate link failed:", err); }
-  await sendMessage(chatId, "I couldn't generate your membership link right now — reply ACTIVATE again in a moment.");
+  await sendMessage(chatId, "I couldn't get your membership link just now. Ask me again in a moment.");
   return false;
 }
 
@@ -263,16 +263,16 @@ export async function sendAuthorizeLink(phone: string, chatId: string, caregiver
   const tab = await loadMembershipTab(caregiverId);
   // Authorize = the background check waiting on consent OR the later driving-record check (2026-10-06).
   if (tab.bg.kind !== "consent" && tab.driver !== "consent") {
-    await sendMessage(chatId, `Nothing to authorize right now — ${bgCardText(tab).replace(/^Background check: /, "your background check is: ")}`);
+    await sendMessage(chatId, `Nothing to authorize right now. ${bgCardText(tab).replace(/^Background check: /, "Your background check is: ")}`);
     return false;
   }
   try {
     const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
     const r = await runSendOnboardingLinkAction({ phone, linkType: "caregiver_background_check" }, { caller: "sms_agent", role: "caregiver", phone });
     if (r.sent) return true;
-    if (r.throttled) { await sendMessage(chatId, `Your authorization link went out about ${r.minutesSinceLastSend ?? "a few"} minutes ago — tap that one, or reply LINK and I'll resend it.`); return false; }
+    if (r.throttled) { await sendMessage(chatId, `Your authorization link went out about ${r.minutesSinceLastSend ?? "a few"} minutes ago. Tap that one, or say link and I'll resend it.`); return false; }
   } catch (err) { console.error("[caregiverMembership] authorize link failed:", err); }
-  await sendMessage(chatId, "I couldn't generate your authorization link right now — reply AUTHORIZE again in a moment.");
+  await sendMessage(chatId, "I couldn't get your authorization link just now. Ask me again in a moment.");
   return false;
 }
 

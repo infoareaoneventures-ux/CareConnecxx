@@ -61,11 +61,11 @@ export function hoursLeftLabel(respondByMs: number, nowMs: number): string {
 }
 
 export function unsubmittedText(shift: FirebaseFirestore.DocumentData, completedMs: number): string {
-  return `Your ${shortDate(completedMs)} visit with ${String(shift.clientName || "the family")} still has no hours submitted. Reply SUBMIT to submit them.`;
+  return `Your ${shortDate(completedMs)} visit with ${String(shift.clientName || "the family")} still has no hours submitted. Want to do that now? Just say submit.`;
 }
 export function correctionText(row: FirebaseFirestore.DocumentData, respondByMs: number, nowMs: number): string {
   const when = tsMs(row.submittedStartTime);
-  return `${String(row.clientName || "The family")}'s correction to your ${when !== null ? `${shortDate(when)} ` : ""}hours auto-accepts in ${hoursLeftLabel(respondByMs, nowMs)}. Reply REVIEW to accept it or send a counter.`;
+  return `${String(row.clientName || "The family")}'s correction to your ${when !== null ? `${shortDate(when)} ` : ""}hours auto-accepts in ${hoursLeftLabel(respondByMs, nowMs)}. Want to accept it or send a counter? Say review and we'll go through it.`;
 }
 
 async function notify(opts: { caregiverId: string; text: string; bellBody: string; sourcePath: string; eventId: string; type: string; title: string; data: Record<string, unknown>; sourceAgent: string }): Promise<boolean> {
@@ -100,7 +100,7 @@ export async function runCaregiverTimesheetReminders(nowMs = Date.now()): Promis
     try {
       const text = unsubmittedText(v, completedMs as number);
       await notify({
-        caregiverId, text, bellBody: text.replace(/ Reply SUBMIT to submit them\.$/, " Submit them on your Timesheets page."),
+        caregiverId, text, bellBody: text.replace(/ Want to do that now\? Just say submit\.$/, " Submit them on your Timesheets page."),
         sourcePath: `shifts/${doc.id}`, eventId: "submit-reminder", type: "shift_hours_unsubmitted", title: "Hours not submitted",
         data: { shiftId: doc.id }, sourceAgent: "timesheet_submit_reminder",
       });
@@ -120,7 +120,7 @@ export async function runCaregiverTimesheetReminders(nowMs = Date.now()): Promis
     try {
       const text = correctionText(r, respondByMs as number, nowMs);
       await notify({
-        caregiverId, text, bellBody: text.replace(/ Reply REVIEW to accept it or send a counter\.$/, " Review it on your Timesheets page."),
+        caregiverId, text, bellBody: text.replace(/ Want to accept it or send a counter\? Say review and we'll go through it\.$/, " Review it on your Timesheets page."),
         sourcePath: `shiftHours/${doc.id}`, eventId: "correction-reminder", type: "shift_hours_correction_reminder", title: "Correction awaiting your answer",
         data: { appointmentId: doc.id }, sourceAgent: "timesheet_correction_reminder",
       });

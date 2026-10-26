@@ -111,18 +111,18 @@ export async function checkCaregiverAccess(
 export function caregiverGateText(reason: CaregiverGateReason, caregiver: Record<string, unknown> = {}): string {
   switch (reason) {
     case "membership":
-      return "Membership required — you need an active membership to take this action. Activate your membership to continue:";
+      return "Membership required. You'll need an active membership for that, here's the link to activate it:";
     case "background":
-      return "Background check required — your background check must be cleared before you can take this action.";
+      return "Background check required. Your background check needs to clear before you can do that.";
     case "transport":
       // 2026-10-06: Transportation offered + driving record cleared (no documents); one line with the site's modal + Jobs button.
       // Not offering yet → the site's button opens the Care Services editor; by text that is SERVICES (no Settings link).
       if (!caregiverOffersTransportation(caregiver)) {
-        return "Set Up Transportation — this job includes driving. To apply, add Transportation to your services (reply SERVICES) and complete the driving record check, included in your membership.";
+        return "Set Up Transportation. This job includes driving, so to apply you'd add Transportation to your services (say services and I'll do it with you) and complete the driving record check, which your membership covers.";
       }
       // Offering already → the site's button opens Settings › Membership & verification; Evia TEXTS that card
       // (textCaregiverGateBlock appends the driving record line) — never a link to the site (founder, 2026-10-06).
-      return "Set Up Transportation — this job includes driving. To apply, offer Transportation on your profile and complete the driving record check, included in your membership.";
+      return "Set Up Transportation. This job includes driving, so to apply you'd need the driving record check to clear. Your membership covers it.";
   }
 }
 
@@ -149,10 +149,10 @@ export async function textCaregiverGateBlock(
       const line = clearedOn && card === "approved"
         ? DRIVER_CARD_TEXT[card].replace("Driving record check cleared. ", `Driving record check cleared on ${clearedOn}. `)
         : DRIVER_CARD_TEXT[card];
-      await sendMessage(chatId, `Where it stands: ${line} Reply MEMBERSHIP for your whole Membership & verification section.`);
+      await sendMessage(chatId, `Where it stands: ${line} Say membership and I'll show your whole Membership & verification section.`);
     } catch (err) {
       console.error("caregiverAccessGate: driving record line failed", err);
-      await sendMessage(chatId, "Reply MEMBERSHIP to see where your driving record stands.");
+      await sendMessage(chatId, "Say membership and I'll show where your driving record stands.");
     }
     return;
   }

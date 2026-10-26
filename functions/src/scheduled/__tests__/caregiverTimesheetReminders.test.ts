@@ -75,7 +75,7 @@ describe("the run", () => {
     const r = await runCaregiverTimesheetReminders(NOW);
     expect(r.unsubmitted).toBe(1); expect(r.skipped).toBe(2);
     expect(hoisted.sends).toHaveLength(1);
-    expect(hoisted.sends[0].out.content).toBe("Your Feb 10 visit with Basra Yousuf still has no hours submitted. Reply SUBMIT to submit them.");
+    expect(hoisted.sends[0].out.content).toBe("Your Feb 10 visit with Basra Yousuf still has no hours submitted. Want to do that now? Just say submit.");
     expect(hoisted.bells[0]).toMatchObject({ sourcePath: "shifts/s1", eventId: "submit-reminder", type: "shift_hours_unsubmitted", title: "Hours not submitted", body: "Your Feb 10 visit with Basra Yousuf still has no hours submitted. Submit them on your Timesheets page." });
     expect(hoisted.updates.find((u) => u.path === "shifts/s1")?.data.caraSubmitReminderSentAt).toBe(new Date(NOW).toISOString());
     // Second run: nothing new.
@@ -88,7 +88,7 @@ describe("the run", () => {
     hoisted.docs.set("shiftHours/a2", { caregiverId: "cg1", clientName: "B", status: "correction_proposed", correctionRespondByAt: new Date(NOW + 10 * 3_600_000).toISOString() });
     const r = await runCaregiverTimesheetReminders(NOW);
     expect(r.corrections).toBe(1);
-    expect(hoisted.sends[0].out.content).toBe("Basra Yousuf's correction to your Feb 10 hours auto-accepts in 3 hours. Reply REVIEW to accept it or send a counter.");
+    expect(hoisted.sends[0].out.content).toBe("Basra Yousuf's correction to your Feb 10 hours auto-accepts in 3 hours. Want to accept it or send a counter? Say review and we'll go through it.");
     expect(hoisted.bells[0]).toMatchObject({ sourcePath: "shiftHours/a1", type: "shift_hours_correction_reminder", title: "Correction awaiting your answer", body: "Basra Yousuf's correction to your Feb 10 hours auto-accepts in 3 hours. Review it on your Timesheets page." });
     expect(hoisted.docs.get("shiftHours/a1").caraCorrectionReminderSentAt).toBe(new Date(NOW).toISOString());
     const again = await runCaregiverTimesheetReminders(NOW + 3_600_000);

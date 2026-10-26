@@ -81,7 +81,7 @@ describe("the tab — the page's reads and chips", () => {
     expect(r.text).toContain("Timesheets · Unsubmitted (1)");
     expect(r.text).toContain("Basra Yousuf · 1 shift");
     expect(r.text).toContain("1. Sep 18 · In 2:05:09 PM · Out 5:10:00 PM · 3:04:51 · Est. pay $77.02 · Card · Logged · Not submitted");
-    expect(r.text).toContain("Reply SUBMIT n to submit a visit's hours");
+    expect(r.text).toContain("Want to submit one? Say submit and its number.");
     expect(r.items).toEqual([{ number: 1, kind: "shift", id: "s1" }]);
   });
   it("Pending rows carry the page's status labels; a correction says how to answer", () => {
@@ -93,9 +93,9 @@ describe("the tab — the page's reads and chips", () => {
     ];
     const r = pendingText(rows);
     expect(r.text).toContain("1. Sep 18 · 2:05:09 PM – 5:10:00 PM · 3:04:51 · $77.02 · Pending client review");
-    expect(r.text).toContain("2. Sep 18 · 2:05:09 PM – 5:10:00 PM · 3:04:51 · $77.02 · Correction Received — reply REVIEW 2");
+    expect(r.text).toContain("2. Sep 18 · 2:05:09 PM – 5:10:00 PM · 3:04:51 · $77.02 · Correction Received (say review 2 to answer it)");
     expect(r.text).toContain("· Awaiting Payment");
-    expect(r.text).toContain("1 correction needs your answer — reply REVIEW n.");
+    expect(r.text).toContain("1 correction needs your answer, say review and its number.");
     expect(r.items.map((i) => i.id)).toEqual(["a", "b", "c"]);
   });
   it("History groups by month with the page's totals, badges Corrected, pages 5 at a time with MORE", () => {
@@ -108,9 +108,9 @@ describe("the tab — the page's reads and chips", () => {
     expect(p1.text).toContain("1. Sep 16 · 2:00:00 PM – 4:00:00 PM · 2:00:00 · $50.00 · Approved"); // newest first
     expect(p1.text).toContain("· Corrected · Approved");
     expect(p1.shown).toBe(5); expect(p1.remaining).toBe(2);
-    expect(p1.text).toContain("Reply MORE for 2 older.");
+    expect(p1.text).toContain("There are 2 older, just say more.");
     const p2 = historyText(rows, 5);
-    expect(p2.text).toContain("More history:");
+    expect(p2.text).toContain("Here are the next ones:");
     expect(p2.text).toContain("August 2026 · 1 shift · $40.00");
     expect(p2.items.map((i) => i.number)).toEqual([6, 7]);
     expect(p2.text).toContain("6. Sep 11 · 2:00:00 PM – 4:00:00 PM · 2:00:00 · $50.00 · Paid");
@@ -140,7 +140,7 @@ describe("the tab — the page's reads and chips", () => {
     expect(t).toContain("Base pay $77.02\nMileage · 20 miles +$12.50\nTotal $89.52");
     expect(t).toContain("History\n• Submitted by care provider — Sep 18, 5:12 PM · 2:05 PM – 5:10 PM · 3:04:51 · $25/hr · Base pay $77.02 · Mileage +$12.50 · Total $89.52");
     expect(t).toContain("• Client proposed correction — Sep 18, 8:04 PM · 2:30 PM – 5:00 PM · 2:30:00 · $25/hr · Base pay $62.50 · Mileage +$12.50 · Total $75.00 · \"She left early\"");
-    expect(t.endsWith("Reply REVIEW 2 to accept the correction or send a counter.")).toBe(true);
+    expect(t.endsWith("Want to answer this correction? Say review 2 and we'll go through it.")).toBe(true);
     const p = timesheetDetailText({ id: "b", status: "pending_client_review", clientName: "B", payRate: 25, submittedStartTime: IN, submittedEndTime: OUT, grossPay: 77.02, autoApproveAt: "2026-09-20T00:12:00.000Z" });
     expect(p).toContain("Gross pay $77.02\nAuto-approves Sep 19, 5:12 PM");
     const q = timesheetDetailText({ id: "c", status: "pending_client_review", clientName: "B", payRate: 25, submittedStartTime: IN, submittedEndTime: OUT, grossPay: 77.02, autoApproveAt: null,
@@ -159,7 +159,7 @@ describe("the tab — the page's reads and chips", () => {
       "Est. pay $77.02",
       "Recipients H M, A M",
       "",
-      "Reply SUBMIT 1 to submit hours, or VIEW 1 for the visit.",
+      "Want to submit these hours? Say submit 1. Or say view 1 to see the visit.",
     ].join("\n"));
   });
   it("sends a chip and stores the numbered list; MORE pages History from the stored offset", async () => {
@@ -185,7 +185,7 @@ describe("Submit hours worked — the modal as a flow", () => {
       "Duration 3:04:51",
       "Base pay (3:04:51 @ $25/hr) $77.02",
       "",
-      `Any additional charges (overtime, mileage, supplies)? Reply one like "Mileage 12.50" (add a note after a dash: "Mileage 12.50 - 20 miles"), or NONE.`,
+      "Any additional charges, like overtime, mileage or supplies? Tell me one with the amount, for example mileage 12.50, and add a note after a dash if you like. If none, just say no.",
     ].join("\n"));
     const w = hoisted.sessionWrites[0];
     expect(w.submitHoursFlowStep).toBe("sh_items");
@@ -195,7 +195,7 @@ describe("Submit hours worked — the modal as a flow", () => {
   it("refuses a visit that already has hours (and says where it is), and a visit that isn't completed", async () => {
     shift("s1"); hours("s1", { status: "paid" });
     expect((await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" })).reason).toBe("already_submitted");
-    expect(hoisted.sent[0]).toBe("Hours for that visit were already submitted — it's Paid. Reply PENDING or HISTORY to see it.");
+    expect(hoisted.sent[0]).toBe("Those hours were already submitted, they're Paid. Say pending or history and I'll show you.");
     shift("s2", { status: "in-progress" });
     expect((await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s2" })).reason).toBe("not_completed");
   });
@@ -209,11 +209,11 @@ describe("Submit hours worked — the modal as a flow", () => {
       "",
       "Payment method: Card. Client has 24 hours to approve or propose a correction. After that, hours auto-approve and Stripe processes payment.",
       "",
-      "Reply SUBMIT to submit, or CANCEL.",
+      "Want me to submit this?",
     ].join("\n"));
     await handleSubmitHoursFlowStep("+1", "chat", "SUBMIT", session() as never);
     expect(hoisted.submit).toHaveBeenCalledWith("cg1", { shiftId: "s1", startTime: IN, endTime: OUT, lineItems: [] });
-    expect(hoisted.sent.at(-1)).toBe("Hours submitted — awaiting client approval");
+    expect(hoisted.sent.at(-1)).toBe("Submitted! I'll let you know when the family approves them.");
     expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("__delete__");
   });
   it("SUBMIT failure: the callable's own message is texted (the page's toast); a raw server error is NOT — a plain line instead (live 2026-10-07: '6 ALREADY_EXISTS: Document already exists: projects/…' reached the phone)", async () => {
@@ -224,7 +224,7 @@ describe("Submit hours worked — the modal as a flow", () => {
     raw.code = 6;
     hoisted.submit.mockRejectedValueOnce(raw);
     await handleSubmitHoursFlowStep("+1", "chat", "SUBMIT", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("I couldn't submit those hours just now. Please try again in a minute, or submit them from your Timesheets page.");
+    expect(hoisted.sent.at(-1)).toBe("I couldn't submit those hours just now. Give it another try in a minute, or submit them from your Timesheets page.");
     expect(hoisted.sent.at(-1)).not.toContain("ALREADY_EXISTS");
 
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
@@ -241,7 +241,7 @@ describe("Submit hours worked — the modal as a flow", () => {
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
     hoisted.quick.mockResolvedValueOnce('{"label": "Mileage", "amount": 12.5, "note": "20 miles"}');
     await handleSubmitHoursFlowStep("+1", "chat", "mileage 12.50 - 20 miles", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Added Mileage · $12.50. Another charge? Reply it, or DONE.");
+    expect(hoisted.sent.at(-1)).toBe("Added Mileage · $12.50. Anything else to add? If not, just say no.");
     hoisted.quick.mockResolvedValueOnce('{"label": "Supplies", "amount": null, "note": null}');
     await handleSubmitHoursFlowStep("+1", "chat", "supplies", session() as never);
     expect(hoisted.sent.at(-1)).toContain("Please enter an amount for each additional charge.");
@@ -264,7 +264,7 @@ describe("Submit hours worked — the modal as a flow", () => {
     shift("s1");
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
     await handleSubmitHoursFlowStep("+1", "chat", "cancel", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Okay — nothing was submitted. The visit still shows under Unsubmitted.");
+    expect(hoisted.sent.at(-1)).toBe("No problem, I didn't submit anything. The visit still shows under Unsubmitted.");
     expect(hoisted.submit).not.toHaveBeenCalled();
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
     await handleSubmitHoursFlowStep("+1", "chat", "NONE", session() as never);
@@ -294,7 +294,7 @@ describe("Review correction — the modal as a flow", () => {
       "Total $75.00",
       "\"She left early\"",
       "",
-      "Reply ACCEPT to accept $75.00, or COUNTER to send a counter.",
+      "Do you want to accept $75.00, or send a counter?",
     ].join("\n"));
   });
   it("ACCEPT runs the site's accept write and texts the page's toast", async () => {
@@ -302,24 +302,24 @@ describe("Review correction — the modal as a flow", () => {
     await startReviewCorrectionFlow("+1", "chat", session() as never, { caregiverId: "cg1", appointmentId: "a1" });
     await handleReviewCorrectionFlowStep("+1", "chat", "accept", session() as never);
     expect(hoisted.respond).toHaveBeenCalledWith("cg1", { appointmentId: "a1", action: "accept" });
-    expect(hoisted.sent.at(-1)).toBe("Correction accepted");
+    expect(hoisted.sent.at(-1)).toBe("Done, the correction is accepted.");
   });
   it("COUNTER asks start (KEEP), end, the charge amounts, a note, then SEND runs the counter write with the modal's payload", async () => {
     correction();
     await startReviewCorrectionFlow("+1", "chat", session() as never, { caregiverId: "cg1", appointmentId: "a1" });
     await handleReviewCorrectionFlowStep("+1", "chat", "counter", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Counter start — reply a time like 2:05 PM, or KEEP for 2:30 PM.");
+    expect(hoisted.sent.at(-1)).toBe("What start time are you countering with? If 2:30 PM is right, just say keep.");
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Counter end — reply a time, or KEEP for 5:00 PM.");
+    expect(hoisted.sent.at(-1)).toBe("And the end time? If 5:00 PM is right, just say keep.");
     hoisted.quick.mockResolvedValueOnce("14:00");
     await handleReviewCorrectionFlowStep("+1", "chat", "2pm", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("The end has to be after the start (2:30 PM). Counter end — reply a time, or KEEP for 5:00 PM.");
+    expect(hoisted.sent.at(-1)).toBe("The end has to be after the start (2:30 PM). And the end time? If 5:00 PM is right, just say keep.");
     hoisted.quick.mockResolvedValueOnce("17:10");
     await handleReviewCorrectionFlowStep("+1", "chat", "5:10 pm", session() as never);
-    expect(hoisted.sent.at(-1)).toBe('Additional charges: Mileage $12.50. Reply a new amount for any of them, like "Mileage 10", or KEEP.');
+    expect(hoisted.sent.at(-1)).toBe("Additional charges: Mileage $12.50. Want to change any amount? Tell me which and the new amount, like mileage 10. If they're right, just say keep.");
     hoisted.quick.mockResolvedValueOnce('{"1": 10}');
     await handleReviewCorrectionFlowStep("+1", "chat", "mileage 10", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Note (optional) — why do you disagree? Reply the note, or SKIP.");
+    expect(hoisted.sent.at(-1)).toBe("Want to add a note for the family on why you disagree? If not, just say no.");
     await handleReviewCorrectionFlowStep("+1", "chat", "I stayed until she was settled", session() as never);
     expect(hoisted.sent.at(-1)).toBe([
       "Your counter — Basra Yousuf",
@@ -329,7 +329,7 @@ describe("Review correction — the modal as a flow", () => {
       "Your total $76.67",
       "Note: \"I stayed until she was settled\"",
       "",
-      "Reply SEND to send the counter, or CANCEL.",
+      "Want me to send this counter to the family?",
     ].join("\n"));
     await handleReviewCorrectionFlowStep("+1", "chat", "SEND", session() as never);
     expect(hoisted.respond).toHaveBeenCalledWith("cg1", {
@@ -338,13 +338,13 @@ describe("Review correction — the modal as a flow", () => {
       counterNote: "I stayed until she was settled",
       counterLineItems: [{ type: "custom", label: "Mileage", note: "", amount: 10 }],
     });
-    expect(hoisted.sent.at(-1)).toBe("Counter-proposal sent to client");
+    expect(hoisted.sent.at(-1)).toBe("Sent. I'll let you know when the family answers.");
   });
   it("CANCEL leaves the correction waiting", async () => {
     correction();
     await startReviewCorrectionFlow("+1", "chat", session() as never, { caregiverId: "cg1", appointmentId: "a1" });
     await handleReviewCorrectionFlowStep("+1", "chat", "cancel", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Okay — nothing was sent. The correction is still waiting for your answer under Pending.");
+    expect(hoisted.sent.at(-1)).toBe("No problem, I didn't send anything. The correction is still waiting for your answer under Pending.");
     expect(hoisted.respond).not.toHaveBeenCalled();
   });
 });
@@ -362,7 +362,7 @@ describe("keywords — TIMESHEETS · PENDING · HISTORY · REPORT · SUBMIT n ·
     expect(hoisted.sent.at(-1)).toContain("Submit hours worked — Basra Yousuf · Sep 18");
     shift("s2", { date: "2026-09-19", startedAt: "2026-09-19T21:00:00.000Z", completedAt: "2026-09-20T00:00:00.000Z" });
     await handleTimesheetsKeyword("+1", "chat", "cg1", "submit", session());
-    expect(hoisted.sent.at(-1)).toBe("Which one? Reply SUBMIT with the visit's number.");
+    expect(hoisted.sent.at(-1)).toBe("Which one? Say submit and the visit's number.");
     expect(await handleTimesheetsKeyword("+1", "chat", "cg1", "SUBMIT 2", session())).toBe("handled");
     expect(hoisted.sent.at(-1)).toContain("Submit hours worked");
     expect(await handleTimesheetsKeyword("+1", "chat", "cg1", "hello", session())).toBe("passthrough");
@@ -373,7 +373,7 @@ describe("keywords — TIMESHEETS · PENDING · HISTORY · REPORT · SUBMIT n ·
     expect(await handleTimesheetsKeyword("+1", "chat", "cg1", "DETAILS 1", session())).toBe("handled");
     expect(hoisted.sent.at(-1)).toContain("Basra Yousuf · Sep 18 · Correction Received");
     expect(await handleTimesheetsKeyword("+1", "chat", "cg1", "VIEW 1", session())).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("Shift not found."); // no shifts doc in this fixture — the "View shift" modal's own line
+    expect(hoisted.sent.at(-1)).toBe("I couldn't find that visit."); // no shifts doc in this fixture — the "View shift" modal's own line
     expect(await handleTimesheetsKeyword("+1", "chat", "cg1", "REVIEW 1", session())).toBe("handled");
     expect(hoisted.sent.at(-1)).toContain("Review correction — Basra Yousuf");
     // A newer numbered list from another page owns DETAILS n.
@@ -398,18 +398,18 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
     hoisted.quick.mockResolvedValueOnce('{"label":"Mileage","amount":12.5,"note":"20 miles"}');
     await handleSubmitHoursFlowStep("+1", "chat", "Mileage 12.50 - 20 miles", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Added Mileage · $12.50. Another charge? Reply it, or DONE.");
+    expect(hoisted.sent.at(-1)).toBe("Added Mileage · $12.50. Anything else to add? If not, just say no.");
     // a question on the "Another charge?" turn: the parser fails, the question check says yes
     hoisted.quick.mockResolvedValueOnce("not json");
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
     await handleSubmitHoursFlowStep("+1", "chat", "is the mileage taxed?", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Answer. Added Mileage · $12.50. Another charge? Reply it, or DONE.");
+    expect(hoisted.sent.at(-1)).toBe("Answer. Added Mileage · $12.50. Anything else to add? If not, just say no.");
     expect(lastFacts()).toContain("Submit hours worked — Basra Yousuf · Sep 18");
     expect(lastFacts()).toContain("Base pay (3:04:51 @ $25/hr) $77.02");
     expect(lastFacts()).toContain("Mileage · 20 miles $12.50");
     expect(lastFacts()).toContain("Total $89.52");
     expect(lastFacts()).toContain("Payment method: Card.");
-    expect(lastFacts()).toContain("Nothing is submitted until the care provider replies SUBMIT");
+    expect(lastFacts()).toContain("Nothing is submitted until the care provider says yes");
     expect(lastFacts()).toContain("Base pay = the time between the start and end shown × the hourly rate");
     expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("sh_items");
     // the confirm step
@@ -438,12 +438,12 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     await handleReviewCorrectionFlowStep("+1", "chat", "counter", session() as never);
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
     await handleReviewCorrectionFlowStep("+1", "chat", "what did she propose for the start?", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Answer. Counter start — reply a time like 2:05 PM, or KEEP for 2:30 PM.");
+    expect(hoisted.sent.at(-1)).toBe("Answer. What start time are you countering with? If 2:30 PM is right, just say keep.");
     expect(lastFacts()).toContain("Client proposed: 2:30:00 PM – 5:00:00 PM · 2:30:00");
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
     await handleReviewCorrectionFlowStep("+1", "chat", "and the end?", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Answer. Counter end — reply a time, or KEEP for 5:00 PM.");
+    expect(hoisted.sent.at(-1)).toBe("Answer. And the end time? If 5:00 PM is right, just say keep.");
     expect(lastFacts()).toContain("Counter start chosen so far: 2:30 PM.");
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
@@ -458,10 +458,10 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Note (optional) — why do you disagree? Reply the note, or SKIP.");
+    expect(hoisted.sent.at(-1)).toBe("Want to add a note for the family on why you disagree? If not, just say no.");
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
     await handleReviewCorrectionFlowStep("+1", "chat", "does the family see this note?", session() as never);
-    expect(hoisted.sent.at(-1)).toBe("Answer. Note (optional) — why do you disagree? Reply the note, or SKIP.");
+    expect(hoisted.sent.at(-1)).toBe("Answer. Want to add a note for the family on why you disagree? If not, just say no.");
     expect(lastFacts()).toContain("The note goes to the family with the counter, in the care provider's own words.");
     expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowStep).toBe("rc_note");
     expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowData.note).toBeUndefined();

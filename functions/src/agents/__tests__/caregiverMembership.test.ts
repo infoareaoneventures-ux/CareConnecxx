@@ -77,7 +77,7 @@ describe("membershipTabText — the three cards word for word", () => {
       "Active · Evia Membership: Annual plan",
       "Renews March 3, 2027",
       "What's included:", ...WHATS_INCLUDED.map((l) => `✓ ${l}`),
-      "Manage membership: update payment method, cancel, or view invoices via Stripe, reply MANAGE MEMBERSHIP for your link.", "",
+      "Manage membership: to update your card, cancel, or see invoices, say manage membership and I'll send your Stripe link.", "",
       "Background check: Cleared 9/26/2026 · Next check with your renewal on March 3, 2027", "",
       DRIVER_CARD_TEXT.offer,
     ].join("\n"));
@@ -94,7 +94,7 @@ describe("membershipTabText — the three cards word for word", () => {
   it("not active: No active membership + the page's sentence (canceled vs activate) + ACTIVATE; background not started", async () => {
     hoisted.docs.set("caregivers/cg1", { membershipStatus: "canceled" });
     let t = membershipTabText(await loadMembershipTab("cg1"));
-    expect(t).toContain("No active membership\nYour membership was canceled. Renew to access jobs and platform features.\nReply ACTIVATE for your membership link ($69.99/year).");
+    expect(t).toContain("No active membership\nYour membership was canceled. Renew to access jobs and platform features.\nSay activate and I'll send your membership link ($69.99/year).");
     expect(t).not.toContain("What's included");
     expect(t).toContain("Background check: Starts right after your membership is active, it's included in the annual fee.");
     hoisted.docs.set("caregivers/cg1", {}); hoisted.docs.set("users/cg1", {});
@@ -117,7 +117,7 @@ describe("bgCardFor / bgCardText — the dashboard card's rules", () => {
     expect(bgCardFor({ backgroundCheckData: { checkrCandidateId: "c", status: "pending" } })).toEqual({ kind: "in_progress", detail: "running" });
     expect(bgCardFor({})).toEqual({ kind: "not_started" });
     const base = { status: "active", isActive: true, periodEnd: END, cancelAtPeriodEnd: false, driver: "offer" as const, mvrClearedOn: null };
-    expect(bgCardText({ ...base, bg: { kind: "consent", renewal: true } })).toBe("Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check within 7 days to stay bookable. Reply AUTHORIZE for the link.");
+    expect(bgCardText({ ...base, bg: { kind: "consent", renewal: true } })).toBe("Background check: Renew your background check. Your annual membership renewed. Authorize this year's background check within 7 days to stay bookable. Say authorize and I'll send the link.");
     expect(bgCardText({ ...base, bg: { kind: "in_progress", detail: "running" } })).toBe("Background check: In progress. Checkr emailed you a secure link, it usually takes about 5 minutes.");
     expect(bgCardText({ ...base, isActive: false, periodEnd: null, bg: { kind: "cleared", clearedOn: "9/26/2026" } })).toBe("Background check: Cleared 9/26/2026");
   });
@@ -145,13 +145,13 @@ describe("keywords — the section's buttons", () => {
     expect(hoisted.portalCreate).toHaveBeenCalledWith({ customer: "cus_1", return_url: "https://eviacares.com/care-provider/settings" });
     hoisted.docs.delete("customers/cg1");
     await handleMembershipKeyword("+1555", "chat", "cg1", "billing");
-    expect(hoisted.sent.at(-1)).toBe("No billing account found. Please purchase a membership first — reply ACTIVATE for your membership link.");
+    expect(hoisted.sent.at(-1)).toBe("I don't see a billing account yet. Say activate and I'll send your membership link first.");
   });
   it("ACTIVATE sends the checkout link only when not active; AUTHORIZE sends the consent page only when a consent is waiting", async () => {
     expect(await handleMembershipKeyword("+1555", "chat", "cg1", "ACTIVATE")).toBe("handled");
     expect(hoisted.sent.at(-1)).toContain("already active");
     expect(await handleMembershipKeyword("+1555", "chat", "cg1", "authorize")).toBe("handled");
-    expect(hoisted.sent.at(-1)).toBe("Nothing to authorize right now — your background check is: Cleared 9/26/2026 · Next check with your renewal on March 3, 2027");
+    expect(hoisted.sent.at(-1)).toBe("Nothing to authorize right now. Your background check is: Cleared 9/26/2026 · Next check with your renewal on March 3, 2027");
     hoisted.docs.set("caregivers/cg1", { membershipStatus: "active", backgroundCheckData: { consentRequired: true, consentReason: "renewal" } });
     expect(await handleMembershipKeyword("+1555", "chat", "cg1", "AUTHORIZE")).toBe("handled");
     expect(hoisted.linkAction).toHaveBeenLastCalledWith({ phone: "+1555", linkType: "caregiver_background_check" }, { caller: "sms_agent", role: "caregiver", phone: "+1555" });

@@ -79,7 +79,7 @@ describe("startInstantPayout — the page's preconditions, in the page's order",
   it("under $1 → the page's info toasts (settling amount, else nothing to cash out); nothing parked", async () => {
     enabled(); hoisted.balance = { instantAvailableCents: 40, pendingCents: 2000 };
     expect((await startInstantPayout(CG, PHONE, CHAT)).reason).toBe("no_balance");
-    expect(hoisted.sent[0]).toBe("$20.00 is still settling — it pays out automatically, no action needed.");
+    expect(hoisted.sent[0]).toBe("$20.00 is still settling. It pays out automatically, nothing to do.");
     hoisted.balance = { instantAvailableCents: 40, pendingCents: 0 };
     await startInstantPayout(CG, PHONE, CHAT);
     expect(hoisted.sent[1]).toBe(NOTHING_TO_CASH_OUT);
@@ -102,7 +102,7 @@ describe("startInstantPayout — the page's preconditions, in the page's order",
       "",
       "Arrives in about 30 minutes — funds will be sent to your connected bank account. No rush? Your earnings pay out automatically every day and land in your bank within ~2 business days.",
       "",
-      "Reply CASH OUT to send $49.00 now, or CANCEL.",
+      "Want me to send $49.00 now?",
     ].join("\n"));
     expect(session().pendingInstantPayoutAmount).toBe("4950");
     expect(typeof session().pendingInstantPayoutConfirm).toBe("string");
@@ -135,24 +135,24 @@ describe("handleInstantPayoutConfirm — the modal's two buttons", () => {
   it("a question keeps the confirmation parked and re-asks — briefed with the modal's own lines (fee, net, timing)", async () => {
     park(); hoisted.isQuestion.mockResolvedValueOnce(true);
     await handleInstantPayoutConfirm(CG, PHONE, "how long does it take?", CHAT);
-    expect(hoisted.sent.at(-1)).toBe("Answer. Reply CASH OUT to send $49.00 now, or CANCEL.");
+    expect(hoisted.sent.at(-1)).toBe("Answer. Should I send $49.00 now, or hold off?");
     expect(session().pendingInstantPayoutAmount).toBe("4950");
     expect(hoisted.executeInstantPayout).not.toHaveBeenCalled();
     // Founder 2026-10-11: the answer is grounded in the Cash Out modal exactly as texted, not the reply line alone.
     const [text, reAsk, opts] = vi.mocked(answerMidFlow).mock.calls.at(-1)!;
     expect(text).toBe("how long does it take?");
-    expect(reAsk).toBe("Reply CASH OUT to send $49.00 now, or CANCEL.");
+    expect(reAsk).toBe("Should I send $49.00 now, or hold off?");
     expect(opts?.facts).toContain("Available Now $49.50");
     expect(opts?.facts).toContain("Stripe instant fee (1%, min $0.50) −$0.50");
     expect(opts?.facts).toContain("You'll Receive $49.00");
     expect(opts?.facts).toContain("Arrives in about 30 minutes");
     expect(opts?.facts).toContain("Regular payouts happen automatically every day and are free");
-    expect(opts?.facts).toContain("nothing is sent until the care provider replies CASH OUT");
+    expect(opts?.facts).toContain("nothing is sent until the care provider says yes");
   });
   it("an unclear reply re-asks without clearing", async () => {
     park();
     await handleInstantPayoutConfirm(CG, PHONE, "maybe later idk", CHAT);
-    expect(hoisted.sent.at(-1)).toBe("Sorry, I didn't quite catch that. Reply CASH OUT to send $49.00 now, or CANCEL.");
+    expect(hoisted.sent.at(-1)).toBe("Sorry, I'm not sure I followed. Should I send $49.00 now, or hold off?");
     expect(session().pendingInstantPayoutAmount).toBe("4950");
   });
   it("server refusals are texted as the server says them (the page shows error.message); duplicate and swept-balance keep their lines; unknown → the page's default", async () => {
@@ -161,12 +161,12 @@ describe("handleInstantPayoutConfirm — the modal's two buttons", () => {
     expect(hoisted.sent.at(-1)).toBe("Account not fully onboarded. Please complete your Stripe Connect setup.");
     park(); hoisted.executeInstantPayout.mockRejectedValueOnce(new hoisted.InstantPayoutError("DUPLICATE", "x"));
     await handleInstantPayoutConfirm(CG, PHONE, "CASH OUT", CHAT);
-    expect(hoisted.sent.at(-1)).toMatch(/already sent a moment ago/);
+    expect(hoisted.sent.at(-1)).toMatch(/already went out a moment ago/);
     park(); hoisted.executeInstantPayout.mockRejectedValueOnce(new hoisted.InstantPayoutError("NO_BALANCE", "x"));
     await handleInstantPayoutConfirm(CG, PHONE, "CASH OUT", CHAT);
     expect(hoisted.sent.at(-1)).toMatch(/just paid out automatically/);
     park(); hoisted.executeInstantPayout.mockRejectedValueOnce(new Error("stripe exploded"));
     await handleInstantPayoutConfirm(CG, PHONE, "CASH OUT", CHAT);
-    expect(hoisted.sent.at(-1)).toBe("Payout failed. Please try again.");
+    expect(hoisted.sent.at(-1)).toBe("That payout didn't go through. Give it another try in a minute.");
   });
 });

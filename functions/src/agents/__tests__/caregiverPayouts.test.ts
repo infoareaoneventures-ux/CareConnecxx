@@ -82,9 +82,9 @@ describe("the three cards", () => {
     expect(t).toBe([
       "Payments · Payouts", "",
       "Available to Cash Out $49.50",
-      "$20.00 is still settling — it pays out automatically, no action needed.",
-      "$77.02 approved — added to your balance once the family's card is charged.",
-      "Reply CASH OUT to get $49.00 in about 30 minutes (after Stripe's $0.50 instant fee).",
+      "$20.00 is still settling. It pays out automatically, nothing to do.",
+      "$77.02 approved. It's added to your balance once the family's card is charged.",
+      "Want it now? Say cash out and $49.00 lands in about 30 minutes (after Stripe's $0.50 instant fee).",
       FOOTNOTE, "",
       "Bank account (Stripe): Bank account connected.",
       STRIPE_DASHBOARD_LINE, "",
@@ -95,14 +95,14 @@ describe("the three cards", () => {
   });
   it("connected, under $1: the page's 'nothing to cash out' line; not connected / setup incomplete: SETUP; Stripe unreachable", async () => {
     enabled(); hoisted.balance = { instantAvailableCents: 40, pendingCents: 0 };
-    expect(payoutsTabText(await loadPayoutsTab("cg1"))).toContain("Available to Cash Out $0.40\nNothing to cash out right now — your earnings pay out automatically every day.");
+    expect(payoutsTabText(await loadPayoutsTab("cg1"))).toContain("Available to Cash Out $0.40\nNothing to cash out right now. Your earnings pay out automatically every day.");
     hoisted.payFields = {};
     let t = payoutsTabText(await loadPayoutsTab("cg1"));
-    expect(t).toContain("Available to Cash Out $0.00\nConnect a bank to unlock payouts — reply SETUP for your Stripe link.");
-    expect(t).toContain("Bank account (Stripe): Not connected — connect a bank account to receive payouts from credit-card bookings. Reply SETUP for your Stripe link.");
+    expect(t).toContain("Available to Cash Out $0.00\nConnect a bank to unlock payouts. Say setup and I'll send your Stripe link.");
+    expect(t).toContain("Bank account (Stripe): Not connected. Say setup and I'll send your Stripe link to connect one.");
     hoisted.payFields = { stripeAccountId: "acct_1", payoutsEnabled: false, chargesEnabled: false };
     t = payoutsTabText(await loadPayoutsTab("cg1"));
-    expect(t).toContain("Bank account (Stripe): Setup incomplete — Stripe needs more information. Finish the onboarding to start receiving payouts. Reply SETUP for your Stripe link.");
+    expect(t).toContain("Bank account (Stripe): Setup incomplete, Stripe needs a bit more information. Say setup and I'll send your link to finish it.");
     enabled(); hoisted.balanceThrows = true;
     expect(payoutsTabText(await loadPayoutsTab("cg1"))).toContain("Available to Cash Out — couldn't reach Stripe right now");
   });
@@ -124,14 +124,14 @@ describe("keywords", () => {
     expect(await handlePayoutsKeyword("+1", "chat", "cg1", "setup", {})).toBe("handled");
     hoisted.linkResult = { success: true, linkType: "caregiver_payouts", sent: false, throttled: true, minutesSinceLastSend: 3 };
     await handlePayoutsKeyword("+1", "chat", "cg1", "SETUP", {});
-    expect(hoisted.sent.at(-1)).toBe("Your Stripe setup link went out about 3 minutes ago — tap that one, or reply LINK and I'll resend it.");
+    expect(hoisted.sent.at(-1)).toBe("Your Stripe setup link went out about 3 minutes ago. Tap that one, or say link and I'll resend it.");
     expect(await handlePayoutsKeyword("+1", "chat", "cg1", "manage", {})).toBe("handled");
     expect(hoisted.loginLink).toHaveBeenCalledWith("acct_1");
-    expect(hoisted.sent.at(-1)).toBe("Your Stripe dashboard (payout history, bank account, tax forms) — this link signs you in and works once: https://connect.stripe.com/express/acct_1/login");
+    expect(hoisted.sent.at(-1)).toBe("Here's your Stripe dashboard, with your payout history, bank account and tax forms. The link signs you in and works once: https://connect.stripe.com/express/acct_1/login");
     expect(await handlePayoutsKeyword("+1", "chat", "cg1", "PAYOUT HISTORY", {})).toBe("handled");
     hoisted.payFields = {};
     await handlePayoutsKeyword("+1", "chat", "cg1", "MANAGE", {});
-    expect(hoisted.sent.at(-1)).toBe("Your payout account isn't set up yet — reply SETUP for your Stripe link.");
+    expect(hoisted.sent.at(-1)).toBe("Your payout account isn't set up yet. Say setup and I'll send your Stripe link.");
     // The record says connected but Stripe says onboarding never finished (admin Approved button):
     // the flags are re-synced from Stripe and the Setup link goes out instead of a failure.
     enabled(); hoisted.linkResult = { success: true, linkType: "caregiver_payouts", sent: true };
@@ -139,7 +139,7 @@ describe("keywords", () => {
     await handlePayoutsKeyword("+1", "chat", "cg1", "MANAGE", {});
     const { syncConnectAccountStatus } = await import("../../connectAccount");
     expect(syncConnectAccountStatus).toHaveBeenCalledWith(expect.anything(), "acct_1", "cg1");
-    expect(hoisted.sent.at(-1)).toBe("Stripe still needs a few details before your dashboard opens — finish your payout setup first:");
+    expect(hoisted.sent.at(-1)).toBe("Stripe still needs a few details before your dashboard opens. Let's finish your payout setup first:");
     expect(hoisted.payFields.payoutsEnabled).toBe(false);
     expect(await handlePayoutsKeyword("+1", "chat", "cg1", "hello", {})).toBe("passthrough");
   });

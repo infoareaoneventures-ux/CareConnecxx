@@ -75,7 +75,7 @@ describe("settingsPageText — the sections word for word", () => {
       // this fixture has no membershipStatus → the section's not-active state
       "No active membership",
       "Activate your membership to start accepting bookings and applying for jobs.",
-      "Reply ACTIVATE for your membership link ($69.99/year).",
+      "Say activate and I'll send your membership link ($69.99/year).",
       "",
       "Background check: Starts right after your membership is active, it's included in the annual fee.",
       "",

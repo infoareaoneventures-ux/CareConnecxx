@@ -26,6 +26,13 @@ const CONVERTED = [
   "agents/visitMode.ts",
   "scheduled/pendingDecisionNudge.ts",
   "triggers/notificationTriggers.ts",
+  // Batch 3 (timesheets + money)
+  "agents/caregiverTimesheets.ts",
+  "agents/caregiverPayouts.ts",
+  "agents/instantPayoutHandler.ts",
+  "agents/caregiverMembership.ts",
+  "agents/caregiverAccessGate.ts",
+  "scheduled/caregiverTimesheetReminders.ts",
 ];
 
 /** Still on the old grammar — the next batches (context/evia-voice.md, Rollout). Shrinks as batches land. */
@@ -34,20 +41,15 @@ const PENDING = [
   "agents/availabilityHandler.ts",
   "agents/bookingFlow.ts",
   "agents/cancelFlow.ts",
-  "agents/caregiverAccessGate.ts",
   "agents/caregiverCalendar.ts",
   "agents/caregiverCancelShiftHandler.ts",
   "agents/caregiverFamilies.ts",
-  "agents/caregiverMembership.ts",
   "agents/caregiverMyProfile.ts",
-  "agents/caregiverPayouts.ts",
   "agents/caregiverProfileHandler.ts",
   "agents/caregiverSettings.ts",
-  "agents/caregiverTimesheets.ts",
   "agents/correctionFlow.ts",
   "agents/familyIntakeScript.ts",
   "agents/familyRelay.ts",
-  "agents/instantPayoutHandler.ts",
   "agents/jobPostingFlow.ts",
   "agents/onboardingConversation.ts",
   "agents/profileCompleteness.ts",
@@ -57,7 +59,6 @@ const PENDING = [
   "agents/visitRequestFlow.ts",
   "linq/webhooks.ts",
   "mcp/server.ts",
-  "scheduled/caregiverTimesheetReminders.ts",
   "scheduled/pendingTimesheetNudge.ts",
   "scheduled/staleSessionNudge.ts",
 ];

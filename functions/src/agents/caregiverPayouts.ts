@@ -25,7 +25,7 @@ export interface PayoutsTab {
 
 export const FOOTNOTE = "Earnings pay out automatically every day (free) · Instant cash-out: Stripe's 1% fee (min $0.50), ~30 min";
 export const HOW_YOU_GET_PAID = "How you get paid: Automatic — every day, free, lands in ~2 business days · Instant — ~30 minutes, Stripe's 1% fee (min $0.50)";
-export const STRIPE_DASHBOARD_LINE = "Payout history, your bank account and tax forms are in your Stripe dashboard — reply MANAGE for a signed-in link.";
+export const STRIPE_DASHBOARD_LINE = "Payout history, your bank account and tax forms are in your Stripe dashboard. Say manage and I'll send you a signed-in link.";
 
 const money = (cents: number) => `$${(Math.round(cents) / 100).toFixed(2)}`;
 
@@ -62,18 +62,18 @@ export function payoutsTabText(tab: PayoutsTab): string {
   // ── Available to Cash Out (hero) ──
   const avail = tab.balance?.instantAvailableCents ?? 0;
   lines.push(`Available to Cash Out ${tab.fullyEnabled && tab.balance === null ? "— couldn't reach Stripe right now" : money(tab.fullyEnabled ? avail : 0)}`);
-  if (tab.balance && tab.balance.pendingCents > 0) lines.push(`${money(tab.balance.pendingCents)} is still settling — it pays out automatically, no action needed.`);
-  if (tab.approvedAwaitingChargeCents > 0) lines.push(`${money(tab.approvedAwaitingChargeCents)} approved — added to your balance once the family's card is charged.`);
+  if (tab.balance && tab.balance.pendingCents > 0) lines.push(`${money(tab.balance.pendingCents)} is still settling. It pays out automatically, nothing to do.`);
+  if (tab.approvedAwaitingChargeCents > 0) lines.push(`${money(tab.approvedAwaitingChargeCents)} approved. It's added to your balance once the family's card is charged.`);
   if (tab.fullyEnabled && avail >= 100) {
     const fee = instantPayoutFeeCentsFor(avail);
-    lines.push(`Reply CASH OUT to get ${money(avail - fee)} in about 30 minutes (after Stripe's ${money(fee)} instant fee).`);
-  } else if (!tab.fullyEnabled) lines.push("Connect a bank to unlock payouts — reply SETUP for your Stripe link.");
-  else lines.push("Nothing to cash out right now — your earnings pay out automatically every day.");
+    lines.push(`Want it now? Say cash out and ${money(avail - fee)} lands in about 30 minutes (after Stripe's ${money(fee)} instant fee).`);
+  } else if (!tab.fullyEnabled) lines.push("Connect a bank to unlock payouts. Say setup and I'll send your Stripe link.");
+  else lines.push("Nothing to cash out right now. Your earnings pay out automatically every day.");
   lines.push(FOOTNOTE, "");
   // ── Bank account (Stripe) ──
   if (tab.fullyEnabled) lines.push("Bank account (Stripe): Bank account connected.", STRIPE_DASHBOARD_LINE);
-  else if (tab.hasAccount) lines.push("Bank account (Stripe): Setup incomplete — Stripe needs more information. Finish the onboarding to start receiving payouts. Reply SETUP for your Stripe link.");
-  else lines.push("Bank account (Stripe): Not connected — connect a bank account to receive payouts from credit-card bookings. Reply SETUP for your Stripe link.");
+  else if (tab.hasAccount) lines.push("Bank account (Stripe): Setup incomplete, Stripe needs a bit more information. Say setup and I'll send your link to finish it.");
+  else lines.push("Bank account (Stripe): Not connected. Say setup and I'll send your Stripe link to connect one.");
   lines.push("", HOW_YOU_GET_PAID);
   return lines.join("\n");
 }
@@ -90,9 +90,9 @@ export async function sendPayoutSetupLink(phone: string, chatId: string): Promis
     const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
     const r = await runSendOnboardingLinkAction({ phone, linkType: "caregiver_payouts" }, { caller: "sms_agent", role: "caregiver", phone });
     if (r.sent) return true;
-    if (r.throttled) { await sendMessage(chatId, `Your Stripe setup link went out about ${r.minutesSinceLastSend ?? "a few"} minutes ago — tap that one, or reply LINK and I'll resend it.`); return false; }
+    if (r.throttled) { await sendMessage(chatId, `Your Stripe setup link went out about ${r.minutesSinceLastSend ?? "a few"} minutes ago. Tap that one, or say link and I'll resend it.`); return false; }
   } catch (err) { console.error("[caregiverPayouts] setup link failed:", err); }
-  await sendMessage(chatId, "I couldn't generate your Stripe setup link right now — reply SETUP again in a moment.");
+  await sendMessage(chatId, "I couldn't get your Stripe setup link just now. Ask me again in a moment.");
   return false;
 }
 
@@ -101,13 +101,13 @@ export async function sendStripeDashboardLink(phone: string, chatId: string, car
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
   const pay = await getCaregiverPayoutFields(caregiverId, (cgSnap.data() ?? {}) as Record<string, unknown>);
-  if (!pay.stripeAccountId) { await sendMessage(chatId, "Your payout account isn't set up yet — reply SETUP for your Stripe link."); return false; }
+  if (!pay.stripeAccountId) { await sendMessage(chatId, "Your payout account isn't set up yet. Say setup and I'll send your Stripe link."); return false; }
   try {
     const { getStripeClient } = await import("../stripe");
     const stripe = getStripeClient();
     try {
       const link = await stripe.accounts.createLoginLink(String(pay.stripeAccountId));
-      await sendMessage(chatId, `Your Stripe dashboard (payout history, bank account, tax forms) — this link signs you in and works once: ${link.url}`);
+      await sendMessage(chatId, `Here's your Stripe dashboard, with your payout history, bank account and tax forms. The link signs you in and works once: ${link.url}`);
       return true;
     } catch (err) {
       // Same fallback as the page's Manage in Stripe (instantPayout.getPayoutBalance):
@@ -117,12 +117,12 @@ export async function sendStripeDashboardLink(phone: string, chatId: string, car
       if (!isConnectOnboardingIncompleteError(err)) throw err;
       await syncConnectAccountStatus(stripe, String(pay.stripeAccountId), caregiverId)
         .catch((e) => console.error("[caregiverPayouts] status sync failed:", e));
-      await sendMessage(chatId, "Stripe still needs a few details before your dashboard opens — finish your payout setup first:");
+      await sendMessage(chatId, "Stripe still needs a few details before your dashboard opens. Let's finish your payout setup first:");
       return sendPayoutSetupLink(phone, chatId);
     }
   } catch (err) {
     console.error("[caregiverPayouts] login link failed:", err);
-    await sendMessage(chatId, "I couldn't open your Stripe dashboard right now — try MANAGE again in a moment.");
+    await sendMessage(chatId, "I couldn't open your Stripe dashboard just now. Ask me again in a moment.");
     return false;
   }
 }

@@ -24,14 +24,14 @@ import { instantPayoutFeeCentsFor } from "../billing/shiftBillingAmounts";
 
 const db = admin.firestore();
 const money = (cents: number) => `$${(Math.round(cents) / 100).toFixed(2)}`;
-const DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
-export const NOT_SET_UP = "Your payout account isn't set up yet. Connect a bank account to receive payouts from credit-card bookings — here's your Stripe setup link.";
-export const SETUP_INCOMPLETE = "Setup incomplete — Stripe needs more information. Finish the onboarding to start receiving payouts — here's your Stripe link.";
-export const BALANCE_UNAVAILABLE = "I couldn't pull your balance right now. Reply CASH OUT again in a few minutes.";
-export const NOTHING_TO_CASH_OUT = "Nothing to cash out right now — your earnings pay out automatically every day.";
-export const settlingText = (pendingCents: number) => `${money(pendingCents)} is still settling — it pays out automatically, no action needed.`;
-export const HOLD_OFF = "No problem — your earnings still pay out automatically on the daily schedule.";
+export const NOT_SET_UP = "Your payout account isn't set up yet. Connect a bank account to receive payouts from credit-card bookings. Here's your Stripe setup link.";
+export const SETUP_INCOMPLETE = "Stripe still needs a bit more information before payouts can start. Here's your link to finish the setup.";
+export const BALANCE_UNAVAILABLE = "I couldn't pull your balance right now. Ask me again in a few minutes.";
+export const NOTHING_TO_CASH_OUT = "Nothing to cash out right now. Your earnings pay out automatically every day.";
+export const settlingText = (pendingCents: number) => `${money(pendingCents)} is still settling. It pays out automatically, nothing to do.`;
+export const HOLD_OFF = "No problem, your earnings still pay out automatically every day.";
 
 /** The Instant Payout modal, as one text. */
 export function cashOutModalText(availableCents: number): string {
@@ -45,16 +45,16 @@ export function cashOutModalText(availableCents: number): string {
     "",
     "Arrives in about 30 minutes — funds will be sent to your connected bank account. No rush? Your earnings pay out automatically every day and land in your bank within ~2 business days.",
     "",
-    `Reply CASH OUT to send ${money(net)} now, or CANCEL.`,
+    `Want me to send ${money(net)} now?`,
   ].join("\n");
 }
-const REASK = (availableCents: number) => `Reply CASH OUT to send ${money(Math.max(0, availableCents - instantPayoutFeeCentsFor(availableCents)))} now, or CANCEL.`;
+const REASK = (availableCents: number) => `Should I send ${money(Math.max(0, availableCents - instantPayoutFeeCentsFor(availableCents)))} now, or hold off?`;
 /** The modal's facts for a mid-flow question: the modal as texted (amount, fee, net, timing) plus its footnote, exactly as the page states them. */
 export const CASH_OUT_FACTS = (availableCents: number) =>
   `The Cash Out modal on their screen:\n${cashOutModalText(availableCents)}\n\n` +
   "Stripe charges 1% (minimum $0.50) for instant payouts; the fee comes out of the amount sent, so the care provider receives the 'You'll Receive' figure. " +
   "Regular payouts happen automatically every day and are free — nothing to request — and land in the bank within ~2 business days. " +
-  "CASH OUT sends the whole instantly-available balance (there is no partial amount) to the connected bank account in about 30 minutes; nothing is sent until the care provider replies CASH OUT, and CANCEL leaves the daily schedule as it is.";
+  "Cashing out sends the whole instantly-available balance (there is no partial amount) to the connected bank account in about 30 minutes; nothing is sent until the care provider says yes, and no / cancel leaves the daily schedule as it is.";
 
 /**
  * Entry: CASH OUT / PAYOUT, the agent's request_instant_payout, or the
@@ -109,7 +109,7 @@ export async function handleInstantPayoutConfirm(caregiverId: string, phone: str
   else if (await isBackOutRequest(text, q)) action = "cancel";
   else if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: CASH_OUT_FACTS(previewCents) })); return; } // confirmation stays parked
   else {
-    const v = await quickComplete("Evia asked the care provider to reply CASH OUT to send an instant payout, or CANCEL. Classify: SEND (go ahead), CANCEL (hold off), or OTHER.\nReply with ONLY the word.", text, { maxTokens: 5 }).catch(() => "OTHER");
+    const v = await quickComplete("Evia showed the care provider their instant payout amount and asked \"Want me to send it now?\". Classify: SEND (yes / go ahead / send it / cash out), CANCEL (no / hold off / not yet / wait), or OTHER.\nReply with ONLY the word.", text, { maxTokens: 5 }).catch(() => "OTHER");
     action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
   }
   if (action === "other") { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
@@ -126,12 +126,12 @@ export async function handleInstantPayoutConfirm(caregiverId: string, phone: str
     await executeInstantPayout({ caregiverId, source: "cara_sms" });
   } catch (err) {
     if (err instanceof InstantPayoutError) {
-      if (err.code === "DUPLICATE") { await sendMessage(chatId, "Looks like that payout was already sent a moment ago — it's on its way to your bank."); return; }
+      if (err.code === "DUPLICATE") { await sendMessage(chatId, "Looks like that payout already went out a moment ago. It's on its way to your bank."); return; }
       if (err.code === "NO_BALANCE") { await sendMessage(chatId, "Your balance was just paid out automatically, so there's nothing left to send right now. It'll land in your bank within about 2 business days."); return; }
       await sendMessage(chatId, err.message); // the server's own reason — the page shows error.message
       return;
     }
     console.error("[instantPayout] executeInstantPayout failed:", err);
-    await sendMessage(chatId, "Payout failed. Please try again."); // the page's default error toast
+    await sendMessage(chatId, "That payout didn't go through. Give it another try in a minute."); // the page's default error toast, in Evia's voice
   }
 }

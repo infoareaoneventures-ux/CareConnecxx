@@ -31,7 +31,7 @@ import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 const FLOW_TTL_MS = 60 * 60 * 1000;
-const DIDNT_CATCH = "Sorry, I didn't quite catch that.";
+const DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 const HISTORY_PAGE = 5;
 /** Same threshold as the modal / shiftBillingPolicy: gross over $500 needs the family's explicit approval. */
 const EXPLICIT_APPROVAL_THRESHOLD_DOLLARS = 500;
@@ -198,7 +198,7 @@ export function unsubmittedText(shifts: SubmittableShift[]): { text: string; ite
     `${g.name} · ${g.rows.length} shift${g.rows.length === 1 ? "" : "s"}`,
     ...g.rows.map((s) => { n++; items.push({ number: n, kind: "shift", id: s.id }); return unsubmittedRowLine(n, s); }),
   ].join("\n"));
-  return { text: [`Timesheets · Unsubmitted (${shifts.length})`, "", blocks.join("\n\n"), "", "Reply SUBMIT n to submit a visit's hours, or VIEW n for the visit. PENDING or HISTORY for the other tabs."].join("\n"), items };
+  return { text: [`Timesheets · Unsubmitted (${shifts.length})`, "", blocks.join("\n\n"), "", "Want to submit one? Say submit and its number. Say view and the number to see the visit, or pending or history for the other tabs."].join("\n"), items };
 }
 
 export function timesheetRowLine(n: number, r: TimesheetRow): string {
@@ -211,7 +211,7 @@ export function timesheetRowLine(n: number, r: TimesheetRow): string {
     money(rowGross(r)),
     r.loggedManually === true ? "Logged" : "",
     isCorrected(r) && !PENDING_STATUSES.includes(r.status) ? "Corrected" : "",
-    r.status === "correction_proposed" ? `${label} — reply REVIEW ${n}` : label,
+    r.status === "correction_proposed" ? `${label} (say review ${n} to answer it)` : label,
   ].filter(Boolean);
   return `${n}. ${bits.join(" · ")}`;
 }
@@ -223,7 +223,7 @@ export function pendingText(rows: TimesheetRow[]): { text: string; items: ListIt
     ...g.rows.map((r) => { n++; items.push({ number: n, kind: "timesheet", id: r.id, status: r.status }); return timesheetRowLine(n, r); }),
   ].join("\n"));
   const corrections = rows.filter((r) => r.status === "correction_proposed").length;
-  const footer = [corrections > 0 ? `${corrections} correction${corrections === 1 ? " needs" : "s need"} your answer — reply REVIEW n.` : "", "Reply DETAILS n for the full card, or VIEW n for the visit."].filter(Boolean).join(" ");
+  const footer = [corrections > 0 ? `${corrections} correction${corrections === 1 ? " needs" : "s need"} your answer, say review and its number.` : "", "Say details and a number for the full card, or view and the number for the visit."].filter(Boolean).join(" ");
   return { text: [`Timesheets · Pending (${rows.length})`, "", blocks.join("\n\n"), "", footer].join("\n"), items };
 }
 export function historyText(rows: TimesheetRow[], from = 0): { text: string; items: ListItem[]; shown: number; remaining: number } {
@@ -251,8 +251,8 @@ export function historyText(rows: TimesheetRow[], from = 0): { text: string; ite
     blocks.push(lines.join("\n"));
   }
   const remaining = Math.max(0, sorted.length - (from + page.length));
-  const footer = [remaining > 0 ? `Reply MORE for ${remaining} older.` : "", "Reply DETAILS n for the full card, VIEW n for the visit, or REPORT for totals (e.g. REPORT Sep 1 to Sep 30)."].filter(Boolean).join(" ");
-  return { text: [from === 0 ? `Timesheets · History (${rows.length})` : "More history:", "", blocks.join("\n\n"), "", footer].join("\n"), items, shown: page.length, remaining };
+  const footer = [remaining > 0 ? `There are ${remaining} older, just say more.` : "", "Say details and a number for the full card, view and the number for the visit, or report for totals (you can give a range, like report Sep 1 to Sep 30)."].filter(Boolean).join(" ");
+  return { text: [from === 0 ? `Timesheets · History (${rows.length})` : "Here are the next ones:", "", blocks.join("\n\n"), "", footer].join("\n"), items, shown: page.length, remaining };
 }
 
 /** The History chip's Report panel: the page's date filter + Shifts / Total hours / Total earnings. */
@@ -317,7 +317,7 @@ export function timesheetDetailText(r: TimesheetRow, n?: number): string {
       lines.push(`• ${bits.join(" · ")}`);
     }
   }
-  lines.push("", r.status === "correction_proposed" ? `Reply REVIEW${n ? ` ${n}` : ""} to accept the correction or send a counter.` : `Reply VIEW${n ? ` ${n}` : ""} for the visit.`);
+  lines.push("", r.status === "correction_proposed" ? `Want to answer this correction? Say review${n ? ` ${n}` : ""} and we'll go through it.` : `Say view${n ? ` ${n}` : ""} if you want to see the visit.`);
   return lines.join("\n");
 }
 
@@ -336,7 +336,7 @@ export function unsubmittedDetailText(s: SubmittableShift, n?: number): string {
   const recipients = (Array.isArray(s.careRecipients) ? s.careRecipients : []) as Array<{ name?: string } | string>;
   const names = recipients.map((r) => (typeof r === "string" ? r : r.name)).filter((x): x is string => !!x);
   if (names.length > 0) lines.push(`${names.length === 1 ? "Recipient" : "Recipients"} ${names.join(", ")}`);
-  lines.push("", `Reply SUBMIT${n ? ` ${n}` : ""} to submit hours, or VIEW${n ? ` ${n}` : ""} for the visit.`);
+  lines.push("", `Want to submit these hours? Say submit${n ? ` ${n}` : ""}. Or say view${n ? ` ${n}` : ""} to see the visit.`);
   return lines.join("\n");
 }
 
@@ -388,7 +388,7 @@ export async function sendTimesheetVisit(chatId: string, caregiverId: string, re
     shiftId = String(snap.data()?.shiftId ?? snap.data()?.appointmentId ?? ref.id);
   }
   const snap = await db.collection("shifts").doc(shiftId).get();
-  if (!snap.exists || snap.data()?.caregiverId !== caregiverId) { await sendMessage(chatId, "Shift not found."); return false; }
+  if (!snap.exists || snap.data()?.caregiverId !== caregiverId) { await sendMessage(chatId, "I couldn't find that visit."); return false; }
   await sendMessage(chatId, visitDetailText({ ...(snap.data() as Doc), id: snap.id, date: String(snap.data()?.date ?? ""), status: String(snap.data()?.status ?? "") } as PastShift));
   return true;
 }
@@ -412,9 +412,9 @@ const ITEMS_Q = (d: SubmitHoursFlowData) => [
   `Duration ${dur(d.totalHours)}`,
   d.rate > 0 ? basePayLine(d) : null,
   "",
-  `Any additional charges (overtime, mileage, supplies)? Reply one like "Mileage 12.50" (add a note after a dash: "Mileage 12.50 - 20 miles"), or NONE.`,
+  "Any additional charges, like overtime, mileage or supplies? Tell me one with the amount, for example mileage 12.50, and add a note after a dash if you like. If none, just say no.",
 ].filter((l) => l !== null).join("\n");
-const ANOTHER_Q = (li: { label: string; amount: number }) => `Added ${li.label} · ${money(li.amount)}. Another charge? Reply it, or DONE.`;
+const ANOTHER_Q = (li: { label: string; amount: number }) => `Added ${li.label} · ${money(li.amount)}. Anything else to add? If not, just say no.`;
 /** The modal's payment note — its exact two sentences, its exact reason. */
 export function approvalNote(d: SubmitHoursFlowData): string {
   const hasItems = d.items.some((li) => li.amount > 0);
@@ -440,12 +440,12 @@ const SUBMIT_CONFIRM_Q = (d: SubmitHoursFlowData) => {
     "",
     approvalNote(d),
     "",
-    "Reply SUBMIT to submit, or CANCEL.",
+    "Want me to submit this?",
   ].filter((l) => l !== null).join("\n");
 };
 /** The Submit hours modal's facts at any of its steps: the summary so far, the modal's payment note, the money rules. */
 const SUBMIT_FACTS = (d: SubmitHoursFlowData) =>
-  `The Submit hours modal so far:\n${SUBMIT_CONFIRM_Q(d)}\n\nNothing is submitted until the care provider replies SUBMIT on that summary; CANCEL leaves the visit under Unsubmitted. ${MONEY_FACTS}`;
+  `The Submit hours modal so far:\n${SUBMIT_CONFIRM_Q(d)}\n\nNothing is submitted until the care provider says yes to that summary; saying no / cancel leaves the visit under Unsubmitted. ${MONEY_FACTS}`;
 
 async function parse(prompt: string, text: string): Promise<string> {
   return quickComplete(prompt + "\nReply with ONLY the requested value — no explanation.", text, { maxTokens: 80 }).catch(() => "__parse_error__");
@@ -470,9 +470,9 @@ export async function startSubmitHoursFlow(phone: string, chatId: string, _sessi
   const snap = await db.collection("shifts").doc(args.shiftId).get();
   const shift = snap.data() as Doc | undefined;
   if (!snap.exists || !shift || shift.caregiverId !== args.caregiverId) { await sendMessage(chatId, "That visit isn't on your Timesheets tab."); return { started: false, reason: "not_found" }; }
-  if (shift.status !== "completed") { await sendMessage(chatId, `That visit is ${String(shift.status)} — hours can only be submitted for a completed visit.`); return { started: false, reason: "not_completed" }; }
+  if (shift.status !== "completed") { await sendMessage(chatId, `That visit is ${String(shift.status)}, so there's nothing to submit yet. Hours go in once a visit is completed.`); return { started: false, reason: "not_completed" }; }
   const existing = await db.collection("shiftHours").doc(String(shift.appointmentId || snap.id)).get();
-  if (existing.exists) { await sendMessage(chatId, `Hours for that visit were already submitted — it's ${STATUS_LABEL[String(existing.data()?.status)] ?? String(existing.data()?.status)}. Reply PENDING or HISTORY to see it.`); return { started: false, reason: "already_submitted" }; }
+  if (existing.exists) { await sendMessage(chatId, `Those hours were already submitted, they're ${STATUS_LABEL[String(existing.data()?.status)] ?? String(existing.data()?.status)}. Say pending or history and I'll show you.`); return { started: false, reason: "already_submitted" }; }
   const t = shiftTimes(shift);
   if (t.startMs === null || t.endMs === null || t.endMs <= t.startMs) { await sendMessage(chatId, "End time must be after start time."); return { started: false, reason: "bad_times" }; }
   const data: SubmitHoursFlowData = {
@@ -492,7 +492,7 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
   const data = (((session as unknown as Record<string, unknown>).submitHoursFlowData ?? {}) as SubmitHoursFlowData);
   const ref = db.collection("agent_sessions").doc(phone);
   const clear = () => ref.update({ submitHoursFlowStep: admin.firestore.FieldValue.delete(), submitHoursFlowData: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
-  const cancelled = async () => { await clear(); await sendMessage(chatId, "Okay — nothing was submitted. The visit still shows under Unsubmitted."); };
+  const cancelled = async () => { await clear(); await sendMessage(chatId, "No problem, I didn't submit anything. The visit still shows under Unsubmitted."); };
   const next = async (patch: Partial<SubmitHoursFlowData>, stepName: string, question: string) => {
     await ref.update({ submitHoursFlowStep: stepName, submitHoursFlowData: { ...data, ...patch } });
     await sendMessage(chatId, question);
@@ -520,7 +520,7 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
     else {
-      const v = await parse("Evia asked the care provider to reply SUBMIT to submit the hours, or CANCEL. Classify: SUBMIT, CANCEL, or OTHER (a question / a change).", text);
+      const v = await parse("Evia showed the care provider the hours summary and asked \"Want me to submit this?\". Classify: SUBMIT (yes / go ahead / send it / submit), CANCEL (no / hold off / never mind / cancel), or OTHER (a question / a change).", text);
       action = v.toUpperCase().startsWith("SUBMIT") ? "submit" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
@@ -545,10 +545,10 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
       // Raw = a gRPC/Firestore error (numeric code, or a document path in the text) or no message at all.
       const isRaw = typeof code === "number" || !message || /projects\/\S+\/databases\//.test(message) || /^\d+ [A-Z_]+:/.test(message);
       if (isRaw) console.error("submitHoursFlow: submit failed", err);
-      await sendMessage(chatId, isRaw ? "I couldn't submit those hours just now. Please try again in a minute, or submit them from your Timesheets page." : message);
+      await sendMessage(chatId, isRaw ? "I couldn't submit those hours just now. Give it another try in a minute, or submit them from your Timesheets page." : message);
       return;
     }
-    await sendMessage(chatId, "Hours submitted — awaiting client approval"); // the page's toast
+    await sendMessage(chatId, "Submitted! I'll let you know when the family approves them."); // the page's toast, in Evia's voice
     return;
   }
   await clear();
@@ -576,11 +576,12 @@ const proposedBlock = (d: ReviewCorrectionFlowData) => {
     d.reason ? `"${d.reason}"` : null,
   ].filter((l) => l !== null).join("\n");
 };
-const CHOICE_Q = (d: ReviewCorrectionFlowData) => `${proposedBlock(d)}\n\nReply ACCEPT to accept ${money(d.proposedGross)}, or COUNTER to send a counter.`;
-const C_START_Q = (d: ReviewCorrectionFlowData) => `Counter start — reply a time like 2:05 PM, or KEEP for ${clockShort(Date.parse(d.proposedStart))}.`;
-const C_END_Q = (d: ReviewCorrectionFlowData) => `Counter end — reply a time, or KEEP for ${clockShort(Date.parse(d.proposedEnd))}.`;
-const C_ITEMS_Q = (d: ReviewCorrectionFlowData) => `Additional charges: ${d.proposedItems.map((li) => `${itemLabel(li)} ${money(Number(li.amount) || 0)}`).join(", ")}. Reply a new amount for any of them, like "Mileage 10", or KEEP.`;
-const C_NOTE_Q = "Note (optional) — why do you disagree? Reply the note, or SKIP.";
+// Evia's voice (2026-10-26): questions a person would ask; ACCEPT / COUNTER, KEEP / SAME, SKIP / NO and SEND / YES still work exactly as before.
+const CHOICE_Q = (d: ReviewCorrectionFlowData) => `${proposedBlock(d)}\n\nDo you want to accept ${money(d.proposedGross)}, or send a counter?`;
+const C_START_Q = (d: ReviewCorrectionFlowData) => `What start time are you countering with? If ${clockShort(Date.parse(d.proposedStart))} is right, just say keep.`;
+const C_END_Q = (d: ReviewCorrectionFlowData) => `And the end time? If ${clockShort(Date.parse(d.proposedEnd))} is right, just say keep.`;
+const C_ITEMS_Q = (d: ReviewCorrectionFlowData) => `Additional charges: ${d.proposedItems.map((li) => `${itemLabel(li)} ${money(Number(li.amount) || 0)}`).join(", ")}. Want to change any amount? Tell me which and the new amount, like mileage 10. If they're right, just say keep.`;
+const C_NOTE_Q = "Want to add a note for the family on why you disagree? If not, just say no.";
 function counterGross(d: ReviewCorrectionFlowData): { hours: number; base: number; gross: number } {
   const s = Date.parse(d.counterStart ?? ""), e = Date.parse(d.counterEnd ?? "");
   const hours = Number.isFinite(s) && Number.isFinite(e) && e > s ? (e - s) / 3_600_000 : 0;
@@ -592,7 +593,7 @@ function counterGross(d: ReviewCorrectionFlowData): { hours: number; base: numbe
 const REVIEW_FACTS = (d: ReviewCorrectionFlowData) =>
   `The family's proposed correction on their screen:\n${proposedBlock(d)}\n\n` +
   "ACCEPT accepts the family's corrected hours and total as proposed. COUNTER sends different hours (and amounts) back to the family, who then accepts or proposes again. " +
-  "Only the amounts of the existing additional charges can change on a counter (none added or removed). Nothing is accepted or sent until the care provider replies ACCEPT, or SEND on the counter recap. " +
+  "Only the amounts of the existing additional charges can change on a counter (none added or removed). Nothing is accepted or sent until the care provider says yes to accepting, or yes on the counter recap. " +
   MONEY_FACTS;
 const C_CONFIRM_Q = (d: ReviewCorrectionFlowData) => {
   const g = counterGross(d);
@@ -604,7 +605,7 @@ const C_CONFIRM_Q = (d: ReviewCorrectionFlowData) => {
     `Your total ${money(g.gross)}`,
     d.note ? `Note: "${d.note}"` : null,
     "",
-    "Reply SEND to send the counter, or CANCEL.",
+    "Want me to send this counter to the family?",
   ].filter((l) => l !== null).join("\n");
 };
 /** "2:05 pm" / "14:05" / "KEEP" → an ISO instant on the proposed day (Pacific); an explicit date is honoured. */
@@ -644,7 +645,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
   const data = (((session as unknown as Record<string, unknown>).reviewCorrectionFlowData ?? {}) as ReviewCorrectionFlowData);
   const ref = db.collection("agent_sessions").doc(phone);
   const clear = () => ref.update({ reviewCorrectionFlowStep: admin.firestore.FieldValue.delete(), reviewCorrectionFlowData: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
-  const cancelled = async () => { await clear(); await sendMessage(chatId, "Okay — nothing was sent. The correction is still waiting for your answer under Pending."); };
+  const cancelled = async () => { await clear(); await sendMessage(chatId, "No problem, I didn't send anything. The correction is still waiting for your answer under Pending."); };
   const next = async (patch: Partial<ReviewCorrectionFlowData>, stepName: string, question: string) => {
     await ref.update({ reviewCorrectionFlowStep: stepName, reviewCorrectionFlowData: { ...data, ...patch } });
     await sendMessage(chatId, question);
@@ -663,7 +664,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     else if (norm === "CANCEL") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
     else {
-      const v = await parse("Evia asked the care provider to reply ACCEPT (accept the family's corrected hours) or COUNTER (send different hours back). Classify: ACCEPT, COUNTER, CANCEL, or OTHER (a question).", text);
+      const v = await parse("Evia showed the care provider the family's corrected hours and asked whether they want to accept them or send a counter. Classify: ACCEPT (yes / take it / that's fine / accept), COUNTER (no / counter / I want to send different hours), CANCEL (never mind / not now), or OTHER (a question).", text);
       action = v.toUpperCase().startsWith("ACCEPT") ? "accept" : v.toUpperCase().startsWith("COUNTER") ? "counter" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
@@ -676,8 +677,8 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     await clear();
     const { respondToCorrectionAs } = await import("../shiftHours");
     try { await respondToCorrectionAs(await caregiverId(), { appointmentId: data.appointmentId, action: "accept" }); }
-    catch (err) { await sendMessage(chatId, err instanceof Error && err.message ? err.message : "Failed to respond"); return; }
-    await sendMessage(chatId, "Correction accepted"); // the page's toast
+    catch (err) { await sendMessage(chatId, err instanceof Error && err.message ? err.message : "That didn't go through. Give it another try in a minute."); return; }
+    await sendMessage(chatId, "Done, the correction is accepted."); // the page's toast, in Evia's voice
     return;
   }
   if (step === "rc_start") {
@@ -726,7 +727,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
     else {
-      const v = await parse("Evia asked the care provider to reply SEND to send the counter-proposal, or CANCEL. Classify: SEND, CANCEL, or OTHER.", text);
+      const v = await parse("Evia showed the care provider their counter and asked \"Want me to send this counter to the family?\". Classify: SEND (yes / go ahead / send it), CANCEL (no / hold off / never mind), or OTHER.", text);
       action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
     }
     if (action === "cancel") return cancelled();
@@ -744,8 +745,8 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
         counterNote: data.note || undefined,
         counterLineItems: data.proposedItems.length > 0 ? (data.counterItems ?? data.proposedItems) : undefined,
       });
-    } catch (err) { await sendMessage(chatId, err instanceof Error && err.message ? err.message : "Failed to respond"); return; }
-    await sendMessage(chatId, "Counter-proposal sent to client"); // the page's toast
+    } catch (err) { await sendMessage(chatId, err instanceof Error && err.message ? err.message : "That didn't go through. Give it another try in a minute."); return; }
+    await sendMessage(chatId, "Sent. I'll let you know when the family answers."); // the page's toast, in Evia's voice
     return;
   }
   await clear();
@@ -762,7 +763,7 @@ export async function handleTimesheetsKeyword(phone: string, chatId: string, car
   if (upper === "REPORT" || upper.startsWith("REPORT ")) {
     const tab = await loadTimesheetsTab(caregiverId);
     const range = upper === "REPORT" ? {} : await parseReportRange(raw.slice(6).trim());
-    if (range === null) { await sendMessage(chatId, `${DIDNT_CATCH} Reply REPORT for all history, or a range like "REPORT Sep 1 to Sep 30".`); return "handled"; }
+    if (range === null) { await sendMessage(chatId, `${DIDNT_CATCH} Say report for all your history, or give me a range like report Sep 1 to Sep 30.`); return "handled"; }
     await sendMessage(chatId, reportText(tab.history, range)); return "handled";
   }
   // Bare SUBMIT — one unsubmitted visit → straight into its modal; several → the tab, numbered.
@@ -771,13 +772,13 @@ export async function handleTimesheetsKeyword(phone: string, chatId: string, car
     if (tab.submittable.length === 1) { await startSubmitHoursFlow(phone, chatId, session as unknown as AgentSession, { caregiverId, shiftId: tab.submittable[0].id }); return "handled"; }
     if (tab.submittable.length === 0) { await sendMessage(chatId, EMPTY_UNSUBMITTED); return "handled"; }
     await sendCaregiverTimesheets(phone, chatId, caregiverId, "unsubmitted");
-    await sendMessage(chatId, "Which one? Reply SUBMIT with the visit's number.");
+    await sendMessage(chatId, "Which one? Say submit and the visit's number.");
     return "handled";
   }
   const submit = /^SUBMIT\s+(\d+)$/i.exec(raw);
   if (submit) {
     const r = resolveTimesheetRef(session, { number: Number(submit[1]) });
-    if (!r || r.kind !== "shift") { await sendMessage(chatId, `I don't have an unsubmitted visit ${submit[1]} on the last list — reply TIMESHEETS to see them.`); return "handled"; }
+    if (!r || r.kind !== "shift") { await sendMessage(chatId, `I don't see an unsubmitted visit ${submit[1]} on the list I sent. Say timesheets and I'll send it again.`); return "handled"; }
     await startSubmitHoursFlow(phone, chatId, session as unknown as AgentSession, { caregiverId, shiftId: r.id }); return "handled";
   }
   // Bare REVIEW — one correction waiting → its modal; several → Pending, numbered.
@@ -786,25 +787,25 @@ export async function handleTimesheetsKeyword(phone: string, chatId: string, car
     if (tab.corrections.length === 1) { await startReviewCorrectionFlow(phone, chatId, session as unknown as AgentSession, { caregiverId, appointmentId: tab.corrections[0].id }); return "handled"; }
     if (tab.corrections.length === 0) { await sendMessage(chatId, "No corrections are waiting for your answer."); return "handled"; }
     await sendCaregiverTimesheets(phone, chatId, caregiverId, "pending");
-    await sendMessage(chatId, "Which one? Reply REVIEW with its number.");
+    await sendMessage(chatId, "Which one? Say review and its number.");
     return "handled";
   }
   const review = /^REVIEW\s+(\d+)$/i.exec(raw);
   if (review) {
     const r = resolveTimesheetRef(session, { number: Number(review[1]) });
-    if (!r || r.kind !== "timesheet") { await sendMessage(chatId, `I don't have a timesheet ${review[1]} on the last list — reply PENDING to see them.`); return "handled"; }
+    if (!r || r.kind !== "timesheet") { await sendMessage(chatId, `I don't see a timesheet ${review[1]} on the list I sent. Say pending and I'll send it again.`); return "handled"; }
     await startReviewCorrectionFlow(phone, chatId, session as unknown as AgentSession, { caregiverId, appointmentId: r.id }); return "handled";
   }
   const details = /^DETAILS\s+(\d+)$/i.exec(raw);
   if (details && list && listIsLatest(session)) {
     const r = resolveTimesheetRef(session, { number: Number(details[1]) });
-    if (!r) { await sendMessage(chatId, `I don't have a ${details[1]} on the last list — reply TIMESHEETS, PENDING or HISTORY to see them.`); return "handled"; }
+    if (!r) { await sendMessage(chatId, `I don't see a ${details[1]} on the list I sent. Say timesheets, pending or history and I'll send it again.`); return "handled"; }
     await sendTimesheetDetail(chatId, caregiverId, r); return "handled";
   }
   const view = /^VIEW\s+(\d+)$/i.exec(raw);
   if (view && list && listIsLatest(session)) {
     const r = resolveTimesheetRef(session, { number: Number(view[1]) });
-    if (!r) { await sendMessage(chatId, `I don't have a ${view[1]} on the last list — reply TIMESHEETS, PENDING or HISTORY to see them.`); return "handled"; }
+    if (!r) { await sendMessage(chatId, `I don't see a ${view[1]} on the list I sent. Say timesheets, pending or history and I'll send it again.`); return "handled"; }
     await sendTimesheetVisit(chatId, caregiverId, r); return "handled";
   }
   return "passthrough";

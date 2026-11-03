@@ -461,7 +461,12 @@ service cloud.firestore {
     // JOB POSTINGS COLLECTION (wizard-created, one doc per client)
     // ==========================================
     match /job_postings/{postId} {
-      allow read: if isAuthenticated();
+      // Owner / admin only (2026-11-03). This is the family's own wizard record
+      // (doc id == the family's uid) and carries the home street + ZIP Evia
+      // mirrors in, so it must not be readable by every signed-in user. Every
+      // site reader is the family itself (doc(currentUser.uid)) or an admin;
+      // caregivers browse job_posts, and server code uses the Admin SDK.
+      allow read: if isOwner(postId) || isAdmin();
       allow create, update: if (isAuthenticated() && request.auth.uid == postId) || actingFor(postId);
       allow delete: if isAdmin();
     }
@@ -1441,7 +1446,12 @@ service cloud.firestore {
     // the caller's own account and require sign-in; the other four are
     // reachable logged out by design (lost-phone recovery, email-link click).
     match /account_action_requests/{requestId} {
-      allow read: if true;
+      // get only — never list (2026-11-03). `read` would also grant `list`, which
+      // let anyone (signed in or not) enumerate every request with its email,
+      // phone, token and code. The website only ever reads its own request by
+      // the id it just created (services/accountActionQueue.ts onSnapshot).
+      allow get: if true;
+      allow list: if false;
       allow create: if request.resource.data.type in [
           'request_phone_change', 'start_phone_verification', 'confirm_phone_change',
           'confirm_email_change', 'request_email_change', 'delete_account',

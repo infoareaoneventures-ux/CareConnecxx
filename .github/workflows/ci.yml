@@ -54,5 +54,10 @@ jobs:
           VITE_SUPPORT_PHONE: '+15555550101'
           VITE_LINQ_PHONE_NUMBER: '+15555550102'
 
+      # The functions build transpiles file-by-file (functions/scripts/transpile.js)
+      # and does not type-check, so type errors would otherwise reach deploy.
+      - name: Typecheck Cloud Functions
+        run: npm --prefix functions run typecheck
+
       - name: Build Cloud Functions
         run: npm --prefix functions run build

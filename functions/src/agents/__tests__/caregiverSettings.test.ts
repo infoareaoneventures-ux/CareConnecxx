@@ -92,7 +92,7 @@ describe("settingsPageText — the sections word for word", () => {
     hoisted.docs.set("caregivers/cg1", {
       name: "Mahad Ali", createdAt: "2026-09-26T18:00:00.000Z", email: "a@b.com", emailVerified: true, emailVerifiedFor: "A@B.com", skills: ["Transportation"],
       documents: { driversLicense: { url: "u", status: "approved", expirationDate: "2027-03-03" }, insurance: { url: "u", status: "pending" } },
-      pausedUntil: "2026-11-01",
+      pausedUntil: "2099-11-01",
     });
     hoisted.docs.set("users/cg1", {});
     const t = settingsPageText(await loadSettingsPage("cg1"));
@@ -101,7 +101,7 @@ describe("settingsPageText — the sections word for word", () => {
     expect(t).toContain("Membership & verification");
     expect(t).not.toMatch(/document|DOCUMENTS|upload|Expires/i);
     expect(t).toContain("Blocked Users: You haven't blocked anyone.");
-    expect(t).toContain("Your account is paused. You'll automatically become active again on 2026-11-01. Reactivate sooner anytime. Say reactivate whenever you're ready.");
+    expect(t).toContain("Your account is paused. You'll automatically become active again on 2099-11-01. Reactivate sooner anytime. Say reactivate whenever you're ready.");
     hoisted.docs.set("caregivers/cg1", { pausedUntil: "2099-12-31" });
     expect(settingsPageText(await loadSettingsPage("cg1"))).toContain("Your account is paused. You won't show up for new matches until you reactivate. Fully reversible anytime. Say reactivate whenever you're ready.");
   });

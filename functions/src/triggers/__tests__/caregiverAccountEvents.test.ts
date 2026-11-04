@@ -165,18 +165,18 @@ describe("notifyCaregiverAccountEvent — bell + text once", () => {
   it("pause from the SITE (queue action, no session stamp): bell typed account_paused + the text; from an Evia door (stamped within the window): bell only — it texted its own line", async () => {
     hoisted.docState.set("users/cg1", { phone: "+15551112222" });
     hoisted.docState.set("agent_sessions/+15551112222", { userId: "cg1" });
-    const pauseChange = { before: { data: () => ({ name: "A" }) }, after: { data: () => ({ name: "A", pausedUntil: "2026-11-01", pausedAt: "x" }) } };
+    const pauseChange = { before: { data: () => ({ name: "A" }) }, after: { data: () => ({ name: "A", pausedUntil: "2099-11-01", pausedAt: "x" }) } };
     await (onCaregiverAccountChange as any)(pauseChange, { params: { uid: "cg1" }, eventId: "fs-pause-1" });
     expect(hoisted.bells.map((b) => [b.type, b.transitionType])).toEqual([["account_paused", "account_paused"]]);
     expect(hoisted.bells[0].body).toContain("https://eviacares.com/care-provider/settings");
-    expect(hoisted.sent.map((s) => s.content)).toEqual(["Your account is paused until 2026-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime, just say reactivate."]);
+    expect(hoisted.sent.map((s) => s.content)).toEqual(["Your account is paused until 2099-11-01. You won't show up for new matches; existing visits, bookings and interviews are unchanged. Reactivate sooner anytime, just say reactivate."]);
     // A retried invocation of the same event sends nothing more.
     await (onCaregiverAccountChange as any)(pauseChange, { params: { uid: "cg1" }, eventId: "fs-pause-1" });
     expect(hoisted.sent).toHaveLength(1);
 
     // Evia's REACTIVATE keyword: pauseAccount.ts stamped the session just before the write.
     hoisted.docState.set("agent_sessions/+15551112222", { userId: "cg1", accountNoticeTexted: { kind: "account_reactivated", at: new Date().toISOString() } });
-    const reactivateChange = { before: { data: () => ({ name: "A", pausedUntil: "2026-11-01" }) }, after: { data: () => ({ name: "A", reactivatedAt: "y" }) } };
+    const reactivateChange = { before: { data: () => ({ name: "A", pausedUntil: "2099-11-01" }) }, after: { data: () => ({ name: "A", reactivatedAt: "y" }) } };
     await (onCaregiverAccountChange as any)(reactivateChange, { params: { uid: "cg1" }, eventId: "fs-react-1" });
     expect(hoisted.bells.map((b) => b.type)).toEqual(["account_paused", "account_reactivated"]);
     expect(hoisted.sent).toHaveLength(1); // no second text: the door's "You're active again…" line already went

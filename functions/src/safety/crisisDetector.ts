@@ -16,6 +16,10 @@ const MEDICAL_KEYWORDS = [
   "can't get up", "cannot get up", "fell and", "heart problem", "cardiac",
   "911", "ambulance", "emergency room", "er now", "call 911",
   "choking", "allergic reaction", "anaphylaxis", "overdose",
+  "won't wake", "not waking up", "isn't waking", "isn't breathing",
+  "bleeding a lot", "bleeding heavily", "won't stop bleeding",
+  "fell in the", "fell on the", "fell off", "had a fall", "took a fall",
+  "has fallen", "is on the floor", "overdosed", "od'd",
   // Spanish (accent-free)
   "no puedo respirar", "no puede respirar", "no respira", "dolor en el pecho",
   "ataque al corazon", "ataque cardiaco", "infarto", "derrame cerebral",
@@ -31,6 +35,8 @@ const EMOTIONAL_KEYWORDS = [
   "don't want to be here", "can't go on", "no reason to live",
   "better off without me", "suicidal", "hurt myself",
   "self harm", "not worth living", "give up on life",
+  "suicide", "kill my self", "killing myself", "want to be dead",
+  "don't want to live", "self-harm", "cut myself", "cutting myself",
   // Spanish (accent-free)
   "quiero morir", "me quiero morir", "quiero morirme", "quitarme la vida",
   "acabar con todo", "matarme", "me quiero matar", "no quiero vivir",
@@ -39,10 +45,35 @@ const EMOTIONAL_KEYWORDS = [
 ];
 
 // Strip diacritics + lowercase so accent-free SMS text matches accented
-// keywords and vice versa.
+// keywords and vice versa. Curly apostrophes (iPhone default) fold to '.
 function normalizeForMatch(text: string): string {
-  return text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[‘’‛ʼ`´]/g, "'");
 }
+
+function stripApostrophes(text: string): string {
+  return text.replace(/'/g, "");
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Leading word boundary only, so Spanish plurals ("convulsiones") still match.
+function compileKeywords(list: string[]): RegExp[] {
+  const forms = new Set<string>();
+  for (const kw of list) {
+    forms.add(kw);
+    forms.add(stripApostrophes(kw));
+  }
+  return [...forms].map((kw) => new RegExp(`(?:^|[^a-z0-9])${escapeRegex(kw)}`));
+}
+
+const MEDICAL_PATTERNS = compileKeywords(MEDICAL_KEYWORDS);
+const EMOTIONAL_PATTERNS = compileKeywords(EMOTIONAL_KEYWORDS);
 
 export const MEDICAL_RESPONSE =
   "🚨 This sounds like an emergency. Please call 911 or go to your nearest ER immediately.\n\n" +
@@ -54,14 +85,12 @@ export const EMOTIONAL_RESPONSE =
   "I'm here too. Do you want to talk?";
 
 export function detectCrisis(text: string): CrisisType {
-  const lower = normalizeForMatch(text);
+  const normalized = normalizeForMatch(text);
+  const candidates = [normalized, stripApostrophes(normalized)];
+  const hits = (patterns: RegExp[]) => candidates.some((c) => patterns.some((p) => p.test(c)));
 
-  for (const kw of MEDICAL_KEYWORDS) {
-    if (lower.includes(kw)) return "medical";
-  }
-  for (const kw of EMOTIONAL_KEYWORDS) {
-    if (lower.includes(kw)) return "emotional";
-  }
+  if (hits(MEDICAL_PATTERNS)) return "medical";
+  if (hits(EMOTIONAL_PATTERNS)) return "emotional";
   return null;
 }
 

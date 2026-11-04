@@ -82,7 +82,7 @@ async function evaluateCase(tc: EvalCase, index: number): Promise<CaseOutcome> {
   }
 
   // ── Linter cases — verify banned phrases are stripped ────────────────────
-  const LINTER_STRIPPED = new Set(["as an ai", "i cannot", "i am unable", "i don't have the ability"]);
+  const LINTER_STRIPPED = new Set(["as an ai"]);
   const linterTargets = (tc.mustNotContain ?? []).filter(p => LINTER_STRIPPED.has(p.toLowerCase()));
   if (linterTargets.length > 0) {
     for (const mustNot of linterTargets) {

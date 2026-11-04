@@ -2,8 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// P0 privacy fixes (2026-11-03). Text-level contract on firestore.rules, same
-// style as shiftHoursSecurityContract.test.ts.
 const rules = fs.readFileSync(path.join(process.cwd(), "firestore.rules"), "utf8");
 
 function block(match: string): string {

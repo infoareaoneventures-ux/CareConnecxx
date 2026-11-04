@@ -107,27 +107,44 @@ try {
 // Firebase compat requires a RecaptchaVerifier bound to a DOM element before
 // signInWithPhoneNumber will resolve. Keeping one per container so React
 // remount doesn't leak unrendered instances (each one phones home to Google).
-const _recaptchaVerifiers = new Map<string, firebase.auth.RecaptchaVerifier>();
+// reCAPTCHA can't re-render into the same element, so each verifier gets a fresh child.
+const _recaptchaVerifiers = new Map<
+  string,
+  { verifier: firebase.auth.RecaptchaVerifier; host: HTMLElement | null }
+>();
+let _recaptchaHostSeq = 0;
 
 export function getOrCreateRecaptchaVerifier(
   containerId: string,
   options: { size?: 'invisible' | 'normal'; onSolved?: () => void } = {},
 ): firebase.auth.RecaptchaVerifier {
   const existing = _recaptchaVerifiers.get(containerId);
-  if (existing) return existing;
+  if (existing) return existing.verifier;
   if (!auth) throw new Error('Firebase auth is not configured');
-  const verifier = new firebase.auth.RecaptchaVerifier(containerId, {
+
+  const container = typeof document !== 'undefined' ? document.getElementById(containerId) : null;
+  let host: HTMLElement | null = null;
+  let target: string | HTMLElement = containerId;
+  if (container) {
+    host = document.createElement('div');
+    host.id = `${containerId}-rc-${++_recaptchaHostSeq}`;
+    container.appendChild(host);
+    target = host;
+  }
+
+  const verifier = new firebase.auth.RecaptchaVerifier(target, {
     size: options.size ?? 'invisible',
     callback: options.onSolved,
   });
-  _recaptchaVerifiers.set(containerId, verifier);
+  _recaptchaVerifiers.set(containerId, { verifier, host });
   return verifier;
 }
 
 export function clearRecaptchaVerifier(containerId: string): void {
-  const v = _recaptchaVerifiers.get(containerId);
-  if (v) {
-    try { v.clear(); } catch { /* SDK can throw when already cleared */ }
+  const entry = _recaptchaVerifiers.get(containerId);
+  if (entry) {
+    try { entry.verifier.clear(); } catch { /* SDK can throw when already cleared */ }
+    entry.host?.remove();
     _recaptchaVerifiers.delete(containerId);
   }
 }

@@ -59,12 +59,9 @@ describe("supervise", () => {
         "Is there anything else I can help you with?",
     });
     const out = await supervise("any reply", { phone: "+15550001111" });
-    expect(out.toLowerCase()).not.toContain("i'm not able to");
     expect(out.toLowerCase()).not.toContain("is there anything else");
-    // The phrase 'contact our care team' isn't in BANNED_PHRASES today, but
-    // 'I'm not able to' anchors the sentence — once stripped, what remains
-    // must not be the full refusal boilerplate.
-    expect(out).not.toMatch(/^I'm not able to/i);
+    expect(out).toMatch(/^I'm not able to confirm personal health information/);
+    expect(out).not.toMatch(/^confirm personal health information/i);
   });
 
   it("falls back to the linted original when the rewrite collapses to empty after re-lint", async () => {
@@ -74,7 +71,7 @@ describe("supervise", () => {
     mockHaikuReply({
       violation: true,
       // Every clause here is a banned phrase; lintMessage strips it to empty.
-      revised: "I'm not able to. I cannot. I am unable. Is there anything else I can help you with?",
+      revised: "Absolutely! Certainly! Is there anything else I can help you with?",
     });
     const out = await supervise(original, { phone: "+15550001111" });
     expect(out).toBe(original);

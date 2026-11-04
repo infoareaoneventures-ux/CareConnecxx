@@ -17,6 +17,16 @@ describe("lintMessage", () => {
   it("leaves en-dash time ranges alone", () => {
     expect(lintMessage("9:00 AM – 1:00 PM")).toBe("9:00 AM – 1:00 PM");
   });
+
+  it.each([
+    "I'm not able to set up care in Austin just yet.",
+    "I cannot give medical advice, but here is what I can do.",
+    "I am unable to book Tuesday.",
+    "I don't have the ability to change that.",
+  ])("keeps negations: %p", (text) => {
+    expect(lintMessage(text)).toBe(text);
+    expect(lintPreservingLayout(text)).toBe(text);
+  });
 });
 
 describe("lintPreservingLayout", () => {

@@ -33,6 +33,28 @@ describe("detectCrisis (keyword fast-path)", () => {
   ])("returns null for benign message %p", (text) => {
     expect(detectCrisis(text)).toBeNull();
   });
+
+  it.each([
+    ["I can’t breathe", "medical"],
+    ["i cant breathe", "medical"],
+    ["my dad won’t wake up", "medical"],
+    ["he wont wake up", "medical"],
+    ["she fell in the bathroom", "medical"],
+    ["he is bleeding a lot", "medical"],
+    ["mom isn’t breathing", "medical"],
+    ["I don’t want to be here anymore", "emotional"],
+    ["thinking about suicide", "emotional"],
+    ["i want to kill my self", "emotional"],
+  ])("flags everyday wording %p", (text, expected) => {
+    expect(detectCrisis(text)).toBe(expected);
+  });
+
+  it.each([
+    ["can you call her now"],
+    ["my number is 4089115555"],
+  ])("does not fire on a keyword inside another word or number: %p", (text) => {
+    expect(detectCrisis(text)).toBeNull();
+  });
 });
 
 describe("isLikelyRealCrisis (LLM verification)", () => {

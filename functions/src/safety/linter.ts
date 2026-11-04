@@ -1,9 +1,6 @@
+// Never add negations ("I cannot"): phrases are deleted, which flips the meaning.
 const BANNED_PHRASES: string[] = [
   "as an AI",
-  "I cannot",
-  "I am unable",
-  "I don't have the ability",
-  "I'm not able to",
   "rest assured",
   "at the end of the day",
   "moving forward",

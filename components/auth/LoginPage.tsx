@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { auth, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../../lib/firebase';
+import { reportAuthError, withAuthCode } from '../../utils/authErrorDetail';
 import { dbService } from '../../services/api';
 import type firebase from 'firebase/compat/app';
 import { TaskPageBar } from './TaskPageBar';
@@ -20,14 +21,15 @@ function formatDisplay(val: string): string {
 
 // Raw Firebase codes leak implementation detail ("auth/too-many-requests");
 // map the ones users actually hit to plain language.
-function friendlyAuthError(err: any): string {
+function friendlyAuthError(err: any, where: string): string {
+  const code = reportAuthError(where, err);
   switch (err?.code) {
     case 'auth/too-many-requests':        return 'Too many attempts — wait a few minutes and try again.';
     case 'auth/invalid-phone-number':     return "That phone number doesn't look right. Check it and try again.";
     case 'auth/network-request-failed':   return 'Network hiccup — check your connection and try again.';
     case 'auth/code-expired':             return 'That code expired. Tap "Resend code" to get a new one.';
     case 'auth/invalid-verification-code': return 'Incorrect code. Please try again.';
-    default: return 'Something went wrong. Please try again.';
+    default: return withAuthCode('Something went wrong. Please try again.', code);
   }
 }
 
@@ -77,7 +79,7 @@ export const AuthLoginPage: React.FC = () => {
       setResendCountdown(60);
       otpRefs.current[0]?.focus();
     } catch (err: any) {
-      setError(friendlyAuthError(err));
+      setError(friendlyAuthError(err, 'login.sendCode'));
     } finally {
       // Fresh verifier next time either way — the token is single-use.
       clearRecaptchaVerifier(RECAPTCHA_CONTAINER);
@@ -118,7 +120,7 @@ export const AuthLoginPage: React.FC = () => {
       }
       navigate(dest, { replace: true });
     } catch (err: any) {
-      setError(friendlyAuthError(err));
+      setError(friendlyAuthError(err, 'login.confirmOtp'));
       setOtp(['', '', '', '', '', '']);
       otpRefs.current[0]?.focus();
     } finally {

@@ -406,9 +406,13 @@ service cloud.firestore {
         resource == null || request.auth.uid in resource.data.participants || isAdmin()
       );
 
-      // Participants or admin can update (lastMessage, unreadCount, etc.)
+      // Participants or admin can update (lastMessage, unreadCount, etc.). A participant can never
+      // set or clear the closure (closedReason / closedAt / closedBy — written server-side when an
+      // account is deleted, 2026-11-09): only the admin SDK or an admin touches those.
       allow update: if isAuthenticated() && (
-        request.auth.uid in resource.data.participants || isAdmin()
+        (request.auth.uid in resource.data.participants
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['closedReason', 'closedAt', 'closedBy']))
+        || isAdmin()
       );
 
       // Any authenticated user can create a room they're part of; admin can create any room.
@@ -431,9 +435,11 @@ service cloud.firestore {
           || isAdmin()
         );
 
-        // Participants or admin can write messages
+        // Participants or admin can write messages — but not into a conversation closed because
+        // the other person deleted their account (closedReason), which nobody will read.
         allow write: if isAuthenticated() && (
-          request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+          (request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+            && get(/databases/$(database)/documents/chatRooms/$(roomId)).data.get('closedReason', null) == null)
           || isAdmin()
         );
       }

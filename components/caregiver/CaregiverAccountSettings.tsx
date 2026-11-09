@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
 import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, X } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
 import { submitAccountAction } from '../../services/accountActionQueue';
@@ -272,6 +273,8 @@ export const CaregiverAccountSettings: React.FC = () => {
     if (!confirmed) { setDeletingAccount(false); return; }
     try {
       await authService.deleteUserAccount();
+      // Done: signed out, and a clear "your account was deleted" page instead of a screen stuck on "Deleting…".
+      window.location.assign('/account-deleted');
     } catch {
       deleteReauth.setError('Failed to delete account. Please try again.');
       setDeletingAccount(false);
@@ -621,6 +624,7 @@ export const CaregiverAccountSettings: React.FC = () => {
           </div>
           <div className="p-6 space-y-4">
             <p className="text-sm text-slate-600">This action is permanent and cannot be undone.</p>
+            <DeleteAccountConsequences role="caregiver" />
 
             {deleteStep === 'confirm' ? (
               <>

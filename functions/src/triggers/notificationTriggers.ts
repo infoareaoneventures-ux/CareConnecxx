@@ -1002,6 +1002,17 @@ export const onShiftStatusChanged = functions.firestore
       if (!bookingSnap.exists) return;
       if (bookingSnap.data()!.status !== 'accepted') return; // don't overwrite cancelled
 
+      // An ONGOING booking is never ended by its visits running out or one being cancelled (2026-11-09,
+      // Wave 2): create the next two weeks now and leave it accepted. A dated booking is completed only
+      // when there is nothing left to create. If visits cannot be created (frozen membership / locked care
+      // provider) the booking is left exactly as it is — those paths own that state.
+      const booking = bookingSnap.data()!;
+      const { extendBookingShifts } = await import('../scheduled/shiftGenerator');
+      const extended = await extendBookingShifts(bookingRequestId, booking);
+      if (extended.skipped) return;
+      if (extended.created > 0) return;
+      if (booking.schedule?.ongoing === true) return;
+
       await bookingRef.update({
         status: 'completed',
         completedAt: new Date().toISOString(),

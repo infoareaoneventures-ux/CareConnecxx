@@ -468,10 +468,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Families and care providers can arrange care off the platform, which skips the background-check, payment and safety protections.
     - **How we'll fix it:** Run the same contact-detail check on bios as on job descriptions, on the site and in Evia's bio step.
 
-- [ ] **Cancelling one visit ends the whole ongoing booking** — _Found in live testing, Nov 7_
+- [x] **Cancelling one visit ends the whole ongoing booking** — _Found in live testing, Nov 7_
     - **The issue:** The weekly booking (Tuesdays, ongoing) had only the next visits created. When the care provider used "Cancel this shift only" on the last created visit (the prompt said "The rest of your booking stays active"), the booking's status became "completed" and it disappeared from Active Bookings on both sides.
     - **Why it matters:** Families and care providers lose an ongoing arrangement by cancelling a single day, and nobody is told.
     - **How we'll fix it:** Never end an ongoing booking because its created visits ran out; create the next visits ahead of time, and only end a booking when someone chooses to.
+    - **Done (Nov 9):** An ongoing booking is no longer marked completed when its last scheduled visit is cancelled or completed: the next two weeks of visits are created straight away and the booking stays accepted; a dated booking completes only when there is nothing left to create. The daily generator now continues from the furthest visit in ANY state, so a cancelled date is never re-created. Frozen membership / locked care provider still get no new visits. Tests: shiftGeneratorNextVisits.test.ts, notificationTriggers.bookingCompletion.test.ts. Race to know about: the trigger and the daily job could both create visits for the same booking in the same minute; not guarded.
 
 - [ ] **A failed payment is handled unclearly on both sides** — _Found in live testing, Nov 7_
     - **The issue:** With no card on file, the family could still approve hours. The charge failed and the family was told "the card was declined" (there was no card). The timesheet then showed "Correction history: Accepted" though no correction was made, and stayed under "Needs Review". The care provider only sees "Awaiting Payment", with no word that the family's payment failed, and their History says "No completed shifts yet".
@@ -683,15 +684,17 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** The money step is where trust matters most; mismatched totals and slow buttons cause double clicks and disputes.
     - **How we'll fix it:** Speed up the visit actions, confirm the end and link to submitting hours, offer the named charge types, show the full amount charged everywhere, and word the auto-approve banner per timesheet.
 
-- [ ] **Reviews and blocking don't update everything** — _Found in live testing, Nov 7_
+- [~] **Reviews and blocking don't update everything** — _Found in live testing, Nov 7_
     - **The issue:** After the family left a 5-star review, the review appeared in the profile's Reviews section (5.0, 1 review) but the header still said "No reviews yet". Blocking the family from the care provider's chat happened with one click and no confirmation, and after unblocking in Settings the conversation never came back.
     - **Why it matters:** Care providers look unreviewed, and one mis-click permanently loses a conversation.
     - **How we'll fix it:** Update the profile's rating summary when a review lands, ask before blocking, and keep (hide, not remove) the conversation so unblocking restores it.
+    - **Partly done (Nov 9):** Blocking now asks first, and unblocking (site and Evia) no longer hides or wipes the conversation: it comes back as it was. NOT done: the profile header still saying 'No reviews yet' after a review lands (Wave 3).
 
-- [ ] **Deleting an account works but leaves loose ends** — _Found in live testing, Nov 7_
+- [x] **Deleting an account works but leaves loose ends** — _Found in live testing, Nov 7_
     - **The issue:** The care provider's deletion (confirm window, texted code, wrong code refused) removed their records, but the page stayed on "Deleting..." with no confirmation and no sign-out until reloaded, and then showed the plain login page with no "your account was deleted" message. The window never says what happens to the paid yearly membership, upcoming visits or unpaid hours. Afterwards the family's inbox still lists the conversation (unread badge) and accepts new messages that nobody will read, and their job post still shows "1 applicant".
     - **Why it matters:** The person deleting isn't sure it worked, and the family keeps writing to someone who's gone.
     - **How we'll fix it:** Sign out and show a clear "account deleted" page when the request completes; spell out the membership, visits and pay consequences in the window; mark the other side's conversations and applications as "no longer on Evia" and stop new messages.
+    - **Done (Nov 9):** Server: deleting an account now cancels upcoming visits and open bookings the normal way (a care provider's as 'system', a family's as 'client', so the other side is told), withdraws a care provider's pending applications (the applicant count follows), takes down a family's open job posts, removes a care provider's public profile, and CLOSES conversations (closedReason, never deleted); the request is marked done before the login is removed. Site: after deletion the person is signed out and lands on a clear 'Your account has been deleted' page; the window lists the membership (non-refundable), visits, posts and conversations; a closed conversation shows 'no longer on Evia' and cannot send (also refused by firestore.rules). Needs a functions + firestore:rules + hosting deploy. Not done: what happens to unpaid hours is not automated, the window tells the person to contact support first.
 
 ### P3: Low (small fixes)
 

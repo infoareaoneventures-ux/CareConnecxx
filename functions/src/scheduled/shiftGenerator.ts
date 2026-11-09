@@ -410,6 +410,59 @@ export const expireStaleShiftReplacements = functions.pubsub
     }
   });
 
+// ── The next window of visits for a booking (2026-11-09, fix plan Wave 2) ─────────
+// "Cancelling one visit ended the whole ongoing booking": the booking was marked completed the moment its
+// last SCHEDULED visit reached a terminal state, so an ongoing booking whose generated visits ran out — or
+// whose only upcoming visit was cancelled — was closed, and the daily job (which only walks `accepted`
+// bookings) never made the next ones. Visits are now created ahead from the LATEST visit of ANY status, so
+// a cancelled date is never re-created and an ongoing booking is only ever ended by someone choosing to.
+const VISIT_STATUSES = ['scheduled', 'in-progress', 'needs_replacement', 'completed', 'cancelled'] as const;
+
+/** The date (YYYY-MM-DD) of the booking's furthest visit in any state, or null when it has none. */
+export async function latestShiftDate(bookingId: string): Promise<string | null> {
+  const snaps = await Promise.all(VISIT_STATUSES.map((status) =>
+    db.collection('shifts')
+      .where('bookingRequestId', '==', bookingId)
+      .where('status', '==', status)
+      .orderBy('date', 'desc')
+      .limit(1)
+      .get()));
+  let max: string | null = null;
+  for (const snap of snaps) {
+    if (snap.empty) continue;
+    const d = snap.docs[0].data().date as string | undefined;
+    if (d && (!max || d > max)) max = d;
+  }
+  return max;
+}
+
+/** The two-week window after the booking's furthest visit (never in the past). */
+export function nextVisitWindow(latest: string | null, today: string): { generateFrom: string; generateTo: string; maxShiftDate: string } {
+  const maxShiftDate = latest ?? addDays(today, -1);
+  const next = addDays(maxShiftDate, 1);
+  const generateFrom = next < today ? today : next;
+  return { generateFrom, generateTo: addDays(generateFrom, 13), maxShiftDate };
+}
+
+/**
+ * Create the booking's next two weeks of visits right now (used when its last scheduled visit has just
+ * ended or been cancelled). Same gates as the daily job: a frozen family membership or a locked care
+ * provider gets none. Returns how many were created; `skipped` says why none could be.
+ */
+export async function extendBookingShifts(
+  bookingId: string,
+  booking: FirebaseFirestore.DocumentData,
+  now: Date = new Date(),
+): Promise<{ created: number; skipped?: 'frozen' | 'caregiver_not_eligible' }> {
+  const today = businessTodayStr(DEFAULT_TZ, now);
+  const bookingRef = db.collection('booking_requests').doc(bookingId);
+  const lapse = await applyMembershipLapse(bookingRef, booking, today, new Map());
+  if (lapse === 'frozen') return { created: 0, skipped: 'frozen' };
+  if (!(await caregiverEligibleForNewVisits(String(booking.caregiverId || '')))) return { created: 0, skipped: 'caregiver_not_eligible' };
+  const { generateFrom, generateTo } = nextVisitWindow(await latestShiftDate(bookingId), today);
+  return { created: await generateShiftsForBooking(bookingId, booking, generateFrom, generateTo) };
+}
+
 /**
  * Daily job: for every accepted booking, ensure there is at least 2 weeks of
  * scheduled shifts ahead. Generates more whenever the furthest scheduled shift
@@ -490,21 +543,10 @@ export const generateRollingShifts = functions.pubsub
           continue;
         }
 
-        const latestShiftSnap = await db.collection('shifts')
-          .where('bookingRequestId', '==', bookingId)
-          .where('status', '==', 'scheduled')
-          .orderBy('date', 'desc')
-          .limit(1)
-          .get();
-
-        const maxShiftDate: string = latestShiftSnap.empty
-          ? addDays(today, -1)
-          : (latestShiftSnap.docs[0].data().date as string);
+        // Furthest visit in ANY state (2026-11-09): a cancelled date is still "taken", so it is not re-created.
+        const { generateFrom, generateTo, maxShiftDate } = nextVisitWindow(await latestShiftDate(bookingId), today);
 
         if (maxShiftDate >= threshold) continue;
-
-        const generateFrom = addDays(maxShiftDate, 1);
-        const generateTo   = addDays(maxShiftDate, 14);
 
         const created = await generateShiftsForBooking(bookingId, booking, generateFrom, generateTo);
         totalCreated += created;

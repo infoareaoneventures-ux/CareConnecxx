@@ -279,6 +279,8 @@ export const dbService = {
         if (isConfigured && auth && auth.currentUser) {
             const { submitAccountAction } = await import('./accountActionQueue');
             await submitAccountAction('delete_account', { uid: auth.currentUser.uid });
+            // The login is gone server-side; drop the browser's session too so the page does not sit signed in as nobody.
+            await auth.signOut().catch(() => {});
             return true;
         }
         throw new Error("Not logged in");

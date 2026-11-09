@@ -468,20 +468,10 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         await userRef.update({
             [`blockedUserProfiles.${targetId}`]: firebase.firestore.FieldValue.delete(),
         }).catch(() => {}); // field may not exist on legacy blocks — safe to ignore
-        // Hide the room from the unblocking user until a new message arrives.
-        // Also set messagesCutoff so messages sent while blocked stay hidden after unblock.
-        try {
-            const roomId = [currentUser.uid, targetId].sort().join('_');
-            const roomSnap = await db.collection('chatRooms').doc(roomId).get();
-            if (roomSnap.exists) {
-                await db.collection('chatRooms').doc(roomId).update({
-                    [`messagesCutoff.${currentUser.uid}`]: firebase.firestore.FieldValue.serverTimestamp(),
-                    [`deletedAt.${currentUser.uid}`]: firebase.firestore.FieldValue.serverTimestamp(),
-                });
-            }
-        } catch {
-            // chatRoom update failing should not block the unblock itself
-        }
+        // Unblocking restores the conversation exactly as it was (2026-11-09, fix plan Wave 2). It used to
+        // stamp messagesCutoff + deletedAt on the room, which hid the whole history and made the thread
+        // vanish — one mis-click on Block lost the conversation for good. A block only HIDES the thread
+        // (the inbox filters blocked ids); nothing about the room is changed, so there is nothing to undo.
     };
 
     return (

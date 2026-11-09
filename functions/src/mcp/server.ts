@@ -7438,12 +7438,11 @@ async function executeToolCall(
       if (blockAction === "unblock") {
         // Mirrors the website's own unblockUser (context/CareConnexContext.tsx)
         // exactly: split arrayRemove + a nested-field delete into two writes
-        // (mixing those sentinels in one call can reject), clean up the
-        // blockedUserProfiles map entry the block wrote, and hide the shared
-        // chat thread until a new message arrives (same messagesCutoff/deletedAt
-        // treatment as a manual conversation delete) — previously only
-        // blockedUsers was cleared, so an Evia-initiated unblock still showed
-        // the target as blocked on the website.
+        // (mixing those sentinels in one call can reject) and clean up the
+        // blockedUserProfiles map entry the block wrote. The chat thread is left
+        // exactly as it was (2026-11-09, Wave 2): unblocking used to stamp
+        // messagesCutoff/deletedAt on the room, which hid the whole history — a
+        // mis-click on Block lost the conversation. A block only hides the thread.
         const userRef = db.collection("users").doc(userId as string);
         await userRef.set({
           blockedUsers: admin.firestore.FieldValue.arrayRemove(targetUserId),
@@ -7452,19 +7451,6 @@ async function executeToolCall(
         await userRef.set({
           [`blockedUserProfiles.${targetUserId}`]: admin.firestore.FieldValue.delete(),
         }, { merge: true }).catch(() => {}); // field may not exist on legacy blocks — safe to ignore
-        try {
-          const { findChatRoomFor: findRoomForUnblock } = await import("../utils/chatThread");
-          const found = await findRoomForUnblock(userId as string, targetUserId as string);
-          const roomRef = found ? db.collection("chatRooms").doc(found.id) : null;
-          if (roomRef) {
-            await roomRef.set({
-              [`messagesCutoff.${userId}`]: admin.firestore.FieldValue.serverTimestamp(),
-              [`deletedAt.${userId}`]:      admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-          }
-        } catch {
-          // chatRoom update failing should not block the unblock itself
-        }
         logAudit({ eventType: "user_unblocked", userId: userId as string, data: { source: "mcp:set_block_status", targetUserId } }).catch(() => {});
         return { success: true, unblocked: true };
       }

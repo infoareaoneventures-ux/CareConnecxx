@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
 import { recordActedForPerson } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -333,6 +334,8 @@ export const AccountSettings: React.FC = () => {
     if (!confirmed) { setDeletingAccount(false); return; }
     try {
       await authService.deleteUserAccount();
+      // Done: signed out, and a clear "your account was deleted" page instead of a screen stuck on "Deleting…".
+      window.location.assign('/account-deleted');
     } catch {
       deleteReauth.setError('Failed to delete account. Please try again.');
       setDeletingAccount(false);
@@ -774,6 +777,7 @@ export const AccountSettings: React.FC = () => {
             </div>
             <div className="p-6 space-y-4">
               <p className="text-sm text-slate-600">This action is permanent and cannot be undone.</p>
+            <DeleteAccountConsequences role="client" />
 
               {deleteStep === 'confirm' ? (
                 <>

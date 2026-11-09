@@ -113,10 +113,21 @@ describe("processAccountActionQueue", () => {
   it("dispatches delete_account with uid and writes the result back", async () => {
     const snap = makeSnap({ type: "delete_account", uid: "u1" });
     await processAccountActionQueue(snap as any);
-    expect(deleteAccountForUser).toHaveBeenCalledWith("u1");
+    expect(deleteAccountForUser).toHaveBeenCalledWith("u1", expect.objectContaining({ beforeLoginRemoved: expect.any(Function) }));
     expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
       status: "done", result: { deleted: true },
     }));
+  });
+
+  // Wave 2 (2026-11-09): the page watches its request with the very login that deletion removes, so the
+  // request is marked done BEFORE the login goes — a result written afterwards was never seen ("Deleting…" forever).
+  it("marks the delete request done BEFORE the login is removed (callback runs inside the deletion)", async () => {
+    const order: string[] = [];
+    deleteAccountForUser.mockImplementationOnce(async (_uid: string, opts: any) => { order.push("records removed"); await opts.beforeLoginRemoved(); order.push("login removed"); return { deleted: true }; });
+    const snap = makeSnap({ type: "delete_account", uid: "u1" });
+    snap.ref.update.mockImplementation(async (d: any) => { order.push(`request ${d.status}`); });
+    await processAccountActionQueue(snap as any);
+    expect(order.slice(0, 3)).toEqual(["records removed", "request done", "login removed"]);
   });
 
   // door: "site" (B7, 2026-10-11): the page only toasts, so the shared write must NOT stamp the

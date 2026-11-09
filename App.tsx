@@ -46,6 +46,7 @@ const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
 const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
 const BgcheckConsentPage  = lazy(() => import('./components/pages/BgcheckConsentPage'));
 const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
+const AccountDeletedPage  = lazy(() => import('./components/pages/AccountDeletedPage'));
 const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
 const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
 const RequestAccountRecoveryPage = lazy(() => import('./components/pages/RequestAccountRecoveryPage'));
@@ -325,6 +326,7 @@ const AppContent: React.FC = () => {
           <Route path="/bgcheck"            element={<BgcheckConsentPage />} />
           <Route path="/bgcheck-direct"     element={<BgcheckConsentPage />} />
           <Route path="/done"               element={<GenericSuccessPage />} />
+          <Route path="/account-deleted"    element={<AccountDeletedPage />} />
           {/* Signup routes redirect into the unified phone-first onboarding at /start.
               The role= query param selects between the senior-friendly family mode and
               the leaner caregiver mode. See components/auth/onboarding/OnboardingFlow.tsx. */}

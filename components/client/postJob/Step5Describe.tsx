@@ -1,4 +1,5 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../../utils/medicationInstruction';
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from '../../../utils/contactDetails';
 import React, { useEffect } from 'react';
 import { StepProps } from './types';
 import { defaultJobTitle, kindsOfServices, JOB_DESCRIPTION_MAX_CHARS } from '../../caregiver/signup/constants';
@@ -38,6 +39,11 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
     }
     if (isMedicationInstruction(desc)) {
       onShowToast(MEDICATION_INSTRUCTION_MESSAGE, 'error');
+      return;
+    }
+    // The title is public too (2026-11-09): a number or link there is the same leak as in the details.
+    if (containsContactDetails(desc) || containsContactDetails(data.title)) {
+      onShowToast(CONTACT_DETAILS_MESSAGE, 'error');
       return;
     }
     onContinue();

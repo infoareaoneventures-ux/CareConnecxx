@@ -1,4 +1,5 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from '../../utils/contactDetails';
 import { recordActedForPerson } from '../../services/api';
 import { serviceLabel, PRIMARY_SERVICES, CARE_KINDS, serviceListsForKinds, kindsOfServices, JOB_DESCRIPTION_MAX_CHARS } from '../caregiver/signup/constants';
 import React, { useState } from 'react';
@@ -96,6 +97,7 @@ export const EditJobPostModal: React.FC<Props> = ({ post, onClose, onSaved, onSh
   const handleSave = async () => {
     if (form.careTypes.length === 0) { onShowToast('Select at least one care type', 'error'); return; }
     if (isMedicationInstruction(form.description)) { onShowToast(MEDICATION_INSTRUCTION_MESSAGE, 'error'); return; }
+    if (containsContactDetails(form.description)) { onShowToast(CONTACT_DETAILS_MESSAGE, 'error'); return; }
     if (!db) { onShowToast('Database error', 'error'); return; }
 
     setSaving(true);

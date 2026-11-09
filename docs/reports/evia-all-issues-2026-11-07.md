@@ -32,10 +32,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** A simple mistake in the backend could reach live users without being caught first. Those mistakes could affect payments or messages.
     - **How we'll fix it:** Add the missing backend check to the automatic checks, so a change with errors cannot be released.
 
-- [ ] **New-job texts reach care providers far outside their area** — _Found in live testing, Nov 7_
+- [x] **New-job texts reach care providers far outside their area** — _Found in live testing, Nov 7_
     - **The issue:** When a family posts a job, `onJobPostCreatedNotifyCaregivers` texts every care provider with a finished profile in range. A provider with no travel radius gets radius 0, and `withinCaregiverRadius` (`functions/src/agents/jobBoardPage.ts`) treats 0 (or a missing location) as "no limit". So that provider is texted about every job anywhere. The notice also doesn't check that the provider is approved or has an active membership, unlike the family-side search. Live: two test posts in Gilroy each texted a real provider in Santa Clara (about 30 miles away).
     - **Why it matters:** Care providers get texts for jobs they can't take, and providers who aren't cleared for families are told about families' jobs.
     - **How we'll fix it:** Treat a missing radius as a sensible default (for example 10 miles) and a missing location as out of range. Only notify providers who pass `isCaregiverBookable`. Add tests. (For testing, a 10-mile radius was added to that provider's record on Nov 7.)
+    - **Done (Nov 9):** A text now needs the provider to have a location AND a travel distance above zero, a job with coordinates, and a bookable provider (background check approved, membership active, not paused/opted out). The job board's own rule is unchanged. The website bell is written even when no text goes out. Tests in newJobNotice.test.ts. Behaviour change to note: unpaid or not-yet-approved providers are no longer told about new jobs.
 
 - [ ] **Anyone who knows a fixed code can sign in as the support line**
     - **The issue:** The public support number on the website, (650) 563-3842, is also set up in Firebase as a "test" phone number. It always accepts the same code and never sends a text. A second test number, +1 408-637-0483, works the same way.
@@ -98,10 +99,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Testing posting, messaging, booking or visits can reach real families and care providers.
     - **How we'll fix it:** Test those flows only in the sandbox (see the item above). Until then, keep test accounts outside the service area so no real person is matched.
 
-- [ ] **Text-message delivery receipts are thrown away** — _Found in live testing, Nov 7_
+- [~] **Text-message delivery receipts are thrown away** — _Found in live testing, Nov 7_
     - **The issue:** In the production logs, the Linq webhook rejects "message.sent" and "message.delivered" events with "linqWebhook: invalid signature — ignoring".
     - **Why it matters:** Evia can't tell whether a text reached the person, and any feature that relies on delivery status is blind. If incoming messages ever hit the same check, they would be dropped too.
     - **How we'll fix it:** Check the webhook signing secret in the functions env against the one in Linq, and how the signature is computed for these event types. Alert when signatures fail.
+    - **Partly done (Nov 9):** Hardened, root cause NOT confirmed (needs Linq's dashboard / the logs): the check now accepts more than one signing secret (LINQ_WEBHOOK_SECRET_2, LINQ_WEBHOOK_SECRETS), a 'sha256='/'v1=' prefix and comma-separated signatures, still fail-closed; the log now names the failing event type; and a failure raises one high-severity ops alert per event kind per hour. Still to do outside the code: compare the secret on the message.sent / message.delivered subscription in Linq with the functions env and set LINQ_WEBHOOK_SECRET_2 if it differs.
 
 
 - [ ] **Some notices are only sent if a text goes out** — _Found in live testing, Nov 7_
@@ -196,7 +198,7 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
 
 ### P0: Urgent (user safety)
 
-- [ ] **Emergency messages are missed in several situations**
+- [x] **Emergency messages are missed in several situations**
     - **The issue:** Evia has a fast safety check that spots emergencies ("my mom isn't breathing") and replies straight away with 911 or 988 guidance. That check only runs late in the conversation flow. Before it runs, Evia may already have replied with something else in these cases:
         - a brand-new texter
         - someone answering the opt-in question
@@ -206,6 +208,7 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
         - a message that is only a photo
     - **Why it matters:** A person in an emergency could get "Reply resume to continue your sign-up" instead of "Call 911."
     - **How we'll fix it:** Run the emergency check first, before any other reply, for every incoming message. Add an automated test that keeps it first.
+    - **Done (Nov 9):** The emergency check now runs from every entry point: a first-ever text from a number with no session, the cold consent reply, and the web-signup consent reply (it used to sit after those). A number that opted out (STOP) still gets nothing. A number with no session gets the 911 text and a critical support alert, not a stored session. Tests in handleInbound.routing.test.ts. The other items listed under this issue were not part of this change.
 
 - [x] **Everyday emergency wording isn't recognised** — _Done in code (8308ed73), not yet deployed_
     - **The issue:** The emergency check looks for exact phrases. iPhones type a curly apostrophe (’) by default, and the check doesn't treat it like a normal one. In our test, all of these were missed:
@@ -223,10 +226,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
         - Send every message that doesn't match a keyword to an AI emergency check as a backup. Today that backup only runs for non-English messages.
         - Make emergency cases a 100% pass requirement in the test suite.
 
-- [ ] **The AI can approve its own high-risk actions**
+- [x] **The AI can approve its own high-risk actions**
     - **The issue:** Actions like deleting an account, cancelling an interview or removing a job post are supposed to wait for the user to reply YES. A flaw in the approval check means the AI itself could submit the approval and skip the user's YES.
     - **Why it matters:** A confused AI, or someone hiding instructions in a profile bio or message, could trigger account deletion or cancellations without the user agreeing.
     - **How we'll fix it:** Strip approval codes out of anything the AI sends, accept an approval only after the user's real YES has been recorded, and never show approval codes to the AI.
+    - **Done (Nov 9):** Only an action the user's own YES has claimed (status 'executing') can be confirmed; 'awaiting' and 'approved' no longer count. The confirmation id is stripped from anything the model sends, the pending-action stub no longer shows the model the id, and the second gate (runTool) now validates the id instead of trusting any value. Tests updated and added.
 
 - [x] **The "tone filter" deletes words and reverses the meaning of messages** — _Done in code (8308ed73), not yet deployed_
     - **The issue:** A filter removes stiff phrases such as "I cannot" and "I'm not able to" from every outgoing text, without rewriting the sentence around them. For example:
@@ -277,10 +281,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
         - Make the live test use the same AI model as production.
         - Run the full live suite regularly against a test environment.
 
-- [ ] **Medicine names slip past the medication check**
+- [x] **Medicine names slip past the medication check**
     - **The issue:** The check that blocks medication instructions only looks for general words such as "pill", "dose" or "medication". A care plan note saying "Give her 2 Tylenol at 8pm" was saved without any warning. The website and Evia's texts use the same check, so both miss it.
     - **Why it matters:** The rule is that medication instructions never reach a care provider. Instructions that name a medicine get through.
     - **How we'll fix it:** Add common medicine names and patterns such as "give her 2 …" to the check, with tests, on both the website and Evia.
+    - **Done (Nov 9):** About 100 common medicine names (brand and generic) plus 'antibiotic', 'painkiller', 'blood thinner' and drops are now medication words in both copies. 'Give her 2 Tylenol at 8pm' is refused; 'She takes Lipitor every day' still passes (a stated fact). The list is not exhaustive; extend it when one is missed.
 
 - [ ] **Short AI checks may come back empty (needs confirmation)**
     - **The issue:** Some quick checks, including the backup emergency check, allow only a few words of output. The newer AI models can use that allowance "thinking," which may leave no answer. An empty answer is treated as "no emergency."
@@ -413,15 +418,17 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** The product doesn't look the way it was designed, and visitors download font files that are never used.
     - **How we'll fix it:** Correct the theme setting so body text uses the brand font, and remove the unused font.
 
-- [ ] **"Looks good" on the care plan publishes a job post without saying so**
+- [x] **"Looks good" on the care plan publishes a job post without saying so**
     - **The issue:** Confirming the care plan with "Looks good" creates a public job post straight away, and nearby care providers are texted about it. Nothing on the button or the page says this will happen.
     - **Why it matters:** A family checking their details can end up advertising a job they weren't ready to post, and real care providers get a text. This happened during testing.
     - **How we'll fix it:** Make posting a separate, clearly labelled step ("Post this job"), or ask the family to confirm and show what will be shared first.
+    - **Done (Nov 9):** The family dashboard no longer posts automatically. Once identity and membership are done it shows a 'Your job isn't posted yet' card with what will be shared (street and contact details are not), who sees it, and a 'Post this job' button (plus 'Not yet'). Tests in WhatsNext.test.tsx. Evia's own posting flow already had an explicit confirm step.
 
-- [ ] **Contact details can be put in public job descriptions**
+- [x] **Contact details can be put in public job descriptions**
     - **The issue:** The job description box says not to include phone numbers or emails, but a description containing both was accepted and saved.
     - **Why it matters:** Every care provider can read the description, so a family can expose personal contact details without realising.
     - **How we'll fix it:** Detect phone numbers and email addresses when the description is saved, on the website and by text, and ask the family to remove them.`)
+    - **Done (Nov 9):** New shared check (utils/contactDetails.ts + functions twin, parity-tested) refuses phone numbers (digits and spelled out), emails (also 'name at gmail dot com'), links, @handles and off-Evia contact/payment apps (WhatsApp, Telegram, Snapchat, Venmo, Zelle, Cash App, PayPal). Wired into the Post a job details and title, the job edit window, the older posting wizard, Evia's posting flow and edit, and the text intake. Same refusal for care provider bios: profile editor, signup wizard, Evia's bio step and the profile tool.
     - **Confirmed Nov 7:** "Call me at 408-555-0199" went through the form and was saved word-for-word in the post's `description`.
 
 - [ ] **"Nearby Care Providers" looks like it never finishes loading** — _Found in live testing, Nov 7_

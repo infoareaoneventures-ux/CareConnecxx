@@ -39,6 +39,8 @@ vi.mock("../../agents/pendingActions", () => ({
   isHighRisk: vi.fn().mockReturnValue(false),
   proposePendingAction: vi.fn(),
   buildPendingActionStub: vi.fn(),
+  getPendingActionById: vi.fn().mockResolvedValue({ id: "pa_42", status: "executing" }),
+  isConfirmedActionValid: vi.fn().mockReturnValue(true),
 }));
 
 import { runTool, ToolHandler, RunToolContext } from "../runTool";

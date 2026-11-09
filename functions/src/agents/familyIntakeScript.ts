@@ -47,6 +47,7 @@
 //
 // Pure parts (step order, next step, roster rules, questions, value validation)
 // are exported for tests; every side effect arrives through FamilyIntakeDeps.
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from "../utils/contactDetails";
 import {
   AGE_RANGES, STAGE_HEADING, OTHER_KIND_QUESTION, ageRangeFromWords, ageRangeLabel, stageQuestion,
   recipientCareKind, rosterCareKinds, serviceMenuText, serviceLabel, JOB_DESCRIPTION_MAX_CHARS,
@@ -751,6 +752,7 @@ async function readDescription(deps: FamilyIntakeDeps, text: string): Promise<St
   const t = text.trim();
   if (t.length > JOB_DESCRIPTION_MAX_CHARS) return { error: `That's ${t.length.toLocaleString("en-US")} characters and the job details hold up to ${JOB_DESCRIPTION_MAX_CHARS.toLocaleString("en-US")}. Could you send a shorter version?` };
   if (deps.isMedicationInstruction(t)) return { error: deps.medicationMessage };
+  if (containsContactDetails(t)) return { error: CONTACT_DETAILS_MESSAGE }; // 2026-11-09: no phone, email or link in the public details
   return { fields: { jobDescription: t }, ack: "Got it, I saved that." };
 }
 

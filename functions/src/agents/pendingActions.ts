@@ -378,10 +378,17 @@ function canonicalizeToolInput(input: unknown): string {
 
 // Validate a _confirmedActionId at the MCP gate so the gate's safety lives in
 // CODE, not in caller discipline: the confirmation must reference a real,
-// still-awaiting (the legit re-run dispatches before resolving), unexpired
-// action for the SAME phone and tool — AND, when the current input is supplied,
-// the same semantic parameters as the stored proposal. This stops a valid
-// confirmation id from being reused to commit a DIFFERENT action.
+// unexpired action for the SAME phone and tool that a REAL user YES has already
+// claimed — AND, when the current input is supplied, the same semantic
+// parameters as the stored proposal. This stops a valid confirmation id from
+// being reused to commit a DIFFERENT action.
+//
+// 2026-11-09 (Wave 1, "the AI can approve its own high-risk actions"): ONLY
+// status "executing" is accepted. That status is written by exactly one thing —
+// approvalHandler's claimPendingAction, which runs after the user's own inbound
+// YES (or DELETE MY ACCOUNT) was classified. Before, "awaiting" and "approved"
+// were accepted too, so a model that put the proposal's id in its next tool call
+// (the stub used to show it the id) executed the action with no user reply.
 export function isConfirmedActionValid(
   pending:      PendingAction | null,
   toolName:     string,
@@ -391,20 +398,10 @@ export function isConfirmedActionValid(
 ): boolean {
   if (
     !(pending !== null &&
-      // 2026-09-06 fix: "executing" MUST be accepted here — approvalHandler's
-      // executeConfirmedAction calls claimPendingAction (awaiting → executing,
-      // a single-fire transaction) BEFORE dispatching to the MCP gate with
-      // _confirmedActionId set, so the legitimate re-run ALWAYS sees status
-      // "executing" by the time this check runs, never "awaiting". Rejecting
-      // "executing" here meant EVERY confirmed high-risk action in the product
-      // failed unconditionally with PERMISSION_DENIED ("This confirmation is
-      // no longer valid") — found via a live test where a family confirmed
-      // declining a job applicant and got exactly that error. claimPendingAction's
-      // own transaction (checks status !== "awaiting" inside the transaction)
-      // already provides the single-fire/no-double-dispatch guarantee — this
-      // check exists to reject a forged/expired/wrong-tool/wrong-phone/
-      // tampered-input id, not to re-police a claim that already succeeded.
-      (pending.status === "awaiting" || pending.status === "approved" || pending.status === "executing") &&
+      // "executing" = claimPendingAction (awaiting → executing, a single-fire
+      // transaction) already ran because the user confirmed; the legitimate re-run
+      // always sees it. An action still "awaiting" has had NO user confirmation.
+      pending.status === "executing" &&
       new Date(pending.expiresAt).getTime() > nowMs &&
       pending.toolName === toolName &&
       pending.phone === phone)
@@ -454,7 +451,6 @@ export async function resolvePendingAction(
 // this and generates a confirmation prompt for the family.
 export function buildPendingActionStub(action: PendingAction): {
   _pending_action: true;
-  actionId:        string;
   toolName:        string;
   preview:         string;
   expires_in_minutes: number;
@@ -462,8 +458,8 @@ export function buildPendingActionStub(action: PendingAction): {
 } {
   const minutes = Math.max(1, Math.ceil((new Date(action.expiresAt).getTime() - Date.now()) / 60_000));
   return {
+    // No action id here on purpose (2026-11-09): the model must never hold the key that releases the action.
     _pending_action: true,
-    actionId:        action.id,
     toolName:        action.toolName,
     preview:         action.preview,
     expires_in_minutes: minutes,

@@ -98,7 +98,7 @@ describe("safety tools", () => {
   describe("set_block_status", () => {
     describe("action: 'block'", () => {
       // Confirmed-action gate (U12): seed a pending doc for the bypass call below.
-      beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }));
+      beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" }));
 
       it("requires userId, targetUserId, and action", async () => {
         const r = await handleToolCall("set_block_status", { userId: "u1" }) as any;
@@ -161,7 +161,7 @@ describe("safety tools", () => {
 
     describe("action: 'report'", () => {
       // Confirmed-action gate (U12): seed a pending doc for the bypass calls below.
-      beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }));
+      beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" }));
 
       it("requires category and description", async () => {
         const r = await handleToolCall("set_block_status", { userId: "u1", targetUserId: "u2", action: "report", category: "harassment" }) as any;

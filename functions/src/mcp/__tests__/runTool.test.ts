@@ -6,7 +6,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const gate = vi.hoisted(() => ({
   isHighRisk: vi.fn().mockReturnValue(false),
   proposePendingAction: vi.fn().mockResolvedValue({ id: "pa_1", preview: "Cancel appointment?" }),
-  buildPendingActionStub: vi.fn().mockReturnValue({ _pendingAction: true, actionId: "pa_1" }),
+  buildPendingActionStub: vi.fn().mockReturnValue({ _pendingAction: true }),
+  getPendingActionById: vi.fn().mockResolvedValue({ id: "pa_1", status: "executing" }),
+  isConfirmedActionValid: vi.fn().mockReturnValue(true),
 }));
 vi.mock("../../agents/pendingActions", () => gate);
 
@@ -27,7 +29,9 @@ describe("runTool", () => {
     vi.clearAllMocks(); // gate mocks are hoisted/shared — clear call history between tests
     gate.isHighRisk.mockReturnValue(false);
     gate.proposePendingAction.mockResolvedValue({ id: "pa_1", preview: "Cancel appointment?" });
-    gate.buildPendingActionStub.mockReturnValue({ _pendingAction: true, actionId: "pa_1" });
+    gate.buildPendingActionStub.mockReturnValue({ _pendingAction: true });
+    gate.getPendingActionById.mockResolvedValue({ id: "pa_1", status: "executing" });
+    gate.isConfirmedActionValid.mockReturnValue(true);
   });
 
   it("injects session fields into the tool input (clientId + userId from userId)", async () => {
@@ -69,6 +73,15 @@ describe("runTool", () => {
     const result = await runTool(tool({ name: "cancel_appointment", run }), {}, { actor: "client" });
     expect(result).toMatchObject({ _toolError: true, code: "PERMISSION_DENIED" });
     expect(gate.proposePendingAction).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("a _confirmedActionId the user never confirmed (forged / still awaiting) is REFUSED and the tool does not run", async () => {
+    gate.isHighRisk.mockReturnValue(true);
+    gate.isConfirmedActionValid.mockReturnValue(false);
+    const run = vi.fn();
+    const result = await runTool(tool({ name: "cancel_appointment", run }), { _confirmedActionId: "forged" }, ctx);
+    expect(result).toMatchObject({ _toolError: true, code: "PERMISSION_DENIED" });
     expect(run).not.toHaveBeenCalled();
   });
 

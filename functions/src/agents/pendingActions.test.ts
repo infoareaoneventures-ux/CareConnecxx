@@ -346,7 +346,7 @@ describe("resolvePendingAction", () => {
 });
 
 describe("buildPendingActionStub", () => {
-  it("produces a Claude-readable stub with action id, preview, and TTL", () => {
+  it("produces a Claude-readable stub with preview and TTL — and NO action id (the model must never hold the key)", () => {
     const action: PendingAction = {
       id:         "pa_42",
       phone:      "+15550001111",
@@ -359,7 +359,8 @@ describe("buildPendingActionStub", () => {
     };
     const stub = buildPendingActionStub(action);
     expect(stub._pending_action).toBe(true);
-    expect(stub.actionId).toBe("pa_42");
+    expect(JSON.stringify(stub)).not.toContain("pa_42");
+    expect("actionId" in stub).toBe(false);
     expect(stub.toolName).toBe("delete_memory_file");
     expect(stub.preview).toBe("Delete the profile memory file");
     expect(stub.expires_in_minutes).toBeGreaterThanOrEqual(13);

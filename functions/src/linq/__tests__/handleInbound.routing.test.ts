@@ -676,6 +676,49 @@ describe("safety + account gates", () => {
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
+  // 2026-11-09 (Wave 1): the crisis check used to sit AFTER the branches that return on their own
+  // (first-ever text, cold consent reply, web-signup consent reply), so an emergency sent there was
+  // never looked at. It now runs from each of those entry points.
+  it("an emergency from a number with NO session is answered (crisis text + support alert), not treated as a first hello", async () => {
+    detectCrisis.mockReturnValue("medical");
+    isLikelyRealCrisis.mockResolvedValue(true);
+    await handleInbound(makeEvent("my mom fell and she is not breathing"));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
+    expect(hoisted.docState.get("admin_alerts/auto-add")).toMatchObject({ type: "cara_medical_emergency", severity: "critical" });
+    // No session record is created (it would turn the person's next hello into a returning-user turn).
+    expect(hoisted.docState.has(`agent_sessions/${PHONE}`)).toBe(false);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("an emergency sent while the cold consent question is pending is answered, not read as a consent reply", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, service: "SMS", userType: null, onboardingStep: "cold_awaiting_consent", optedOut: false, optedIn: false });
+    detectCrisis.mockReturnValue("medical");
+    isLikelyRealCrisis.mockResolvedValue(true);
+    await handleInbound(makeEvent("my dad collapsed, he is not responding"));
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
+    expect(parseWithClaude).not.toHaveBeenCalled(); // never classified as a consent answer
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).optedIn).toBe(false); // consent untouched
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify).toBeTruthy(); // NOTIFY armed
+  });
+
+  it("an emergency sent while the web-signup consent question is pending is answered first", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: "u1", seniorId: "u1", service: "SMS", optedOut: false, optedIn: false });
+    detectCrisis.mockReturnValue("medical");
+    isLikelyRealCrisis.mockResolvedValue(true);
+    await handleInbound(makeEvent("she is having a stroke"));
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
+    expect(parseWithClaude).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).optedIn).toBe(false);
+  });
+
+  it("a number that opted out gets no crisis text (the STOP is honoured first)", async () => {
+    seedSession({ optedOut: true });
+    detectCrisis.mockReturnValue("medical");
+    await handleInbound(makeEvent("he is not breathing"));
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("crisis keyword judged NOT real falls through to the QA agent", async () => {
     seedSession();
     detectCrisis.mockReturnValue("medical");

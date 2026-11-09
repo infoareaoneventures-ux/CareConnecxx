@@ -65,51 +65,30 @@ import { extractMediaPart, downloadMedia, storeInboundMedia, InboundMediaPart } 
 import { classifyMedia } from "../utils/visionVerify";
 import { detectLanguage, languageFromSession, t as tr, flowLabel, type Language } from "../utils/language";
 import { recordApprovalNoticeProviderStatus } from "../billing/approvalNoticeDispatcher";
+import { verifySignature, webhookSecretsFromEnv } from "./webhookSignature";
 
 const db = admin.firestore();
 
-// ── Signature verification ────────────────────────────────────────────────────
+// ── Signature verification ── (linq/webhookSignature.ts)
 
-function verifySignature(
-  rawBody:   Buffer,
-  timestamp: string,
-  signature: string,
-  secret:    string
-): boolean {
-  // Signature is HMAC-SHA256 over `{timestamp}.{payload}` (per Linq docs).
-  const payload = Buffer.concat([Buffer.from(`${timestamp}.`), rawBody]);
-
-  // Linq's docs don't pin down the secret's encoding or the signature's output
-  // encoding, so derive the HMAC key both ways and compare the signature against
-  // every common digest encoding. A match in any pair proves the sender holds the
-  // secret (which is the whole point); the extra candidates don't weaken anything
-  // since each still requires knowing the secret.
-  const keyCandidates: Buffer[] = [
-    Buffer.from(secret, "utf8"),    // secret used as a raw string key (Stripe-style; most providers)
-    Buffer.from(secret, "base64"),  // secret used as base64-encoded key bytes
-  ];
-
-  const safeEqual = (a: string, b: string): boolean => {
-    if (a.length !== b.length) return false;
-    try {
-      return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-    } catch {
-      return false;
-    }
-  };
-
-  for (const key of keyCandidates) {
-    const hmac = crypto.createHmac("sha256", key).update(payload).digest();
-    const expectedB64    = hmac.toString("base64");
-    const expectedB64Url = hmac.toString("base64url");
-    const expectedHex    = hmac.toString("hex");
-    if (safeEqual(expectedB64,    signature) ||
-        safeEqual(expectedB64Url, signature) ||
-        safeEqual(expectedHex,    signature)) {
-      return true;
-    }
-  }
-  return false;
+// Failures are alerted, not just logged (2026-11-09): a wave of rejected events (a rotated secret, a new
+// subscription with its own secret, an encoding change) used to be visible only to someone reading the logs.
+// At most one alert per event kind per hour per instance; the kind is reduced to a known name so a spoofed
+// request cannot make up alert types.
+const _sigAlertedAt = new Map<string, number>();
+const KNOWN_LINQ_EVENTS = new Set(["message.received", "message.sent", "message.delivered", "message.read", "message.failed", "message.edited", "reaction.added", "reaction.removed", "chat.created", "phone_number.status_updated"]);
+function raiseInvalidSignatureAlert(rawEventType: string): void {
+  const kind = KNOWN_LINQ_EVENTS.has(rawEventType) ? rawEventType : "other";
+  const last = _sigAlertedAt.get(kind) ?? 0;
+  if (Date.now() - last < 60 * 60 * 1000) return;
+  _sigAlertedAt.set(kind, Date.now());
+  void createCaraOpsAlert({
+    type:     "linq_webhook_signature_invalid",
+    severity: "high",
+    source:   "linqWebhook",
+    message:  `Linq webhook events are failing the signature check (${kind}). Check the signing secret(s) in the functions env against Linq's subscriptions.`,
+    context:  { eventKind: kind },
+  }).catch(() => {});
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
@@ -246,6 +225,63 @@ async function handleTypingStarted(event: unknown): Promise<void> {
     cachedAt:  now,
     expiresAt: new Date(Date.now() + 60 * 1000).toISOString(),
   });
+}
+
+// ── Crisis check for ANY inbound text (2026-11-09, fix plan Wave 1) ─────────────
+// The check used to sit in the middle of handleInboundTurn, AFTER the branches that return on
+// their own — a first-ever text, the cold consent reply, the web-signup consent reply, the
+// admin-assist consent reply — so "my mom isn't breathing" sent to a number with no session (or
+// answering a consent question) was never looked at. It now runs from every one of those entry
+// points. Returns true when a crisis reply went out (the caller stops there).
+//   • keyword fast-path → 1.2s LLM check that filters quotes / jokes / hypotheticals (fail-safe: crisis);
+//   • no keyword + non-English → the multilingual LLM classifier (paraphrase / code-switching).
+// A number with no session yet has nowhere to store the NOTIFY follow-up, so support is paged
+// directly (raiseMedicalCrisisAlert) and no session record is created.
+async function respondToCrisisIfAny(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession | null,
+): Promise<boolean> {
+  if (!text) return false;
+  const lang: Language = session
+    ? languageFromSession(session as unknown as Record<string, unknown>)
+    : ((await detectLanguage(text).catch(() => null)) ?? "en");
+
+  const respondMedical = async (): Promise<void> => {
+    await sendMessage(chatId, tr.crisis_medical(lang));
+    logCrisisDetected(phone, "medical", text).catch(() => {});
+    raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
+    if (session) {
+      // Arm the NOTIFY follow-up so the family's "NOTIFY" reply reaches the care team.
+      await db.collection("agent_sessions").doc(phone).update({
+        pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
+      }).catch(() => {});
+    }
+  };
+
+  const crisis = detectCrisis(text);
+  if (crisis === "medical") {
+    if (await isLikelyRealCrisis(text, "medical")) { await respondMedical(); return true; }
+    console.info("crisisDetector: medical keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
+  }
+  if (crisis === "emotional") {
+    if (await isLikelyRealCrisis(text, "emotional")) { await sendEmotionalCrisisResponse(phone, chatId, lang, text); return true; }
+    console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
+  }
+
+  // No keyword fired. For messages that look non-English (Spanish is supported), run the
+  // multilingual LLM classifier — gated to likely-non-English to avoid an LLM call on every
+  // English message. The classifier already judges genuineness, so a hit goes straight to the reply.
+  if (crisis === null) {
+    const looksNonEnglish = lang === "es" || /[ñ¿¡áéíóúü]/i.test(text);
+    if (looksNonEnglish) {
+      const llmCrisis = await classifyCrisisMultilingual(text);
+      if (llmCrisis === "medical") { await respondMedical(); return true; }
+      if (llmCrisis === "emotional") { await sendEmotionalCrisisResponse(phone, chatId, lang, text); return true; }
+    }
+  }
+  return false;
 }
 
 // User replied "NOTIFY" after a crisis message. Page our support team with a
@@ -796,6 +832,8 @@ const handleInboundInner = traceable(
   // ── New user — texted first (MO consent) ────────────────────────────────────
   // (or a cold-parked phone whose /start signup is waiting — restartViaWebBridge)
   if (!sessionSnap.exists || restartViaWebBridge) {
+    // A first-ever text can be an emergency: look at it BEFORE capability checks, onboarding and consent.
+    if (await respondToCrisisIfAny(phone, chatId, text, sessionSnap.exists ? (sessionSnap.data() as AgentSession) : null)) return;
     const capability = await checkCapability(phone);
     const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
 
@@ -1113,6 +1151,12 @@ const handleInboundInner = traceable(
     return;
   }
 
+  // ── Crisis check (2026-11-09) — before the consent branches below, which return on their own ──
+  // A thread the team is holding (humanMode) is a person's to answer; everything else is looked at here.
+  if (!(session as unknown as Record<string, { on?: boolean } | undefined>).humanMode?.on) {
+    if (await respondToCrisisIfAny(phone, chatId, text, session)) { await stopTyping(chatId).catch(() => {}); return; }
+  }
+
   // ── Pending cold-inbound consent (this session's own consent gate) ─────────
   // Distinguished from the web-signup case below by onboardingStep — the
   // auth-trigger-seeded session never sets one. The reply IS the consent
@@ -1396,55 +1440,8 @@ const handleInboundInner = traceable(
   // the yearly background-check refresh is the site's own renewal flow —
   // Stripe renewal → consent card on the dashboard — not an Evia-only path.)
 
-  const crisis = detectCrisis(text);
-  const sessionLang = languageFromSession(session as unknown as Record<string, unknown>);
-  if (crisis === "medical") {
-    if (await isLikelyRealCrisis(text, "medical")) {
-      await sendMessage(chatId, tr.crisis_medical(sessionLang));
-      logCrisisDetected(phone, "medical", text).catch(() => {});
-      raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
-      // Arm the NOTIFY follow-up so the family's "NOTIFY" reply reaches the care team.
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
-      }).catch(() => {});
-      return;
-    }
-    console.info("crisisDetector: medical keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
-  }
-  if (crisis === "emotional") {
-    if (await isLikelyRealCrisis(text, "emotional")) {
-      await sendEmotionalCrisisResponse(phone, chatId, sessionLang, text);
-      return;
-    }
-    console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
-  }
-
-  // No crisis keyword fired. For messages that look non-English (Spanish is a
-  // supported language), run a multilingual LLM crisis classify to catch
-  // paraphrased or code-switched crisis text the keyword lists can't enumerate.
-  // Gated to likely-non-English to avoid adding an LLM call to every English
-  // message — see the launch-readiness plan's open question (every-message vs
-  // non-English). The classifier already judges genuineness, so a positive
-  // result routes straight to the crisis response (no second verify call).
-  if (crisis === null) {
-    const looksNonEnglish = sessionLang === "es" || /[ñ¿¡áéíóúü]/i.test(text);
-    if (looksNonEnglish) {
-      const llmCrisis = await classifyCrisisMultilingual(text);
-      if (llmCrisis === "medical") {
-        await sendMessage(chatId, tr.crisis_medical(sessionLang));
-        logCrisisDetected(phone, "medical", text).catch(() => {});
-        raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
-        }).catch(() => {});
-        return;
-      }
-      if (llmCrisis === "emotional") {
-        await sendEmotionalCrisisResponse(phone, chatId, sessionLang, text);
-        return;
-      }
-    }
-  }
+  // (The crisis check itself now runs EARLIER — respondToCrisisIfAny, before the new-contact and
+  // consent branches that return on their own — so no text skips it.)
 
   // ── Zep lazy-init / self-heal — ANY session without a thread ──────────────
   // Was gated to onboardingStep === "complete" (backfill for pre-Zep users),
@@ -2613,8 +2610,8 @@ export const linqWebhook = functions
   const sendOk = () => { if (!sent) { sent = true; res.status(200).send("ok"); } };
 
   try {
-    const webhookSecret = process.env.LINQ_WEBHOOK_SECRET;
-    if (!webhookSecret) {
+    const webhookSecrets = webhookSecretsFromEnv();
+    if (webhookSecrets.length === 0) {
       // Fail closed. If the secret is unset, we cannot verify any inbound event,
       // which means replays, spoofed senders, and signature tampering are all
       // accepted as authentic. A missing secret is a deploy-time misconfig, not
@@ -2629,13 +2626,18 @@ export const linqWebhook = functions
     const timestamp = req.headers["x-webhook-timestamp"] as string ?? "";
     const signature = req.headers["x-webhook-signature"] as string ?? "";
     const rawBody   = (req as any).rawBody as Buffer ?? Buffer.from(JSON.stringify(req.body));
-    if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
+    if (!verifySignature(rawBody, timestamp, signature, webhookSecrets)) {
       // Diagnostic (2026-10-19): what kind of event fails the check — shape only, never the text, phone or headers' values.
       // (The founder's voice memos never reached transcription; bursts of rejected events line up with the attempts.)
       const bodyAny = (req.body ?? {}) as Record<string, any>;
       const partTypes = Array.isArray(bodyAny?.data?.parts) ? bodyAny.data.parts.map((x: any) => String(x?.type ?? "?")) : Array.isArray(bodyAny?.parts) ? bodyAny.parts.map((x: any) => String(x?.type ?? "?")) : [];
+      // The event name is read from every place Linq may put it (v3 body: event_type; header: x-webhook-event) —
+      // the old log read only "type"/"event", so the failing event kind was invisible in the logs.
+      const failedEventType = String(bodyAny?.event_type ?? req.headers["x-webhook-event"] ?? bodyAny?.type ?? bodyAny?.event ?? "?").slice(0, 60);
+      raiseInvalidSignatureAlert(failedEventType);
       console.warn("linqWebhook: invalid signature — ignoring", {
-        eventType: String(bodyAny?.type ?? bodyAny?.event ?? bodyAny?.event_type ?? "?").slice(0, 60),
+        eventType: failedEventType,
+        secretsConfigured: webhookSecrets.length,
         contentType: String(req.headers["content-type"] ?? "").slice(0, 60),
         bodyBytes: rawBody.length,
         hasRawBody: Boolean((req as any).rawBody),

@@ -75,6 +75,7 @@ import { resolveCaregiverRate as resolveCaregiverRateShared } from "../utils/car
 // and the site's Send Booking write since 2026-09-17).
 import { bookingTimeToMinutes } from "../agents/bookingResolution";
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from "../utils/medicationInstruction";
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from "../utils/contactDetails";
 
 // Resolve caregiver name + hourly rate from the caregiver doc. Mirrors the
 // name fallbacks used by the live `request_booking` path (name/fullName) so a
@@ -3116,8 +3117,8 @@ export async function handleToolCall(
     // Validate the confirmation against the pending doc so the gate's safety
     // lives HERE, not in caller discipline: a forged, expired, already-resolved,
     // wrong-phone, or wrong-tool id is refused instead of blindly bypassing.
-    // The legit re-run (approvalHandler) dispatches BEFORE resolving, so the
-    // doc is still "awaiting" at this point.
+    // The legit re-run (approvalHandler) dispatches after claimPendingAction (a real user YES), so
+    // the doc is "executing" at this point — an "awaiting" one has had no confirmation and is refused.
     const pending = await getPendingActionById(confirmedActionId);
     // Pass the current input so a valid confirmation id can't be reused to commit
     // a DIFFERENT action than the one that was proposed/approved.
@@ -4639,6 +4640,7 @@ async function executeToolCall(
         return { success: true, sentTo: email };
       }
       if (bio && typeof bio === "string" && bio.length > 2500) return toolError("INVALID_INPUT", "bio must be 2500 characters or fewer");
+      if (bio && typeof bio === "string" && containsContactDetails(bio)) return { success: false, error: CONTACT_DETAILS_MESSAGE, sayVerbatim: true };
       // The rate is the caregiver's to set (founder 2026-10-04): the 1-person rate is more than $0,
       // 2 / 3+ people may be 0 (not offered). No floor, no ceiling — same as the wizard and the page.
       const { RATE_RULE_TEXT, toExperienceBucket, toServiceRadius } = await import("../agents/onboardingContract");
@@ -6770,6 +6772,15 @@ async function executeToolCall(
           guidance: `Not saved — it contains medication instructions. Tell them, in these words: "${MEDICATION_INSTRUCTION_MESSAGE}" Then ask for the description again, or move on if they'd rather skip it. Never suggest what to write instead.`,
         };
       }
+      // No phone number, email or link in the public details (2026-11-09) — same refusal, same line, both doors.
+      if (role === "client" && fieldName === "jobDescription" && containsContactDetails(fieldValue)) {
+        return {
+          ok: true,
+          saved: false,
+          invalidValue: true,
+          guidance: `Not saved — it contains a phone number, email or link. Tell them, in these words: "${CONTACT_DETAILS_MESSAGE}" Then ask for the description again, or move on if they'd rather skip it. Never suggest what to write.`,
+        };
+      }
       let careNeedsGuidance = "";
       if (role === "client" && fieldName === "careNeeds") {
         // The website's "What type of care is needed? Select all that apply." —
@@ -6905,6 +6916,15 @@ async function executeToolCall(
         const bioText = typeof fieldValue === "string" ? fieldValue.trim() : "";
         if (!bioText) {
           return { ok: true, saved: false, invalidValue: true, guidance: "Their bio is empty — ask for a few words about themselves, in their own words, any length. Never write it for them." };
+        }
+        // The bio is public: no phone number, email or link (2026-11-09) — one refusal on the site and by text.
+        if (containsContactDetails(bioText)) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `Not saved — the bio is public and it contains a phone number, email or link. Tell them, in these words: "${CONTACT_DETAILS_MESSAGE}" Then ask for the bio again. Never write it for them.`,
+          };
         }
         if (bioText.length > BIO_MAX_CHARS) {
           return {

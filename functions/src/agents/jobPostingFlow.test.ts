@@ -345,6 +345,26 @@ describe("handleJpAskDescription — medication instructions never reach the pos
   });
 });
 
+describe("handleJpAskDescription — phone numbers, emails and links never reach the post (Wave 1, 2026-11-09)", () => {
+  beforeEach(() => { process.env.CONVERGENCE_UNFLIPPED = "job_posting"; });
+  afterEach(() => { delete process.env.CONVERGENCE_UNFLIPPED; });
+
+  it("refuses with the one line and asks again; nothing merged", async () => {
+    mapper.mapperReply.mockResolvedValueOnce("NO"); // back-out check
+    modelReplies("NO");                               // isQuestionOrOther
+    await handleJobPostingStep(PHONE, CHAT, "She is lovely and loves tea. Text me on 408-555-1212 or email jo@gmail.com.", {
+      ...SESSION,
+      jobPostingStep: "jp_ask_description",
+      jobPostingData: { jobFrequency: "occasional", jobCareNeeds: ["Companionship"], jobHourlyRate: 25 },
+    });
+    const merged = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobDescription);
+    expect(merged).toBeUndefined();
+    const sent = String(sendMessage.mock.calls.at(-1)?.[1]);
+    expect(sent).toContain("Phone numbers, emails and links can't go in here");
+    expect(sent).toContain("What else should care providers know about this job?");
+  });
+});
+
 describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical categories (2026-09-11)", () => {
   // job_posting is a DEFAULT_FLIPPED_FLOWS flow (dispatch resolves the step
   // from field-completion, not the literal jobPostingStep string) — force the

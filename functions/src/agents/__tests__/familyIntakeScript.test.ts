@@ -426,4 +426,15 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     expect(sent.at(-1)).toBe("Care providers here don't give medication.");
     expect(merged.length).toBe(0);
   });
+
+  it("a description with a phone number, email or link is refused, nothing saved (Wave 1, 2026-11-09)", async () => {
+    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, relationship: "self", seniorName: "Hamse", rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Light Housekeeping"], householdAsked: true, rate: 16 };
+    const { deps, sent, merged } = makeDeps(["TEXT", "TEXT"], site);
+    await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text: "Please call 408-555-1212 before you come", session: { onboardingData: {} } });
+    expect(String(sent.at(-1))).toContain("Phone numbers, emails and links can't go in here");
+    expect(merged.length).toBe(0);
+    await runFamilyIntakeTurn(deps, { phone: "+1", chatId: "c", text: "my email is jo@gmail.com", session: { onboardingData: {} } });
+    expect(String(sent.at(-1))).toContain("Phone numbers, emails and links can't go in here");
+    expect(merged.length).toBe(0);
+  });
 });

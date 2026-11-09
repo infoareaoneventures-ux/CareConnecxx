@@ -1,4 +1,5 @@
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from '../../utils/contactDetails';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   ChevronLeft, Loader2, Upload, Sparkles,
@@ -304,6 +305,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const handleSaveBio = async () => {
     // Required, no minimum (founder, 2026-10-19) — the cap is the box's maxLength.
     if (!form.bio.trim()) { onShowToast('Please write a few words about yourself', 'error'); return; }
+    if (containsContactDetails(form.bio)) { onShowToast(CONTACT_DETAILS_MESSAGE, 'error'); return; }
     setIsLoading(true);
     try {
       await dbService.updateUser('caregivers', uid, cleanData({

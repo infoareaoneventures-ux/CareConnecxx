@@ -494,17 +494,17 @@ describe("communication tools", () => {
       expect(del._toolError).toBe(true);
       expect(del.message ?? del.error ?? JSON.stringify(del)).toMatch(/care team/);
       // _confirmedActionId bypasses the runtime HITL gate once a pending doc exists (see safety.test.ts).
-      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }); 
+      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" }); 
       const block = await handleToolCall("set_block_status", { userId: "cg1", targetUserId: "c1", action: "block", _confirmedActionId: "test" }) as any;
       expect(block._toolError).toBe(true);
-      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }); 
+      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" }); 
       const report = await handleToolCall("set_block_status", { userId: "cg1", targetUserId: "careconnex-support", action: "report", category: "other", description: "x", _confirmedActionId: "test" }) as any;
       expect(report._toolError).toBe(true);
       expect(JSON.stringify(report)).toMatch(/Evia team thread/);
       // Someone NOT on the care team can still be blocked, like the page.
       hoisted.collState.set("booking_requests", []);
       hoisted.docState.set("users/c9", { name: "Stranger" });
-      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }); 
+      hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" }); 
       const ok = await handleToolCall("set_block_status", { userId: "cg1", targetUserId: "c9", action: "block", _confirmedActionId: "test" }) as any;
       expect(ok.blocked).toBe(true);
     });

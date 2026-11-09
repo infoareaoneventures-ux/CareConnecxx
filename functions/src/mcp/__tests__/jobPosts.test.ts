@@ -192,7 +192,7 @@ describe("cancel_job_post", () => {
 
   // cancel_job_post is high-risk (pendingActions.ts) — bypass the HITL gate
   // the same way safety.test.ts does, via a pre-approved pending_actions doc.
-  beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "cancel_job_post", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }));
+  beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "cancel_job_post", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" }));
 
   it("sets status to cancelled (matches services/api.ts's cancelJobPost, not 'closed')", async () => {
     hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open" });
@@ -435,7 +435,7 @@ describe("respond_to_job_application", () => {
   it("on reject: does not touch the job post or other applications", async () => {
     // Only the reject branch is high-risk (pendingActions.ts) — bypass via the
     // same pre-approved pending_actions doc pattern as safety.test.ts.
-    hoisted.docState.set("pending_actions/test", { toolName: "respond_to_job_application", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
+    hoisted.docState.set("pending_actions/test", { toolName: "respond_to_job_application", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" });
     hoisted.docState.set("job_applications/app_1", { clientId: CLIENT, jobId: JOB_ID, caregiverId: "cg1", status: "pending" });
     const r = await handleToolCall("respond_to_job_application", { applicationId: "app_1", clientId: CLIENT, decision: "reject", _confirmedActionId: "test" }) as any;
     expect(r.success).toBe(true);
@@ -445,7 +445,7 @@ describe("respond_to_job_application", () => {
   // 2026-09-16: the site's Decline button writes rejected + declinedAt and
   // sends the caregiver nothing — Evia now does exactly that.
   it("on reject: writes the site's fields (rejected + declinedAt) and does not message the care provider", async () => {
-    hoisted.docState.set("pending_actions/test", { toolName: "respond_to_job_application", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
+    hoisted.docState.set("pending_actions/test", { toolName: "respond_to_job_application", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" });
     hoisted.docState.set("job_applications/app_1", { clientId: CLIENT, jobId: JOB_ID, caregiverId: "cg1", status: "pending" });
     hoisted.collState.set("agent_sessions", [{ id: "+15550001111", userId: "cg1", chatId: "chat-cg" }]);
     const r = await handleToolCall("respond_to_job_application", { applicationId: "app_1", clientId: CLIENT, decision: "reject", _confirmedActionId: "test" }) as any;

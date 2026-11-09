@@ -18,6 +18,7 @@ import { serviceLabel, serviceLabels, serviceMenuText, JOB_DESCRIPTION_MAX_CHARS
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
 import { formatDateForDisplay } from "../utils/scheduledTime";
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from "../utils/medicationInstruction";
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from "../utils/contactDetails";
 
 const db = admin.firestore();
 
@@ -1265,6 +1266,11 @@ async function handleJpAskDescription(
     await sendMessage(chatId, `${MEDICATION_INSTRUCTION_MESSAGE} ${REASK}`);
     return;
   }
+  // No phone number, email or link in the public details (2026-11-09) — same line as the site's box.
+  if (containsContactDetails(description)) {
+    await sendMessage(chatId, `${CONTACT_DETAILS_MESSAGE} ${REASK}`);
+    return;
+  }
   await mergeJobData(phone, { jobDescription: description });
   await updateJobStep(phone, "jp_confirm_post");
   await sendJobPostRecap(phone, chatId, session);
@@ -1389,6 +1395,7 @@ async function applyJobPostEdit(
   if (edit.action === "edit_description" && edit.newDescription) {
     if (edit.newDescription.length > JOB_DESCRIPTION_MAX_CHARS) { await sendMessage(chatId, `That's ${edit.newDescription.length.toLocaleString("en-US")} characters and the job details hold up to ${JOB_DESCRIPTION_MAX_CHARS.toLocaleString("en-US")}. Could you send a shorter version?`); return; }
     if (isMedicationInstruction(edit.newDescription)) { await sendMessage(chatId, `${MEDICATION_INSTRUCTION_MESSAGE} What should the details say instead?`); return; }
+    if (containsContactDetails(edit.newDescription)) { await sendMessage(chatId, `${CONTACT_DETAILS_MESSAGE} What should the details say instead?`); return; }
     await mergeJobData(phone, { jobDescription: edit.newDescription });
     return landed("Details updated.");
   }

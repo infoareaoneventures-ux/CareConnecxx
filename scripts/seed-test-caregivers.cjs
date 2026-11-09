@@ -26,6 +26,13 @@
  * Clara County city so seeded fakes don't surface to real Gilroy/San Jose signups.
  */
 
+// Guard: seed and cleanup write to the LIVE project (careconnex-d4c8b). They refuse to run unless you pass --live ("list" is read-only).
+if (['seed', 'cleanup'].includes(process.argv[2]) && !process.argv.includes('--live')) {
+  console.error('Refusing to run: seed-test-caregivers.cjs seed/cleanup writes to the LIVE careconnex-d4c8b project. Re-run with --live to confirm.');
+  process.exit(1);
+}
+process.argv = process.argv.filter((a) => a !== '--live');
+
 const path = require("path");
 const admin = require(path.join(__dirname, "..", "functions", "node_modules", "firebase-admin"));
 const serviceAccount = require(path.join(__dirname, "..", "functions", "serviceAccountKey.json"));

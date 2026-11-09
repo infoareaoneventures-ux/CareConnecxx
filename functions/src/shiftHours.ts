@@ -1,4 +1,5 @@
 import * as functions from "firebase-functions/v1";
+import { getStripeSecretKey } from "./stripeConfig";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
 import { isOfflinePaymentMethod } from './billing/paymentMethods';
@@ -45,7 +46,7 @@ async function tellCaregiver(caregiverId: string, type: string, title: string, b
   return true;
 }
 
-const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY, {
+const stripe = new Stripe(getStripeSecretKey(), {
   timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't run a payment handler to the function deadline
 });
 const db = admin.firestore();

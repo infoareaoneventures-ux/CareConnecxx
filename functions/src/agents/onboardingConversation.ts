@@ -1,4 +1,5 @@
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
+import { getStripeSecretKey } from "../stripeConfig";
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { isMvrCheckConfigured } from "../mvrConfig";
@@ -108,7 +109,7 @@ function getStripe(): Stripe {
   // logic still flows. Production (not dry-run) always gets the real client,
   // so the live path is unchanged.
   if (isOnboardingDryRun()) return DRY_RUN_STRIPE;
-  if (!_stripe) _stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", { apiVersion: "2023-10-16" as any });
+  if (!_stripe) _stripe = new Stripe(getStripeSecretKey(), { apiVersion: "2023-10-16" as any });
   return _stripe;
 }
 

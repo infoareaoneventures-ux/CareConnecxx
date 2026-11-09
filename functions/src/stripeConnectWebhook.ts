@@ -3,16 +3,16 @@ import * as admin from "firebase-admin";
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from "./utils/webhookLedger";
 import { isOfflinePaymentMethod } from "./billing/paymentMethods";
 import Stripe from "stripe";
+import { getStripeSecretKey, getConnectWebhookSecret } from "./stripeConfig";
 
 if (!admin.apps.length) {
     admin.initializeApp();
 }
 
-const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY);
+const stripe = new Stripe(getStripeSecretKey());
 const db = admin.firestore();
 
-const connectWebhookSecret = () =>
-    functions.config().stripe?.connect_webhook_secret || process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+const connectWebhookSecret = () => getConnectWebhookSecret();
 
 // Bell ⇄ text in lockstep (caregiver sweep C11, 2026-10-11): the payout text goes
 // FIRST (sendSMSToUser — the caregiver's phone from caregivers/{uid} or

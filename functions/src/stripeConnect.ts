@@ -3,12 +3,13 @@ import * as admin from "firebase-admin";
 import { getCaregiverPayoutFields } from "./caregiverPrivate";
 import { ensureConnectAccount, syncConnectAccountStatus, createConnectOnboardingLink } from "./connectAccount";
 const Stripe = require("stripe");
+import { getStripeSecretKey } from "./stripeConfig";
 
 if (!admin.apps.length) {
     admin.initializeApp();
 }
 
-const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY);
+const stripe = new Stripe(getStripeSecretKey());
 const db = admin.firestore();
 
 const appUrl = (): string => {

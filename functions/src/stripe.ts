@@ -1,6 +1,8 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
+import { getStripeSecretKey } from "./stripeConfig";
+import { invoiceSubscriptionId, withTopLevelPeriod } from "./stripeCompat";
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from './utils/webhookLedger';
 import { appLink } from './config/appUrl';
 import { createCaregiverMembershipCheckout, markCaregiverMembershipPaid, createCaregiverBillingPortalUrl, NoBillingAccountError, resolveCaregiverAnnualPriceId } from './caregiverMembershipBilling';
@@ -9,7 +11,7 @@ import { resolveCaregiverPhone } from './utils/caregiverPhone';
 import { LIVE_SUBSCRIPTION_STATUSES, pickLiveSubscription } from './utils/liveSubscription';
 
 // Initialize Stripe with secret key
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
+const stripe = new Stripe(getStripeSecretKey(), {
   apiVersion: '2023-10-16',
   timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't hold a webhook claim open to the function deadline
 });
@@ -210,7 +212,7 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
 
       case 'customer.subscription.deleted': {
         const subscription = event.data.object as Stripe.Subscription;
-        await handleSubscriptionDeleted(subscription, event.created);
+        await handleSubscriptionDeleted(withTopLevelPeriod(subscription), event.created);
         break;
       }
 
@@ -439,12 +441,13 @@ async function freshSubscription(subscription: Stripe.Subscription): Promise<Str
     const live = await stripe.subscriptions.retrieve(subscription.id);
     if (live && typeof live === 'object' && (live as Stripe.Subscription).status) {
       // Keep the identity metadata the payload carried if Stripe's copy lacks it (SMS checkouts).
-      return { ...(live as Stripe.Subscription), metadata: { ...(subscription.metadata ?? {}), ...((live as Stripe.Subscription).metadata ?? {}) } };
+      return withTopLevelPeriod({ ...(live as Stripe.Subscription), metadata: { ...(subscription.metadata ?? {}), ...((live as Stripe.Subscription).metadata ?? {}) } });
     }
   } catch (err) {
     console.warn(`freshSubscription: retrieve failed for ${subscription.id}, using the webhook payload:`, err instanceof Error ? err.message : err);
   }
-  return subscription;
+  // The payload may be in the newer API shape (period dates on the item) — normalise so the handlers read real dates.
+  return withTopLevelPeriod(subscription);
 }
 
 /** Pure (C14): is this event older than the last subscription event already mirrored? */
@@ -539,7 +542,7 @@ async function mirrorMembershipToCaregiverDoc(userId: string, membershipStatus: 
  * Handle invoice.payment_succeeded
  */
 async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
-  const subscriptionId = invoice.subscription;
+  const subscriptionId = invoiceSubscriptionId(invoice); // old or new (2025+) payload shape
   if (!subscriptionId) return;
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId as string);
@@ -676,7 +679,7 @@ async function notifyCaregiverRenewalCharge(userId: string, invoice: Stripe.Invo
  * Handle invoice.payment_failed
  */
 async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
-  const subscriptionId = invoice.subscription;
+  const subscriptionId = invoiceSubscriptionId(invoice); // old or new (2025+) payload shape
   if (!subscriptionId) return;
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId as string);

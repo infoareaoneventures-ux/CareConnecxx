@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { StepError } from './StepError';
 import { Calendar, CalendarDays, Clock, Briefcase } from 'lucide-react';
 import { DayOfWeekPicker } from '../../ui/DayOfWeekPicker';
 import { StepProps, TIME_OF_DAY_OPTIONS } from './types';
@@ -33,31 +34,33 @@ const FREQUENCY_OPTIONS = [
 ];
 
 export const Step1Schedule: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
+  const [error, setError] = useState<string | null>(null);
   const handleContinue = () => {
     if (!data.jobFrequency) {
-      onShowToast('Choose how often you need care', 'error');
+      setError('Choose how often you need care');
       return;
     }
     if (!data.startDate) {
-      onShowToast('Please choose a start date', 'error');
+      setError('Please choose a start date');
       return;
     }
     if (data.startDate < todayIso()) {
-      onShowToast('Start date must be today or later', 'error');
+      setError('Start date must be today or later');
       return;
     }
     if (!data.ongoing && data.endDate && data.endDate < data.startDate) {
-      onShowToast('End date must be after the start date', 'error');
+      setError('End date must be after the start date');
       return;
     }
     if (!data.daysFlexible && data.daysOfWeek.length === 0) {
-      onShowToast('Pick at least one day or mark your days as flexible', 'error');
+      setError('Pick at least one day or mark your days as flexible');
       return;
     }
     if (data.timeOfDay.length === 0) {
-      onShowToast('Choose at least one time of day', 'error');
+      setError('Choose at least one time of day');
       return;
     }
+    setError(null);
     onContinue();
   };
 
@@ -197,6 +200,8 @@ export const Step1Schedule: React.FC<StepProps> = ({ data, onChange, onContinue,
           </div>
         </div>
       </div>
+
+      <StepError message={error} />
 
       <div className="mt-8 flex items-center justify-between">
         <button

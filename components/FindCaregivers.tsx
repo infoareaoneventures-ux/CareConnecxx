@@ -542,8 +542,27 @@ export default function FindCaregivers() {
     return (
       <div className="min-h-screen bg-slate-50">
         <ClientNavigation />
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+        {/* Placeholder cards in the shape of the results (2026-11-11: a blank page with a small spinner for 3+ seconds). */}
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8" role="status" aria-label="Loading care providers" data-testid="find-care-skeleton">
+          <div className="h-8 w-56 bg-slate-200 rounded mb-6 animate-pulse" />
+          <div className="grid sm:grid-cols-2 gap-5">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="bg-white rounded-2xl border border-slate-200 p-5 animate-pulse">
+                <div className="flex items-start gap-4 mb-5">
+                  <div className="w-20 h-20 rounded-full bg-slate-200 shrink-0" />
+                  <div className="flex-1 space-y-3 pt-1">
+                    <div className="h-5 bg-slate-200 rounded w-2/3" />
+                    <div className="h-3 bg-slate-100 rounded w-1/3" />
+                    <div className="h-3 bg-slate-100 rounded w-1/2" />
+                  </div>
+                </div>
+                <div className="h-3 bg-slate-100 rounded w-full mb-2" />
+                <div className="h-3 bg-slate-100 rounded w-5/6 mb-5" />
+                <div className="h-10 bg-slate-100 rounded-xl" />
+              </div>
+            ))}
+          </div>
+          <span className="sr-only">Loading care providers…</span>
         </div>
       </div>
     );

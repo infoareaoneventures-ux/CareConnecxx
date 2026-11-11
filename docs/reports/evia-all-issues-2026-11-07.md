@@ -413,15 +413,17 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Families and care providers can't see upcoming visits at a glance.
     - **How we'll fix it:** Scroll to 7am, or the first visit, when the calendar opens. Default phones to the List or Day view, and let people swipe between days.
 
-- [ ] **Texted-link pages open with no valid link**
+- [x] **Texted-link pages open with no valid link**
     - **The issue:** The background-check page and the photo-upload page show the full form even when someone opens them without the personal link Evia texts.
     - **Why it matters:** A person who opens an old or copied link fills in the form and only then hits an error, which is confusing and erodes trust on a legal consent step.
     - **How we'll fix it:** Check the link first. If it's missing or expired, show "This link has expired" with a "Text me a new link" button.
+    - **Done (Nov 11):** The photo-upload page now shows 'This link has expired' with a 'Text Evia for a new link' button when opened without its personal link; the background-check page already did.
 
-- [ ] **Find Care shows a blank spinner for several seconds**
+- [~] **Find Care shows a blank spinner for several seconds**
     - **The issue:** Opening Find Care shows an empty page with a small spinner for 3 seconds or more before any results appear.
     - **Why it matters:** This is the most important page for families, and a blank screen feels slow or broken.
     - **How we'll fix it:** Show placeholder cards in the shape of the results straight away, and speed up the provider search.
+    - **Partly done (Nov 11):** The spinner is replaced by placeholder cards in the shape of the results at once. NOT done: speeding up the provider search itself.
 
 - [ ] **The brand font isn't showing anywhere**
     - **The issue:** Because of a setup error, the site downloads the brand font (Plus Jakarta Sans) but displays the device's default font instead. Only the large headings use the brand serif font. A third, unused font is also downloaded.
@@ -575,10 +577,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Show the steps left ("1 step away from care") or the steps done ("2 of 3 steps done").
     - **Done (Nov 11):** Now reads '2 of 3 steps done' or '1 step away from care'.
 
-- [ ] **The care plan progress card shows an out-of-date status**
+- [x] **The care plan progress card shows an out-of-date status**
     - **The issue:** Right after finishing the setup questions, the dashboard said "60% complete — select the types of care needed", even though the care types had been saved. It only corrected itself after visiting the Care Plan page.
     - **Why it matters:** Families are asked to redo something they've already done.
     - **How we'll fix it:** Work out progress from the same record the setup questions save to, and refresh it when they close.
+    - **Done (Nov 11):** Progress now reads the care needs and emergency contact from the setup questions' own record (job_postings) as well as the Care Plan, so it is right the moment the questions close.
 
 - [x] **Wrong message when posting a request before the identity check**
     - **The issue:** Clicking "New Request" before the identity check shows "To contact care providers, you need to complete a quick identity check."
@@ -631,11 +634,12 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Show a typical range for the area and the billed amount as the family types.
     - **Done (Nov 11):** The rate step shows a typical local range (25th–75th percentile of the rates care providers have set; $18–28 when there are too few) and the billed amount as the family types, e.g. $25/hr → $27.25/hr.
 
-- [~] **Form errors appear at the top of the screen and linger** — _Found in live testing, Nov 7_
+- [x] **Form errors appear at the top of the screen and linger** — _Found in live testing, Nov 7_
     - **The issue:** Leaving the rate empty shows "Please enter an hourly rate" as a pop-up at the top of the screen instead of next to the field, and it stays visible on the next step.
     - **Why it matters:** The message is easy to miss, and seeing it on the next step is confusing.
     - **How we'll fix it:** Show the error under the field and clear it when the step changes.
     - **Partly done (Nov 11):** The rate step shows its error under the field and clears it when the rate is typed; moving to another step scrolls to the top and clears leftover error toasts. NOT done: moving the other steps' errors under their fields.
+    - **Done (Nov 11):** All six post-a-job steps now show their error inline above Continue and clear it when fixed or when the step changes; no step uses a toast for validation any more.
 
 - [ ] **Days of the week are in a different order on each side** — _Found in live testing, Nov 7_
     - **The issue:** Care provider pages list Mon–Sun; family pages list Sun–Sat.
@@ -678,10 +682,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Use one notice template for both sides with time, link and next step.
     - **Done (Nov 11):** The family's 'Interview Accepted' bell now carries the time (in their own zone) and says Evia will text the call link. The family's text already carried the time and link.
 
-- [ ] **Slow saves in Settings** — _Found in live testing, Nov 7_
+- [~] **Slow saves in Settings** — _Found in live testing, Nov 7_
     - **The issue:** Pausing the care provider account showed "Saving…" for about 10 seconds; reactivating was similar.
     - **Why it matters:** Feels broken; people click again.
     - **How we'll fix it:** Find what the save waits on (probably a backend call) and return as soon as the write lands.
+    - **Partly done (Nov 11):** Pause and reactivate now flip at once with the confirmation and revert with the reason only if the server refuses (the wait was the server round trip, not the write). NOT done: the other Settings saves were not timed.
 
 - [~] **Family membership shows as "None" in some places** — _Found in live testing, Nov 7_
     - **The issue:** With member access granted (`membershipStatus: active`, set by hand for testing), Settings says "Membership plan: None — Add a plan" and the Membership page offers "Select a plan". The access check reads one field; these pages read another. Needs checking with a real subscription before treating it as a bug.
@@ -768,11 +773,12 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** It looks broken on the page families use to choose a care provider.
     - **How we'll fix it:** Use normal word wrapping for profile text.
 
-- [ ] **Sign-up steps open scrolled down, and the terms checkbox has no label**
+- [x] **Sign-up steps open scrolled down, and the terms checkbox has no label**
     - **The issue:** After pressing "Continue" on the sign-up page, the next step opens part-way down the page, so its heading is cut off. The "I agree to the terms" checkbox is read out by screen readers as just "on".
     - **Why it matters:** The first impression feels unfinished, and people using screen readers can't tell what they're agreeing to.
     - **How we'll fix it:** Scroll to the top at each step, and connect the checkbox to its label.`)
     - **Also seen Nov 7:** the care provider setup steps and the post-a-job steps open scrolled to the middle too.
+    - **Done (Nov 11):** Every sign-up step now opens at the top, and the terms checkbox is tied to its label by id.
 
 - [ ] **More controls without labels** — _Found in live testing, Nov 7_
     - **The issue:** Screen readers can't name: the care provider's service options, the login code boxes, and several header icon buttons. The post-a-job "Ongoing / no end date" checkbox is read as "on". Login uses 6 code boxes while sign-up uses one box.

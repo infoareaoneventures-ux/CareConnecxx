@@ -242,28 +242,37 @@ export const CaregiverAccountSettings: React.FC = () => {
 
   const isPaused = !!pausedUntil && pausedUntil > new Date().toISOString();
 
+  // Optimistic (2026-11-11: the page sat on "Saving…" for ~10 seconds waiting for the server round trip even though the
+  // write itself is instant): the state flips and the confirmation shows at once; if the server refuses, it flips back
+  // and says so.
   const handleTogglePause = async () => {
     if (!currentUser?.uid) return;
+    const before = pausedUntil;
+    const wasPaused = isPaused;
+    const until = resumeDateDraft.trim() || undefined;
+    if (wasPaused) {
+      setPausedUntil(null);
+      addToast("You're active again — you'll start showing up for new matches.", 'success');
+    } else {
+      setPausedUntil(until || '2099-12-31');
+      setResumeDateDraft('');
+      addToast(
+        until
+          ? `Account paused — you'll automatically become active again on ${until}.`
+          : "Account paused — you won't be shown for new matches until you reactivate.",
+        'success'
+      );
+    }
     setTogglingPause(true);
     try {
-      if (isPaused) {
+      if (wasPaused) {
         await submitAccountAction('set_caregiver_pause_status', { uid: currentUser.uid, action: 'reactivate' });
-        setPausedUntil(null);
-        addToast("You're active again — you'll start showing up for new matches.", 'success');
       } else {
-        const until = resumeDateDraft.trim() || undefined;
         await submitAccountAction('set_caregiver_pause_status', { uid: currentUser.uid, action: 'pause', ...(until ? { until } : {}) });
-        setPausedUntil(until || '2099-12-31');
-        setResumeDateDraft('');
-        addToast(
-          until
-            ? `Account paused — you'll automatically become active again on ${until}.`
-            : "Account paused — you won't be shown for new matches until you reactivate.",
-          'success'
-        );
       }
-    } catch {
-      addToast(`Failed to ${isPaused ? 'reactivate' : 'pause'} your account. Please try again.`, 'error');
+    } catch (e) {
+      setPausedUntil(before);
+      addToast(safeErrorMessage(e, `Couldn't ${wasPaused ? 'reactivate' : 'pause'} your account. Please try again.`), 'error');
     } finally {
       setTogglingPause(false);
     }

@@ -1,6 +1,7 @@
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../../utils/medicationInstruction';
+import { StepError } from './StepError';
 import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from '../../../utils/contactDetails';
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StepProps } from './types';
 import { defaultJobTitle, kindsOfServices, JOB_DESCRIPTION_MAX_CHARS } from '../../caregiver/signup/constants';
 import { postCareKinds } from './Step3CareNeeds';
@@ -11,6 +12,7 @@ const MIN_TITLE = 10;
 const MAX_TITLE = 80;
 
 export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
+  const [error, setError] = useState<string | null>(null);
   // Auto-prefill title on first visit when city is set
   useEffect(() => {
     if (!data.title && data.city) {
@@ -22,30 +24,31 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
     const title = data.title.trim();
     const desc = data.description.trim();
     if (title.length < MIN_TITLE) {
-      onShowToast(`Title must be at least ${MIN_TITLE} characters`, 'error');
+      setError(`Title must be at least ${MIN_TITLE} characters`);
       return;
     }
     if (title.length > MAX_TITLE) {
-      onShowToast(`Title must be ${MAX_TITLE} characters or fewer`, 'error');
+      setError(`Title must be ${MAX_TITLE} characters or fewer`);
       return;
     }
     if (desc.length < MIN_DESC) {
-      onShowToast(`Description must be at least ${MIN_DESC} characters so care providers have enough context`, 'error');
+      setError(`Description must be at least ${MIN_DESC} characters so care providers have enough context`);
       return;
     }
     if (desc.length > MAX_DESC) {
-      onShowToast(`Description must be ${MAX_DESC} characters or fewer`, 'error');
+      setError(`Description must be ${MAX_DESC} characters or fewer`);
       return;
     }
     if (isMedicationInstruction(desc)) {
-      onShowToast(MEDICATION_INSTRUCTION_MESSAGE, 'error');
+      setError(MEDICATION_INSTRUCTION_MESSAGE);
       return;
     }
     // The title is public too (2026-11-09): a number or link there is the same leak as in the details.
     if (containsContactDetails(desc) || containsContactDetails(data.title)) {
-      onShowToast(CONTACT_DETAILS_MESSAGE, 'error');
+      setError(CONTACT_DETAILS_MESSAGE);
       return;
     }
+    setError(null);
     onContinue();
   };
 
@@ -95,6 +98,8 @@ export const Step5Describe: React.FC<StepProps> = ({ data, onChange, onContinue,
           </p>
         </div>
       </div>
+
+      <StepError message={error} />
 
       <div className="mt-8 flex items-center justify-between">
         <button

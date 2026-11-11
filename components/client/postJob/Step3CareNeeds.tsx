@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { StepError } from './StepError';
 import { Check } from 'lucide-react';
 import { StepProps, CareRecipientEntry } from './types';
 import {
@@ -25,6 +26,7 @@ export function postCareKinds(recipients: readonly CareRecipientEntry[]): CareKi
 }
 
 export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue, onBack, onShowToast }) => {
+  const [error, setError] = useState<string | null>(null);
   const { currentUser } = useCareConnex();
   const [didPrepopulate, setDidPrepopulate] = useState(false);
 
@@ -70,18 +72,19 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
   const handleContinue = () => {
     const chosen = data.careTypes.filter(ct => visible.has(ct));
     if (chosen.length === 0) {
-      onShowToast('Please select at least one type of care', 'error');
+      setError('Please select at least one type of care');
       return;
     }
     const postKinds = kindsOfServices(chosen, kinds);
     const missing = childOn ? data.careRecipients.find(r => recipientCareKind(r.relationship, r.careKind) === 'child' && !recipientStage(r)) : undefined;
     if (missing) {
-      onShowToast(childrenOnPost > 1 ? `Please pick ${missing.firstName}'s stage` : "Please pick the child's stage", 'error');
+      setError(childrenOnPost > 1 ? `Please pick ${missing.firstName}'s stage` : "Please pick the child's stage");
       return;
     }
     // The post's `ageRanges` are just the picked children's stages (one per child).
     const stages = postKinds.includes('child') ? stagesOfRecipients(data.careRecipients) : [];
     onChange({ ...(chosen.length !== data.careTypes.length ? { careTypes: chosen } : {}), ageRanges: stages });
+    setError(null);
     onContinue();
   };
 
@@ -135,6 +138,8 @@ export const Step3CareNeeds: React.FC<StepProps> = ({ data, onChange, onContinue
           </div>
         ))}
       </div>
+
+      <StepError message={error} />
 
       <div className="mt-8 flex items-center justify-between">
         <button

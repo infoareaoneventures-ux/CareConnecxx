@@ -49,6 +49,11 @@ async function compressImage(file: File): Promise<{ base64: string; contentType:
   }
 }
 
+/** True when the page was opened with Evia's personal link token (?t=…). Without one nothing can be uploaded. */
+export function hasUploadToken(search: string = typeof window !== 'undefined' ? window.location.search : ''): boolean {
+  return (new URLSearchParams(search).get('t') ?? '').trim().length > 0;
+}
+
 async function uploadFile(file: File, isPhoto: boolean): Promise<void> {
   if (!functions) throw Object.assign(new Error('not connected'), { code: 'unavailable' });
   const token = new URLSearchParams(window.location.search).get('t') ?? '';
@@ -128,7 +133,9 @@ const Spinner: React.FC<{ label?: string }> = ({ label = 'Uploading...' }) => (
 
 // ── Profile photo ─────────────────────────────────────────────────────────────
 function PhotoUpload() {
-  const [status, setStatus] = useState<'idle' | 'uploading' | 'done' | 'error' | 'expired'>('idle');
+  // No personal link (?t=…) at all: show the expired screen straight away, not the form (2026-11-11).
+  const hasLink = hasUploadToken();
+  const [status, setStatus] = useState<'idle' | 'uploading' | 'done' | 'error' | 'expired'>(hasLink ? 'idle' : 'expired');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);

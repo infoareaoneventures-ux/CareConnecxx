@@ -6,6 +6,8 @@ vi.mock('../../../services/api', () => ({ dbService: { getPublicCaregiverRates: 
 
 import { Step4Rate } from './Step4Rate';
 import { Step6Review } from './Step6Review';
+import { Step5Describe } from './Step5Describe';
+import { Step1Schedule } from './Step1Schedule';
 import { INITIAL_FORM_DATA } from './types';
 import { saveDraft, loadDraft, clearDraft, isMeaningfulDraft, DRAFT_MAX_AGE_MS } from './draft';
 import { computeRateRange, rateRangeOrFallback } from '../../../utils/marketRate';
@@ -76,5 +78,24 @@ describe('market rate range', () => {
     expect(computeRateRange([20, 22])).toBeNull();
     expect(rateRangeOrFallback([20, 22])).toEqual({ min: 18, max: 28 });
     expect(computeRateRange([1, 2, 999, 5000, 25, 26, 27, 28, 29])?.min).toBeGreaterThanOrEqual(10);
+  });
+});
+
+describe('the other steps show their errors inline above Continue (no toasts)', () => {
+  it('Step 5: a phone number in the details is refused in place', () => {
+    const toast = vi.fn(); const onContinue = vi.fn();
+    render(<Step5Describe data={{ ...INITIAL_FORM_DATA, title: 'Care in Gilroy for Rosy', description: 'Loves tea and walks. Call me on 408-555-1212 any time please, thank you so much.' }} onChange={noop} onContinue={onContinue} onBack={noop} onShowToast={toast} />);
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByTestId('step-error').textContent).toMatch(/phone numbers, emails and links/i);
+    expect(toast).not.toHaveBeenCalled();
+    expect(onContinue).not.toHaveBeenCalled();
+  });
+
+  it('Step 1: nothing chosen shows the first missing answer inline', () => {
+    const toast = vi.fn();
+    render(<Step1Schedule data={{ ...INITIAL_FORM_DATA }} onChange={noop} onContinue={noop} onBack={noop} onShowToast={toast} />);
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByTestId('step-error').textContent).toMatch(/how often/i);
+    expect(toast).not.toHaveBeenCalled();
   });
 });

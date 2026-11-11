@@ -24,17 +24,22 @@ const STEP_ORDER: OnboardingStepId[] = [
   'pay-membership',
 ];
 
-function computeCarePlanProgress(
+export function computeCarePlanProgress(
   jobPostingsData: any | null,
   carePlanData: any | null
 ): { percent: number; hint: string } {
   const recipientPlans: Record<string, any> = carePlanData?.recipientPlans ?? {};
-  const anyHasCareNeeds = Object.values(recipientPlans).some(
-    (p: any) => Array.isArray(p?.careNeeds) && p.careNeeds.length > 0
-  );
+  // The setup questions (the site wizard and Evia's text intake) save the care needs and the emergency contact on the
+  // job_postings record; the Care Plan page copies them into carePlans.recipientPlans / emergencyContacts only when it is
+  // opened. Progress reads BOTH (2026-11-11: it said "60% complete — select the types of care needed" right after the
+  // care types had been saved, until the Care Plan page was visited).
+  const anyHasCareNeeds =
+    Object.values(recipientPlans).some((p: any) => Array.isArray(p?.careNeeds) && p.careNeeds.length > 0) ||
+    (Array.isArray(jobPostingsData?.careNeeds) && jobPostingsData.careNeeds.length > 0);
   const hasEmergencyContact =
     (Array.isArray(carePlanData?.emergencyContacts) && carePlanData.emergencyContacts.length > 0) ||
-    !!jobPostingsData?.emergencyFirstName;
+    !!jobPostingsData?.emergencyFirstName ||
+    !!jobPostingsData?.emergencyContactName;
 
   const checks: { ok: boolean; missingHint: string }[] = [
     {

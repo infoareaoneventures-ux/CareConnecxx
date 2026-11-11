@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { applyMembershipLapse } from '../billing/membershipLapse';
 import { canWork } from '../utils/caregiverCanWork';
 import { businessTodayStr, DEFAULT_TZ } from '../utils/scheduledTime';
+import { careZoneOf } from '../utils/careTime';
 
 const db = admin.firestore();
 
@@ -112,6 +113,9 @@ async function generateShiftsForBooking(
     careRecipients:       booking.careRecipients || [],
     emergencyContact:     booking.emergencyContact || null,
     schedule:             over.schedule !== undefined ? over.schedule : (booking.schedule || null),
+    // The care location's zone (2026-11-09, all-U.S.-zones): a visit's date + start/end are wall-clock AT this zone.
+    // Every reader that compares a visit with "now" goes through it; a record without one reads as Pacific.
+    timeZone:             careZoneOf(booking),
     bookingRequestId:     bookingId,
     jobId:                booking.jobId || null,
     recurringWeekly:      true,
@@ -207,7 +211,8 @@ export const onBookingAccepted = functions.firestore
     }
 
     const bookingId = context.params.bookingId;
-    const today = new Date().toISOString().split('T')[0];
+    // "Today" is the care location's date, not UTC's (a 6 PM Eastern booking is already "tomorrow" in UTC).
+    const today = businessTodayStr(careZoneOf(after));
     const startDate: string = after.schedule?.startDate || today;
     // Allow up to 2 days in the past to handle UTC vs local timezone differences
     // (e.g. client sets startDate = "today" in PDT but server UTC is already "tomorrow")
@@ -216,6 +221,8 @@ export const onBookingAccepted = functions.firestore
     const generateTo   = addDays(generateFrom >= today ? generateFrom : today, 13); // 2 weeks
 
     try {
+      // Remember the care location's zone on the booking (once), so every later reader agrees.
+      if (!after.timeZone) await db.collection('booking_requests').doc(bookingId).update({ timeZone: careZoneOf(after) }).catch(() => {});
       const created = await generateShiftsForBooking(bookingId, after, generateFrom, generateTo);
       console.log(`onBookingAccepted: created ${created} shifts for booking ${bookingId}`);
 
@@ -454,7 +461,7 @@ export async function extendBookingShifts(
   booking: FirebaseFirestore.DocumentData,
   now: Date = new Date(),
 ): Promise<{ created: number; skipped?: 'frozen' | 'caregiver_not_eligible' }> {
-  const today = businessTodayStr(DEFAULT_TZ, now);
+  const today = businessTodayStr(careZoneOf(booking), now);
   const bookingRef = db.collection('booking_requests').doc(bookingId);
   const lapse = await applyMembershipLapse(bookingRef, booking, today, new Map());
   if (lapse === 'frozen') return { created: 0, skipped: 'frozen' };
@@ -473,9 +480,6 @@ export async function extendBookingShifts(
 export const generateRollingShifts = functions.pubsub
   .schedule('every 24 hours')
   .onRun(async () => {
-    const today = new Date().toISOString().split('T')[0];
-    const threshold = addDays(today, 14);
-
     const bookingsSnap = await db.collection('booking_requests')
       .where('status', '==', 'accepted')
       .get();
@@ -485,6 +489,7 @@ export const generateRollingShifts = functions.pubsub
       return;
     }
 
+    const cleanupToday = businessTodayStr(DEFAULT_TZ);
     // ── ONE-TIME CLEANUP: wipe all scheduled shifts and regenerate ──
     // Check a flag doc; if it exists we already cleaned up.
     const flagRef = db.collection('_meta').doc('shiftsCleanedUp');
@@ -502,11 +507,11 @@ export const generateRollingShifts = functions.pubsub
       console.log(`generateRollingShifts: deleted ${deleted} bad shifts`);
 
       // Regenerate 4 weeks for all accepted bookings immediately
-      const generateTo = addDays(today, 27);
+      const generateTo = addDays(cleanupToday, 27);
       let totalCreated = 0;
       for (const bookingDoc of bookingsSnap.docs) {
         try {
-          const n = await generateShiftsForBooking(bookingDoc.id, bookingDoc.data(), today, generateTo);
+          const n = await generateShiftsForBooking(bookingDoc.id, bookingDoc.data(), cleanupToday, generateTo);
           totalCreated += n;
         } catch (err) {
           console.error('cleanup regen error', bookingDoc.id, err);
@@ -528,6 +533,9 @@ export const generateRollingShifts = functions.pubsub
       try {
         const booking = bookingDoc.data();
         const bookingId = bookingDoc.id;
+        // Each booking's own "today" (its care location's date) — a Chicago booking rolls on Chicago's day.
+        const today = businessTodayStr(careZoneOf(booking));
+        const threshold = addDays(today, 14);
         const endDate: string | null =
           booking.schedule?.ongoing ? null : (booking.schedule?.endDate || null);
 

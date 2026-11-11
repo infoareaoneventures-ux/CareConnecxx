@@ -119,3 +119,23 @@ describe("generateRollingShifts does not bring a cancelled visit back", () => {
     expect(dates.every((d) => d > cancelledDate)).toBe(true);
   });
 });
+
+
+describe("all U.S. zones (2026-11-09): visits carry their care location's zone", () => {
+  it("a Chicago booking's generated visits are stamped America/Chicago; an unzoned booking reads Pacific", async () => {
+    await extendBookingShifts("brC", ongoingBooking({ address: "100 Main St, Austin, TX 78701" }));
+    expect(hoisted.batchSets.length).toBeGreaterThan(0);
+    expect(hoisted.batchSets.every((s) => s.data.timeZone === "America/Chicago")).toBe(true);
+    hoisted.batchSets.length = 0;
+    await extendBookingShifts("brP", ongoingBooking({ address: "4746 Campbell Ave, San Jose, CA 95130" }));
+    expect(hoisted.batchSets.every((s) => s.data.timeZone === "America/Los_Angeles")).toBe(true);
+    hoisted.batchSets.length = 0;
+    await extendBookingShifts("brX", ongoingBooking());
+    expect(hoisted.batchSets.every((s) => s.data.timeZone === "America/Los_Angeles")).toBe(true);
+  });
+
+  it("an explicit timeZone on the booking wins over the address", async () => {
+    await extendBookingShifts("brE", ongoingBooking({ timeZone: "America/New_York", address: "1 Main St, Chicago, IL 60601" }));
+    expect(hoisted.batchSets.every((s) => s.data.timeZone === "America/New_York")).toBe(true);
+  });
+});

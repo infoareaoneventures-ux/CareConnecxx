@@ -1,4 +1,5 @@
 import { safeErrorMessage } from '../utils/safeErrorMessage';
+import { zoneAbbr, viewerZone } from '../utils/careTime';
 import { billedHourlyRate } from '../utils/pricing';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -271,6 +272,10 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                                 </option>
                             ))}
                         </select>
+                        {/* The time is picked in the viewer's own zone and stored as an exact moment; the other person sees it in theirs (2026-11-09). */}
+                        <p className="mt-1.5 text-xs text-slate-500" data-testid="interview-zone-note">
+                            Times are in your time zone ({zoneAbbr(viewerZone())}). {(caregiver as any)?.name ? `${(caregiver as any).name.split(' ')[0]} sees it in theirs.` : 'They see it in theirs.'}
+                        </p>
                     </div>
 
                     {/* Notes */}

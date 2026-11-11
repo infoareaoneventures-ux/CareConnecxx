@@ -1,4 +1,5 @@
 import * as functions from "firebase-functions/v1";
+import { careZoneOf, zoneSuffix } from "./utils/careTime";
 import { getStripeSecretKey } from "./stripeConfig";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
@@ -335,7 +336,7 @@ export async function respondToCorrectionAs(uid: string, data: Partial<RespondTo
     // and the 24h auto-accept already text them; an accept only left an in-app
     // notification (live-caught 2026-09-18). Same information as the card.
     await textClient(shift.clientId,
-      `${shift.caregiverName ?? 'Your care provider'} accepted your correction: ${formatClockTime(Date.parse(shift.proposedStartTime))}–${formatClockTime(Date.parse(shift.proposedEndTime))} (${fmtHours(finalAmount.totalHours)}). $${finalAmount.grossPay.toFixed(2)} to ${shift.caregiverName ?? 'your care provider'}; $${(finalAmount.totalChargeCents / 100).toFixed(2)} goes on your card on file (incl. the $${(finalAmount.serviceFeeCents / 100).toFixed(2)} service fee).`);
+      `${shift.caregiverName ?? 'Your care provider'} accepted your correction: ${formatClockTime(Date.parse(shift.proposedStartTime), careZoneOf(shift))}–${formatClockTime(Date.parse(shift.proposedEndTime), careZoneOf(shift))}${zoneSuffix(shift, Date.parse(shift.proposedEndTime))} (${fmtHours(finalAmount.totalHours)}). $${finalAmount.grossPay.toFixed(2)} to ${shift.caregiverName ?? 'your care provider'}; $${(finalAmount.totalChargeCents / 100).toFixed(2)} goes on your card on file (incl. the $${(finalAmount.serviceFeeCents / 100).toFixed(2)} service fee).`);
     return { success: true };
   }
 

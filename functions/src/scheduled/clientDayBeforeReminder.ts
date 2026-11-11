@@ -1,13 +1,16 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { businessTomorrowStr, formatHHMMForDisplay } from "../utils/scheduledTime";
+import { formatHHMMForDisplay } from "../utils/scheduledTime";
+import { tomorrowRangeAcrossZones, dayBeforeReminderDue, zoneSuffix } from "../utils/careTime";
 import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
 // Day-before client reminder. Mirror of sendDayBeforeShiftReminders but sends
-// the heads-up to the FAMILY for confirmed shifts. Runs at 8 PM ET — late
+// the heads-up to the FAMILY for confirmed shifts. Runs HOURLY (2026-11-09, all U.S. zones) and sends each visit's
+// reminder once the visit's OWN care-location clock reaches 9 PM on the day before (it was one midnight-ET run, which
+// is 9 PM Pacific but already the visit's own day for Eastern families). Was: runs at 8 PM ET — late
 // enough that the caregiver's confirmation has had time to come in (caregiver
 // reminder fires at 6 PM ET), early enough not to interrupt evening routines.
 //
@@ -15,16 +18,10 @@ const db = admin.firestore();
 // initiates a client cancellation flow handled inbound. Question replies are
 // routed through the standard QA path via the dispatcher.
 export const sendClientDayBeforeReminders = functions.pubsub
-  .schedule("0 0 * * *")          // midnight ET = 9 PM PT (DST handled by timeZone)
-  .timeZone("America/New_York")
+  .schedule("0 * * * *")
   .onRun(async () => {
-    // Business-timezone tomorrow. At the midnight-ET run the UTC date is
-    // already PT+1, so the old +1-day UTC math computed PT+2 — families were
-    // reminded for the day after tomorrow and never for the actual tomorrow.
-    const tomorrowStr = businessTomorrowStr();
-    const tomorrowDisplay = new Date(`${tomorrowStr}T12:00:00Z`).toLocaleDateString("en-US", {
-      timeZone: "America/Los_Angeles", weekday: "long", month: "long", day: "numeric",
-    });
+    // The dates that are "tomorrow" somewhere in the U.S. right now (1-2 days); each visit is then judged by its own zone.
+    const range = tomorrowRangeAcrossZones();
 
     // Only send for confirmed appointments — skip pending_caregiver_confirmation
     // (we don't want to tell the family it's locked in if the caregiver hasn't
@@ -33,7 +30,7 @@ export const sendClientDayBeforeReminders = functions.pubsub
     // excludes docs missing the field (appointments are created without it), so
     // it would skip every never-reminded appointment. Filter already-sent in code.
     const docs = await queryVisits({
-      dateOp: "==", dateValue: tomorrowStr,
+      dateOp: ">=", dateValue: range.from, dateUpperBound: range.to,
       shiftStatuses: ["scheduled"],
     });
 
@@ -41,6 +38,10 @@ export const sendClientDayBeforeReminders = functions.pubsub
       const appt    = doc.data();
       const apptId  = doc.id;
       if (appt.clientDayBeforeReminderSent === true) continue;
+      if (!dayBeforeReminderDue(appt, 21)) continue; // 9 PM on the day before, at the visit's own location
+      const tomorrowDisplay = new Date(`${String(appt.date)}T12:00:00Z`).toLocaleDateString("en-US", {
+        timeZone: "UTC", weekday: "long", month: "long", day: "numeric",
+      });
       const clientId    = (appt.clientId    ?? "") as string;
       const caregiverId = (appt.caregiverId ?? "") as string;
       if (!clientId || !caregiverId) continue;
@@ -65,7 +66,7 @@ export const sendClientDayBeforeReminders = functions.pubsub
         // either — that invited a legacy appointments-based cancel path that
         // never touched the real visit; a family who wants to cancel just
         // texts Evia and gets the site's own cancel flow.
-        const startLabel = startTime ? formatHHMMForDisplay(startTime) : "";
+        const startLabel = startTime ? `${formatHHMMForDisplay(startTime)}${zoneSuffix(appt)}` : "";
         const message = lang === "es"
           ? `Solo un aviso — ${cgFirstName} tiene la visita de ${seniorName} mañana, ${tomorrowDisplay}${startLabel ? ` a las ${startLabel}` : ""}. ` +
             `No necesitas hacer nada; escríbeme si algo cambia.`

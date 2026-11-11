@@ -1,3 +1,4 @@
+import { careZoneOf, instantToWall } from './careTime';
 export type ShiftDisplayStatus =
   | 'overdue'
   | 'scheduled'
@@ -24,15 +25,20 @@ export function shiftDisplayStatus(shift: {
   date: string;
   startTime?: string;
   endTime?: string;
+  /** The care location's zone (stamped on the visit); a visit without one reads from its address's ZIP, then Pacific. */
+  timeZone?: string;
+  address?: string;
 }): ShiftDisplayStatus {
   // A caregiver-cancelled visit nobody covered ages out like any other: once its
   // window has passed it is Overdue, not "Needs Replacement" forever (live
   // 2026-09-20: a 1:30 PM visit still offered Find replacement at 2:49 PM).
   if (shift.status !== 'scheduled' && shift.status !== 'needs_replacement') return shift.status as ShiftDisplayStatus;
 
-  const now = new Date();
-  const todayStr = localDateStr(now);
-  const nowMins = now.getHours() * 60 + now.getMinutes();
+  // "Now" AT THE CARE LOCATION (2026-11-09, all U.S. zones) — not the viewer's browser zone: a care provider in
+  // Chicago and a family in Boston must both see the same visit as overdue at the same real moment.
+  const nowWall = instantToWall(Date.now(), careZoneOf(shift));
+  const todayStr = nowWall.date;
+  const nowMins = timeToMins(nowWall.time);
   const startMins = timeToMins(shift.startTime || '00:00');
   const endMins = timeToMins(shift.endTime || '23:59');
 

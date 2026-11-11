@@ -187,7 +187,8 @@ describe("onBookingAccepted — single-shift replacement resolution", () => {
       { params: { bookingId: "br2" } } as any,
     );
 
-    expect(hoisted.updateMock).not.toHaveBeenCalled();
+    // No shift is touched; the only write allowed is remembering the booking's own care-location zone (2026-11-09).
+    expect(hoisted.updateMock.mock.calls.every(([path]: [string, any]) => !path.startsWith("shifts/"))).toBe(true);
   });
 });
 

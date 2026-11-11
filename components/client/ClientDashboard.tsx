@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { ZoneTag } from '../ui/ZoneTag';
 import { recordActedForPerson } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, CreditCard } from 'lucide-react';
@@ -917,7 +918,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                       </div>
                       <div className="flex items-center gap-1.5 text-xs text-slate-500">
                         <Clock className="w-3 h-3 flex-shrink-0" />
-                        <span className="font-medium">{fmtTime(shift.startTime)} – {fmtTime(shift.endTime)}</span>
+                        <span className="font-medium">{fmtTime(shift.startTime)} – {fmtTime(shift.endTime)}<ZoneTag visit={shift as any} /></span>
                       </div>
                       {isInProgress && shift.startedAt && (
                         <div className="flex items-center gap-1.5 text-xs mt-1 text-green-600 font-medium">
@@ -1280,7 +1281,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 {(shift.startTime || shift.endTime) && (
                                   <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-0.5">
                                     <Clock className="w-3 h-3 flex-shrink-0" />
-                                    <span>{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</span>
+                                    <span>{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}<ZoneTag visit={shift as any} /></span>
                                   </div>
                                 )}
                                 {shift.address && (

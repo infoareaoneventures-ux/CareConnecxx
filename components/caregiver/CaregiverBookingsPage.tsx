@@ -1,4 +1,6 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { ZoneTag } from '../ui/ZoneTag';
+import { careZoneOf, wallToInstantMs } from '../../utils/careTime';
 import { recordActedForPerson } from '../../services/api';
 import React, { useEffect, useState } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
@@ -1194,7 +1196,7 @@ const BookingGroupCard: React.FC<{
                     > 24 check, so overdue shifts are hidden here too — no separate check
                     needed. */}
                 {shift.status === 'scheduled' && shift.rescheduledBy !== 'caregiver' && rescheduleOpenId !== shift.id &&
-                  (new Date(`${shift.date}T${shift.startTime}`).getTime() - Date.now()) / (1000 * 60 * 60) > 24 && (
+                  (wallToInstantMs(shift.date, shift.startTime, careZoneOf(shift as any)) - Date.now()) / (1000 * 60 * 60) > 24 && (
                   <button
                     onClick={() => {
                       setRescheduleOpenId(shift.id);
@@ -1212,7 +1214,7 @@ const BookingGroupCard: React.FC<{
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-slate-800">{fmtDate(shift.date)}</span>
-                    <span className="text-xs text-slate-500">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</span>
+                    <span className="text-xs text-slate-500">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}<ZoneTag visit={shift as any} /></span>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${shiftStatusBadgeClass(shiftDisplayStatus(shift))}`}>
                       {shiftStatusLabel(shiftDisplayStatus(shift))}
                     </span>
@@ -1252,7 +1254,7 @@ const BookingGroupCard: React.FC<{
                     if (shift.status !== 'scheduled') return null;
                     const ds = shiftDisplayStatus(shift);
                     if (ds === 'overdue') return null;
-                    const minsUntilStart = (new Date(`${shift.date}T${shift.startTime}`).getTime() - Date.now()) / 60000;
+                    const minsUntilStart = (wallToInstantMs(shift.date, shift.startTime, careZoneOf(shift as any)) - Date.now()) / 60000;
                     if (minsUntilStart > 15) return null;
                     const otherOpen = otherVisitInProgress(inProgressVisits, shift.id);
                     if (otherOpen) return (
@@ -2293,8 +2295,8 @@ export const CaregiverBookingsPage: React.FC = () => {
       // Total hours calculation
       const totalMins = (() => {
         if (!logStartDate || !logStart || !logEndDate || !logEnd) return null;
-        const s = new Date(`${logStartDate}T${logStart}:00`).getTime();
-        const e = new Date(`${logEndDate}T${logEnd}:00`).getTime();
+        const s = wallToInstantMs(logStartDate, logStart, careZoneOf(logHoursShift as any));
+        const e = wallToInstantMs(logEndDate, logEnd, careZoneOf(logHoursShift as any));
         if (isNaN(s) || isNaN(e) || e <= s) return null;
         return Math.round((e - s) / 60000);
       })();
@@ -2438,8 +2440,9 @@ export const CaregiverBookingsPage: React.FC = () => {
                   if (!logHoursShift || !logStart || !logEnd || !logStartDate || !logEndDate) return;
                   setLoggingHours(true);
                   try {
-                    const startedAt = new Date(`${logStartDate}T${logStart}:00`);
-                    const completedAt = new Date(`${logEndDate}T${logEnd}:00`);
+                    // The times are wall clock AT the visit's care location (2026-11-09).
+                    const startedAt = new Date(wallToInstantMs(logStartDate, logStart, careZoneOf(logHoursShift as any)));
+                    const completedAt = new Date(wallToInstantMs(logEndDate, logEnd, careZoneOf(logHoursShift as any)));
                     // The server's logHours writes the modal's patch ({status:'completed', startedAt,
                     // completedAt, loggedManually, tasksCompleted, completionNotes?, updatedAt}) once it
                     // has checked the visit is a missed one and the gate passes.

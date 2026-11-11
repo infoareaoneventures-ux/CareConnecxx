@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { careZoneOf } from "../utils/careTime";
 import { autoApproveAtIso } from "../config/slaConstants";
 import { apptStartMs } from "../utils/scheduledTime";
 import { normalizePaymentMethod } from "./paymentMethods";
@@ -37,10 +38,13 @@ export function bookedWindowMillis(appointment: Record<string, unknown>): { star
   const endTime = typeof appointment.endTime === "string" ? appointment.endTime : "";
   if (!date || !startTime) return null;
 
-  const start = apptStartMs(date, startTime);
+  // The visit's own care-location zone (2026-11-09): a Chicago 9:00 AM is 3:00 PM UTC, not 5:00 PM — judging a correct
+  // clock-in against a Pacific window would reject it as "outside the booked window".
+  const tz = careZoneOf(appointment);
+  const start = apptStartMs(date, startTime, tz);
   if (!Number.isFinite(start)) return null;
   if (endTime) {
-    let end = apptStartMs(date, endTime);
+    let end = apptStartMs(date, endTime, tz);
     if (!Number.isFinite(end)) return null;
     if (end <= start) end += 24 * 60 * 60 * 1000;
     return { start, end };
@@ -191,6 +195,7 @@ export async function createValidatedShiftHours(input: {
       payloadSnapshot: {
         caregiverName: appointment.caregiverName ?? "Caregiver",
         date: appointment.date ?? null,
+        timeZone: careZoneOf(appointment),
         totalHours: policy.totalHours,
         bookedRate,
         lineItems,
@@ -378,6 +383,7 @@ export async function createValidatedShiftHoursFromShift(input: {
       payloadSnapshot: {
         caregiverName: shift.caregiverName ?? "Caregiver",
         date: shift.date ?? null,
+        timeZone: careZoneOf(shift),
         totalHours: policy.totalHours,
         bookedRate,
         lineItems,

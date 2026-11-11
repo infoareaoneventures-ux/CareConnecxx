@@ -192,12 +192,10 @@ export const onVideoInterviewWrite = functions.firestore
       // and render in PT — Z-form values rendered without a timeZone showed the
       // UTC clock (7-8h wrong) in the notification.
       if (!before && statusAfter === 'requested' && after.caregiverId) {
-        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
-        const displayTime = new Date(parseScheduledTimeMs(String(after.scheduledTime ?? ''))).toLocaleString('en-US', {
-          timeZone: 'America/Los_Angeles',
-          weekday: 'short', month: 'short', day: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-        });
+        const { parseScheduledTimeMs, formatInterviewTimeShort } = await import('../utils/scheduledTime');
+        const { zoneForUser } = await import('../utils/personZone');
+        // The care provider is told the time in THEIR OWN zone (2026-11-09, all U.S. zones).
+        const displayTime = formatInterviewTimeShort(parseScheduledTimeMs(String(after.scheduledTime ?? '')), await zoneForUser(after.caregiverId));
         // The Interviews tab card, as one line: family, job, date + time, type,
         // and the family's note (2026-09-27 — the note used to be missing).
         const ivType = after.interviewType === 'in-person' ? 'In Person' : after.interviewType === 'phone' ? 'Phone' : 'Video';
@@ -273,12 +271,12 @@ export const onVideoInterviewWrite = functions.firestore
         after.scheduledTime &&
         before.scheduledTime !== after.scheduledTime
       ) {
-        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
-        const displayTime = new Date(parseScheduledTimeMs(String(after.scheduledTime ?? ''))).toLocaleString('en-US', {
-          timeZone: 'America/Los_Angeles',
-          weekday: 'short', month: 'short', day: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-        });
+        const { parseScheduledTimeMs, formatInterviewTimeShort } = await import('../utils/scheduledTime');
+        const { zoneForUser } = await import('../utils/personZone');
+        const scheduledMs = parseScheduledTimeMs(String(after.scheduledTime ?? ''));
+        // Told in the RECIPIENT's zone: the care provider's confirmation in theirs, the family's in theirs (2026-11-09).
+        const recipientIsCaregiver = before.rescheduledBy === 'caregiver';
+        const displayTime = formatInterviewTimeShort(scheduledMs, await zoneForUser(recipientIsCaregiver ? after.caregiverId : after.clientId));
         // accept_interview_reschedule (mcp/server.ts) already texts this
         // direction itself and stamps acceptedRescheduleViaAgent — skip to
         // avoid a double text. rescheduledViaAgent itself is already

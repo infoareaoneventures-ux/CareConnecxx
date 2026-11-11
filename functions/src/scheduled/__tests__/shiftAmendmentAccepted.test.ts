@@ -97,7 +97,7 @@ describe("onBookingAmendmentAccepted — the page's Accept, server-side, once", 
       status: "scheduled", address: "20 Descanso Dr", careNeeds: ["Companionship"], lifestylePreferences: ["No pets"], rate: 25, paymentMethod: "credit",
       notes: "Extra help on Fridays", careRecipients: [{ name: "Mai" }], emergencyContact: { name: "Linh" },
       schedule: { ongoing: true, startDate: "2099-01-01", dayShiftTimes: { Mon: [{ start: "09:00", end: "13:00" }], Fri: [{ start: "09:00", end: "11:00" }] } },
-      bookingRequestId: "br1", jobId: "job1", recurringWeekly: true, tasksCompleted: [], createdAt: "__ts__",
+      bookingRequestId: "br1", jobId: "job1", recurringWeekly: true, timeZone: "America/Los_Angeles", tasksCompleted: [], createdAt: "__ts__",
       date: "2099-01-09", startTime: "09:00", endTime: "11:00",
     });
     // only the amendment's days — never the booking's Monday

@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
+import { ZoneTag } from '../ui/ZoneTag';
 import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -1309,7 +1310,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                     <p className="text-sm text-slate-700">{fmtDate(s.date)}</p>
                     <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
                       <Clock className="w-3 h-3" />
-                      {fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}
+                      {fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}<ZoneTag visit={s as any} />
                     </p>
                     {/* A visit's own note (e.g. the note on the schedule-change request
                         that created it) — shown only when it differs from the booking's
@@ -1644,7 +1645,7 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
                   <div className="space-y-1">
                     <div className="flex items-center gap-3 text-xs">
                       <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
-                      <span className="font-semibold text-slate-700">{fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}</span>
+                      <span className="font-semibold text-slate-700">{fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}<ZoneTag visit={s as any} /></span>
                     </div>
                     {(actualStart || actualEnd) && (
                       <div className="flex items-center gap-3 text-xs">

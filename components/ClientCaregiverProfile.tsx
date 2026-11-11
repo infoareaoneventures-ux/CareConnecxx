@@ -1,4 +1,5 @@
 import { serviceLabel, CARE_KIND_LABEL, serviceGroupsOf } from './caregiver/signup/constants';
+import { reviewSummary } from '../utils/reviewSummary';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
@@ -117,6 +118,7 @@ export default function ClientCaregiverProfile({
     passedData && caregiverId ? mapRawToProfile(caregiverId, passedData) : null
   );
   const [reviews, setReviews] = useState<Review[]>([]);
+  const summary = reviewSummary({ rating: caregiver?.rating, reviewCount: caregiver?.reviewCount }, reviews);
   const [loading, setLoading] = useState(!passedData);
   const [showInterviewModal, setShowInterviewModal] = useState(false);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
@@ -180,7 +182,7 @@ export default function ClientCaregiverProfile({
       // MyCareTeam.tsx uses to decide whether the Past tab offers Re-book
       // (a family that's already interviewed this caregiver shouldn't be
       // asked to "Request Interview" again once their booking ends).
-      const activeStatuses = ['requested', 'pending', 'scheduled'];
+      const activeStatuses = ['requested', 'pending', 'scheduled', 'accepted', 'confirmed']; // accepted/confirmed too (2026-11-11)
       db!.collection('video_interviews')
         .where('clientId', '==', uid)
         .where('caregiverId', '==', caregiverId)
@@ -341,17 +343,17 @@ export default function ClientCaregiverProfile({
 
                 <h1 className="text-2xl font-bold text-slate-900 mb-1">{fullName}</h1>
 
-                {/* Star rating */}
+                {/* Star rating — from the reviews actually listed below (utils/reviewSummary) */}
                 <div className="flex items-center gap-1 mb-2">
                   {[...Array(5)].map((_, i) => (
                     <Star
                       key={i}
-                      className={`w-4 h-4 ${caregiver.reviewCount > 0 && i < Math.round(caregiver.rating) ? 'text-accent-400' : 'text-slate-200'}`}
+                      className={`w-4 h-4 ${summary.count > 0 && i < Math.round(summary.rating) ? 'text-accent-400' : 'text-slate-200'}`}
                       fill="currentColor"
                     />
                   ))}
-                  {caregiver.reviewCount > 0
-                    ? <span className="text-sm font-medium text-slate-700 ml-1">{caregiver.rating.toFixed(1)} ({caregiver.reviewCount} review{caregiver.reviewCount !== 1 ? 's' : ''})</span>
+                  {summary.count > 0
+                    ? <span className="text-sm font-medium text-slate-700 ml-1">{summary.rating.toFixed(1)} ({summary.count} review{summary.count !== 1 ? 's' : ''})</span>
                     : <span className="text-sm text-slate-400 ml-1">No reviews yet</span>
                   }
                 </div>
@@ -548,7 +550,7 @@ export default function ClientCaregiverProfile({
 
             {/* Reviews */}
             <Section
-              title={`Reviews${caregiver.reviewCount > 0 ? ` (${caregiver.reviewCount})` : ''}`}
+              title={`Reviews${summary.count > 0 ? ` (${summary.count})` : ''}`}
               action={
                 hasCompletedShift && !hasReviewed ? (
                   <button onClick={() => setShowReviewModal(true)}

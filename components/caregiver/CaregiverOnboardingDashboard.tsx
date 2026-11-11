@@ -1,4 +1,6 @@
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { isPastJob, jobRateText, JOB_PAYMENT_TEXT } from '../../utils/jobDisplay';
+import { localDateStr } from '../../utils/shiftUtils';
 import { serviceLabel, ageRangeLabel, kindsOfPost } from './signup/constants';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -422,7 +424,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {jobs.map(job => {
+                {jobs.filter(j => !isPastJob(j as any, localDateStr(new Date()))).map(job => {
                   const p = profile as any;
                   const cgLat = p.latitude ?? p.lat;
                   const cgLng = p.longitude ?? p.lng;
@@ -457,7 +459,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                   })();
                   const isOffline = !((job as any).paymentMethod) || isOfflinePaymentMethod((job as any).paymentMethod);
                   // Jobs page rateLabel: a flexible job stores rate 0 + rateFlexible → "Flexible", never "$0/hr".
-                  const rateStr = ((job as any).rateFlexible || !job.rate || job.rate <= 0) ? 'Flexible' : `${job.rate}/hr`;
+                  const rateStr = jobRateText(job as any);
                   return (
                     <div key={job.id} className="bg-white rounded-2xl p-5 hover:shadow-md shadow-sm transition-all">
                       {/* Header: title + rate */}
@@ -466,18 +468,16 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                           <h4 className="font-bold text-slate-900 text-sm leading-snug mb-1">{job.title || 'Care needed'}</h4>
                           <div className="flex items-center gap-1.5 text-xs text-slate-500">
                             <MapPin className="w-3 h-3 flex-shrink-0" />
-                            <span>{job.location || (job as any).zipCode || 'Location TBD'}</span>
+                            {(job.location || (job as any).zipCode) && <span>{job.location || (job as any).zipCode}</span>}
                             {dist && <span className="text-slate-400">({dist} mi away)</span>}
                           </div>
                         </div>
                         <div className="text-right flex-shrink-0">
                           <span className="text-sm font-bold text-green-700 bg-green-100 px-2.5 py-1 rounded-full">{rateStr}</span>
-                          {(job as any).paymentMethod && (
-                            <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-0.5">
-                              {isOffline ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
-                              via {isOffline ? paymentMethodLabel((job as any).paymentMethod || 'cash').toLowerCase() : (job as any).paymentMethod}
-                            </p>
-                          )}
+                          <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-0.5">
+                            <CreditCard className="w-3 h-3" />
+                            {JOB_PAYMENT_TEXT}
+                          </p>
                         </div>
                       </div>
 

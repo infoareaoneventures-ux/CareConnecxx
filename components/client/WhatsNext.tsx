@@ -289,7 +289,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
             <p className="mt-1 text-sm text-primary-50/90">
               {allDone
                 ? 'Your care coordinator is here if you need anything.'
-                : `You're ${completedCount} of ${STEP_DEFS.length} steps away from care.`}
+                : completedCount >= STEP_DEFS.length - 1 ? `1 step away from care.` : `${completedCount} of ${STEP_DEFS.length} steps done.`}
             </p>
           </div>
           {!allDone && (

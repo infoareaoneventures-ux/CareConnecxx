@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { recordActedForPerson } from '../../../services/api';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
@@ -15,21 +15,49 @@ import { Step4Rate } from './Step4Rate';
 import { Step5Describe } from './Step5Describe';
 import { Step6Review } from './Step6Review';
 import { JobPostFormData, INITIAL_FORM_DATA } from './types';
+import { saveDraft, loadDraft, clearDraft, isMeaningfulDraft } from './draft';
 import { kindsOfServices, recipientCareKind } from '../../caregiver/signup/constants';
 
 const TOTAL_STEPS = 6;
 
 export const PostJobFlow: React.FC = () => {
   const navigate = useNavigate();
-  const { currentUser, addToast } = useCareConnex();
+  const { currentUser, addToast, toasts, removeToast } = useCareConnex();
 
   const [step, setStep] = useState(0);
   const [data, setData] = useState<JobPostFormData>(INITIAL_FORM_DATA);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedPostId, setSubmittedPostId] = useState<string | null>(null);
 
+  const [restoredDraft, setRestoredDraft] = useState(false);
+  const restoredFor = useRef<string | null>(null);
+
+  // Restore a saved draft once the account is known; save on every change; clear when posted.
+  useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid || restoredFor.current === uid) return;
+    restoredFor.current = uid;
+    const d = loadDraft(uid);
+    if (d && isMeaningfulDraft(d, INITIAL_FORM_DATA)) {
+      setData({ ...INITIAL_FORM_DATA, ...d.data });
+      setStep(Math.max(0, Math.min(TOTAL_STEPS - 1, d.step)));
+      setRestoredDraft(true);
+    }
+  }, [currentUser?.uid]);
+  useEffect(() => {
+    if (!currentUser?.uid || restoredFor.current !== currentUser.uid || submittedPostId) return;
+    saveDraft(currentUser.uid, step, data);
+  }, [data, step, currentUser?.uid, submittedPostId]);
+  const startOver = () => { clearDraft(currentUser?.uid); setData(INITIAL_FORM_DATA); setStep(0); setRestoredDraft(false); };
+
   const onChange = (patch: Partial<JobPostFormData>) => setData(prev => ({ ...prev, ...patch }));
-  const goTo = (i: number) => setStep(Math.max(0, Math.min(TOTAL_STEPS - 1, i)));
+  const goTo = (i: number) => {
+    setStep(Math.max(0, Math.min(TOTAL_STEPS - 1, i)));
+    // A new step opens at the top with no leftover error from the last one (2026-11-11: it opened scrolled down and the
+    // previous step's error toast was still showing).
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    toasts.filter(t => t.type === 'error').forEach(t => removeToast(t.id));
+  };
   const next = () => goTo(step + 1);
   const back = () => {
     if (step === 0) {
@@ -89,6 +117,7 @@ export const PostJobFlow: React.FC = () => {
 
       const id = await dbService.createJobPost(payload as any, currentUser.uid);
       void recordActedForPerson('job_post_created', 'posted a job for care providers to see');
+      clearDraft(currentUser.uid);
       setSubmittedPostId(typeof id === 'string' ? id : 'posted');
       addToast('Job posted! Care providers can now apply.', 'success');
 
@@ -233,6 +262,12 @@ export const PostJobFlow: React.FC = () => {
       <ClientNavigation />
 
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+        {restoredDraft && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-primary-800" role="status" data-testid="draft-restored">
+            <span>We kept your answers from last time.</span>
+            <button type="button" onClick={startOver} className="font-semibold underline">Start over</button>
+          </div>
+        )}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-10">
           {step === 0 && (
             <Step1Schedule data={data} onChange={onChange} onContinue={next} onBack={back} onShowToast={addToast} />

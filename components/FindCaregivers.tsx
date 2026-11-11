@@ -95,7 +95,7 @@ export default function FindCaregivers() {
   const [sortBy, setSortBy] = useState<SortOption>('rating');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(searchParams.get('tab') === 'favorites');
   const { gate, Modals: GateModals } = useAccessGates();
-  const { blockedIds } = useCareConnex();
+  const { blockedIds, addToast } = useCareConnex();
   const [viewingCaregiver, setViewingCaregiver] = useState<Caregiver | null>(null);
   const [interviewCaregiver, setInterviewCaregiver] = useState<Caregiver | null>(null);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
@@ -176,7 +176,7 @@ export default function FindCaregivers() {
           );
           setBookedCaregiverIds(liveIds);
 
-          const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
+          const activeStatuses = new Set(['requested', 'pending', 'scheduled', 'accepted', 'confirmed']);
           const requestedIds = new Set<string>(
             interviewsSnap.docs
               .filter(d => activeStatuses.has(d.data().status))
@@ -871,13 +871,14 @@ export default function FindCaregivers() {
           } as any}
           jobPosts={clientOpenPosts}
           onClose={() => setInterviewCaregiver(null)}
-          onSuccess={() => {
+          onSuccess={(msg) => {
             if (interviewCaregiver) {
               setRequestedCaregiverIds(prev => new Set([...prev, interviewCaregiver.id]));
             }
+            addToast(msg, 'success');
             setInterviewCaregiver(null);
           }}
-          onShowToast={() => {}}
+          onShowToast={(msg, type) => addToast(msg, type)}
         />
       )}
 

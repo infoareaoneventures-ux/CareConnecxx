@@ -297,6 +297,24 @@ export const dbService = {
         return () => { };
     },
 
+    /** The hourly rates care providers have set (public profiles), for the post-a-job rate guidance. Never throws. */
+    getPublicCaregiverRates: async (limit = 200): Promise<unknown[]> => {
+        if (!db) return [];
+        try {
+            const snap = await db.collection('publicCaregiverProfiles').limit(limit).get();
+            return snap.docs.map((d) => (d.data() as any).hourlyRate);
+        } catch { return []; }
+    },
+
+    /** A care provider's weekly availability as stored on their public profile (raw), or null. Never throws. */
+    getCaregiverWeeklyAvailability: async (caregiverId: string): Promise<Record<string, any[]> | null> => {
+        if (!db || !caregiverId) return null;
+        try {
+            const snap = await db.collection('publicCaregiverProfiles').doc(caregiverId).get();
+            return snap.exists ? (((snap.data() as any)?.weeklyAvailability as Record<string, any[]>) || {}) : null;
+        } catch { return null; }
+    },
+
     getCurrentUser: () => {
         return auth?.currentUser || null;
     },

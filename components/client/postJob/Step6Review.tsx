@@ -26,6 +26,12 @@ const Row: React.FC<{ label: string; value: React.ReactNode; onEdit: () => void 
   </div>
 );
 
+// "2026-11-10" → "Tue, Nov 10, 2026" (2026-11-11: the review showed the raw stored date).
+function fmtReviewDate(d?: string): string {
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return d || '—';
+  return new Date(`${d}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 export const Step6Review: React.FC<Step6Props> = ({
   data, onBack, isSubmitting, onEditStep, onSubmit,
 }) => {
@@ -34,12 +40,12 @@ export const Step6Review: React.FC<Step6Props> = ({
   };
 
   const scheduleSummary = (() => {
-    const endPart = data.ongoing ? 'ongoing' : data.endDate ? `to ${data.endDate}` : '';
+    const endPart = data.ongoing ? 'ongoing' : data.endDate ? `to ${fmtReviewDate(data.endDate)}` : '';
     const days = data.daysOfWeek.length ? data.daysOfWeek.join(', ') : 'no days';
     const tod = data.timeOfDay.length
       ? data.timeOfDay.map(v => TIME_OF_DAY_OPTIONS.find(o => o.value === v)?.label ?? v).join(', ')
       : '—';
-    return `${data.startDate || '—'} ${endPart} · ${days} · ${tod}`;
+    return `${fmtReviewDate(data.startDate)} ${endPart} · ${days} · ${tod}`;
   })();
 
   const locationSummary = [data.streetAddress, data.city, `${data.state} ${data.zipCode}`.trim()].filter(Boolean).join(', ');
@@ -82,7 +88,7 @@ export const Step6Review: React.FC<Step6Props> = ({
           value={<>{data.careTypes.map(serviceLabel).join(', ') || '—'}{careLevelLabel && <> · <span className="text-slate-500">{careLevelLabel}</span></>}<br /><span className="text-xs text-slate-500">{[kindLabel, ...ageBits].join(' · ')}</span></>}
           onEdit={() => onEditStep(2)}
         />
-        <Row label="Rate & payment" value={`${rateSummary} · Credit Card`} onEdit={() => onEditStep(3)} />
+        <Row label="Rate & payment" value={`${rateSummary} · paid by card through Evia`} onEdit={() => onEditStep(3)} />
         <Row label="Details" value={data.description || '—'} onEdit={() => onEditStep(4)} />
       </div>
 

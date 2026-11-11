@@ -1,4 +1,5 @@
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { addressForPost } from './bookingPrefill';
 import { recordActedForPerson } from '../../services/api';
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
 import { PRIMARY_SERVICES, serviceLabel, ageRangeLabel, recipientStage } from '../caregiver/signup/constants';
@@ -115,7 +116,7 @@ export const PostsPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { currentUser, addToast } = useCareConnex();
   const { gate, Modals: GateModals } = useAccessGates();
-  const handleNewRequest = () => gate('booking', undefined, () => navigate('/client/post-job'));
+  const handleNewRequest = () => gate('post', undefined, () => navigate('/client/post-job'));
 
   const [posts, setPosts] = useState<JobPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
@@ -847,18 +848,20 @@ export const PostsPage: React.FC = () => {
         emergencyContactRelation: primaryContact?.relation || primaryContact?.relationship || '',
         shiftStartDate: prevSchedule?.startDate || postForDraft?.startDate || (postForDraft as any)?.date || '',
         shiftEndDate: prevSchedule?.ongoing ? '' : (prevSchedule?.endDate || postForDraft?.endDate || ''),
-        shiftOngoing: prevSchedule?.endDate ? false : true,
+        // No earlier booking: the schedule comes from the job post this care provider applied to (2026-11-11 — the form
+        // used to open with rate, schedule and care location empty and marked Required).
+        shiftOngoing: prevSchedule ? (prevSchedule.endDate ? false : true) : !postForDraft?.endDate,
         dayShiftTimes: prevDayShiftTimes ?? Object.fromEntries(
           (postForDraft?.daysOfWeek || []).map((day: string) => {
             const normalized = day.trim().charAt(0).toUpperCase() + day.trim().slice(1, 3).toLowerCase();
             return [normalized, [{ label: '', start: '', end: '' }]];
           })
         ),
-        agreedRate: prevBookingData?.rate ?? null,
+        agreedRate: prevBookingData?.rate ?? (postForDraft?.rate && postForDraft.rate > 0 ? postForDraft.rate : null),
         // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every
         // booking is paid by card now, so there's nothing left to choose.
         paymentMethod: 'credit',
-        selectedAddress: prevBookingData?.address || '',
+        selectedAddress: prevBookingData?.address || addressForPost(cp.locationPool || [], postForDraft, primaryAddress),
         note: prevBookingData?.notes || '',
         lifestyleNotes: prevBookingData?.lifestylePreferences || lifestyleNotes,
       });

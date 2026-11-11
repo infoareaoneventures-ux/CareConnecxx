@@ -441,15 +441,17 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Done (Nov 9):** New shared check (utils/contactDetails.ts + functions twin, parity-tested) refuses phone numbers (digits and spelled out), emails (also 'name at gmail dot com'), links, @handles and off-Evia contact/payment apps (WhatsApp, Telegram, Snapchat, Venmo, Zelle, Cash App, PayPal). Wired into the Post a job details and title, the job edit window, the older posting wizard, Evia's posting flow and edit, and the text intake. Same refusal for care provider bios: profile editor, signup wizard, Evia's bio step and the profile tool.
     - **Confirmed Nov 7:** "Call me at 408-555-0199" went through the form and was saved word-for-word in the post's `description`.
 
-- [ ] **"Nearby Care Providers" looks like it never finishes loading** — _Found in live testing, Nov 7_
+- [x] **"Nearby Care Providers" looks like it never finishes loading** — _Found in live testing, Nov 7_
     - **The issue:** When no care provider matches, the family dashboard shows four pulsing loading cards that never go away. The "Care providers are being matched to your area, check back shortly" note sits below the fold (`components/client/ClientDashboard.tsx`).
     - **Why it matters:** Families think the page is broken. With only 4 public care-provider profiles in production today, most families will see this.
     - **How we'll fix it:** Show a real empty state: no placeholders, a clear message, and the "Browse all care providers" button in view.
+    - **Done (Nov 11):** The four pulsing placeholders are gone. With no match the dashboard shows a real empty state: a clear message and a 'Browse all care providers' button.
 
-- [ ] **The post-a-job form loses everything if you're signed out** — _Found in live testing, Nov 7_
+- [~] **The post-a-job form loses everything if you're signed out** — _Found in live testing, Nov 7_
     - **The issue:** The 6-step care request form keeps no draft. During testing, the session ended while the form sat on the review step (cause unknown; no idle timeout in the code), and all answers were gone after signing back in.
     - **Why it matters:** Families lose several minutes of work and may give up.
     - **How we'll fix it:** Save a draft as each step is completed (on the `job_postings` record or locally), and find out why the session ended.
+    - **Partly done (Nov 11):** The form now saves a draft in the browser per account as each answer changes, restores it on the next visit with a 'Start over' option, and clears it when the job is posted (a week-old draft is dropped). NOT done: the cause of the Nov 7 session end is still unknown; the draft lives in that browser only.
 
 
 - [~] **Interview times are saved in the family's device time zone** — _Found in live testing, Nov 7_
@@ -459,25 +461,28 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Also seen with visits:** the care provider's Bookings page lists visits and shows "Start Shift" by the device's clock, while the server checks the 15-minute window in Pacific time. On a device in another time zone, Start spins for about 10 seconds and then says "Not yet — Start opens 15 minutes before the visit (12:00 AM on Sat, Nov 7)", a time that has already passed on that device.
     - **Done (Nov 11) for all U.S. time zones (decision Nov 9: the exact UTC moment is canonical, not Pacific):** New shared helper utils/careTime.ts (site + functions twin, byte-parity tested): ZIP→zone for every U.S. zone incl. split states, Arizona (no daylight saving), Alaska, Hawaii; wall-clock⇄instant conversion across daylight-saving changes and midnight. Visits: each visit is stamped with its care location's zone when generated (booking too, on acceptance); a record with none reads from its address ZIP, then Pacific, so existing data is unchanged. The server's 15-minute Start window, Evia's today/START lookup, timesheet scheduled times, and the booked-window check that decides whether submitted hours are 'outside the booked window' (this would have rejected correct Chicago hours) all use the visit's zone; the site's overdue/cancel-window/Start-window/log-hours use it too, instead of the browser's clock. Interviews are exact instants shown in each person's own zone: the family's and care provider's texts and notices name their own zone (e.g. '12:00 PM ET'; Pacific text is unchanged), and the interview window says which zone the times are in. Day-before reminders now run hourly and fire at 7 PM (care provider) / 9 PM (family) on the visit's own clock the evening before, instead of one Pacific-anchored run. A small zone tag appears beside visit times outside Pacific. Tests run clean under five machine zones (UTC, Pakistan, New York, Hawaii, Los Angeles). NOT done: the zone name on every one of ~50 site time strings and on the remaining Pacific-fixed Evia texts (timesheet lists, in-shift confirmations, other interview pick-lists); the calendar views' own 'today'; a backfill of the zone onto existing visits (not needed: unzoned = Pacific = how they were made); ZIP-3 accuracy at a few county-level borders.
 
-- [ ] **Families can request a second interview with someone they've already interviewed** — _Found in live testing, Nov 7_
+- [x] **Families can request a second interview with someone they've already interviewed** — _Found in live testing, Nov 7_
     - **The issue:** After the care provider accepted the interview, the family dashboard card and the care provider's profile both offer "Request Interview" again. Before acceptance the card correctly said "Interview Requested".
     - **Why it matters:** Duplicate requests confuse both sides and clutter the care provider's inbox.
     - **How we'll fix it:** Show the interview's status ("Interview Tue 10:00 AM") on the card and profile whenever one is pending or accepted.
+    - **Done (Nov 11):** Accepted and confirmed interviews now count as already requested on the dashboard card, Find Care and the care provider's profile (it only counted requested / pending / scheduled).
 
-- [ ] **The booking form doesn't reuse the job post** — _Found in live testing, Nov 7_
+- [~] **The booking form doesn't reuse the job post** — _Found in live testing, Nov 7_
     - **The issue:** "Send Booking" opens with the rate, schedule and care location empty and marked "Required", even though the family entered all three when posting the job this care provider applied to.
     - **Why it matters:** Families type the same details twice, and the two can drift apart.
     - **How we'll fix it:** Pre-fill the booking from the job post (or the care plan) and let the family adjust.
+    - **Partly done (Nov 11):** The form now opens with the rate from the job post, the care location whose ZIP matches the post (else the only saved address, else the account address), and the ongoing / end date from the post. NOT done: start and end times (the post has only morning / afternoon / evening) and the days' times stay for the family to enter.
 
 - [ ] **Families can book without a card on file** — _Found in live testing, Nov 7_
     - **The issue:** The family had no payment card, yet the booking request went through, the care provider accepted it, and both sides show "Card" as the payment method. Payment is only attempted after the visit, when the family approves hours (or 24 hours pass).
     - **Why it matters:** The charge fails after the care provider has already worked, and the care provider isn't paid.
     - **How we'll fix it:** Ask for a card before a booking request can be sent (or before the care provider can accept), and show a clear prompt on the booking form.
 
-- [ ] **Care providers can put a phone number in their public bio** — _Found in live testing, Nov 7_
+- [x] **Care providers can put a phone number in their public bio** — _Found in live testing, Nov 7_
     - **The issue:** Saving "Text me at 408-555-0177." in the care provider's About text was accepted ("Profile updated") and shown on the public profile. Job descriptions have the same gap (listed above).
     - **Why it matters:** Families and care providers can arrange care off the platform, which skips the background-check, payment and safety protections.
     - **How we'll fix it:** Run the same contact-detail check on bios as on job descriptions, on the site and in Evia's bio step.
+    - **Done (Nov 11):** Done in Wave 1 (Nov 9): phone numbers, emails and links are refused in bios on the profile editor, signup wizard, Evia's bio step and the profile tool.
 
 - [x] **Cancelling one visit ends the whole ongoing booking** — _Found in live testing, Nov 7_
     - **The issue:** The weekly booking (Tuesdays, ongoing) had only the next visits created. When the care provider used "Cancel this shift only" on the last created visit (the prompt said "The rest of your booking stays active"), the booking's status became "completed" and it disappeared from Active Bookings on both sides.
@@ -564,20 +569,22 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** These boxes look off-brand and dated, and some phones block them.
     - **How we'll fix it:** Replace them with branded confirmation pop-ups and notifications.
 
-- [ ] **The dashboard's progress line counts the wrong steps**
+- [x] **The dashboard's progress line counts the wrong steps**
     - **The issue:** With 2 of 3 setup steps done, the dashboard says "You're 2 of 3 steps away from care." With none done, it says "You're 0 of 3 steps away."
     - **Why it matters:** It tells families the opposite of how far along they are.
     - **How we'll fix it:** Show the steps left ("1 step away from care") or the steps done ("2 of 3 steps done").
+    - **Done (Nov 11):** Now reads '2 of 3 steps done' or '1 step away from care'.
 
 - [ ] **The care plan progress card shows an out-of-date status**
     - **The issue:** Right after finishing the setup questions, the dashboard said "60% complete — select the types of care needed", even though the care types had been saved. It only corrected itself after visiting the Care Plan page.
     - **Why it matters:** Families are asked to redo something they've already done.
     - **How we'll fix it:** Work out progress from the same record the setup questions save to, and refresh it when they close.
 
-- [ ] **Wrong message when posting a request before the identity check**
+- [x] **Wrong message when posting a request before the identity check**
     - **The issue:** Clicking "New Request" before the identity check shows "To contact care providers, you need to complete a quick identity check."
     - **Why it matters:** The family was posting a request, not contacting anyone, so the message is confusing.
     - **How we'll fix it:** Word the message for the action that was blocked, for example "To post a care request…".
+    - **Done (Nov 11):** The identity check now names the blocked action: 'To post a care request…', 'To interview …', 'To book …'.
 
 - [ ] **Some form checks don't explain themselves**
     - **The issue:** A $0 hourly rate just greys out "Continue" with no explanation. On the Care Plan page, a missing first name only shows as a pop-up at the top of the screen, away from the field. The emergency contact can be the account holder's own phone number.
@@ -589,50 +596,57 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** It feels broken, and people lose their place on the page.
     - **How we'll fix it:** Stop the background page from scrolling while a pop-up is open, as part of the shared pop-up component.`)
 
-- [ ] **In-app notifications show raw web addresses** — _Found in live testing, Nov 7_
+- [x] **In-app notifications show raw web addresses** — _Found in live testing, Nov 7_
     - **The issue:** Bell notifications include links as plain text, for example "https://www.eviacares.com/client/membership".
     - **Why it matters:** It looks unfinished, and the long address is hard to read on a phone.
     - **How we'll fix it:** Turn links into a button or tappable text ("View membership"), using the notification's own link field.
+    - **Done (Nov 11):** Bell text drops raw links and reads as a normal sentence.
 
-- [ ] **The care provider jobs list shows stale and badly formatted jobs** — _Found in live testing, Nov 7_
+- [~] **The care provider jobs list shows stale and badly formatted jobs** — _Found in live testing, Nov 7_
     - **The issue:** Before setting a location, the test care provider's dashboard listed jobs dated August–September 2026 (already past), "Location TBD", "26/hr" with no $ sign, and raw values such as "via credit_card" and "via cash".
     - **Why it matters:** Care providers see jobs they can't take and data that looks broken.
     - **How we'll fix it:** Hide past-dated jobs, require a location before listing jobs, and format rates and payment methods with the shared formatters.
+    - **Partly done (Nov 11):** Jobs dated before today are hidden on the job board and the onboarding dashboard; rates read '$26/hr'; payment reads 'Paid by card through Evia' (no 'via cash'); 'Location TBD' is no longer shown; 'Experience' no longer reads 'years years'. NOT done: requiring a location before any jobs are listed.
 
-- [ ] **Interview requests are slow and the times ignore the care provider** — _Found in live testing, Nov 7_
+- [~] **Interview requests are slow and the times ignore the care provider** — _Found in live testing, Nov 7_
     - **The issue:** Sending an interview request took about 8 seconds and showed two success messages saying the same thing. The time list is always 9 AM–6 PM, whatever hours the care provider gave, and shows no time zone.
     - **Why it matters:** Families pick times the care provider has said they can't do, and the double message looks like a glitch.
     - **How we'll fix it:** Offer times from the care provider's availability, show the time zone, and show one confirmation.
+    - **Partly done (Nov 11):** Times are now offered from the care provider's own availability for the chosen day (all day when none is set), the window states the zone, and there is one confirmation (Find Care showed none before). NOT done: the ~8 second wait to send.
 
 - [ ] **Editing a care location adds a second one** — _Found in live testing, Nov 7_
     - **The issue:** Changing the family's care location to a new address kept the old one, so the post-a-job form lists both Santa Clara and Gilroy.
     - **Why it matters:** Families may post a job at an old address.
     - **How we'll fix it:** Editing should replace the address; adding a new one should be a separate action.
 
-- [ ] **The job review step shows details the family never entered** — _Found in live testing, Nov 7_
+- [x] **The job review step shows details the family never entered** — _Found in live testing, Nov 7_
     - **The issue:** The review page shows the raw date ("2026-11-10"), and adds "Pets in home" and "Credit Card" without the form ever asking.
     - **Why it matters:** Families post details they didn't choose, and care providers see them.
     - **How we'll fix it:** Format the date, and only show fields the family set (or ask for them in the form).
+    - **Done (Nov 11):** Dates are formatted ('Tue, Nov 10, 2026') and payment reads 'paid by card through Evia'. Pets / smoking were already only shown when set on the saved location.
 
-- [ ] **The rate step gives no guidance** — _Found in live testing, Nov 7_
+- [x] **The rate step gives no guidance** — _Found in live testing, Nov 7_
     - **The issue:** "Set your rate" is an empty box. It gives no typical local range and doesn't mention the fee families pay on top ($25/hr becomes $27.25/hr billed).
     - **Why it matters:** Families guess, and the higher billed amount is a surprise later.
     - **How we'll fix it:** Show a typical range for the area and the billed amount as the family types.
+    - **Done (Nov 11):** The rate step shows a typical local range (25th–75th percentile of the rates care providers have set; $18–28 when there are too few) and the billed amount as the family types, e.g. $25/hr → $27.25/hr.
 
-- [ ] **Form errors appear at the top of the screen and linger** — _Found in live testing, Nov 7_
+- [~] **Form errors appear at the top of the screen and linger** — _Found in live testing, Nov 7_
     - **The issue:** Leaving the rate empty shows "Please enter an hourly rate" as a pop-up at the top of the screen instead of next to the field, and it stays visible on the next step.
     - **Why it matters:** The message is easy to miss, and seeing it on the next step is confusing.
     - **How we'll fix it:** Show the error under the field and clear it when the step changes.
+    - **Partly done (Nov 11):** The rate step shows its error under the field and clears it when the rate is typed; moving to another step scrolls to the top and clears leftover error toasts. NOT done: moving the other steps' errors under their fields.
 
 - [ ] **Days of the week are in a different order on each side** — _Found in live testing, Nov 7_
     - **The issue:** Care provider pages list Mon–Sun; family pages list Sun–Sat.
     - **Why it matters:** Small, but it makes the two sides feel like different products.
     - **How we'll fix it:** Pick one order and use a shared day list.
 
-- [ ] **"BGC+" badge on care provider cards** — _Found in live testing, Nov 7_
+- [x] **"BGC+" badge on care provider cards** — _Found in live testing, Nov 7_
     - **The issue:** The background-check badge on the family's care provider card reads "BGC+" in tiny text.
     - **Why it matters:** Families don't know what it means, so the strongest trust signal is lost.
     - **How we'll fix it:** Use plain words, for example "Background checked", with a short explanation on hover or tap.
+    - **Done (Nov 11):** The badge now reads "Background checked" with a check icon.
 
 - [ ] **Slow pages: Membership and the family dashboard** — _Found in live testing, Nov 7_
     - **The issue:** The family Membership page showed "Loading membership status..." for more than 3 seconds. (Find Care being slow is already listed.)
@@ -670,10 +684,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** A paying family could be told they have no plan and pay twice.
     - **How we'll fix it:** Use one shared "membership active" helper everywhere (the access gate's rule).
 
-- [ ] **The dashboard's timesheet and shift cards say the wrong thing** — _Found in live testing, Nov 7_
+- [~] **The dashboard's timesheet and shift cards say the wrong thing** — _Found in live testing, Nov 7_
     - **The issue:** With no timesheet ever submitted, the family dashboard says "All timesheets reviewed". The upcoming shift card shows a time ("12 AM – 11:59 PM") without a date. The family's Settings shows the account address (old Santa Clara) separately from the care location (Gilroy), with no explanation.
     - **Why it matters:** Families read these as facts about their care.
     - **How we'll fix it:** "No timesheets yet" when there are none; always show the date on shift cards; explain or merge the two addresses.
+    - **Partly done (Nov 11):** 'No timesheets yet' when none was ever submitted; the upcoming shift card shows the date. NOT done: explaining or merging the account address and the care location in Settings.
 
 - [ ] **Find Care filters and counts are off** — _Found in live testing, Nov 7_
     - **The issue:** With "5+ years" experience selected, a care provider with "3-5 years" still shows. The tabs say "All (2)" while the list says "1 care provider found". On a care provider card only the photo opens the profile (not the name), and the profile doesn't show the care provider's weekly availability.
@@ -695,11 +710,12 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** The money step is where trust matters most; mismatched totals and slow buttons cause double clicks and disputes.
     - **How we'll fix it:** Speed up the visit actions, confirm the end and link to submitting hours, offer the named charge types, show the full amount charged everywhere, and word the auto-approve banner per timesheet.
 
-- [~] **Reviews and blocking don't update everything** — _Found in live testing, Nov 7_
+- [x] **Reviews and blocking don't update everything** — _Found in live testing, Nov 7_
     - **The issue:** After the family left a 5-star review, the review appeared in the profile's Reviews section (5.0, 1 review) but the header still said "No reviews yet". Blocking the family from the care provider's chat happened with one click and no confirmation, and after unblocking in Settings the conversation never came back.
     - **Why it matters:** Care providers look unreviewed, and one mis-click permanently loses a conversation.
     - **How we'll fix it:** Update the profile's rating summary when a review lands, ask before blocking, and keep (hide, not remove) the conversation so unblocking restores it.
     - **Partly done (Nov 9):** Blocking now asks first, and unblocking (site and Evia) no longer hides or wipes the conversation: it comes back as it was. NOT done: the profile header still saying 'No reviews yet' after a review lands (Wave 3).
+    - **Done (Nov 11):** The profile header rating and count now come from the reviews listed (no more 'No reviews yet' beside a 5-star review). With the Nov 9 blocking changes this item is complete.
 
 - [x] **Deleting an account works but leaves loose ends** — _Found in live testing, Nov 7_
     - **The issue:** The care provider's deletion (confirm window, texted code, wrong code refused) removed their records, but the page stayed on "Deleting..." with no confirmation and no sign-out until reloaded, and then showed the plain login page with no "your account was deleted" message. The window never says what happens to the paid yearly membership, upcoming visits or unpaid hours. Afterwards the family's inbox still lists the conversation (unread badge) and accepts new messages that nobody will read, and their job post still shows "1 applicant".

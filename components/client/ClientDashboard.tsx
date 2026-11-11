@@ -142,6 +142,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
+  // "All timesheets reviewed" is only true once one has been submitted (2026-11-11: it said so with none ever sent).
+  const [hasAnyTimesheet, setHasAnyTimesheet] = useState(false);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
   const [activeShifts, setActiveShifts] = useState<any[]>([]);
   // First-visit review prompt (2026-09-19): a caregiver with a completed shift,
@@ -321,7 +323,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       .onSnapshot(snap => {
         const all = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setAllInterviews(all);
-        const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
+        // An accepted / confirmed interview still counts (2026-11-11): the card used to offer "Request Interview" again once it was accepted.
+        const activeStatuses = new Set(['requested', 'pending', 'scheduled', 'accepted', 'confirmed']);
         const pending = all.filter((d: any) => activeStatuses.has(d.status));
 
         setRequestedCaregiverIds(new Set(pending.map((d: any) => d.caregiverId).filter(Boolean)));
@@ -381,6 +384,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           .sort((a: any, b: any) => new Date(a.autoApproveAt).getTime() - new Date(b.autoApproveAt).getTime())
       );
       setUnpaidShifts(rows.filter((r: any) => UNPAID_STATUSES.includes(r.status)));
+      setHasAnyTimesheet(rows.length > 0);
     });
     return () => { try { (unsub as any)?.(); } catch {} };
   }, [currentUser?.uid]);
@@ -918,7 +922,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                       </div>
                       <div className="flex items-center gap-1.5 text-xs text-slate-500">
                         <Clock className="w-3 h-3 flex-shrink-0" />
-                        <span className="font-medium">{fmtTime(shift.startTime)} – {fmtTime(shift.endTime)}<ZoneTag visit={shift as any} /></span>
+                        <span className="font-medium">{shift.date ? `${new Date(`${shift.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}, ` : ''}{fmtTime(shift.startTime)} – {fmtTime(shift.endTime)}<ZoneTag visit={shift as any} /></span>
                       </div>
                       {isInProgress && shift.startedAt && (
                         <div className="flex items-center gap-1.5 text-xs mt-1 text-green-600 font-medium">
@@ -1396,7 +1400,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                       <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
                         <CheckCircle className="w-4 h-4 text-green-600" />
                       </div>
-                      <p className="text-sm text-slate-600">All timesheets reviewed</p>
+                      <p className="text-sm text-slate-600">{hasAnyTimesheet ? 'All timesheets reviewed' : 'No timesheets yet. They appear here after a visit.'}</p>
                     </div>
                   )}
                 </div>
@@ -1499,20 +1503,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                       ))}
                     </div>
                   ) : (
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      {[1, 2, 3, 4].map(i => (
-                        <div key={i} className="bg-white rounded-xl border border-slate-200 overflow-hidden animate-pulse">
-                          <div className="h-44 bg-slate-100" />
-                          <div className="p-4 space-y-3">
-                            <div className="h-4 bg-slate-100 rounded w-2/3" />
-                            <div className="h-3 bg-slate-100 rounded w-1/2" />
-                            <div className="h-8 bg-slate-100 rounded" />
-                          </div>
-                        </div>
-                      ))}
-                      <div className="sm:col-span-2 text-center py-4">
-                        <p className="text-sm text-slate-500">Care providers are being matched to your area — check back shortly.</p>
-                        <button onClick={() => navigate('/client/find-care-providers')} className="mt-2 text-primary-600 text-sm font-medium hover:underline">Browse all care providers →</button>
+                    <div className="bg-white rounded-xl border border-slate-200 p-8 text-center" data-testid="nearby-empty">
+                      <p className="text-base font-semibold text-slate-800">No care providers near you yet</p>
+                      <p className="mt-1 text-sm text-slate-500">We're still building out your area. You can browse every care provider now, or post a care request and we'll tell care providers nearby.</p>
+                      <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+                        <button onClick={() => navigate('/client/find-care-providers')} className="inline-flex items-center rounded-full bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary-700">Browse all care providers</button>
                       </div>
                     </div>
                   );

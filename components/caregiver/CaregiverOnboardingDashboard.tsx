@@ -420,7 +420,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
             ) : jobs.length === 0 ? (
               <div className="text-center py-8">
                 <Briefcase className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-                <p className="text-sm text-slate-400">No jobs posted yet. Check back soon.</p>
+                <p className="text-sm text-slate-400">No new jobs nearby right now. Jobs you've applied to or hidden aren't listed here. Check back soon.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { looksLikeEmail, EMAIL_FORMAT_MESSAGE } from '../../utils/emailFormat';
 import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
 import { recordActedForPerson } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -213,8 +215,9 @@ export const AccountSettings: React.FC = () => {
     try {
       await fn();
       addToast(successMsg, 'success');
-    } catch {
-      addToast('Something went wrong — please try again', 'error');
+    } catch (e) {
+      // The server's own reason when it gave one (2026-11-11: "Valid email required" came back and was dropped).
+      addToast(safeErrorMessage(e, 'Something went wrong — please try again'), 'error');
     } finally {
       setIsLoading(false);
     }
@@ -267,6 +270,7 @@ export const AccountSettings: React.FC = () => {
   const handleRequestEmailChange = () => saving(async () => {
     const user = authService.getCurrentUser();
     if (!newEmailDraft.trim() || !user?.uid) return;
+    if (!looksLikeEmail(newEmailDraft)) throw new Error(EMAIL_FORMAT_MESSAGE);
     const r = await submitAccountAction<{ stage: 'awaiting_old_approval' | 'awaiting_new_confirm'; token: string; sentTo: string }>('request_email_change', { uid: user.uid, newEmail: newEmailDraft.trim() });
     setEmailChange(r);
     setFallbackCodeSent(false);

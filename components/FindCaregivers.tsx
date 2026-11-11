@@ -11,7 +11,7 @@ import {
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
 import { CareKind, CARE_KINDS, CARE_KIND_LABEL, kindsOfProvider, serviceListsForKinds } from './caregiver/signup/constants';
-import { formatExperience } from '../utils/experience';
+import { formatExperience, experienceYears } from '../utils/experience';
 import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
 import { nearestDistanceMiles } from '../hooks/useNearbyCaregiversWithScores';
@@ -471,14 +471,16 @@ export default function FindCaregivers() {
     return n;
   }, [nameQuery, maxRate, maxDistance, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages]);
 
-  const filteredCaregivers = useMemo(() => {
+  // The visible list for either tab. The tab counts below use the SAME rules, so "All (2)" can no longer sit beside
+  // "1 care provider found" (2026-11-11): both count what passes the filters.
+  const computeVisible = (favoritesOnly: boolean) => {
     // The service checkboxes collapse to the viewed kind; a tick outside it is ignored (Transportation sits under both).
     const visibleServices = new Set(serviceListsForKinds(viewKind ? [viewKind] : CARE_KINDS).flatMap(l => [...l.services]));
     const appliedSpecialties = new Set(Array.from(selectedSpecialties).filter(s => visibleServices.has(s)));
     let list = caregivers.filter(cg => {
       if (blockedIds.has(cg.id)) return false;
       if (viewKind && !cg.careKinds.includes(viewKind)) return false;
-      if (showFavoritesOnly && !favorites.includes(cg.id)) return false;
+      if (favoritesOnly && !favorites.includes(cg.id)) return false;
       // Distance filter — only applied when client has locations AND caregiver has coords
       if (cg.distance != null) {
         if (cg.distance > maxDistance) return false;
@@ -495,7 +497,7 @@ export default function FindCaregivers() {
       }
       if (maxRate < 100 && cg.hourlyRate > maxRate) return false;
       if (cg.rating < minRating) return false;
-      if ((cg.experience || 0) < minExperience) return false;
+      if (experienceYears(cg.experience) < minExperience) return false;
       if (appliedSpecialties.size > 0) {
         // Transportation counts only while it is live on the record (offered + driving record
         // clear) — the same rule that shows the pill, so the filter and the card agree (2026-10-06).
@@ -531,7 +533,10 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
+  };
+  const filteredCaregivers = useMemo(() => computeVisible(showFavoritesOnly), [showFavoritesOnly, caregivers, blockedIds, favorites, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
+  const allCount = useMemo(() => computeVisible(false).length, [caregivers, blockedIds, favorites, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
+  const favCount = useMemo(() => computeVisible(true).length, [caregivers, blockedIds, favorites, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
 
   if (loading) {
     return (
@@ -726,7 +731,7 @@ export default function FindCaregivers() {
                 : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
             }`}
           >
-            All ({caregivers.length})
+            All ({allCount})
           </button>
           <button
             onClick={() => setShowFavoritesOnly(true)}
@@ -737,7 +742,7 @@ export default function FindCaregivers() {
             }`}
           >
             <Heart className={`w-3.5 h-3.5 ${showFavoritesOnly ? 'fill-current' : ''}`} />
-            Favorites ({favorites.length})
+            Favorites ({favCount})
           </button>
 
           <button
@@ -971,7 +976,10 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
           </div>
           
           <div className="flex-1 min-w-0 pt-1 pr-10">
-            <h3 className="text-[22px] font-bold text-slate-900 group-hover:text-primary-600 transition-colors truncate mb-1 leading-tight">{fullName}</h3>
+            <h3 className="text-[22px] font-bold text-slate-900 group-hover:text-primary-600 transition-colors truncate mb-1 leading-tight">
+              {/* A real button (2026-11-11): the name is reachable by keyboard and screen readers, not only the photo/area. */}
+              <button type="button" onClick={(e) => { e.stopPropagation(); onViewProfile(); }} className="max-w-full truncate text-left hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded">{fullName}</button>
+            </h3>
             
             <div className="flex items-center gap-0.5 mb-2.5">
               {[...Array(5)].map((_, i) => (

@@ -362,7 +362,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
             void recordActedForPerson('interview_accepted', 'accepted an interview');
-            onShowToast('Interview accepted', 'success');
+            // Move to the Accepted view so the card is still in sight (2026-11-11: Accept removed the card from the
+            // current view and left an empty list with no message), and say what happens next.
+            setIvFilter('accepted');
+            onShowToast('Interview accepted. You can find it under Accepted, and Evia will text you the call link before it starts.', 'success');
         } catch {
             onShowToast('Failed to accept interview', 'error');
         } finally {
@@ -1136,6 +1139,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                 );
                             })}
                         </div>
+                        {visibleInterviews.filter(iv => ivFilter === 'all' || iv.status === ivFilter).length === 0 && (
+                            <div className="text-center py-8 text-slate-500" data-testid="interviews-empty-filter">
+                                <p className="text-sm">No {ivFilter} interviews right now.</p>
+                                <button type="button" onClick={() => setIvFilter('all')} className="mt-2 text-sm font-semibold text-primary-600 hover:underline">Show all interviews</button>
+                            </div>
+                        )}
                         <div className="space-y-3">
                             {visibleInterviews.filter(iv => ivFilter === 'all' || iv.status === ivFilter).map(iv => {
                                 const date = new Date(iv.scheduledAt);

@@ -653,36 +653,41 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Slow pages feel broken, especially on mobile data.
     - **How we'll fix it:** Load membership status from the user record already in memory, and show a placeholder instead of a sentence.
 
-- [ ] **No notice when a care provider's membership becomes active** — _Found in live testing, Nov 7_
+- [~] **No notice when a care provider's membership becomes active** — _Found in live testing, Nov 7_
     - **The issue:** The care provider got no in-app notification when their membership became active.
     - **Why it matters:** They don't know they can move on to the background check.
     - **How we'll fix it:** Send a bell notification (and Evia text) when the membership activates.
+    - **Partly done (Nov 11):** Checked, not a code gap: the care provider's 'Membership active' bell and text are raised by the membership record change (membership_paid). The Nov 7 test set the membership by hand, which skips that change. Re-test with a real (test-mode) payment.
 
 
-- [ ] **The care provider's dashboard doesn't update after actions** — _Found in live testing, Nov 7_
+- [~] **The care provider's dashboard doesn't update after actions** — _Found in live testing, Nov 7_
     - **The issue:** After applying to a job, the card still said "Apply Now" and My Applications said "No pending applications" until a page reload. Applying again was only refused after filling the form in a second time ("You have already applied to this job"). After the reload, Nearby Jobs said "No jobs posted yet" because the one job was hidden once applied, and the application showed the date it was sent (Nov 7) where the job's date (Nov 10) is expected.
     - **Why it matters:** Care providers can't tell whether their action worked.
     - **How we'll fix it:** Update the lists as soon as the write succeeds, mark applied jobs "Applied", and say "No new jobs nearby" when jobs are only hidden.
+    - **Partly done (Nov 11):** The dashboard's Nearby Jobs and the Care Requests card now listen live, so an applied job leaves the list and shows under My Applications at once (both were one-time reads). The empty text now says 'No new jobs nearby right now. Jobs you've applied to or hidden aren't listed here.' NOT done: the application row still shows the date it was sent, not the job's date.
 
-- [ ] **Accepting an interview leaves a blank page** — _Found in live testing, Nov 7_
+- [x] **Accepting an interview leaves a blank page** — _Found in live testing, Nov 7_
     - **The issue:** On the care provider's Interviews tab, Accept removed the card and left an empty list with no message and no confirmation. The filter chips changed to "All / Accepted" while the address still said "pending". Accepting a booking request also showed no confirmation.
     - **Why it matters:** It looks like the interview disappeared.
     - **How we'll fix it:** Show a confirmation and switch to the Accepted view (or keep the card with its new status).
+    - **Done (Nov 11):** Accept now switches to the Accepted view so the card stays in sight, confirms with what happens next, and an empty filter shows 'No … interviews right now' with a 'Show all interviews' button. Accepting a booking request already showed a confirmation.
 
-- [ ] **Family and care provider see different detail for the same event** — _Found in live testing, Nov 7_
+- [x] **Family and care provider see different detail for the same event** — _Found in live testing, Nov 7_
     - **The issue:** The care provider's "Interview confirmed" notice has the time, the note and the Meet link; the family's "Interview Accepted" notice has neither time nor link.
     - **Why it matters:** The family has to go looking for when and where to join.
     - **How we'll fix it:** Use one notice template for both sides with time, link and next step.
+    - **Done (Nov 11):** The family's 'Interview Accepted' bell now carries the time (in their own zone) and says Evia will text the call link. The family's text already carried the time and link.
 
 - [ ] **Slow saves in Settings** — _Found in live testing, Nov 7_
     - **The issue:** Pausing the care provider account showed "Saving…" for about 10 seconds; reactivating was similar.
     - **Why it matters:** Feels broken; people click again.
     - **How we'll fix it:** Find what the save waits on (probably a backend call) and return as soon as the write lands.
 
-- [ ] **Family membership shows as "None" in some places** — _Found in live testing, Nov 7_
+- [~] **Family membership shows as "None" in some places** — _Found in live testing, Nov 7_
     - **The issue:** With member access granted (`membershipStatus: active`, set by hand for testing), Settings says "Membership plan: None — Add a plan" and the Membership page offers "Select a plan". The access check reads one field; these pages read another. Needs checking with a real subscription before treating it as a bug.
     - **Why it matters:** A paying family could be told they have no plan and pay twice.
     - **How we'll fix it:** Use one shared "membership active" helper everywhere (the access gate's rule).
+    - **Partly done (Nov 11):** Checked, not a code gap: Settings and the Membership page read the subscription record, which any real subscription creates; only the hand-set test data lacked one. Re-test with a real (test-mode) subscription.
 
 - [~] **The dashboard's timesheet and shift cards say the wrong thing** — _Found in live testing, Nov 7_
     - **The issue:** With no timesheet ever submitted, the family dashboard says "All timesheets reviewed". The upcoming shift card shows a time ("12 AM – 11:59 PM") without a date. The family's Settings shows the account address (old Santa Clara) separately from the care location (Gilroy), with no explanation.
@@ -690,20 +695,23 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** "No timesheets yet" when there are none; always show the date on shift cards; explain or merge the two addresses.
     - **Partly done (Nov 11):** 'No timesheets yet' when none was ever submitted; the upcoming shift card shows the date. NOT done: explaining or merging the account address and the care location in Settings.
 
-- [ ] **Find Care filters and counts are off** — _Found in live testing, Nov 7_
+- [~] **Find Care filters and counts are off** — _Found in live testing, Nov 7_
     - **The issue:** With "5+ years" experience selected, a care provider with "3-5 years" still shows. The tabs say "All (2)" while the list says "1 care provider found". On a care provider card only the photo opens the profile (not the name), and the profile doesn't show the care provider's weekly availability.
     - **Why it matters:** Families filter on experience and availability to choose someone; wrong results erode trust.
     - **How we'll fix it:** Map the experience buckets to numbers correctly, make the counts agree, make the name a link, and add availability to the profile.
+    - **Partly done (Nov 11):** The experience filter reads the stored bucket as a number (a '3-5 years' provider no longer passes '5+'); the All and Favorites counts use the same rules as the list; the care provider's name is a real button. NOT done: showing weekly availability in the profile window.
 
-- [ ] **A pending reschedule can be hidden from the care provider** — _Found in live testing, Nov 7_
+- [~] **A pending reschedule can be hidden from the care provider** — _Found in live testing, Nov 7_
     - **The issue:** When the family proposed moving a visit, the care provider's Bookings page tucked that visit behind "Show 1 more shift", so the "Accept new time / Decline" box was out of sight. The family's extra-visit request is labelled "Schedule change request" on both sides, and its booking picker lists bookings only by the care provider's name. After the care provider accepted it, the family's notice said "accepted your request to add Thu to your regular schedule", though only the one Nov 12 visit was added.
     - **Why it matters:** The care provider may never see the request, and the family's visit stays unconfirmed.
     - **How we'll fix it:** Always show visits with a pending request, show pending requests under the Requests tab, and call an extra visit an "Extra visit request".
+    - **Partly done (Nov 11):** A visit with a pending reschedule is always shown (never behind 'Show more shifts'); a one-day request is called 'Extra visit request' on both sides and accepting it tells the family about the extra visit, not a change to the regular schedule. NOT done: listing pending requests under the Requests tab and naming the booking in the family's picker.
 
-- [ ] **Account-change errors don't say what went wrong** — _Found in live testing, Nov 7_
+- [x] **Account-change errors don't say what went wrong** — _Found in live testing, Nov 7_
     - **The issue:** Changing the recovery email to an invalid address or to an address the email service refuses both show only "Failed to send the link". The server returned a specific reason ("Valid email required"; the email provider rejected the domain) that the page drops.
     - **Why it matters:** People can't fix the problem themselves.
     - **How we'll fix it:** Show the server's message, and check the email format on the page before sending.
+    - **Done (Nov 11):** Both Settings pages show the server's own reason when it gave one (e.g. 'Valid email required') and check the email format before sending.
 
 - [ ] **Visit and timesheet screens: slow, and the money shown doesn't match** — _Found in live testing, Nov 7_
     - **The issue:** Start and End each spun for about 12 seconds; ending a visit gave no confirmation and no prompt to submit hours. The extra-charge type list only offers "Custom" though the hint names overtime, mileage and supplies. The family's review window shows $2.37 while the card above says $3.37 will be charged (the 9% fee, $1 minimum, is left out). The banner says "Shifts auto-approve after 24 hours" while this timesheet (with an extra charge) needs manual approval. The care provider's message says "awaiting client approval".

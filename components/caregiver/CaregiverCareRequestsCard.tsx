@@ -32,13 +32,12 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
       setMyInterviews(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, onErr));
 
-    db.collection('job_applications')
+    // Live (2026-11-11): a one-time read left "No pending applications" showing after she applied, until a reload.
+    unsubs.push(db.collection('job_applications')
       .where('caregiverId', '==', caregiverId)
       .orderBy('appliedAt', 'desc')
       .limit(20)
-      .get()
-      .then(snap => setMyApplications(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
-      .catch(onErr);
+      .onSnapshot(snap => setMyApplications(snap.docs.map(d => ({ id: d.id, ...d.data() }))), onErr));
 
     return () => unsubs.forEach(u => { try { u(); } catch {} });
   }, [caregiverId, reloadKey]);

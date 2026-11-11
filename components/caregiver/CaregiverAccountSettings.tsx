@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { looksLikeEmail, EMAIL_FORMAT_MESSAGE } from '../../utils/emailFormat';
 import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
 import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, X } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
@@ -141,6 +143,7 @@ export const CaregiverAccountSettings: React.FC = () => {
 
   const saveEmail = async () => {
     if (!newEmailDraft.trim() || !currentUser?.uid) return;
+    if (!looksLikeEmail(newEmailDraft)) { addToast(EMAIL_FORMAT_MESSAGE, 'error'); return; }
     setSavingEmail(true);
     try {
       const r = await submitAccountAction<{ stage: 'awaiting_old_approval' | 'awaiting_new_confirm'; token: string; sentTo: string }>('request_email_change', { uid: currentUser.uid, newEmail: newEmailDraft.trim() });
@@ -148,7 +151,7 @@ export const CaregiverAccountSettings: React.FC = () => {
       setFallbackCodeSent(false);
       setFallbackCode('');
       setEmailRequestSent(true);
-    } catch { addToast('Failed to send the link', 'error'); }
+    } catch (e) { addToast(safeErrorMessage(e, 'Failed to send the link'), 'error'); } // the server's own reason when it gave one
     finally { setSavingEmail(false); }
   };
 
@@ -158,7 +161,7 @@ export const CaregiverAccountSettings: React.FC = () => {
     try {
       await submitAccountAction('resend_email_confirmation', { uid: currentUser.uid });
       addToast('Confirmation link sent — check your inbox (and Junk)', 'success');
-    } catch { addToast('Failed to send the link', 'error'); }
+    } catch (e) { addToast(safeErrorMessage(e, 'Failed to send the link'), 'error'); }
     finally { setSavingEmail(false); }
   };
 

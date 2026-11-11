@@ -353,10 +353,16 @@ export const onVideoInterviewWrite = functions.firestore
         // The family's ONE text for this event is the confirmed-time + Meet link
         // message from interviewLinkTrigger.ts (it fires on the same accept and
         // retries until delivered). Texting here too made it two or three.
+        // The bell carries what the care provider's does (2026-11-11: it had neither the time nor what happens next):
+        // the time in the FAMILY's own zone and that Evia texts the call link.
+        const { parseScheduledTimeMs: parseMs, formatInterviewTimeShort: fmtShort } = await import('../utils/scheduledTime');
+        const { zoneForUser: zoneOf } = await import('../utils/personZone');
+        const whenMs = parseMs(String(after.scheduledTime ?? ''));
+        const whenText = Number.isFinite(whenMs) ? ` for ${fmtShort(whenMs, await zoneOf(after.clientId))}` : '';
         await tell('client', after.clientId, {
           type: 'interview_accepted',
           title: 'Interview Accepted',
-          body: `${after.caregiverName} accepted your interview request.`,
+          body: `${after.caregiverName} accepted your interview request${whenText}. Evia will text you the call link before it starts.`,
           data: { interviewId: context.params.interviewId },
         }, null, { ...iv, transitionType: 'interview_accepted' }, { textOwnedElsewhere: true });
       }
@@ -656,12 +662,20 @@ export const onBookingAmendmentWrite = functions.firestore
       // Accepted → notify client
       if (statusAfter === 'accepted' && after.clientId) {
         const days = Object.keys(after.newDays || {}).join(', ');
+        // A ONE-DAY request is an extra visit, not a change to the regular schedule (2026-11-11: the family was told
+        // "add Thu to your regular schedule" though only that one visit was added).
+        const oneDay = !after.ongoing && after.startDate && after.endDate && after.startDate === after.endDate;
+        const dayLabel = oneDay ? new Date(`${after.startDate}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
         await tell('client', after.clientId, {
           type: 'amendment_accepted',
-          title: 'Schedule Change Accepted',
-          body: `${after.caregiverName} accepted your request to add ${days} to your regular schedule.`,
+          title: oneDay ? 'Extra Visit Accepted' : 'Schedule Change Accepted',
+          body: oneDay
+            ? `${after.caregiverName} accepted your request for an extra visit on ${dayLabel}.`
+            : `${after.caregiverName} accepted your request to add ${days} to your regular schedule.`,
           data: { amendmentId: context.params.amendmentId },
-        }, `${after.caregiverName || 'Your care provider'} accepted your request to add ${days} to the schedule.`, { ...am, transitionType: 'amendment_accepted' });
+        }, oneDay
+          ? `${after.caregiverName || 'Your care provider'} accepted your request for an extra visit on ${dayLabel}.`
+          : `${after.caregiverName || 'Your care provider'} accepted your request to add ${days} to the schedule.`, { ...am, transitionType: 'amendment_accepted' });
       }
 
       // Declined → notify client

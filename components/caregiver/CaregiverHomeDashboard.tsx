@@ -134,11 +134,15 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
         dbService.getOpenJobs().then(all => { setRawJobs(all); setJobsLoaded(true); }).catch(() => setJobsLoaded(true));
       });
 
-    db.collection('job_applications').where('caregiverId', '==', uid).get()
-      .then(snap => setAppliedJobIds(new Set(snap.docs.map(d => (d.data() as any).jobId).filter(Boolean))))
-      .catch(() => {});
+    // LIVE (2026-11-11): this was a one-time read, so a job she had just applied to stayed listed with "Apply Now"
+    // until a page reload. The listener drops it as soon as the application is written.
+    const appsUnsub = db.collection('job_applications').where('caregiverId', '==', uid)
+      .onSnapshot(
+        snap => setAppliedJobIds(new Set(snap.docs.map(d => (d.data() as any).jobId).filter(Boolean))),
+        () => {},
+      );
 
-    return unsub;
+    return () => { unsub(); appsUnsub(); };
   }, [uid]);
 
   // Filter + sort inline so it re-runs whenever profile (radius/location) changes

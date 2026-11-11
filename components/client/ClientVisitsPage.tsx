@@ -2005,7 +2005,7 @@ export const ClientVisitsPage: React.FC = () => {
                     </div>
                     <div>
                       <p className="font-semibold text-slate-900">{a.caregiverName || 'Care Provider'}</p>
-                      <p className="text-xs text-slate-400">Schedule change request · Awaiting response</p>
+                      <p className="text-xs text-slate-400">{!a.ongoing && a.startDate && a.startDate === a.endDate ? 'Extra visit request' : 'Schedule change request'} · Awaiting response</p>
                     </div>
                   </div>
                   <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full shrink-0">

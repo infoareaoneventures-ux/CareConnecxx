@@ -153,4 +153,26 @@ describe("C11 — bell ⇄ text in lockstep on the booking pipeline", () => {
     expect(textsTo(CG_PHONE)).toEqual([sentence]);
     expect(bellsFor(CAREGIVER)[0]).toMatchObject({ type: "amendment_cancelled", body: sentence });
   });
+
+  // 2026-11-11 (Wave 3): a ONE-DAY request is an extra visit — the family is not told it joined the regular schedule.
+  it("accepting a one-day request tells the family about the extra visit, not a regular-schedule change", async () => {
+    const before = { caregiverId: CAREGIVER, clientId: CLIENT, status: "pending", caregiverName: "Alice", ongoing: false, startDate: "2026-11-12", endDate: "2026-11-12", newDays: { Thu: [{ start: "09:00", end: "12:00" }] } };
+    await (onBookingAmendmentWrite as any)(change(before, "am2", { ...before, status: "accepted" }), ctx());
+    expect(bellsFor(CLIENT)[0]).toMatchObject({ type: "amendment_accepted", title: "Extra Visit Accepted", body: "Alice accepted your request for an extra visit on Thu, Nov 12." });
+    expect(textsTo(CL_PHONE)[0]).toBe("Alice accepted your request for an extra visit on Thu, Nov 12.");
+  });
+
+  it("accepting an ongoing request still says it joined the regular schedule", async () => {
+    const before = { caregiverId: CAREGIVER, clientId: CLIENT, status: "pending", caregiverName: "Alice", ongoing: true, startDate: "2026-11-12", newDays: { Thu: [{ start: "09:00", end: "12:00" }] } };
+    await (onBookingAmendmentWrite as any)(change(before, "am3", { ...before, status: "accepted" }), ctx());
+    expect(bellsFor(CLIENT)[0]).toMatchObject({ title: "Schedule Change Accepted", body: "Alice accepted your request to add Thu to your regular schedule." });
+  });
+
+  it("the family's Interview Accepted bell carries the time and what happens next", async () => {
+    hoisted.docState.set(`users/${CLIENT}`, { phone: CL_PHONE, homeZipCode: "10001" }); // Eastern
+    const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: "2026-11-10T17:00:00.000Z" };
+    const { onVideoInterviewWrite } = await import("../notificationTriggers");
+    await (onVideoInterviewWrite as any)(change(before, "iv7", { ...before, status: "accepted" }), { params: { interviewId: "iv7" }, eventId: "evt-7" });
+    expect(bellsFor(CLIENT)[0]).toMatchObject({ type: "interview_accepted", body: "Alice accepted your interview request for Tue, Nov 10, 12:00 PM ET. Evia will text you the call link before it starts." });
+  });
 });

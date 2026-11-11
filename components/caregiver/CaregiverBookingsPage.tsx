@@ -1156,8 +1156,11 @@ const BookingGroupCard: React.FC<{
               const d = (a.date || '').localeCompare(b.date || '');
               return d !== 0 ? d : (a.startTime || '').localeCompare(b.startTime || '');
             });
-          const visible = showAllShifts ? allUpcoming : allUpcoming.slice(0, 2);
-          const hiddenCount = allUpcoming.length - 2;
+          // A visit with a pending request is never tucked behind "Show more" (2026-11-11: the family's proposed new
+          // time sat out of sight, so the Accept / Decline box was never seen): it stays in view with the first two.
+          const firstTwo = new Set(allUpcoming.slice(0, 2).map(s => s.id));
+          const visible = showAllShifts ? allUpcoming : allUpcoming.filter(s => firstTwo.has(s.id) || !!s.reschedulePendingDate);
+          const hiddenCount = allUpcoming.length - visible.length;
           return (
             <>
               {visible.map(shift => {
@@ -2129,7 +2132,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                       </div>
                       <div>
                         <p className="font-semibold text-slate-900">{a.clientName || 'Client'}</p>
-                        <p className="text-xs text-slate-400">Schedule change request</p>
+                        <p className="text-xs text-slate-400">{!a.ongoing && a.startDate && a.startDate === a.endDate ? 'Extra visit request' : 'Schedule change request'}</p>
                       </div>
                     </div>
                     <div className="border-t border-violet-100 bg-violet-50 px-5 py-3">

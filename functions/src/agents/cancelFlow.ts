@@ -11,9 +11,9 @@
 // intent classification, back-out check first, isQuestionOrOther guard,
 // deterministic bare number / yes / no before any model call, nothing
 // written before YES, fresh re-check at commit.
+import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
-import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
@@ -33,13 +33,7 @@ const BARE_NO = new Set(["NO", "N", "NOPE", "NAH"]);
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const response = await getSharedClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      system:     prompt + "\nReply with ONLY the requested value or format — no explanation, no extra text, no questions. Never invent information the user's message doesn't contain.",
-      messages:   [{ role: "user", content: userText }],
-    });
-    const parsed = ((response.content[0] as { text: string }).text ?? "").trim();
+    const parsed = await flowParseCall(prompt + "\nReply with ONLY the requested value or format — no explanation, no extra text, no questions. Never invent information the user's message doesn't contain.", userText, 200);
     if (parsed && caraOutputGuardEnabled() && !guardModelOutput(parsed).ok) return "__parse_error__";
     return parsed;
   } catch (err) {
@@ -67,17 +61,10 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
 }
 
 async function answerQuestionMidFlow(text: string): Promise<string> {
-  const response = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 100,
-    system:
-      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family cancel a care visit, booking, or request. You see ONLY this one " +
+  const answer = await flowAnswerCall(CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family cancel a care visit, booking, or request. You see ONLY this one " +
       "message. NEVER claim something was or wasn't mentioned before, and NEVER state whether anything has been cancelled — " +
       "you cannot see the schedule. If the message is about something else, say plainly it'll have to wait until this is " +
-      "finished. Otherwise answer briefly (1–2 sentences). Be warm. NEVER write out a URL. " + ANTI_INVENTION_CLAUSE,
-    messages: [{ role: "user", content: text }],
-  });
-  const answer = ((response.content[0] as { text: string }).text ?? "").trim();
+      "finished. Otherwise answer briefly (1–2 sentences). Be warm. NEVER write out a URL. " + ANTI_INVENTION_CLAUSE, text, 100);
   if (answer && caraOutputGuardEnabled() && !guardModelOutput(answer).ok) return "Good question — I don't want to guess on that one.";
   return answer;
 }

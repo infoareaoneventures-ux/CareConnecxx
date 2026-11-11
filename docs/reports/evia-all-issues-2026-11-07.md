@@ -242,40 +242,47 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
 
 ### P1: High (reliability, cost and correctness)
 
-- [ ] **Booking, cancelling and job posting stop if one AI provider goes down**
+- [x] **Booking, cancelling and job posting stop if one AI provider goes down**
     - **The issue:** Evia normally switches to a backup AI provider when the main one fails. Eight conversation flows don't use that switch and call one provider directly: booking, cancel, reschedule, corrections, interviews, replacements, visit requests and job posting.
     - **Why it matters:** If that provider has an outage or runs out of credit, which happened on July 3, all of these flows stop working at once.
     - **How we'll fix it:** Route these flows through the shared AI helper, which already has retries and a backup provider.
+    - **Done (Nov 10):** The eight scripted flows (booking, cancel, reschedule, corrections, interviews, replacements, visit requests, job posting) no longer call Anthropic directly. All 16 calls go through one helper, agents/flowModelCall.ts, which uses the shared fast path (OpenAI first, Anthropic Haiku automatically as the backup). A test fails if any flow goes back to a direct provider call.
 
-- [ ] **An unused AI endpoint is open to any signed-in user**
+- [x] **An unused AI endpoint is open to any signed-in user**
     - **The issue:** The backend has an AI relay that any signed-in user can call with any instructions, up to 30 times a minute, with no daily limit. The website no longer uses it.
     - **Why it matters:** Anyone who signs up could run up the AI bill or use it as a free AI service.
     - **How we'll fix it:** Remove it. If it's needed later, rebuild it with fixed prompts, size limits and a daily cap per user.
+    - **Done (Nov 10):** Removed: the aiProxy function (functions/src/aiProxy.ts and its export), the dead site service that called it (services/ai.ts + test), and the CLAUDE.md line. Deploying will ask to delete the live v1-aiProxy function; say yes.
 
-- [ ] **No spending limit on text conversations during sign-up**
+- [x] **No spending limit on text conversations during sign-up**
     - **The issue:** The per-phone limit on how fast someone can text is checked after the sign-up conversation has already been handled, so sign-up turns aren't limited. Each sign-up message can use up to 10 AI steps. There is also no daily cost limit per phone number.
     - **Why it matters:** A script texting the public number could drive unlimited AI costs.
     - **How we'll fix it:** Check the rate limit first for every message, and add a daily cost ceiling per phone number.
+    - **Done (Nov 10):** The hourly abuse limit (120 msgs/hr) and the per-phone and global DAILY turn caps now run for EVERY turn before the sign-up branch (one helper, spendLimitsBlockTurn); they sit after the emergency check so an emergency still gets through. The daily caps still fail open. A true per-phone dollar ceiling is not added; the existing cap is in turns (CARA_DAILY_TURN_CAP, default 150).
 
-- [ ] **Users can get stuck on "Reply resume to continue"**
+- [x] **Users can get stuck on "Reply resume to continue"**
     - **The issue:** When someone has an unfinished sign-up, Evia only accepts exact words like RESUME or START OVER. Anything else ("yes", "continue please", "Resume.", or a question) gets the same prompt again, over and over.
     - **Why it matters:** People get stuck in a loop and can't sign up. This also blocks the emergency check (see P0).
     - **How we'll fix it:** Use the AI to understand the reply (resume, start over, or something else), and answer anything else normally.
+    - **Done (Nov 10):** The reply is now read by the model (resume / start over / something else) instead of exact words: 'yes', 'continue please', 'Resume.' resume; 'begin again' restarts; a question or anything else is answered normally and the saved checkpoint is kept. The old prompt is no longer sent in a loop.
 
-- [ ] **Questions get saved as the emergency contact's name**
+- [x] **Questions get saved as the emergency contact's name**
     - **The issue:** During family sign-up, if someone replies to "Who's your emergency contact?" with a short question like "what is this for" or "dont have one," Evia can save that text as the contact's name.
     - **Why it matters:** A wrong emergency contact ends up on the care plan.
     - **How we'll fix it:** Check for questions first and answer them, then re-ask. Never guess a name from leftover words.
+    - **Done (Nov 10):** The family text intake now asks the model whether the reply is an answer, a question or a refusal. A question is answered and the question re-asked; 'dont have one' gets a plain reason we need one; neither is ever saved as a name. A short real name or initials still save.
 
-- [ ] **Two quick texts in a row can get lost or answered twice**
+- [~] **Two quick texts in a row can get lost or answered twice**
     - **The issue:** If a second text arrives while Evia is still answering the first, it waits only about 3 seconds before failing. A full answer can take a minute or more. A turn that fails after already replying may also run again and send a duplicate reply.
     - **Why it matters:** Replies get lost, delayed or duplicated, which is confusing when a family is coordinating care.
     - **How we'll fix it:** Queue messages that arrive mid-reply and answer them in order. Set a hard time limit on each answer, and make sure a retry never sends the same reply twice.
+    - **Partly done (Nov 10):** A second text now waits for the first (up to 95s, just past the 90s lock lease, polling every 0.75s) instead of failing after about 3 seconds. NOT done: a true ordered queue (arrival order among several waiters is best-effort) and a guard against a retried turn sending a duplicate reply.
 
-- [ ] **The pre-release AI test gate doesn't test Evia's real conversations**
+- [~] **The pre-release AI test gate doesn't test Evia's real conversations**
     - **The issue:** The test that runs before each release only checks emergency keywords and the tone filter. It skips 150 of its 205 cases, and only runs when releasing through one particular command. The live conversation test also uses a different AI model from production.
     - **Why it matters:** Releases look tested when Evia's actual replies aren't.
     - **How we'll fix it:**
+    - **Partly done (Nov 10):** Emergency cases are now must-pass (one failure blocks regardless of the overall rate); five missed wordings (curly apostrophes, capitals) were added; the gate now runs on EVERY functions deploy (firebase.json predeploy) instead of only through npm run deploy. NOT done: 177 of 210 cases are still skipped because they need a live, non-production agent run, and the live test's model was not re-checked.
         - Make emergency cases must-pass, and add the missed wordings above.
         - Run the gate on every release.
         - Make the live test use the same AI model as production.
@@ -287,20 +294,23 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Add common medicine names and patterns such as "give her 2 …" to the check, with tests, on both the website and Evia.
     - **Done (Nov 9):** About 100 common medicine names (brand and generic) plus 'antibiotic', 'painkiller', 'blood thinner' and drops are now medication words in both copies. 'Give her 2 Tylenol at 8pm' is refused; 'She takes Lipitor every day' still passes (a stated fact). The list is not exhaustive; extend it when one is missed.
 
-- [ ] **Short AI checks may come back empty (needs confirmation)**
+- [~] **Short AI checks may come back empty (needs confirmation)**
     - **The issue:** Some quick checks, including the backup emergency check, allow only a few words of output. The newer AI models can use that allowance "thinking," which may leave no answer. An empty answer is treated as "no emergency."
     - **Why it matters:** A backup safety check could silently fail.
     - **How we'll fix it:** Turn off the models' "thinking" on these quick checks, and alert the team whenever one comes back empty.
+    - **Partly done (Nov 10):** An empty quick-check answer is now logged every time, retried once with extra room for reasoning models (so the hidden 'thinking' can't use up the allowance), then handed to the Anthropic backup, and raises an ops alert (throttled to one per 10 minutes). NOT done: turning the models' reasoning off, because the setting could not be verified against the production models.
 
-- [ ] **Conversation data may be going to an extra outside service (needs confirmation)**
+- [~] **Conversation data may be going to an extra outside service (needs confirmation)**
     - **The issue:** The AI calls are wrapped by a monitoring tool (LangSmith). If its tracing is switched on in production, full conversations, including care needs, notes and addresses, are sent to that vendor too, and it isn't on the approved list of providers that may receive health information.
     - **Why it matters:** This could be a health-privacy (HIPAA) compliance gap.
     - **How we'll fix it:** Check the production setting. If tracing is on, enable data masking or turn it off, and add the vendor to the approved list if it stays.
+    - **Partly done (Nov 10):** Code now forces LangSmith tracing OFF unless someone deliberately sets LANGSMITH_ALLOW_PHI_TRACING=true. Still to check outside the code: whether tracing was on in production (the functions env), and whether LangSmith should be added to the approved-vendor list.
 
-- [ ] **The main AI call gives up after 10 seconds (needs confirmation)**
+- [x] **The main AI call gives up after 10 seconds (needs confirmation)**
     - **The issue:** Evia's main reasoning call uses the same 10-second time limit as the quick checks, even though its instructions are large.
     - **Why it matters:** Turns may often fall back to the backup provider, which is slower and costs more.
     - **How we'll fix it:** Give the main call its own 25–30 second limit, and track how often the backup is used.
+    - **Done (Nov 10):** The main reasoning call (and its Gemini and Anthropic backups) now has its own 28-second limit instead of the quick checks' 10 or 15 seconds. The backup is raised as a provider alert each time it is used, as before.
 
 - [ ] **The Terms of Service may describe checks that don't happen (needs confirmation)**
     - **The issue:** The Terms (section 3) say care providers go through "sex offender registry checks, reference checks, and credential verification." As far as we can see in the product, the background check covers criminal history, plus the driving record for providers who offer transportation.

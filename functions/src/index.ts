@@ -225,7 +225,7 @@ export { processInterviewActionQueue } from './triggers/interviewActionQueue';
 export { processVisitActionQueue } from './triggers/visitActionQueue';
 
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
-export { aiProxy } from "./aiProxy";
+// (aiProxy removed 2026-11-09: an open AI relay any signed-in user could call; the site no longer used it.)
 
 // ADMIN ADVANCE QUEUE — Firestore trigger; avoids the allUsers IAM callable requirement
 export { processAdminAdvanceQueue } from './triggers/adminAdvanceQueue';

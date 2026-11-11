@@ -32,9 +32,9 @@
 // offer → writeConfirmedShifts) is gone; the caregiver accepts on the site
 // and shiftGenerator.ts's onBookingAccepted creates the shifts, exactly as
 // for a web-sent request.
+import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
-import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
@@ -154,13 +154,7 @@ const BK_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const response = await getSharedClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      system:     prompt + "\nReply with ONLY the requested value or format — no explanation, no extra text, no questions. Never invent information the user's message doesn't contain.",
-      messages:   [{ role: "user", content: userText }],
-    });
-    const parsed = ((response.content[0] as { text: string }).text ?? "").trim();
+    const parsed = await flowParseCall(prompt + "\nReply with ONLY the requested value or format — no explanation, no extra text, no questions. Never invent information the user's message doesn't contain.", userText, 200);
     if (parsed) {
       const guard = caraOutputGuardEnabled() ? guardModelOutput(parsed) : { ok: true as const };
       if (!guard.ok) {
@@ -205,11 +199,7 @@ async function answerQuestionMidFlow(text: string, caregiverName?: string): Prom
   // rest of the conversation — including anything Evia herself said earlier.
   // Must never claim something was/wasn't mentioned before, and must not
   // force an out-of-scope question into booking terms.
-  const response = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 100,
-    system:
-      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family send a booking request" +
+  const answer = await flowAnswerCall(CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family send a booking request" +
       (caregiverName ? ` to a care provider named ${caregiverName}` : "") +
       ". You see ONLY this one message, not the rest of the conversation — including anything " +
       "Evia herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. " +
@@ -218,10 +208,7 @@ async function answerQuestionMidFlow(text: string, caregiverName?: string): Prom
       "about. Instead say plainly that it'll have to wait, e.g. \"That sounds like something else — let's finish " +
       "this first, and I'll help with that right after.\" Otherwise answer their actual question about this " +
       "booking briefly (1–2 sentences). Be warm and helpful. NEVER write out a URL or web address, and never " +
-      "claim you just sent, resent, or will send a link. " + ANTI_INVENTION_CLAUSE,
-    messages: [{ role: "user", content: text }],
-  });
-  const answer = ((response.content[0] as { text: string }).text ?? "").trim();
+      "claim you just sent, resent, or will send a link. " + ANTI_INVENTION_CLAUSE, text, 100);
   if (answer && caraOutputGuardEnabled() && !guardModelOutput(answer).ok) return BK_MIDFLOW_FALLBACK;
   return answer;
 }

@@ -1,6 +1,6 @@
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
+import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import * as admin from "firebase-admin";
-import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { enforceClientGate } from "./clientAccessGate";
 import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
@@ -281,13 +281,7 @@ export const CLASSIFICATION_GUARD_CLAUSE =
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const response = await getSharedClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      system:     prompt + "\n" + CLASSIFICATION_GUARD_CLAUSE,
-      messages:   [{ role: "user", content: userText }],
-    });
-    const parsed = ((response.content[0] as { text: string }).text ?? "").trim();
+    const parsed = await flowParseCall(prompt + "\n" + CLASSIFICATION_GUARD_CLAUSE, userText, 200);
     // Output guard (U2, R2): a meta-response/URL from the parser is a parse
     // failure — every call site already handles "__parse_error__" (raw text or
     // validated default). Kill switch: CARA_OUTPUT_GUARD_ENABLED=false.
@@ -390,11 +384,7 @@ async function answerQuestionMidFlow(phone: string, text: string, session: Agent
   // was flatly false (Evia's own prior text named the interview). This
   // function has no way to know that — it must not pretend otherwise, and
   // must not try to force an out-of-scope question into job-posting terms.
-  const response = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 100,
-    system:
-      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a client post a care job. " +
+  const answer = await flowAnswerCall(CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a client post a care job. " +
       `They are setting up a job for ${recipientName}. ` +
       (sharedProfile ? `${sharedProfile} ` : "") +
       "You see ONLY this one message, not the rest of the conversation — including anything Evia herself said earlier. " +
@@ -405,10 +395,7 @@ async function answerQuestionMidFlow(phone: string, text: string, session: Agent
       "that right after.\" Otherwise answer their actual question about this job post briefly (1–2 sentences). Be warm and helpful. " +
       "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
       "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages. " +
-      ANTI_INVENTION_CLAUSE,
-    messages: [{ role: "user", content: text }],
-  });
-  const answer = ((response.content[0] as { text: string }).text ?? "").trim();
+      ANTI_INVENTION_CLAUSE, text, 100);
   // Output guard (U2, R2): a meta-response or composed URL never reaches the
   // family's phone — the deterministic fallback goes out instead.
   if (answer && caraOutputGuardEnabled() && !guardModelOutput(answer).ok) {

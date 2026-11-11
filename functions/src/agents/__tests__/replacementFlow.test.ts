@@ -97,6 +97,15 @@ const messagesCreate = vi.fn();
 vi.mock("../../utils/claudeClient", () => ({
   getSharedClient: () => ({ messages: { create: (...a: unknown[]) => messagesCreate(...a) } }),
 }));
+// 2026-11-09 (Wave 2): the eight scripted flows now call the shared model helper (OpenAI first, Anthropic backup)
+// instead of Anthropic directly. These tests keep driving the model through the same queued replies.
+vi.mock("../flowModelCall", () => {
+  const call = async (system: string, user: string, maxTokens: number) => {
+    const r: any = await messagesCreate({ system, messages: [{ role: "user", content: user }], max_tokens: maxTokens });
+    return String(r?.content?.[0]?.text ?? "").trim();
+  };
+  return { flowParseCall: call, flowAnswerCall: call };
+});
 // stepHandler's isBackOutRequest goes through the shared utils/parseWithClaude
 // (OpenAI fast path) — route it through the same queue so every model call in
 // a step is accounted for in order: back-out → question → extraction. An

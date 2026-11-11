@@ -148,6 +148,8 @@ export async function callOpenAiAgentTurn(params: {
   toolChoice: "auto" | "none";
   messages: Anthropic.MessageParam[];
   signal?: AbortSignal;
+  /** Per-request time limit in ms. The shared client's own limit (10s) is meant for the quick checks, not this call. */
+  timeoutMs?: number;
 }): Promise<OpenAiAgentTurnResult> {
   const tools = convertTools(capToolsForOpenAi(params.tools));
   const res = await params.client.chat.completions.create(
@@ -160,7 +162,7 @@ export async function callOpenAiAgentTurn(params: {
       ],
       ...(tools.length ? { tools, tool_choice: params.toolChoice } : {}),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-    { signal: params.signal },
+    { signal: params.signal, ...(params.timeoutMs ? { timeout: params.timeoutMs } : {}) },
   );
 
   const choice = res.choices[0];

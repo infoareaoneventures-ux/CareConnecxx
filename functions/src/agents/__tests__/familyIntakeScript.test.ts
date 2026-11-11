@@ -416,6 +416,29 @@ describe("runFamilyIntakeTurn — the whole conversation, scripted", () => {
     expect(s2.at(-1)).toContain("only serves Santa Clara County");
   });
 
+  // 2026-11-09 (Wave 2): a question or a refusal at the emergency contact step must never become the contact's name.
+  it("a question or a refusal at the emergency contact step is not saved as the name — the question is answered, the refusal told why we need one", async () => {
+    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["MON"], timeOfDay: ["morning"], photoSkipped: true, relationship: "parent", seniorName: "Rosa Diaz", rosterCountConfirmed: true, caregiversNeeded: 1 };
+    const q = makeDeps(['{"kind":"question","name":"what is this for","phone":"","relationship":""}', "ANSWER"], site);
+    await runFamilyIntakeTurn(q.deps, { phone: "+1", chatId: "c", text: "what is this for", session: { onboardingData: {} } });
+    expect(q.merged.some((f) => "emergencyContactName" in f)).toBe(false);
+
+    const none = makeDeps(['{"kind":"none","name":"dont have one","phone":"","relationship":""}'], site);
+    await runFamilyIntakeTurn(none.deps, { phone: "+1", chatId: "c", text: "dont have one", session: { onboardingData: {} } });
+    expect(none.merged.some((f) => "emergencyContactName" in f)).toBe(false);
+    expect(String(none.sent.at(-1))).toContain("We do need one person we can call in an emergency");
+  });
+
+  it("a real name at the emergency contact step is still saved (initials too)", async () => {
+    const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["MON"], timeOfDay: ["morning"], photoSkipped: true, relationship: "parent", seniorName: "Rosa Diaz", rosterCountConfirmed: true, caregiversNeeded: 1 };
+    const ok = makeDeps(['{"kind":"answer","name":"contact s s","phone":"4088745451","relationship":""}'], site);
+    await runFamilyIntakeTurn(ok.deps, { phone: "+1", chatId: "c", text: "contact s s 4088745451", session: { onboardingData: {} } });
+    expect(ok.merged.some((f) => f.emergencyContactName === "contact s s")).toBe(true);
+    const initials = makeDeps(['{"kind":"answer","name":"","phone":"","relationship":""}'], site);
+    await runFamilyIntakeTurn(initials.deps, { phone: "+1", chatId: "c", text: "S m", session: { onboardingData: {} } });
+    expect(initials.merged.some((f) => f.emergencyContactName === "S m")).toBe(true);
+  });
+
   it("a description over the cap is refused with the count, never cut; medication instructions are refused", async () => {
     const site = { firstName: "Hamse", careFrequency: "part_time", homeStreet: "x", homeZipCode: "95130", sameAsHomeAddress: true, startDate: "2026-10-21", ongoing: true, selectedDays: ["TUE"], timeOfDay: ["morning"], photoSkipped: true, relationship: "self", seniorName: "Hamse", rosterCountConfirmed: true, caregiversNeeded: 1, emergencyContactName: "s", emergencyContactPhone: "(408) 874-5451", emergencyContactRelationship: "cousin", careNeeds: ["Light Housekeeping"], householdAsked: true, rate: 16 };
     const { deps, sent, merged } = makeDeps(["TEXT", "TEXT"], site);

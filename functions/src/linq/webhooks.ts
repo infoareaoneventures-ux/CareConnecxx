@@ -2,6 +2,7 @@ import { isCareProviderRole } from "../utils/roleParam";
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
+import "../observability/tracingGuard"; // tracing off unless explicitly allowed (health information)
 import { traceable } from "langsmith/traceable";
 import { claimWebhookEvent, settleWebhookEvent, LINQ_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
@@ -48,7 +49,7 @@ import {
   sendOnboardingOffer,
   shouldReoffer,
 } from "../agents/profileCompleteness";
-import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing } from "../utils/sessionState";
+import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing, INBOUND_LOCK_TTL_MS } from "../utils/sessionState";
 import { generateCaraMessage } from "../utils/caraMessage";
 import {
   initializeZepOnFirstContact,
@@ -89,6 +90,58 @@ function raiseInvalidSignatureAlert(rawEventType: string): void {
     message:  `Linq webhook events are failing the signature check (${kind}). Check the signing secret(s) in the functions env against Linq's subscriptions.`,
     context:  { eventKind: kind },
   }).catch(() => {});
+}
+
+// ── Spend limits for EVERY turn (2026-11-09, fix plan Wave 2) ─────────────────────
+// "No spending limit on text conversations during sign-up": the hourly per-phone abuse check and the
+// per-phone / global DAILY turn caps sat AFTER the onboarding branch, which returns on its own — so
+// every sign-up turn (up to ~10 model steps each) ran with no limit at all, and a script texting the
+// public number could drive unlimited cost. They now run before the onboarding gate, for every turn.
+// Placed after the crisis check (an emergency always gets through). The daily caps fail open: for a care
+// product, availability beats enforcement. Returns true when the turn must stop here.
+async function spendLimitsBlockTurn(phone: string, chatId: string, session: AgentSession): Promise<boolean> {
+  // Hourly abuse limit — only triggers on actual abuse (120+ msgs/hr from one phone). Dropped silently
+  // rather than answered with a "broken" reply; logged so we can see if a real user ever hits it.
+  if (await isRateLimited(phone)) {
+    console.warn("handleInbound: phone exceeded 120 msgs/hr rate limit — dropping silently", { phone });
+    return true;
+  }
+  // Per-user daily turn cap + global daily kill-switch. Placed AFTER the
+  // crisis fast-path (safety messages always get through) and both fail open.
+  try {
+    const { checkDailyTurnCap, checkGlobalDailyTurnBudget } = await import("../rateLimit");
+    const [userCap, globalCap] = await Promise.all([
+      checkDailyTurnCap(phone),
+      checkGlobalDailyTurnBudget(),
+    ]);
+    if (!globalCap.allowed) {
+      // Platform-wide budget exhausted: flip degraded mode (clears on the
+      // first successful turn after the counter resets at midnight) and give
+      // each user one honest notice per hour instead of silence.
+      const { setSystemDegraded, degradedFailureNotice } = await import("../observability/systemStatus");
+      if (globalCap.justBreached) {
+        await setSystemDegraded("global daily LLM turn budget exhausted").catch(() => {});
+      }
+      const notice = await degradedFailureNotice(
+        phone, session as unknown as Record<string, unknown>,
+        "I've hit my processing limit for today — I'll pick this back up as soon as I'm running normally, and our team has been alerted.",
+      ).catch(() => null);
+      if (notice) await sendMessage(chatId, notice).catch(() => {});
+      return true;
+    }
+    if (!userCap.allowed) {
+      if (userCap.justBreached) {
+        await sendMessage(chatId,
+          "We've traded a lot of messages today and I've hit my daily limit for this conversation — " +
+          "I'll pick things back up tomorrow morning. Anything safety-related still gets through right away."
+        ).catch(() => {});
+      }
+      return true;
+    }
+  } catch (capErr) {
+    console.error("handleInbound: spend guardrail check failed (fail-open):", capErr);
+  }
+  return false;
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
@@ -632,14 +685,30 @@ async function handleColdConsentReply(
 // run concurrently against the same awaiting_approval agent_task (double-book /
 // double-charge). Throws if the lock can't be acquired so the caller decides
 // whether to retry (message path → 500/retry) or drop (reaction → logged).
-export async function runSerializedByPhone(phone: string, fn: () => Promise<void>): Promise<void> {
-  let acquired = false;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    if (await claimInboundProcessing(phone, db)) { acquired = true; break; }
-    await new Promise((r) => setTimeout(r, 500));
+// Waiting for the lock (2026-11-09, fix plan Wave 2: "two quick texts in a row can get lost"): a second text used
+// to wait only ~3 seconds (6 tries x 500 ms) before failing, while a full answer can take a minute or more — so it
+// was dropped to a 500 and a redelivery. It now waits out the other turn, up to just past the lock's own lease
+// (INBOUND_LOCK_TTL_MS, 90s — a crashed turn's lock expires by itself), and then runs, so the message is
+// answered in turn instead of lost. Arrival order is best-effort among several waiters. The webhook already holds
+// its response until the work is done, and a Linq redelivery of the same event is dropped by the event claim.
+export const INBOUND_WAIT_MS = INBOUND_LOCK_TTL_MS + 5_000;
+export const INBOUND_POLL_MS = 750;
+
+export async function runSerializedByPhone(
+  phone: string,
+  fn: () => Promise<void>,
+  opts: { waitMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  const waitMs = opts.waitMs ?? INBOUND_WAIT_MS;
+  const pollMs = opts.pollMs ?? INBOUND_POLL_MS;
+  const deadline = Date.now() + waitMs;
+  let acquired = await claimInboundProcessing(phone, db);
+  while (!acquired && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, pollMs));
+    acquired = await claimInboundProcessing(phone, db);
   }
   if (!acquired) {
-    throw new Error(`runSerializedByPhone: per-phone lock unavailable after retries for ${phone}`);
+    throw new Error(`runSerializedByPhone: per-phone lock unavailable after ${Math.round(waitMs / 1000)}s for ${phone}`);
   }
   try {
     await fn();
@@ -1307,8 +1376,24 @@ const handleInboundInner = traceable(
     const checkpoint = (session as any).onboardingCheckpoint as {
       step: string; onboardingData: Record<string, unknown>; savedAt: string;
     } | undefined;
-    const isResumeCommand = norm === "RESUME" || norm === "CONTINUE" || norm === "PICK UP WHERE I LEFT OFF";
-    const isStartOver     = norm === "START OVER" || norm === "RESTART" || norm === "BEGIN AGAIN";
+    let isResumeCommand = norm === "RESUME" || norm === "CONTINUE" || norm === "PICK UP WHERE I LEFT OFF";
+    let isStartOver     = norm === "START OVER" || norm === "RESTART" || norm === "BEGIN AGAIN";
+    // The exact words were the ONLY way out (2026-11-09, fix plan Wave 2): "yes", "continue please", "Resume."
+    // or a question got the same prompt back, forever — and nothing else was answered. Read the reply with the
+    // model (CLAUDE.md: never keyword-match intent): resume / start over / something else. Anything else is
+    // handled below like any normal message; the saved checkpoint stays so they can still pick it up later.
+    if (checkpoint && !isResumeCommand && !isStartOver && session.onboardingStep !== "complete" && text.trim()) {
+      const { parseWithClaude } = await import("../utils/parseWithClaude");
+      const choice = (await parseWithClaude(
+        'The person has an unfinished sign-up saved from before and was asked whether to pick up where they left off or start over. ' +
+        'Reply exactly "resume" if they want to continue / pick it back up (for example "yes", "continue please", "resume."), ' +
+        'exactly "restart" if they want to start over or begin again, otherwise exactly "other" ' +
+        '(a question, a different request, or anything that is not an answer to that).',
+        text,
+      ).catch(() => "other")).trim().toLowerCase();
+      if (choice === "resume") isResumeCommand = true;
+      else if (choice === "restart") isStartOver = true;
+    }
 
     if (checkpoint && (isResumeCommand || isStartOver)) {
       await db.collection("agent_sessions").doc(phone).update({
@@ -1364,14 +1449,8 @@ const handleInboundInner = traceable(
       return;
     }
 
-    // If checkpoint exists but user sent a normal message (not resume/start-over),
-    // nudge them to choose before processing normally
-    if (checkpoint && session.onboardingStep !== "complete") {
-      await sendMessage(chatId,
-        "You have a saved session from before. Want to pick up where you left off, or start over? Say resume, or start over."
-      );
-      return;
-    }
+    // A checkpoint exists but the message is not an answer to the resume question (a question, a new request, an
+    // empty/media turn): do NOT re-send the prompt in a loop — fall through and answer it normally (2026-11-09).
   }
 
   // STOP — works at any stage (CANCEL is NOT here — it cancels a visit, not the account)
@@ -1454,6 +1533,9 @@ const handleInboundInner = traceable(
       console.error("Zep lazy-init error:", err)
     );
   }
+
+  // Spend limits come BEFORE the onboarding gate so sign-up turns are limited too (2026-11-09).
+  if (await spendLimitsBlockTurn(phone, chatId, session)) return;
 
   // ── ONBOARDING gate — route to state machine if not complete ─────────────
   // If the session exists but has no onboardingStep (e.g. created by an old
@@ -2117,13 +2199,6 @@ const handleInboundInner = traceable(
     return;
   }
 
-  // Rate limit — only triggers on actual abuse (120+ msgs/hr from one phone).
-  // Drop silently instead of sending a "broken" reply to the user. Log so we
-  // can see if a real user ever hits it.
-  if (await isRateLimited(phone)) {
-    console.warn("handleInbound: phone exceeded 120 msgs/hr rate limit — dropping silently", { phone });
-    return;
-  }
 
   // The webhook signature has been verified by the public handler, and the
   // accepted-session path has passed its rejection guards. Stamp activity
@@ -2268,42 +2343,6 @@ const handleInboundInner = traceable(
     dueAt:     new Date(Date.now() + 10 * 60_000).toISOString(),
   }).catch(() => {/* non-critical */});
 
-  // ── LLM spend guardrails ────────────────────────────────────────────────────
-  // Per-user daily turn cap + global daily kill-switch. Placed AFTER the
-  // crisis fast-path (safety messages always get through) and both fail open.
-  try {
-    const { checkDailyTurnCap, checkGlobalDailyTurnBudget } = await import("../rateLimit");
-    const [userCap, globalCap] = await Promise.all([
-      checkDailyTurnCap(phone),
-      checkGlobalDailyTurnBudget(),
-    ]);
-    if (!globalCap.allowed) {
-      // Platform-wide budget exhausted: flip degraded mode (clears on the
-      // first successful turn after the counter resets at midnight) and give
-      // each user one honest notice per hour instead of silence.
-      const { setSystemDegraded, degradedFailureNotice } = await import("../observability/systemStatus");
-      if (globalCap.justBreached) {
-        await setSystemDegraded("global daily LLM turn budget exhausted").catch(() => {});
-      }
-      const notice = await degradedFailureNotice(
-        phone, session as unknown as Record<string, unknown>,
-        "I've hit my processing limit for today — I'll pick this back up as soon as I'm running normally, and our team has been alerted.",
-      ).catch(() => null);
-      if (notice) await sendMessage(chatId, notice).catch(() => {});
-      return;
-    }
-    if (!userCap.allowed) {
-      if (userCap.justBreached) {
-        await sendMessage(chatId,
-          "We've traded a lot of messages today and I've hit my daily limit for this conversation — " +
-          "I'll pick things back up tomorrow morning. Anything safety-related still gets through right away."
-        ).catch(() => {});
-      }
-      return;
-    }
-  } catch (capErr) {
-    console.error("handleInbound: spend guardrail check failed (fail-open):", capErr);
-  }
 
   // ── Caregiver keyword handling ──────────────────────────────────────────────
   if (session.userType === "caregiver") {

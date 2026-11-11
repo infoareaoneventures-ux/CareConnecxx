@@ -11,7 +11,6 @@
     "eval": "cd functions && npx ts-node src/evals/runner.ts",
     "eval:onboarding": "vitest run functions/src/agents/qaAgent.onboarding.eval.test.ts",
     "canary:onboarding": "cd functions && npx ts-node src/agents/onboardingCanaryWatch.ts",
-    "predeploy": "npm run eval",
     "deploy": "node scripts/deploy.mjs",
     "test": "vitest",
     "icons": "node scripts/generate-icons.cjs",

@@ -58,6 +58,15 @@ vi.mock("../utils/claudeClient", () => ({
     messages: { create: (...args: unknown[]) => hoisted.messagesCreate(...args) },
   }),
 }));
+// 2026-11-09 (Wave 2): the eight scripted flows now call the shared model helper (OpenAI first, Anthropic backup)
+// instead of Anthropic directly. These tests keep driving the model through the same queued replies.
+vi.mock("./flowModelCall", () => {
+  const call = async (system: string, user: string, maxTokens: number) => {
+    const r: any = await hoisted.messagesCreate({ system, messages: [{ role: "user", content: user }], max_tokens: maxTokens });
+    return String(r?.content?.[0]?.text ?? "").trim();
+  };
+  return { flowParseCall: call, flowAnswerCall: call };
+});
 
 const { sendMessage, messagesCreate } = hoisted;
 

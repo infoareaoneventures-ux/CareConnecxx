@@ -16,9 +16,9 @@
 // bare number / yes / no before any model call, one recap + explicit YES
 // gate. Nothing is written until that YES. Shares every check and write with
 // the MCP tool (request_schedule_amendment) via agents/visitRequest.ts.
+import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
-import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
@@ -59,13 +59,7 @@ const BARE_NO = new Set(["NO", "N", "NOPE", "NAH", "NONE", "SKIP"]);
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const response = await getSharedClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 300,
-      system:     prompt + "\nReply with ONLY the requested value or format — no explanation, no extra text, no questions. Never invent information the user's message doesn't contain.",
-      messages:   [{ role: "user", content: userText }],
-    });
-    const parsed = ((response.content[0] as { text: string }).text ?? "").trim();
+    const parsed = await flowParseCall(prompt + "\nReply with ONLY the requested value or format — no explanation, no extra text, no questions. Never invent information the user's message doesn't contain.", userText, 300);
     if (parsed && caraOutputGuardEnabled() && !guardModelOutput(parsed).ok) {
       console.warn("[visitRequestFlow] parseWithClaude: output guard rejected model response", { rawLength: parsed.length });
       return "__parse_error__";
@@ -100,20 +94,13 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
 const VR_MIDFLOW_FALLBACK = "Good question — I don't want to guess on that one.";
 
 async function answerQuestionMidFlow(text: string): Promise<string> {
-  const response = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 100,
-    system:
-      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family request an additional care visit (a new day/time) on one of " +
+  const answer = await flowAnswerCall(CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family request an additional care visit (a new day/time) on one of " +
       "their existing bookings. You see ONLY this one message, not the rest of the conversation — including anything " +
       "Evia herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. NEVER " +
       "state whether a care provider is available at a time — you cannot see their schedule. If the message is clearly " +
       "about something OTHER than finishing this visit request, say plainly that it'll have to wait, e.g. \"That sounds " +
       "like something else — let's finish this first, and I'll help with that right after.\" Otherwise answer briefly " +
-      "(1–2 sentences). Be warm. NEVER write out a URL. " + ANTI_INVENTION_CLAUSE,
-    messages: [{ role: "user", content: text }],
-  });
-  const answer = ((response.content[0] as { text: string }).text ?? "").trim();
+      "(1–2 sentences). Be warm. NEVER write out a URL. " + ANTI_INVENTION_CLAUSE, text, 100);
   if (answer && caraOutputGuardEnabled() && !guardModelOutput(answer).ok) return VR_MIDFLOW_FALLBACK;
   return answer;
 }

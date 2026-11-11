@@ -18,6 +18,7 @@
  */
 
 import OpenAI from "openai";
+import "../observability/tracingGuard"; // tracing off unless explicitly allowed (health information)
 import { wrapOpenAI } from "langsmith/wrappers/openai";
 import type Anthropic from "@anthropic-ai/sdk";
 import { callClaudeWithRetry } from "./claudeRetry";
@@ -86,6 +87,30 @@ export function getGeminiOpenAIClient(): OpenAI {
 // instance per 10 minutes, not one per failed quick-call during an outage.
 let _lastFallbackAlertAt = 0;
 
+// A quick check that comes back EMPTY (2026-11-09, fix plan Wave 2). GPT-5-family models count their hidden
+// reasoning against the small output allowance these checks use (8-200 tokens), so the allowance can be spent
+// "thinking" and the visible answer left empty — and an empty answer from the backup emergency check is read
+// as "no emergency". An empty answer is now retried once with reasoning headroom, then handed to the Anthropic
+// fallback, and every occurrence is logged and alerted (throttled) so it is never silent.
+let _lastEmptyAlertAt = 0;
+function reportEmptyQuickReply(model: string, finishReason: string | null | undefined, maxTokens: number): void {
+  console.error("cara.llm.empty: quick check returned no text", { model, finishReason, maxTokens });
+  void (async () => {
+    try {
+      if (Date.now() - _lastEmptyAlertAt < 10 * 60_000) return;
+      _lastEmptyAlertAt = Date.now();
+      const { createCaraOpsAlert } = await import("../observability/caraOpsAlerts");
+      await createCaraOpsAlert({
+        type: "llm_quick_check_empty",
+        severity: "medium",
+        source: "openaiClient",
+        message: `A quick AI check (${model}) returned no text (finish: ${finishReason ?? "?"}, allowance: ${maxTokens} tokens). Reasoning may be using the allowance.`,
+        context: { model, finishReason: finishReason ?? "unknown", maxTokens },
+      });
+    } catch { /* non-critical */ }
+  })();
+}
+
 export async function quickComplete(
   systemPrompt: string,
   userText: string,
@@ -94,10 +119,10 @@ export async function quickComplete(
   const maxTokens = opts?.maxTokens ?? 200;
   try {
     const model = opts?.model ?? resolveCaraModelConfig("router").model;
-    const res = await getOpenAIClient().chat.completions.create(
+    const ask = (budget: number) => getOpenAIClient().chat.completions.create(
       {
         model,
-        ...openAiTokenLimitParam(model, maxTokens),
+        ...openAiTokenLimitParam(model, budget),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user",   content: userText },
@@ -105,7 +130,20 @@ export async function quickComplete(
       },
       { signal: opts?.signal }
     );
-    return (res.choices[0]?.message?.content ?? "").trim();
+    let res = await ask(maxTokens);
+    let text = (res.choices[0]?.message?.content ?? "").trim();
+    if (!text) {
+      reportEmptyQuickReply(model, res.choices[0]?.finish_reason, maxTokens);
+      if (/^gpt-5(?:[.-]|$)/i.test(model)) {
+        // Reasoning models: give the answer room beside the hidden reasoning, once.
+        res = await ask(Math.max(maxTokens * 8, 512));
+        text = (res.choices[0]?.message?.content ?? "").trim();
+      }
+      if (!text && process.env.ANTHROPIC_API_KEY && !opts?.signal?.aborted) {
+        return anthropicFallback(systemPrompt, userText, maxTokens, new Error("OpenAI returned an empty completion"));
+      }
+    }
+    return text;
   } catch (err) {
     // The caller explicitly cancelled — honor the abort rather than spending
     // the fallback budget on work the caller no longer wants.

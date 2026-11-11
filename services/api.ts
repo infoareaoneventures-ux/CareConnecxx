@@ -1,4 +1,5 @@
 import { stripeService as externalStripeService } from './stripeService';
+import { swallow, reportError } from '../utils/reportError';
 import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 
 import firebase, { auth, db, functions, storage, isConfigured, setActingAuthUser } from '../lib/firebase';
@@ -280,7 +281,7 @@ export const dbService = {
             const { submitAccountAction } = await import('./accountActionQueue');
             await submitAccountAction('delete_account', { uid: auth.currentUser.uid });
             // The login is gone server-side; drop the browser's session too so the page does not sit signed in as nobody.
-            await auth.signOut().catch(() => {});
+            await auth.signOut().catch(swallow('api: background step 1'));
             return true;
         }
         throw new Error("Not logged in");
@@ -2565,7 +2566,7 @@ export const adminService = {
     },
     clearAdminPresence: async (adminUid: string): Promise<void> => {
         if (!isConfigured || !db) return;
-        await db.collection('admin_presence').doc(adminUid).delete().catch(() => {});
+        await db.collection('admin_presence').doc(adminUid).delete().catch(swallow('api: background step 2'));
     },
     /** Every account the team is acting for or viewing right now (YES windows + fresh presence), live. */
     watchOpenSessions: (onRows: (rows: OpenSessionRow[]) => void): (() => void) => {
@@ -2708,7 +2709,7 @@ export const adminService = {
         if (data.name) mirror.name = data.name;
         if (data.email) mirror.email = data.email;
         if (Object.keys(mirror).length) {
-            try { await db.collection('users').doc(uid).update(mirror); } catch { /* best effort */ }
+            try { await db.collection('users').doc(uid).update(mirror); } catch (e) { reportError(e, { where: 'api: mirror profile to users record' }); }
         }
     },
 
@@ -2885,9 +2886,9 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
     }, { merge: true });
 
     if (photoURL) {
-        await db.collection('users').doc(uid).set({ photoURL }, { merge: true }).catch(() => {});
+        await db.collection('users').doc(uid).set({ photoURL }, { merge: true }).catch(swallow('api: background step 3'));
         // Never the admin's own Auth profile while acting for someone (2026-10-22).
-        try { if (!actingContext) await firebase.auth().currentUser?.updateProfile({ photoURL }); } catch { /* best effort */ }
+        try { if (!actingContext) await firebase.auth().currentUser?.updateProfile({ photoURL }); } catch (e) { reportError(e, { where: 'api: update login photo' }); }
     }
 
     // Best-effort writes — don't block wizard completion if they fail

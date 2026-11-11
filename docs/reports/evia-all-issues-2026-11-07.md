@@ -69,12 +69,12 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Require an explicit choice of target ("test" or "live") and a confirmation step, and remove the old duplicate release script.
     - **Partly done (Nov 9):** npm run deploy now needs a person at a terminal to type the project id and refuses to run otherwise. There is no separate test project, so there is no test target. The old duplicate script scripts/deploy.sh (it only builds) is still there; delete it when convenient.
 
-- [ ] **No consistent code-quality rules**
+- [x] **No consistent code-quality rules** — _Done in code (Nov 11): ESLint + Prettier, run in CI; errors fail the build, warnings are paid down_
     - **The issue:** The project has no automatic style or quality checker, so every developer writes code in their own way.
     - **Why it matters:** Bugs slip through more often, new developers take longer to get productive, and code reviews take longer.
     - **How we'll fix it:** Add standard automatic checkers that run every time code is saved and on every change, and fix what they find, starting with the most important areas.
 
-- [ ] **Errors are often silently ignored**
+- [ ] **Errors are often silently ignored** — _Partly done (Nov 11): one error path (reportError/swallow) and 37 silent catches converted in money, booking and account code; about 50 remain_
     - **The issue:** In over 100 places, when something fails (for example, loading a page section or saving data), the app quietly ignores the error. Our error-tracking service (Sentry) only hears about a small fraction of problems.
     - **Why it matters:** Users can hit a broken screen or a save that didn't work, and nobody on the team ever finds out.
     - **How we'll fix it:** Add one standard way of handling errors that tells the user something went wrong and reports it to our error-tracking dashboard.
@@ -84,7 +84,7 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Rules such as "always clean user input" are applied inconsistently, the same logic is copied in many places, and changes are harder and riskier.
     - **How we'll fix it:** Gradually move database access into one organized layer, grouped by area (caregivers, bookings, payments, admin). An automated check will stop new screens from bypassing it.
 
-- [ ] **The app does extra work every time something changes**
+- [ ] **The app does extra work every time something changes** — _Partly done (Nov 11): toast state split out so a toast no longer redraws every screen; duplicate loads and the unused caregiver list not done_
     - **The issue:** One central piece of the app causes about 40 screens to redraw whenever a small notification pops up. It also loads some data twice, and loads a caregiver list that is never shown.
     - **Why it matters:** The app is slower than it needs to be, especially on older phones, and it makes extra database reads that add to running costs.
     - **How we'll fix it:** Split that piece into smaller parts so only the affected screens update, and remove the duplicate and unused data loading.
@@ -325,7 +325,7 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Lower-quality answers on important checks, and confusion for whoever changes the setup next.
     - **How we'll fix it:** Point the safety checks at the right model, warn at startup when a setting is missing, and update the documentation.
 
-- [ ] **Other users' text reaches the AI unchecked**
+- [x] **Other users' text reaches the AI unchecked** — _Done in code (Nov 11): Evia's main prompt treats bios, messages, job descriptions and notes in tool results as data only_
     - **The issue:** Profile bios, messages and job descriptions written by other users are passed to the AI as-is.
     - **Why it matters:** Someone could hide instructions in their bio to manipulate Evia. This makes the self-approval issue in P0 more serious.
     - **How we'll fix it:** Mark all user-written content as "data only, not instructions" before the AI sees it.
@@ -335,7 +335,7 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Evia misreads messages such as "I don't want an interview."
     - **How we'll fix it:** Let the AI interpret these replies.
 
-- [ ] **Personal details appear in system logs**
+- [x] **Personal details appear in system logs** — _Done in code (Nov 11): phones/emails were already masked; message text is now logged as a length only and error messages are masked_
     - **The issue:** Snippets of messages and full phone numbers are written to the server logs.
     - **Why it matters:** Logs are widely accessible to the team and tools, so they should never contain health or contact details.
     - **How we'll fix it:** Log only masked phone numbers and message lengths.

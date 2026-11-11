@@ -1,4 +1,5 @@
 
+import { swallow } from '../utils/reportError';
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../utils/medicationInstruction';
 import { recordActedForPerson } from '../services/api';
 import { serviceLabel, PRIMARY_SERVICES, CareKind, RELATIONSHIPS, serviceListsForKinds, AGE_RANGES, STAGE_HEADING, ageRangeLabel, recipientCareKind, recipientStage, OTHER_KIND_QUESTION, OTHER_KIND_OPTIONS } from './caregiver/signup/constants';
@@ -261,7 +262,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
         const d = snap.data() as any;
         const url = [d?.photoURL, d?.photo, d?.profilePhoto].find(isPhotoUrl) ?? null;
         if (url) setProfilePhotoURL(url);
-      }).catch(() => {});
+      }).catch(swallow('CarePlan: background step 1'));
   }, [currentUser?.uid]);
 
   useEffect(() => {
@@ -553,7 +554,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       void recordActedForPerson('care_plan_updated', 'updated your care plan');
       setRecipientPlans(prev => ({ ...prev, [key]: updated }));
       if (editingSection === 'careNeeds' && typeof updated.ageRange === 'string' && updated.ageRange && recipientCareKind(recipient.relationship, recipient.careKind) === 'child') {
-        await syncRosterStage(recipient, updated.ageRange).catch(() => {});
+        await syncRosterStage(recipient, updated.ageRange).catch(swallow('CarePlan: background step 2'));
       }
       if (editingSection === 'locations') setLocationPool(cleanPool);
       // senior_profiles.needs is the field caregiver-matching actually reads

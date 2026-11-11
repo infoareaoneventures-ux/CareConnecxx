@@ -1,4 +1,5 @@
 import { serviceLabel, CARE_KIND_LABEL, serviceGroupsOf } from './caregiver/signup/constants';
+import { swallow } from '../utils/reportError';
 import { reviewSummary } from '../utils/reviewSummary';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
@@ -153,7 +154,7 @@ export default function ClientCaregiverProfile({
     if (uid) {
       dbService.getJobPostsByClient(uid).then(posts => {
         setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date, createdAt: p.createdAt })));
-      }).catch(() => {});
+      }).catch(swallow('ClientCaregiverProfile: background step 1'));
 
       // Check for an existing accepted booking with this caregiver that STILL
       // has a live shift. booking_requests.status stays 'accepted' forever
@@ -175,7 +176,7 @@ export default function ClientCaregiverProfile({
           const hasLiveShift = shiftsSnap.docs.some(d => bookingIds.includes(d.data().bookingRequestId));
           setIsBooked(hasLiveShift);
         })
-        .catch(() => {});
+        .catch(swallow('ClientCaregiverProfile: background step 2'));
 
       // Check for an active interview request with this caregiver, and
       // whether a PAST interview with them was completed — same rule
@@ -192,7 +193,7 @@ export default function ClientCaregiverProfile({
           setIsRequested(hasActive);
           setHasCompletedInterview(snap.docs.some(d => d.data().status === 'completed'));
         })
-        .catch(() => {});
+        .catch(swallow('ClientCaregiverProfile: background step 3'));
 
       // Check for a completed shift with this caregiver
       db!.collection('shifts')
@@ -202,7 +203,7 @@ export default function ClientCaregiverProfile({
         .limit(1)
         .get()
         .then(snap => setHasCompletedShift(!snap.empty))
-        .catch(() => {});
+        .catch(swallow('ClientCaregiverProfile: background step 4'));
 
       // Check if the client has already left a review for this caregiver
       db!.collection('reviews')
@@ -211,7 +212,7 @@ export default function ClientCaregiverProfile({
         .limit(1)
         .get()
         .then(snap => setHasReviewed(!snap.empty))
-        .catch(() => {});
+        .catch(swallow('ClientCaregiverProfile: background step 5'));
     }
   }, [caregiverId]);
 

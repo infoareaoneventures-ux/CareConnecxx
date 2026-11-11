@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { swallow } from '../../utils/reportError';
 import { ZoneTag } from '../ui/ZoneTag';
 import { recordActedForPerson } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -211,7 +212,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const dismissReviewPrompt = async (caregiverId: string) => {
     setDismissedReviewPrompts(prev => [...prev, caregiverId]);
     if (!currentUser?.uid || !db) return;
-    await db.collection('users').doc(currentUser.uid).set({ dismissedReviewPrompts: firebase.firestore.FieldValue.arrayUnion(caregiverId) }, { merge: true }).catch(() => {});
+    await db.collection('users').doc(currentUser.uid).set({ dismissedReviewPrompts: firebase.firestore.FieldValue.arrayUnion(caregiverId) }, { merge: true }).catch(swallow('ClientDashboard: background step 1'));
   };
 
   // A caregiver whose booking has ended but who was actually interviewed
@@ -490,7 +491,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         if (!isMounted) return;
         setTopRatedCaregivers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Caregiver)));
       })
-      .catch(() => {});
+      .catch(swallow('ClientDashboard: background step 2'));
     return () => { isMounted = false; };
   }, [currentUser?.uid]);
 
@@ -499,7 +500,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     if (!db || !currentUser?.uid) return;
     db.collection('users').doc(currentUser.uid).get()
       .then(doc => setSavedIds((doc.data() as any)?.savedCaregiverIds || []))
-      .catch(() => {});
+      .catch(swallow('ClientDashboard: background step 3'));
   }, [currentUser?.uid]);
 
   const handleToggleSave = async (caregiver: Caregiver) => {

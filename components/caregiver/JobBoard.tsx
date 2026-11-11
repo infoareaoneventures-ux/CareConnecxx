@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel, kindsOfPost, serviceListsForKinds, CARE_KINDS, CARE_KIND_LABEL, CareKind } from './signup/constants';
+import { swallow } from '../../utils/reportError';
 import { JOB_PAYMENT_TEXT, isPastJob } from '../../utils/jobDisplay';
 import { localDateStr } from '../../utils/shiftUtils';
 import { formatExperience } from '../../utils/experience';
@@ -191,7 +192,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
         db.collection('job_posts').where('status', '==', 'open').get().then(snap => {
             const all = snap.docs.map(d => normalizeJobPost({ id: d.id, ...d.data() }));
             setHiddenJobs(all.filter(j => hiddenJobIds.has(j.id)));
-        }).catch(() => {}).finally(() => setHiddenJobsLoading(false));
+        }).catch(swallow('JobBoard: background step 1')).finally(() => setHiddenJobsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, hiddenKey]);
 

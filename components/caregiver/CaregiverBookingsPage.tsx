@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { swallow } from '../../utils/reportError';
 import { ZoneTag } from '../ui/ZoneTag';
 import { careZoneOf, wallToInstantMs } from '../../utils/careTime';
 import { recordActedForPerson } from '../../services/api';
@@ -778,7 +779,7 @@ const BookingGroupCard: React.FC<{
     await db.collection('shifts').doc(shiftId).update({
       notesLog: firebase.firestore.FieldValue.arrayUnion({ at: new Date().toISOString(), text, by: 'caregiver' }),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {});
+    }).catch(swallow('CaregiverBookingsPage: background step 1'));
     void recordActedForPerson('visit_note_added', 'added a note to a visit');
   };
 
@@ -930,7 +931,7 @@ const BookingGroupCard: React.FC<{
       ? prev.filter(k => !subtaskKeys.includes(k))
       : [...new Set([...prev, ...subtaskKeys])];
     setTasksByShift(p => ({ ...p, [shiftId]: next }));
-    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(() => {});
+    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(swallow('CaregiverBookingsPage: background step 2'));
   };
 
   const toggleTask = async (shiftId: string, key: string) => {
@@ -939,7 +940,7 @@ const BookingGroupCard: React.FC<{
     const prev = tasksByShift[shiftId] || [];
     const next = prev.includes(key) ? prev.filter(t => t !== key) : [...prev, key];
     setTasksByShift(p => ({ ...p, [shiftId]: next }));
-    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(() => {});
+    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(swallow('CaregiverBookingsPage: background step 3'));
   };
 
   // Delegated to page-level handler (lifted so orphan amendments in Requests tab can share it)
@@ -2176,7 +2177,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                               await db.collection('booking_amendments').doc(a.id).update({
                                 status: 'declined',
                                 respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                              }).catch(() => {});
+                              }).catch(swallow('CaregiverBookingsPage: background step 4'));
                               // Notification handled by onBookingAmendmentWrite Cloud Function
                             }}
                             className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors"

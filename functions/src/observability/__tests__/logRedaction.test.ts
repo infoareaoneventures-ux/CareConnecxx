@@ -24,3 +24,29 @@ describe("log redaction", () => {
     expect(redactValue(err)).toBe(err);
   });
 });
+
+
+// 2026-11-11 (Wave 4): message text is logged as a length only; an Error's message is masked too.
+describe("message text and errors", () => {
+  it("fields that hold what a person wrote become a length", () => {
+    const o = redactValue({ phone: "+14087261330", text: "my mom fell and is not breathing", body: "hi", other: "keep me" }) as Record<string, unknown>;
+    expect(o.text).toBe("[32 chars]");
+    expect(o.body).toBe("[2 chars]");
+    expect(o.other).toBe("keep me");
+    expect(String(o.phone)).not.toContain("4087261330");
+  });
+  it("reaches nested fields and arrays but leaves class instances alone", () => {
+    const when = new Date(0);
+    const o = redactValue({ a: { b: { content: "secret words" } }, list: [{ text: "x" }], when }) as any;
+    expect(o.a.b.content).toBe("[12 chars]");
+    expect(o.list[0].text).toBe("[1 chars]");
+    expect(o.when).toBe(when);
+  });
+  it("an Error with a number in its message is masked and stays an Error", () => {
+    const e = redactValue(new Error("send failed for +15551234567")) as Error;
+    expect(e).toBeInstanceOf(Error);
+    expect(e.message).not.toContain("15551234567");
+    const plain = new Error("nothing private");
+    expect(redactValue(plain)).toBe(plain);
+  });
+});

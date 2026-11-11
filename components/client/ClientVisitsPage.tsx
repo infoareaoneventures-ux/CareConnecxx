@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
+import { swallow } from '../../utils/reportError';
 import { ZoneTag } from '../ui/ZoneTag';
 import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect } from 'react';
@@ -1821,7 +1822,7 @@ export const ClientVisitsPage: React.FC = () => {
       futureSnap.docs.forEach(doc => batch.update(doc.ref, { status: 'cancelled', bulkCancelled: true }));
       await batch.commit();
       // onBookingRequestWrite Cloud Function fires here and notifies the caregiver
-      await db.collection('booking_requests').doc(bookingRequestId).update({ status: 'cancelled' }).catch(() => {});
+      await db.collection('booking_requests').doc(bookingRequestId).update({ status: 'cancelled' }).catch(swallow('ClientVisitsPage: background step 1'));
     } else {
       batch.update(db.collection('shifts').doc(shiftId), { status: 'cancelled', bulkCancelled: true });
       await batch.commit();
@@ -1843,7 +1844,7 @@ export const ClientVisitsPage: React.FC = () => {
       status: 'cancelled',
       cancelledBy: 'client',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {});
+    }).catch(swallow('ClientVisitsPage: background step 2'));
   };
 
   const [replacementShift, setReplacementShift] = useState<Shift | null>(null);
@@ -1904,7 +1905,7 @@ export const ClientVisitsPage: React.FC = () => {
     await db.collection('booking_requests').doc(replacementRequestId).update({
       status: 'cancelled',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {});
+    }).catch(swallow('ClientVisitsPage: background step 3'));
   };
 
   const activeShifts = shifts.filter(s => s.status === 'scheduled' || s.status === 'in-progress' || s.status === 'needs_replacement');
@@ -2034,7 +2035,7 @@ export const ClientVisitsPage: React.FC = () => {
                       onClick={async () => {
                         if (!db) return;
                         // onBookingAmendmentWrite Cloud Function fires and notifies the caregiver
-                        await db.collection('booking_amendments').doc(a.id).update({ status: 'cancelled' }).catch(() => {});
+                        await db.collection('booking_amendments').doc(a.id).update({ status: 'cancelled' }).catch(swallow('ClientVisitsPage: background step 4'));
                       }}
                       className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors shrink-0 mt-0.5"
                     >

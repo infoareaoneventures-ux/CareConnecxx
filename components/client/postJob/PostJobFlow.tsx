@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useToasts } from '../../../context/ToastContext';
 import { recordActedForPerson } from '../../../services/api';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
@@ -22,7 +23,8 @@ const TOTAL_STEPS = 6;
 
 export const PostJobFlow: React.FC = () => {
   const navigate = useNavigate();
-  const { currentUser, addToast, toasts, removeToast } = useCareConnex();
+  const { currentUser, addToast, removeToast } = useCareConnex();
+  const toasts = useToasts();
 
   const [step, setStep] = useState(0);
   const [data, setData] = useState<JobPostFormData>(INITIAL_FORM_DATA);

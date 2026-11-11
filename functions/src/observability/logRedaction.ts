@@ -19,13 +19,32 @@ export function redactText(s: string): string {
     });
 }
 
+// Fields that hold what a person WROTE (2026-11-11, fix plan Wave 4: "snippets of messages are written to the server
+// logs"): logged as a length only. The phone/email masking above never covered the words themselves.
+const TEXT_FIELDS = new Set([
+  "text", "message", "body", "content", "textpreview", "crisistext", "snippet", "usertext", "inboundtext",
+  "originaltext", "lasttext", "newmessage", "prompt",
+]);
+
 export function redactValue(v: unknown, depth = 0): unknown {
   if (typeof v === "string") return redactText(v);
   if (v == null || typeof v !== "object" || depth > 4) return v;
-  if (v instanceof Error) return v; // keep stacks intact (stack text rarely carries PII; message is below)
+  if (v instanceof Error) {
+    // An Error's message can carry a number or an address ("send failed for +1555…"): mask it, keep the stack.
+    const masked = redactText(v.message);
+    if (masked === v.message) return v;
+    const copy = new Error(masked);
+    copy.name = v.name;
+    copy.stack = v.stack ? redactText(v.stack) : v.stack;
+    return copy;
+  }
   if (Array.isArray(v)) return v.map((x) => redactValue(x, depth + 1));
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return v; // Dates, Buffers, Firestore refs… untouched
   const out: Record<string, unknown> = {};
-  for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = redactValue(val, depth + 1);
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    out[k] = typeof val === "string" && TEXT_FIELDS.has(k.toLowerCase()) ? `[${val.length} chars]` : redactValue(val, depth + 1);
+  }
   return out;
 }
 

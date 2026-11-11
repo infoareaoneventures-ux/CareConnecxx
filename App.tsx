@@ -1,4 +1,5 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
+import { useToasts } from './context/ToastContext';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { ViewType } from './types';
 
@@ -184,8 +185,9 @@ const AppContent: React.FC = () => {
   const location = useLocation();
   const {
     isLoading, authResolved, authRecovery, retryAuth, signOutFromRecovery,
-    toasts, removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen,
+    removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen,
   } = useCareConnex();
+  const toasts = useToasts(); // the toast list lives in its own provider (context/ToastContext.tsx)
 
   const [viewingCaregiver, setViewingCaregiver] = useState<any>(null);
 

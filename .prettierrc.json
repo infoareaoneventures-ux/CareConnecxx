@@ -1,0 +1,11 @@
+{
+  "semi": true,
+  "singleQuote": true,
+  "printWidth": 160,
+  "tabWidth": 2,
+  "trailingComma": "all",
+  "arrowParens": "always",
+  "overrides": [
+    { "files": "functions/**/*.ts", "options": { "singleQuote": false } }
+  ]
+}

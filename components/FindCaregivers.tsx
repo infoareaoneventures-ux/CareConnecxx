@@ -1,4 +1,5 @@
 import { serviceLabel } from './caregiver/signup/constants';
+import { swallow } from '../utils/reportError';
 import React, { useState, useEffect, useMemo } from 'react';
 import { billedHourlyRate } from '../utils/pricing';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -196,7 +197,7 @@ export default function FindCaregivers() {
           );
           setRebookCaregiverIds(rebookIds);
         })
-        .catch(() => {});
+        .catch(swallow('FindCaregivers: background step 1'));
 
       // ── Collect all client care location lat/lngs in parallel ──
       const [postsSnap, jpDoc, cpDoc, spDoc] = await Promise.all([

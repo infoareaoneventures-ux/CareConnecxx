@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { swallow } from '../../utils/reportError';
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
 import { looksLikeEmail, EMAIL_FORMAT_MESSAGE } from '../../utils/emailFormat';
 import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
@@ -198,7 +199,7 @@ export const AccountSettings: React.FC = () => {
         }
 
         if (d.identityCheckStatus) setIdentityStatus(d.identityCheckStatus);
-      }).catch(() => {});
+      }).catch(swallow('AccountSettings: background step 1'));
     }
 
     // Membership status — mirrors Membership.tsx's own listener exactly
@@ -237,7 +238,7 @@ export const AccountSettings: React.FC = () => {
       await Promise.all([
         db!.collection('users').doc(user.uid).update({ photoURL: url }),
         db!.collection('senior_profiles').doc(user.uid).set({ imageUrl: url }, { merge: true }),
-        (user as any).updateProfile?.({ photoURL: url }).catch(() => {}),
+        (user as any).updateProfile?.({ photoURL: url }).catch(swallow('AccountSettings: background step 2')),
       ]);
       setPhotoURL(url);
       addToast('Profile photo updated', 'success');

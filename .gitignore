@@ -69,3 +69,6 @@ functions/ledger*.json
 functions/iv_*.json
 functions/audit*.json
 functions/fnlog*.txt
+
+# Local AI-assistant instructions: kept on disk, never committed
+CLAUDE.md

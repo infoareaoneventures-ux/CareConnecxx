@@ -34,6 +34,7 @@ import { WAITLISTED_STEP, parkOutOfArea } from "./serviceAreaGate";
 import { evaluateServiceArea } from "../config/serviceArea";
 import { lookupZipPlace } from "../utils/geocode";
 import { isMedicationInstruction as isMedicationInstructionText, MEDICATION_INSTRUCTION_MESSAGE as MEDICATION_INSTRUCTION_TEXT } from "../utils/medicationInstruction";
+import { formatExperience } from "./caregiverProfilePage";
 import {
   runFamilyIntakeTurn, nextFamilyStep, familyQuestion, effectiveFamilyData, isFamilyScriptStep,
   readRoster, dataFromRoster, rosterFromData, describeRoster, type FamilyIntakeDeps,
@@ -867,12 +868,17 @@ async function tryAbsorbClientGateUpdate(
 
 // True when the message is ONLY a greeting/pleasantry — no answer, name, question,
 // or substantive content. LLM-judged (no keyword matching), per Evia's rules.
-async function isGreetingOnly(text: string): Promise<boolean> {
+// `askedQuestion` is what Evia just asked (2026-11-14, live text test): "morning" answering "morning, afternoon, evening,
+// or overnight?" was judged a greeting and got "Hey Sam! Good to hear from you" instead of being read as the answer.
+async function isGreetingOnly(text: string, askedQuestion?: string): Promise<boolean> {
   const r = await parseWithClaude(
     "Reply with exactly GREETING or OTHER. " +
     'GREETING = the message is ONLY a greeting or pleasantry with no real content ' +
     '(e.g. "hey cara", "hi", "hello", "good morning", "you there?", "yo", "hey"). ' +
-    "OTHER = it contains any answer, a name, a question, a number, or any substantive info.",
+    "OTHER = it contains any answer, a name, a question, a number, or any substantive info." +
+    (askedQuestion
+      ? ` Evia's last question to them was: "${askedQuestion}". If the message could be an ANSWER to that question (a single word like "morning", "evening", "yes", a day, a time), it is OTHER, not a greeting.`
+      : ""),
     text
   ).catch(() => "OTHER");
   return r.trim().toUpperCase().startsWith("GREET");
@@ -1087,7 +1093,11 @@ export async function handleOnboardingStep(
   // (by name when known) instead of re-asking from scratch or resetting.
   if (step && step !== "verify_phone" && step !== "complete"
       && text !== "__RESUME__" && text.trim() !== "" && !inboundMedia) {
-    if (await isGreetingOnly(text)) {
+    const pendingField = (session as unknown as Record<string, unknown>).confirmEditAskField;
+    const lastAsked = typeof pendingField === "string" && pendingField
+      ? (await import("./familyRecapEdits")).questionForField(pendingField)
+      : currentStepQuestion(step, session);
+    if (await isGreetingOnly(text, lastAsked)) {
       const data      = (session.onboardingData ?? {}) as Record<string, unknown>;
       const firstName = ((data.firstName ?? data.name) as string | undefined)?.trim() ?? "";
       const audience: "caregiver" | "family" = session.userType === "caregiver" ? "caregiver" : "family";
@@ -2105,15 +2115,26 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
       }
       if (await finishRecapEdit(phone, chatId, appliedA)) return;
     }
-    // Not an answer to that question: a side question is answered and the question stays; anything else re-asks it once.
-    if (await isQuestionOrOther(text, questionForField(askedField))) {
-      const answer = await answerQuestionMidFlow(text, session, phone);
-      await sendMessage(chatId, `${answer}\n\n${questionForField(askedField)}`);
+    // "yes, that looks right" while a question about one field was still waiting: they are done editing (live text
+    // test 2026-11-14: it answered "Sorry, I didn't catch that" and left the summary unconfirmed). The question is
+    // dropped and the reply is read as the confirmation below.
+    const agreedInstead = await parseWithClaude(
+      `Evia showed the family a summary of their care request and, after they asked to change something, asked "${questionForField(askedField)}". If their reply just says the summary is fine as it is ("yes", "looks right", "that's correct", "all good"), reply exactly CONFIRM. Otherwise reply OTHER.`,
+      text,
+    ).catch(() => "OTHER");
+    if (agreedInstead.trim().toUpperCase() === "CONFIRM") {
+      await clearAsk();
+    } else {
+      // Not an answer to that question: a side question is answered and the question stays; anything else re-asks it once.
+      if (await isQuestionOrOther(text, questionForField(askedField))) {
+        const answer = await answerQuestionMidFlow(text, session, phone);
+        await sendMessage(chatId, `${answer}\n\n${questionForField(askedField)}`);
+        return;
+      }
+      await clearAsk();
+      await sendMessage(chatId, `Sorry, I didn't catch that. ${RECAP_EDIT_FALLBACK}`);
       return;
     }
-    await clearAsk();
-    await sendMessage(chatId, `Sorry, I didn't catch that. ${RECAP_EDIT_FALLBACK}`);
-    return;
   }
   // "Whose name — you or Mahad C?" was asked after an edit that didn't say who; this reply names them (2026-10-21).
   const pendingEdit = (session as unknown as Record<string, unknown>).confirmEditPending as NonNullable<AppliedRecapEdit["pending"]> | undefined;
@@ -2654,7 +2675,7 @@ async function handleClientShowCaregivers(
   for (const item of preview.items) {
     try {
       const caption =
-        `${item.name}${item.yearsExperience ? ` — ${item.yearsExperience} yrs experience` : ""}` +
+        `${item.name}${formatExperience(item.yearsExperience) ? ` — ${formatExperience(item.yearsExperience)}` : ""}` +
         `${item.strongestFit ? `, strongest fit for ${item.strongestFit}` : ""}` +
         (item.id ? `\nTap to view ${item.name.split(" ")[0]}'s profile: ${APP_URL}/p/${item.id}` : "");
       await sendMessage(chatId, caption);

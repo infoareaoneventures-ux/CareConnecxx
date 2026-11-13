@@ -98,6 +98,13 @@ export default function FindCaregivers() {
   const { gate, Modals: GateModals } = useAccessGates();
   const { blockedIds, addToast } = useCareConnex();
   const [viewingCaregiver, setViewingCaregiver] = useState<Caregiver | null>(null);
+  // Escape closes the profile window (live test 2026-11-14: it did not).
+  useEffect(() => {
+    if (!viewingCaregiver) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setViewingCaregiver(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewingCaregiver]);
   const [interviewCaregiver, setInterviewCaregiver] = useState<Caregiver | null>(null);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
   const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
@@ -855,6 +862,9 @@ export default function FindCaregivers() {
       {/* Full caregiver profile modal */}
       {viewingCaregiver && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Care provider profile"
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm overflow-y-auto"
           onClick={() => setViewingCaregiver(null)}
         >
@@ -865,6 +875,7 @@ export default function FindCaregivers() {
             <div className="bg-slate-50 rounded-2xl w-full max-w-5xl shadow-2xl relative overflow-hidden">
               {/* Close button */}
               <button
+                aria-label="Close"
                 onClick={() => setViewingCaregiver(null)}
                 className="absolute top-4 right-4 z-50 p-2 bg-white/80 hover:bg-white rounded-full shadow-md transition-colors"
               >

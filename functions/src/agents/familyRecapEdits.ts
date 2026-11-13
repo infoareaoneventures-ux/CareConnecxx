@@ -90,6 +90,7 @@ export async function readRecapEdit(deps: FamilyIntakeDeps, text: string, d: Dat
       '"careNeeds":{"add":["things to ADD, in their words"],"remove":["things to REMOVE, in their words"],"replace":["the whole new list when they restate it"]},' +
       '"people":{"rename":{"from":"old name or relationship if said","to":"new name"},"stage":{"who":"name or relationship if said","stage":"' + AGE_RANGES.map((a) => a.label).join("|") + '"},' +
       '"relationship":{"who":"name if said","to":"self|parent|spouse|adult child|child|other"},"remove":"name or relationship of the person to remove","restate":"the phrase naming WHO the care is for when they restate the whole list"}}. ' +
+      'If they say two listed people are the SAME person, or one is a duplicate, that is people.remove of the duplicate (the one WITHOUT a name when only one has a name; otherwise the one they name), never a rename. ' +
       'Rules: "add X" / "also X" → careNeeds.add; "remove X" / "not X" / "take off X" → careNeeds.remove. A name change is people.rename (never careNeeds). ' +
       'If they say WHAT to change but not the new value ("can you fix the day", "change the rate"), return ONLY {"ask":"<field key>"} — NEVER invent a value they did not give. ' +
       "The account holder's own first/last name is NEVER changed here — if they try, return {}. Omit everything not clearly changed. No markdown.",

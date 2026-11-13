@@ -28,7 +28,7 @@ import * as admin from "firebase-admin";
 import { isCaregiverBookable, type CaregiverEligibilityFields } from "../utils/caregiverEligibility";
 import { haversineDistanceMiles, hasValidTransportDocs } from "./caregiverMatchScoring";
 import { getAppUrl } from "../config/appUrl";
-import { billedHourly } from "./caregiverProfilePage";
+import { billedHourly, formatExperience } from "./caregiverProfilePage";
 
 const db = admin.firestore();
 
@@ -262,7 +262,7 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
 // ── The card, as one SMS ────────────────────────────────────────────────────
 export function caregiverCardText(c: CaregiverCard): string {
   const ratingLabel = c.reviewCount > 0 ? `★ ${c.rating.toFixed(1)} (${c.reviewCount} review${c.reviewCount === 1 ? "" : "s"})` : "No reviews yet";
-  const exp = typeof c.experience === "number" ? `${c.experience} yrs experience` : `${c.experience} experience`;
+  const exp = formatExperience(c.experience) || "Experience not listed";
   const where = [c.city, c.stateCode].filter(Boolean).join(", ") + (c.zipCode ? ` ${c.zipCode}` : "");
   // Transportation only counts as a service once it is live (offered + driving record
   // clear) — same gate as the profile page (ClientCaregiverProfile.tsx /

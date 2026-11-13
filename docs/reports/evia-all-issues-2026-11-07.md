@@ -826,3 +826,34 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
 - The test care provider's account was deleted through the app on Nov 7 (its records are gone). Delete the remaining test records labelled `e2eTestAccount`, the two test posts, the test interview and the test chat.
 - Decide whether to keep the 10-mile radius added to the Santa Clara provider's record.
 - In the LIVE Stripe account: an unpaid Checkout session (it expires on its own) and probably a customer record for e2e-family@example.com were created on Nov 7. Delete the customer if one exists.
+
+---
+
+## 4. Found in the live text test (Nov 14, 2026)
+
+Tested over iMessage against Evia's live line, as a new family, after the Nov 14 deploy. Passed: first-contact consent, "call her now" (no false alarm), emergency wording before consent (911/ER + NOTIFY offer), phone number and email refused in the job description, fixed-text intake order, pricing side question answered.
+
+- [x] **A person gets counted twice on the family summary** — _Fixed in code Nov 14: "my mom, Linda" is read as one person (not yet deployed)_ — — I said the care is for "Linda", later gave "Linda Tester". The summary lists "Linda (your parent) and Linda Tester (your parent)". Telling Evia they're the same person did not remove the duplicate.
+- [x] **Corrections don't always apply** — _Fixed in code Nov 14: "same person" now removes the duplicate; exact times map to day-parts (not yet deployed)_ — — "Linda and Linda Tester are the same person, and the time should be 9am to 1pm" answered "Got it, updated: part-time care" and changed neither. One correction per message worked for the time question only.
+- [x] **Exact visit hours can't be given by text** — _Fixed in code Nov 14: 9am to 1pm now reads as morning + afternoon and Evia says exact hours are set when booking (not yet deployed)_ — — "Saturdays 9am to 1pm" is stored as "SAT, morning". Only a part of the day can be chosen, which doesn't match the site's start and end times.
+- [x] **The roster question says "care providers"** — _Not a bug: this question is how many care providers they need (1–4); I misread it_ — — "How many care providers do you need, 1 to 4?" is really asking how many people need care.
+- [ ] **A reply is sometimes dropped when it answers a later question** — extra details sent early (schedule, care needs) were re-asked later instead of being acknowledged.
+- [x] **A plain "yes, that looks right" isn't understood after an edit** — _Fixed in code Nov 14 (not yet deployed)_ — — Evia answered "Sorry, I didn't catch that" and didn't repeat the summary; only a bare "yes" worked.
+- [x] **Evia greets mid-flow without asking the next question** — _Cause found and fixed in code Nov 14: "morning" was judged a greeting; the check now sees the question just asked (not yet deployed)_ — — after "morning" the reply was only "Hey Sam! Good to hear from you, let's jump right back in where we left off." and then went quiet.
+- [x] **Provider card reads "3-5 years yrs experience"** — _Fixed in code Nov 14: all three text sites use the shared formatter (not yet deployed)_ — — the site's wording was fixed in Wave 3, the text version wasn't.
+- [ ] **Pricing answer on the cost side question is vague** — "your cost depends on the care plan…" without mentioning the family membership price.
+- [ ] **iMessage senders arrive as an email address** — a sender with no phone number on iMessage is stored as an email under `agent_conversations`; phone steps are unverified for them.
+
+### Website booking test (Nov 14, 2026, live site, test family + test care provider)
+
+Passed: sign-in with test numbers on both sides; booking and visit list; cancelling one visit left the booking Ongoing and the next visit showed; Requests tab shows pending requests with the "Extra visit request" label; the provider saw and accepted the extra visit and it appeared in their Active Bookings.
+
+- [x] **Cancelling a visit has no confirmation and no undo** — _Not a bug: the site asks with a browser confirm box, which the test browser accepted automatically_ — — one click on the cross removed the Nov 21 visit straight away.
+- [ ] **Accepting a request has no confirmation** — the provider's Accept on an extra visit applied instantly.
+- [x] **"Request Visit" defaults to Ongoing** — _Fixed in code Nov 14: starts as a one-off with the end date following the start date (not yet deployed)_ — — the form says "a visit outside your regular schedule" but opens with Ongoing ticked, so a one-off visit needs the box cleared and an end date added.
+- [x] **The Request Visit start date jumps** — _Fixed in code Nov 14: the date snapped to today on every keypress, so typing 15 gave today's date; now only checked when the field is left (not yet deployed)_ — — typing Nov 15 into the date field gave Nov 14 (set by the form field it worked).
+- [ ] **"Card" is shown as the payment method with no card on file** — the booking card says "$27.25/hr billed · Card" while Payments says "No card on file" (the known card-before-booking item).
+- [ ] **The provider profile has no availability section** — _Could not reproduce: the section and the public copy both exist; the test provider's record may be in a different shape_ — — the provider has weekly availability saved; the family's profile window shows services, rate, travel and reviews only.
+- [x] **Escape doesn't close the profile window.** — _Fixed in code Nov 14 (not yet deployed)_
+- [x] **Duplicate schedule change requests** — _Leftover test data, not a bug_ — two identical "Schedule change request" cards (Tue 10–1, from Nov 19) sit in Requests on both sides.
+- [ ] **Old test timesheet still Under Review** (Nov 7, $2.37) — approving it would charge a card, left alone.

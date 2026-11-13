@@ -1,5 +1,6 @@
 import { stripeService as externalStripeService } from './stripeService';
 import { swallow, reportError } from '../utils/reportError';
+import { replaceAddressIn } from '../utils/addressReplace';
 import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 
 import firebase, { auth, db, functions, storage, isConfigured, setActingAuthUser } from '../lib/firebase';
@@ -314,6 +315,45 @@ export const dbService = {
             const snap = await db.collection('publicCaregiverProfiles').doc(caregiverId).get();
             return snap.exists ? (((snap.data() as any)?.weeklyAvailability as Record<string, any[]>) || {}) : null;
         } catch { return null; }
+    },
+
+    /**
+     * A family edited a saved care address: rewrite it in every place that holds it (the job post's primary address and saved
+     * locations, and each recipient's care-plan locations), so the location step does not merge the untouched copy back in as
+     * a second location. The care plan's location pool is rewritten by the location step itself (it also re-geocodes). Reports
+     * a failure and carries on: the pool write already lands the edit.
+     */
+    replaceFamilyAddress: async (
+        uid: string,
+        original: { street?: string; zipCode?: string },
+        next: { street: string; city: string; state: string; zipCode: string },
+    ): Promise<void> => {
+        if (!db || !uid) return;
+        try {
+            const jobRef = db.collection('job_postings').doc(uid);
+            const jobSnap = await jobRef.get();
+            if (jobSnap.exists) {
+                const jp = jobSnap.data() as any;
+                const updates: Record<string, unknown> = {};
+                if (jp.street && replaceAddressIn([{ street: jp.street, zipCode: jp.zipCode }], original, next).changed) {
+                    Object.assign(updates, { street: next.street, city: next.city, state: next.state, zipCode: next.zipCode });
+                }
+                const saved = replaceAddressIn<any>(jp.savedLocations, original, next);
+                if (saved.changed) updates.savedLocations = saved.list;
+                if (Object.keys(updates).length) await jobRef.update(updates);
+            }
+            const planRef = db.collection('carePlans').doc(uid);
+            const planSnap = await planRef.get();
+            if (planSnap.exists) {
+                const plans = ((planSnap.data() as any)?.recipientPlans || {}) as Record<string, any>;
+                const updates: Record<string, unknown> = {};
+                for (const [id, plan] of Object.entries(plans)) {
+                    const r = replaceAddressIn<any>(plan?.locations, original, next);
+                    if (r.changed) updates[`recipientPlans.${id}.locations`] = r.list;
+                }
+                if (Object.keys(updates).length) await planRef.update(updates);
+            }
+        } catch (e) { reportError(e, { where: 'Locations: replace an edited address' }); }
     },
 
     getCurrentUser: () => {

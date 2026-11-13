@@ -9,6 +9,7 @@ import { useOnboardingSession } from '../../../hooks/useOnboardingSession';
 import { QRHandoff } from './QRHandoff';
 import { MobileHandoff } from './MobileHandoff';
 import { sanitizeName } from '../../../utils/sanitize';
+import { reportAuthError, withAuthCode } from '../../../utils/authErrorDetail';
 import { TaskPageBar } from '../TaskPageBar';
 import { Footer } from '../../landing/Footer';
 
@@ -119,11 +120,12 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       setResendIn(RESEND_COOLDOWN_SECONDS);
       if (resending) setCode('');
     } catch (err: any) {
+      const code = reportAuthError('signup.sendCode', err);
       const msg = err?.code === 'auth/invalid-phone-number'
         ? "That number doesn't look right — double-check the area code."
         : err?.code === 'auth/too-many-requests'
         ? "Too many tries. Wait a few minutes and try again."
-        : "We couldn't send the code. Please try again.";
+        : withAuthCode("We couldn't send the code. Please try again.", code);
       setError(msg);
       // Reset recaptcha so a retry doesn't fail with "captcha already solved"
       clearRecaptchaVerifier(RECAPTCHA_CONTAINER);
@@ -152,9 +154,10 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       try { sessionStorage.setItem('evia_linq_phone', data.linqPhone); } catch {}
       setStep('handoff');
     } catch (err: any) {
+      const code = reportAuthError('signup.confirmCode', err);
       const msg = err?.code === 'auth/invalid-verification-code' || err?.code === 'auth/code-expired'
         ? "That code didn't match. Double-check the digits — or tap Resend."
-        : "Something went wrong verifying your code. Try again.";
+        : withAuthCode("Something went wrong verifying your code. Try again.", code);
       setError(msg);
     } finally {
       setLoading(false);

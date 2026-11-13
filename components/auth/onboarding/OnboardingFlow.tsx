@@ -41,6 +41,8 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
   const navigate = useNavigate();
   const [role, setRole] = useState<OnboardingRole | null>(initialRole ?? null);
   const [step, setStep] = useState<Step>(initialRole ? 'consent' : 'role');
+  // Each step opens at the top (2026-11-11: pressing Continue left the next step part-way down, its heading cut off).
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }); }, [step]);
   const [agreed, setAgreed] = useState(false);
   const [name, setName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -403,9 +405,9 @@ const ConsentScreen: React.FC<{
             type="checkbox"
             checked={agreed}
             onChange={(e) => setAgreed(e.target.checked)}
-            className="w-4 h-4 rounded accent-ink-900 flex-shrink-0"
+            id="terms-agree" aria-labelledby="terms-agree-label" className="w-4 h-4 rounded accent-ink-900 flex-shrink-0"
           />
-          <span className="text-sm text-ink-600">I agree to the terms above</span>
+          <span id="terms-agree-label" className="text-sm text-ink-600">I agree to the terms above</span>
         </label>
         <button
           onClick={onContinue}
@@ -459,9 +461,9 @@ const ConsentScreen: React.FC<{
           type="checkbox"
           checked={agreed}
           onChange={(e) => setAgreed(e.target.checked)}
-          className="w-5 h-5 rounded accent-ink-900 flex-shrink-0"
+          id="terms-agree" aria-labelledby="terms-agree-label" className="w-5 h-5 rounded accent-ink-900 flex-shrink-0"
         />
-        <span className="text-base text-ink-900">I agree to the terms above</span>
+        <span id="terms-agree-label" className="text-base text-ink-900">I agree to the terms above</span>
       </label>
       <button
         onClick={onContinue}

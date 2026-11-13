@@ -23,7 +23,7 @@ vi.mock("firebase-admin", () => {
       }),
       where: (f: string, _o: string, v: any) => ({ where: (f2: string, _o2: string, v2: any) => ({
         get: vi.fn(async () => {
-          const docs = [...hoisted.docs.entries()].filter(([p, d]) => p.startsWith(`${name}/`) && d[f] === v && d[f2] === v2)
+          const docs = [...hoisted.docs.entries()].filter(([p, d]) => p.startsWith(`${name}/`) && (_o === "in" ? (v as any[]).includes(d[f]) : d[f] === v) && (_o2 === "in" ? (v2 as any[]).includes(d[f2]) : d[f2] === v2))
             .map(([p, d]) => { const id = p.split("/")[1]; return { id, data: () => d, ref: { update: async (x: any) => { hoisted.updates.push({ path: p, data: x }); hoisted.docs.set(p, { ...hoisted.docs.get(p), ...x }); } } }; });
           return { docs, empty: docs.length === 0 };
         }),

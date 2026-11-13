@@ -12,6 +12,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import "../observability/tracingGuard"; // tracing off unless explicitly allowed (health information)
 import { wrapAnthropic } from "langsmith/wrappers/anthropic";
 
 export type AnthropicLike = Anthropic;

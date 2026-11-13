@@ -6,6 +6,8 @@ interface IdentityGateModalProps {
   onGetVerified: () => void;
   onLinkFacebook?: () => void;
   caregiverName?: string;
+  /** What the person was trying to do, so the message names it (2026-11-11: posting a request said "to contact care providers"). */
+  action?: 'message' | 'interview' | 'booking' | 'post';
 }
 
 export const IdentityGateModal: React.FC<IdentityGateModalProps> = ({
@@ -13,6 +15,7 @@ export const IdentityGateModal: React.FC<IdentityGateModalProps> = ({
   onGetVerified,
   onLinkFacebook,
   caregiverName,
+  action,
 }) => {
   const [whyOpen, setWhyOpen] = useState(false);
 
@@ -42,10 +45,12 @@ export const IdentityGateModal: React.FC<IdentityGateModalProps> = ({
             Complete Your Identity Check
           </h2>
           <p className="text-sm text-slate-600 leading-relaxed mb-3">
-            {caregiverName ? (
-              <>To contact <span className="font-semibold text-slate-800">{caregiverName}</span>, you need to complete a quick identity check. Pick up where you left off!</>
+            {action === 'post' ? (
+              'To post a care request, you need to complete a quick identity check. Pick up where you left off!'
+            ) : caregiverName ? (
+              <>To {action === 'interview' ? 'interview' : action === 'booking' ? 'book' : 'contact'} <span className="font-semibold text-slate-800">{caregiverName}</span>, you need to complete a quick identity check. Pick up where you left off!</>
             ) : (
-              'To contact care providers, you need to complete a quick identity check. Pick up where you left off!'
+              `To ${action === 'booking' ? 'book a care provider' : 'contact care providers'}, you need to complete a quick identity check. Pick up where you left off!`
             )}
           </p>
           <p className="text-sm text-slate-600 leading-relaxed mb-5">

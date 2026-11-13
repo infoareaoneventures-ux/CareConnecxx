@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { swallow, registerErrorToast } from '../utils/reportError';
 import { dbService, authService, adminService, setActingContext, type ActingContext } from '../services/api';
 import { notificationService } from '../services/notifications';
 import { pushNotificationService } from '../services/pushNotificationService';
 import { setSentryUser } from '../lib/sentry';
 import { isConfigured, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
-import { Caregiver, ToastMessage, ToastType, User, UserProfile } from '../types';
+import { Caregiver, ToastType, User, UserProfile } from '../types';
+import { ToastProvider, useToastActions } from './ToastContext';
 
 /**
  * Extended user with profile data from Firestore
@@ -40,7 +42,6 @@ interface CareConnexContextType {
     authRecovery: AuthRecoveryState | null;
     retryAuth: () => void;
     signOutFromRecovery: () => Promise<void>;
-    toasts: ToastMessage[];
     addToast: (message: string, type: ToastType) => void;
     removeToast: (id: string) => void;
     blockedIds: Set<string>;
@@ -58,7 +59,7 @@ interface CareConnexContextType {
 
 const CareConnexContext = createContext<CareConnexContextType | undefined>(undefined);
 
-export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+const CareConnexProviderInner: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
     const [caregiverProfile, setCaregiverProfile] = useState<Caregiver | null>(null);
     const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
@@ -66,7 +67,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     const [authResolved, setAuthResolved] = useState(false);
     const [authRecovery, setAuthRecovery] = useState<AuthRecoveryState | null>(null);
     const [authRetryNonce, setAuthRetryNonce] = useState(0);
-    const [toasts, setToasts] = useState<ToastMessage[]>([]);
+    const { addToast, removeToast } = useToastActions(); // stable — a toast never re-renders this provider's consumers
     const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
     const [blockedUserProfiles, setBlockedUserProfiles] = useState<Record<string, { name: string; photo: string }>>({});
     const [membershipModalOpen, setMembershipModalOpen] = useState(false);
@@ -106,7 +107,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         const beat = () => adminService.setAdminPresence({
             adminUid: actingFor.adminUid, adminName: actingFor.adminName, uid: actingFor.uid, role: actingFor.role,
             personName: actingFor.name, mode: actingFor.mode === 'view' ? 'view' : 'act', since, lastSeen: new Date().toISOString(),
-        }).catch(() => {});
+        }).catch(swallow('CareConnexContext: background step 1'));
         void beat();
         const beatTimer = setInterval(beat, 60000);
         try { sessionStorage.setItem('evia:acting-for', JSON.stringify(actingFor)); } catch { /* storage unavailable */ }
@@ -292,7 +293,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                 setCurrentUser(null);
                 setCaregiverProfile(null);
                 setSentryUser(null);
-                pushNotificationService.removeToken('').catch(() => {});
+                pushNotificationService.removeToken('').catch(swallow('CareConnexContext: background step 2'));
             }
             if (!cancelled) setAuthResolved(true);
         });
@@ -334,14 +335,13 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         return unsub;
     }, [currentUser?.uid, currentUser?.userType]);
 
-    const addToast = (message: string, type: ToastType) => {
-        const id = Math.random().toString(36).substr(2, 9);
-        setToasts((prev) => [...prev, { id, message, type }]);
-    };
 
-    const removeToast = (id: string) => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
-    };
+    // Let non-React code (services, helpers) tell the person about a failure through the same toasts: utils/reportError.
+    useEffect(() => {
+        registerErrorToast((message, type) => addToast(message, type));
+        return () => registerErrorToast(null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Initialize Data
     useEffect(() => {
@@ -467,21 +467,11 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         });
         await userRef.update({
             [`blockedUserProfiles.${targetId}`]: firebase.firestore.FieldValue.delete(),
-        }).catch(() => {}); // field may not exist on legacy blocks — safe to ignore
-        // Hide the room from the unblocking user until a new message arrives.
-        // Also set messagesCutoff so messages sent while blocked stay hidden after unblock.
-        try {
-            const roomId = [currentUser.uid, targetId].sort().join('_');
-            const roomSnap = await db.collection('chatRooms').doc(roomId).get();
-            if (roomSnap.exists) {
-                await db.collection('chatRooms').doc(roomId).update({
-                    [`messagesCutoff.${currentUser.uid}`]: firebase.firestore.FieldValue.serverTimestamp(),
-                    [`deletedAt.${currentUser.uid}`]: firebase.firestore.FieldValue.serverTimestamp(),
-                });
-            }
-        } catch {
-            // chatRoom update failing should not block the unblock itself
-        }
+        }).catch(swallow('CareConnexContext: background step 3')); // field may not exist on legacy blocks — safe to ignore
+        // Unblocking restores the conversation exactly as it was (2026-11-09, fix plan Wave 2). It used to
+        // stamp messagesCutoff + deletedAt on the room, which hid the whole history and made the thread
+        // vanish — one mis-click on Block lost the conversation for good. A block only HIDES the thread
+        // (the inbox filters blocked ids); nothing about the room is changed, so there is nothing to undo.
     };
 
     return (
@@ -500,7 +490,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             authRecovery,
             retryAuth,
             signOutFromRecovery,
-            toasts,
             addToast,
             removeToast,
             blockedIds,
@@ -513,6 +502,13 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
         </CareConnexContext.Provider>
     );
 };
+
+/** The app's provider: toasts get their own provider so they never re-render the global context's consumers. */
+export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children }) => (
+    <ToastProvider>
+        <CareConnexProviderInner>{children}</CareConnexProviderInner>
+    </ToastProvider>
+);
 
 export const useCareConnex = () => {
     const context = useContext(CareConnexContext);

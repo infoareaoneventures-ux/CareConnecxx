@@ -47,6 +47,7 @@
 //
 // Pure parts (step order, next step, roster rules, questions, value validation)
 // are exported for tests; every side effect arrives through FamilyIntakeDeps.
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from "../utils/contactDetails";
 import {
   AGE_RANGES, STAGE_HEADING, OTHER_KIND_QUESTION, ageRangeFromWords, ageRangeLabel, stageQuestion,
   recipientCareKind, rosterCareKinds, serviceMenuText, serviceLabel, JOB_DESCRIPTION_MAX_CHARS,
@@ -662,19 +663,28 @@ async function readProvidersCount(deps: FamilyIntakeDeps, text: string): Promise
   return { fields: { caregiversNeeded: n }, ack: `${n} care provider${n === 1 ? "" : "s"}, got it.` };
 }
 
-async function readEmergency(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null> {
+async function readEmergency(deps: FamilyIntakeDeps, text: string): Promise<StepResult | null | { error: string } | { question: true }> {
   const raw = await deps.parseWithClaude(
-    'The family was asked for their emergency contact\'s name and phone number. The message is almost always the NAME — initials or a short fragment count as the name (e.g. "S m" → name "S m", "mom" → name "mom"). ' +
-    'Reply with raw JSON {"name":"","phone":"","relationship":""} — leave a value empty when not stated.',
+    'The family was asked for their emergency contact\'s name and phone number. ' +
+    'Reply with raw JSON {"kind":"answer","name":"","phone":"","relationship":""}. ' +
+    'kind is "question" when the message asks something or is confused about why it is being asked ("what is this for", "why do you need that"); ' +
+    'kind is "none" when they say they have nobody to give or decline ("dont have one", "no one"); otherwise "answer". ' +
+    'For an answer the message is almost always the NAME — initials or a short fragment count as the name (e.g. "S m" → name "S m", "mom" → name "mom"). ' +
+    'NEVER put a question or a refusal in "name". Leave a value empty when not stated.',
     text,
   );
   try {
-    const p = JSON.parse(raw) as { name?: unknown; phone?: unknown; relationship?: unknown };
+    const p = JSON.parse(raw) as { kind?: unknown; name?: unknown; phone?: unknown; relationship?: unknown };
+    // A question gets answered and the question re-asked; a refusal gets the reason we need one — neither is ever
+    // saved as the contact's name (2026-11-09, fix plan Wave 2: "what is this for" / "dont have one" became a name).
+    if (p.kind === "question") return { question: true };
+    if (p.kind === "none") return { error: "We do need one person we can call in an emergency. It can be a friend, a neighbor or a relative. Who should we put?" };
     const name = String(p.name ?? "").trim();
     const phone = formatWizardPhone(p.phone);
     const relationship = String(p.relationship ?? "").trim();
     if (!name && !phone) {
-      // A few letters with no digits and no question mark is a name, whatever the model made of it.
+      // The model judged this an ANSWER but returned nothing: a few letters with no digits is initials or a short
+      // name ("S m"). Only ever for an answer — never a guess from a question or a refusal.
       const t = text.trim();
       if (/^[A-Za-z][A-Za-z .'\-]{0,40}$/.test(t) && t.split(/\s+/).length <= 4) return { fields: { emergencyContactName: t }, ack: `${t}, got it.` };
       return null;
@@ -751,6 +761,7 @@ async function readDescription(deps: FamilyIntakeDeps, text: string): Promise<St
   const t = text.trim();
   if (t.length > JOB_DESCRIPTION_MAX_CHARS) return { error: `That's ${t.length.toLocaleString("en-US")} characters and the job details hold up to ${JOB_DESCRIPTION_MAX_CHARS.toLocaleString("en-US")}. Could you send a shorter version?` };
   if (deps.isMedicationInstruction(t)) return { error: deps.medicationMessage };
+  if (containsContactDetails(t)) return { error: CONTACT_DETAILS_MESSAGE }; // 2026-11-09: no phone, email or link in the public details
   return { fields: { jobDescription: t }, ack: "Got it, I saved that." };
 }
 

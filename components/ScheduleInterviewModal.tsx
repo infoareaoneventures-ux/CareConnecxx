@@ -1,6 +1,10 @@
 import { safeErrorMessage } from '../utils/safeErrorMessage';
+import { interviewSlotsFor } from '../utils/interviewSlots';
+import { weeklySlotsToBl } from '../services/availabilityService';
+import { dbService } from '../services/api';
+import { zoneAbbr, viewerZone } from '../utils/careTime';
 import { billedHourlyRate } from '../utils/pricing';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Calendar, Clock, MessageSquare, Briefcase } from 'lucide-react';
 import { Button } from './ui/Button';
@@ -44,6 +48,15 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedJobId, setSelectedJobId] = useState(preselectedJobId || '');
     const { gate, Modals: GateModals } = useAccessGates();
+    // The care provider's own availability decides which times are offered (their public profile carries it).
+    const [weeklyBlocks, setWeeklyBlocks] = useState<Record<string, string[]> | null>(null);
+    useEffect(() => {
+        const cgId = (caregiver as any).uid || caregiver.id;
+        if (!cgId) return;
+        let cancelled = false;
+        dbService.getCaregiverWeeklyAvailability(cgId).then((weekly) => { if (!cancelled && weekly) setWeeklyBlocks(weeklySlotsToBl(weekly)); });
+        return () => { cancelled = true; };
+    }, [caregiver]);
 
     const handleSchedule = async () => {
         if (!selectedDate || !selectedTime) {
@@ -114,9 +127,9 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                 currentUser.photoURL || undefined,
             );
 
-            // Interview scheduled successfully
-            onSuccess('Interview request sent successfully!');
-            onShowToast('Interview requested! Both parties will be notified.', 'success');
+            // Interview scheduled successfully. ONE confirmation (2026-11-11): the caller shows it via onSuccess — this
+            // used to also raise its own toast, so two success messages appeared.
+            onSuccess('Interview requested! Both of you will be notified.');
             onClose();
         } catch (error: any) {
             console.error('❌ [ScheduleInterviewModal] Error scheduling interview:');
@@ -146,13 +159,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
     };
 
     // Generate time slots (9 AM to 6 PM)
-    const timeSlots = [];
-    for (let hour = 9; hour <= 18; hour++) {
-        timeSlots.push(`${hour.toString().padStart(2, '0')}:00`);
-        if (hour < 18) {
-            timeSlots.push(`${hour.toString().padStart(2, '0')}:30`);
-        }
-    }
+    const { slots: timeSlots, filtered: slotsFiltered, availableThatDay } = interviewSlotsFor(selectedDate, weeklyBlocks);
 
     // Get minimum date (today)
     const today = new Date().toISOString().split('T')[0];
@@ -260,7 +267,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                             onChange={(e) => setSelectedTime(e.target.value)}
                             className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all appearance-none bg-white"
                         >
-                            <option value="">Choose a time...</option>
+                            <option value="">{selectedDate && !availableThatDay ? `${caregiver.name?.split(' ')[0] || 'They'} isn't available that day` : 'Choose a time...'}</option>
                             {timeSlots.map((time) => (
                                 <option key={time} value={time}>
                                     {new Date(`2000-01-01T${time}`).toLocaleTimeString('en-US', {
@@ -271,6 +278,10 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                                 </option>
                             ))}
                         </select>
+                        {/* The time is picked in the viewer's own zone and stored as an exact moment; the other person sees it in theirs (2026-11-09). */}
+                        <p className="mt-1.5 text-xs text-slate-500" data-testid="interview-zone-note">
+                            Times are in your time zone ({zoneAbbr(viewerZone())}). {slotsFiltered && availableThatDay ? `Showing when ${caregiver.name?.split(' ')[0] || 'they'} is available. ` : ''} {(caregiver as any)?.name ? `${(caregiver as any).name.split(' ')[0]} sees it in theirs.` : 'They see it in theirs.'}
+                        </p>
                     </div>
 
                     {/* Notes */}

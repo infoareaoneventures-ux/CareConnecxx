@@ -145,6 +145,16 @@ describe("profile tools", () => {
       expect(hoisted.sets).toHaveLength(0);
     });
 
+    it("refuses a bio with a phone number, email or link — nothing is written (Wave 1, 2026-11-09)", async () => {
+      hoisted.docState.set("caregivers/cg1", { phone: "+15555550100" });
+      for (const bio of ["Call me at 408-555-1212 for details", "email maria@gmail.com", "see www.mariacare.com"]) {
+        const r = await handleToolCall("update_caregiver_profile", { caregiverId: "cg1", phone: "+15555550100", bio }) as any;
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/phone numbers, emails and links/i);
+      }
+      expect(hoisted.sets).toHaveLength(0);
+    });
+
     it.each([-5, 0])("rejects a rate that isn't above $0 (no floor, no ceiling otherwise — 2026-10-04): %s", async (hourlyRate) => {
       hoisted.docState.set("caregivers/cg1", { phone: "+15555550100" });
       const r = await handleToolCall("update_caregiver_profile", {

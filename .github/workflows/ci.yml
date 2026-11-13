@@ -26,6 +26,14 @@ jobs:
       - name: Install dependencies
         run: npm ci && npm --prefix functions ci
 
+      # Lint (2026-11-11): fails on errors only. Warnings are being paid down area by area (eslint.config.js); a new
+      # error — hooks used wrongly, unreachable or duplicate code — cannot be merged.
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck frontend
+        run: npm run typecheck
+
       - name: Agent-Native runtime guard
         run: node scripts/guard-no-agent-native-runtime.mjs
 

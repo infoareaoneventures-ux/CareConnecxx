@@ -1,4 +1,5 @@
 import { serviceLabel } from './signup/constants';
+import { swallow } from '../../utils/reportError';
 import React, { useState, useEffect, useMemo } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import {
@@ -1561,7 +1562,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
       const result = await requestInstantPayout();
       if (result.success) {
         addToast(`Instant payout of $${result.amount.toFixed(2)} initiated (after Stripe's $${Number(result.fee ?? 0).toFixed(2)} instant fee) — arrives in ~30 minutes!`, 'success');
-        getPayoutBalance().then(b => setLiveBalance({ instantAvailable: b.instantAvailable, pending: b.pending })).catch(() => {});
+        getPayoutBalance().then(b => setLiveBalance({ instantAvailable: b.instantAvailable, pending: b.pending })).catch(swallow('CaregiverPaymentsPage: background step 1'));
       }
     } catch (error: any) {
       addToast(error.message || 'Payout failed. Please try again.', 'error');

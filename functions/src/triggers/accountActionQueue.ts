@@ -33,7 +33,7 @@ export const processAccountActionQueue = functions.firestore
     const type = data.type as ActionType;
 
     try {
-      const result = await dispatch(type, data);
+      const result = await dispatch(type, data, snap.ref);
       await snap.ref.update({
         status: "done",
         result: result ?? { success: true },
@@ -49,7 +49,7 @@ export const processAccountActionQueue = functions.firestore
     }
   });
 
-async function dispatch(type: ActionType, data: Record<string, unknown>): Promise<Record<string, unknown> | void> {
+async function dispatch(type: ActionType, data: Record<string, unknown>, requestRef?: FirebaseFirestore.DocumentReference): Promise<Record<string, unknown> | void> {
   const {
     requestPhoneChangeByEmail,
     startPhoneChangeVerification,
@@ -104,7 +104,12 @@ async function dispatch(type: ActionType, data: Record<string, unknown>): Promis
       return;
 
     case "delete_account":
-      return await deleteAccountForUser(String(data.uid ?? "")) as unknown as Record<string, unknown>;
+      // Mark the request done before the login is removed: the page is listening with that login.
+      return await deleteAccountForUser(String(data.uid ?? ""), {
+        beforeLoginRemoved: async () => {
+          await requestRef?.update({ status: "done", result: { deleted: true }, error: null, processedAt: admin.firestore.FieldValue.serverTimestamp() });
+        },
+      }) as unknown as Record<string, unknown>;
 
     // Website entry point for the same pause/reactivate a caregiver could
     // already do over SMS (pause_account/reactivate_account MCP tools) —

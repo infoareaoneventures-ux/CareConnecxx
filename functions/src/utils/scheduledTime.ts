@@ -9,6 +9,8 @@
 // interpreted as wall-clock time in the client's timezone instead
 // (America/Los_Angeles fallback — the service area is Santa Clara County).
 
+import { zoneAbbr } from "./careTime";
+
 export const DEFAULT_TZ = "America/Los_Angeles";
 
 export function parseScheduledTimeMs(value: string, timeZone: string = DEFAULT_TZ): number {
@@ -121,11 +123,13 @@ export function businessNowMinutes(timeZone: string = DEFAULT_TZ, now: Date = ne
 
 // Human-facing time for SMS copy, rendered in the client's timezone
 export function formatInterviewTime(ms: number, timeZone: string = DEFAULT_TZ): string {
-  return new Date(ms).toLocaleString("en-US", {
+  const text = new Date(ms).toLocaleString("en-US", {
     timeZone,
     weekday: "long", month: "long", day: "numeric",
     hour: "numeric", minute: "2-digit",
   });
+  // A person outside Pacific is told their own zone's name ("… 9:00 AM CT") so the time is never ambiguous (2026-11-09).
+  return timeZone === DEFAULT_TZ ? text : `${text} ${zoneAbbr(timeZone, ms)}`;
 }
 
 // Same as formatInterviewTime, short form (no year, abbreviated weekday/
@@ -140,11 +144,12 @@ export function formatInterviewTime(ms: number, timeZone: string = DEFAULT_TZ): 
 // an explicit `timeZone: DEFAULT_TZ` for exactly this reason — this one
 // hadn't yet.
 export function formatInterviewTimeShort(ms: number, timeZone: string = DEFAULT_TZ): string {
-  return new Date(ms).toLocaleString("en-US", {
+  const text = new Date(ms).toLocaleString("en-US", {
     timeZone,
     weekday: "short", month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit",
   });
+  return timeZone === DEFAULT_TZ ? text : `${text} ${zoneAbbr(timeZone, ms)}`;
 }
 
 // Stored appointment/shift times stay 24h "HH:MM" internally (matches the

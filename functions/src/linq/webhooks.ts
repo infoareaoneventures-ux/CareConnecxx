@@ -2,6 +2,7 @@ import { isCareProviderRole } from "../utils/roleParam";
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
+import "../observability/tracingGuard"; // tracing off unless explicitly allowed (health information)
 import { traceable } from "langsmith/traceable";
 import { claimWebhookEvent, settleWebhookEvent, LINQ_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
@@ -48,7 +49,7 @@ import {
   sendOnboardingOffer,
   shouldReoffer,
 } from "../agents/profileCompleteness";
-import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing } from "../utils/sessionState";
+import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing, INBOUND_LOCK_TTL_MS } from "../utils/sessionState";
 import { generateCaraMessage } from "../utils/caraMessage";
 import {
   initializeZepOnFirstContact,
@@ -65,49 +66,80 @@ import { extractMediaPart, downloadMedia, storeInboundMedia, InboundMediaPart } 
 import { classifyMedia } from "../utils/visionVerify";
 import { detectLanguage, languageFromSession, t as tr, flowLabel, type Language } from "../utils/language";
 import { recordApprovalNoticeProviderStatus } from "../billing/approvalNoticeDispatcher";
+import { verifySignature, webhookSecretsFromEnv } from "./webhookSignature";
 
 const db = admin.firestore();
 
-// ── Signature verification ────────────────────────────────────────────────────
+// ── Signature verification ── (linq/webhookSignature.ts)
 
-function verifySignature(
-  rawBody:   Buffer,
-  timestamp: string,
-  signature: string,
-  secret:    string
-): boolean {
-  // Signature is HMAC-SHA256 over `{timestamp}.{payload}` (per Linq docs).
-  const payload = Buffer.concat([Buffer.from(`${timestamp}.`), rawBody]);
+// Failures are alerted, not just logged (2026-11-09): a wave of rejected events (a rotated secret, a new
+// subscription with its own secret, an encoding change) used to be visible only to someone reading the logs.
+// At most one alert per event kind per hour per instance; the kind is reduced to a known name so a spoofed
+// request cannot make up alert types.
+const _sigAlertedAt = new Map<string, number>();
+const KNOWN_LINQ_EVENTS = new Set(["message.received", "message.sent", "message.delivered", "message.read", "message.failed", "message.edited", "reaction.added", "reaction.removed", "chat.created", "phone_number.status_updated"]);
+function raiseInvalidSignatureAlert(rawEventType: string): void {
+  const kind = KNOWN_LINQ_EVENTS.has(rawEventType) ? rawEventType : "other";
+  const last = _sigAlertedAt.get(kind) ?? 0;
+  if (Date.now() - last < 60 * 60 * 1000) return;
+  _sigAlertedAt.set(kind, Date.now());
+  void createCaraOpsAlert({
+    type:     "linq_webhook_signature_invalid",
+    severity: "high",
+    source:   "linqWebhook",
+    message:  `Linq webhook events are failing the signature check (${kind}). Check the signing secret(s) in the functions env against Linq's subscriptions.`,
+    context:  { eventKind: kind },
+  }).catch(() => {});
+}
 
-  // Linq's docs don't pin down the secret's encoding or the signature's output
-  // encoding, so derive the HMAC key both ways and compare the signature against
-  // every common digest encoding. A match in any pair proves the sender holds the
-  // secret (which is the whole point); the extra candidates don't weaken anything
-  // since each still requires knowing the secret.
-  const keyCandidates: Buffer[] = [
-    Buffer.from(secret, "utf8"),    // secret used as a raw string key (Stripe-style; most providers)
-    Buffer.from(secret, "base64"),  // secret used as base64-encoded key bytes
-  ];
-
-  const safeEqual = (a: string, b: string): boolean => {
-    if (a.length !== b.length) return false;
-    try {
-      return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-    } catch {
-      return false;
-    }
-  };
-
-  for (const key of keyCandidates) {
-    const hmac = crypto.createHmac("sha256", key).update(payload).digest();
-    const expectedB64    = hmac.toString("base64");
-    const expectedB64Url = hmac.toString("base64url");
-    const expectedHex    = hmac.toString("hex");
-    if (safeEqual(expectedB64,    signature) ||
-        safeEqual(expectedB64Url, signature) ||
-        safeEqual(expectedHex,    signature)) {
+// ── Spend limits for EVERY turn (2026-11-09, fix plan Wave 2) ─────────────────────
+// "No spending limit on text conversations during sign-up": the hourly per-phone abuse check and the
+// per-phone / global DAILY turn caps sat AFTER the onboarding branch, which returns on its own — so
+// every sign-up turn (up to ~10 model steps each) ran with no limit at all, and a script texting the
+// public number could drive unlimited cost. They now run before the onboarding gate, for every turn.
+// Placed after the crisis check (an emergency always gets through). The daily caps fail open: for a care
+// product, availability beats enforcement. Returns true when the turn must stop here.
+async function spendLimitsBlockTurn(phone: string, chatId: string, session: AgentSession): Promise<boolean> {
+  // Hourly abuse limit — only triggers on actual abuse (120+ msgs/hr from one phone). Dropped silently
+  // rather than answered with a "broken" reply; logged so we can see if a real user ever hits it.
+  if (await isRateLimited(phone)) {
+    console.warn("handleInbound: phone exceeded 120 msgs/hr rate limit — dropping silently", { phone });
+    return true;
+  }
+  // Per-user daily turn cap + global daily kill-switch. Placed AFTER the
+  // crisis fast-path (safety messages always get through) and both fail open.
+  try {
+    const { checkDailyTurnCap, checkGlobalDailyTurnBudget } = await import("../rateLimit");
+    const [userCap, globalCap] = await Promise.all([
+      checkDailyTurnCap(phone),
+      checkGlobalDailyTurnBudget(),
+    ]);
+    if (!globalCap.allowed) {
+      // Platform-wide budget exhausted: flip degraded mode (clears on the
+      // first successful turn after the counter resets at midnight) and give
+      // each user one honest notice per hour instead of silence.
+      const { setSystemDegraded, degradedFailureNotice } = await import("../observability/systemStatus");
+      if (globalCap.justBreached) {
+        await setSystemDegraded("global daily LLM turn budget exhausted").catch(() => {});
+      }
+      const notice = await degradedFailureNotice(
+        phone, session as unknown as Record<string, unknown>,
+        "I've hit my processing limit for today — I'll pick this back up as soon as I'm running normally, and our team has been alerted.",
+      ).catch(() => null);
+      if (notice) await sendMessage(chatId, notice).catch(() => {});
       return true;
     }
+    if (!userCap.allowed) {
+      if (userCap.justBreached) {
+        await sendMessage(chatId,
+          "We've traded a lot of messages today and I've hit my daily limit for this conversation — " +
+          "I'll pick things back up tomorrow morning. Anything safety-related still gets through right away."
+        ).catch(() => {});
+      }
+      return true;
+    }
+  } catch (capErr) {
+    console.error("handleInbound: spend guardrail check failed (fail-open):", capErr);
   }
   return false;
 }
@@ -246,6 +278,63 @@ async function handleTypingStarted(event: unknown): Promise<void> {
     cachedAt:  now,
     expiresAt: new Date(Date.now() + 60 * 1000).toISOString(),
   });
+}
+
+// ── Crisis check for ANY inbound text (2026-11-09, fix plan Wave 1) ─────────────
+// The check used to sit in the middle of handleInboundTurn, AFTER the branches that return on
+// their own — a first-ever text, the cold consent reply, the web-signup consent reply, the
+// admin-assist consent reply — so "my mom isn't breathing" sent to a number with no session (or
+// answering a consent question) was never looked at. It now runs from every one of those entry
+// points. Returns true when a crisis reply went out (the caller stops there).
+//   • keyword fast-path → 1.2s LLM check that filters quotes / jokes / hypotheticals (fail-safe: crisis);
+//   • no keyword + non-English → the multilingual LLM classifier (paraphrase / code-switching).
+// A number with no session yet has nowhere to store the NOTIFY follow-up, so support is paged
+// directly (raiseMedicalCrisisAlert) and no session record is created.
+async function respondToCrisisIfAny(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession | null,
+): Promise<boolean> {
+  if (!text) return false;
+  const lang: Language = session
+    ? languageFromSession(session as unknown as Record<string, unknown>)
+    : ((await detectLanguage(text).catch(() => null)) ?? "en");
+
+  const respondMedical = async (): Promise<void> => {
+    await sendMessage(chatId, tr.crisis_medical(lang));
+    logCrisisDetected(phone, "medical", text).catch(() => {});
+    raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
+    if (session) {
+      // Arm the NOTIFY follow-up so the family's "NOTIFY" reply reaches the care team.
+      await db.collection("agent_sessions").doc(phone).update({
+        pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
+      }).catch(() => {});
+    }
+  };
+
+  const crisis = detectCrisis(text);
+  if (crisis === "medical") {
+    if (await isLikelyRealCrisis(text, "medical")) { await respondMedical(); return true; }
+    console.info("crisisDetector: medical keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
+  }
+  if (crisis === "emotional") {
+    if (await isLikelyRealCrisis(text, "emotional")) { await sendEmotionalCrisisResponse(phone, chatId, lang, text); return true; }
+    console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
+  }
+
+  // No keyword fired. For messages that look non-English (Spanish is supported), run the
+  // multilingual LLM classifier — gated to likely-non-English to avoid an LLM call on every
+  // English message. The classifier already judges genuineness, so a hit goes straight to the reply.
+  if (crisis === null) {
+    const looksNonEnglish = lang === "es" || /[ñ¿¡áéíóúü]/i.test(text);
+    if (looksNonEnglish) {
+      const llmCrisis = await classifyCrisisMultilingual(text);
+      if (llmCrisis === "medical") { await respondMedical(); return true; }
+      if (llmCrisis === "emotional") { await sendEmotionalCrisisResponse(phone, chatId, lang, text); return true; }
+    }
+  }
+  return false;
 }
 
 // User replied "NOTIFY" after a crisis message. Page our support team with a
@@ -596,14 +685,30 @@ async function handleColdConsentReply(
 // run concurrently against the same awaiting_approval agent_task (double-book /
 // double-charge). Throws if the lock can't be acquired so the caller decides
 // whether to retry (message path → 500/retry) or drop (reaction → logged).
-export async function runSerializedByPhone(phone: string, fn: () => Promise<void>): Promise<void> {
-  let acquired = false;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    if (await claimInboundProcessing(phone, db)) { acquired = true; break; }
-    await new Promise((r) => setTimeout(r, 500));
+// Waiting for the lock (2026-11-09, fix plan Wave 2: "two quick texts in a row can get lost"): a second text used
+// to wait only ~3 seconds (6 tries x 500 ms) before failing, while a full answer can take a minute or more — so it
+// was dropped to a 500 and a redelivery. It now waits out the other turn, up to just past the lock's own lease
+// (INBOUND_LOCK_TTL_MS, 90s — a crashed turn's lock expires by itself), and then runs, so the message is
+// answered in turn instead of lost. Arrival order is best-effort among several waiters. The webhook already holds
+// its response until the work is done, and a Linq redelivery of the same event is dropped by the event claim.
+export const INBOUND_WAIT_MS = INBOUND_LOCK_TTL_MS + 5_000;
+export const INBOUND_POLL_MS = 750;
+
+export async function runSerializedByPhone(
+  phone: string,
+  fn: () => Promise<void>,
+  opts: { waitMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  const waitMs = opts.waitMs ?? INBOUND_WAIT_MS;
+  const pollMs = opts.pollMs ?? INBOUND_POLL_MS;
+  const deadline = Date.now() + waitMs;
+  let acquired = await claimInboundProcessing(phone, db);
+  while (!acquired && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, pollMs));
+    acquired = await claimInboundProcessing(phone, db);
   }
   if (!acquired) {
-    throw new Error(`runSerializedByPhone: per-phone lock unavailable after retries for ${phone}`);
+    throw new Error(`runSerializedByPhone: per-phone lock unavailable after ${Math.round(waitMs / 1000)}s for ${phone}`);
   }
   try {
     await fn();
@@ -796,6 +901,8 @@ const handleInboundInner = traceable(
   // ── New user — texted first (MO consent) ────────────────────────────────────
   // (or a cold-parked phone whose /start signup is waiting — restartViaWebBridge)
   if (!sessionSnap.exists || restartViaWebBridge) {
+    // A first-ever text can be an emergency: look at it BEFORE capability checks, onboarding and consent.
+    if (await respondToCrisisIfAny(phone, chatId, text, sessionSnap.exists ? (sessionSnap.data() as AgentSession) : null)) return;
     const capability = await checkCapability(phone);
     const service: LinqService = capability.iMessage ? "iMessage" : capability.RCS ? "RCS" : "SMS";
 
@@ -1113,6 +1220,12 @@ const handleInboundInner = traceable(
     return;
   }
 
+  // ── Crisis check (2026-11-09) — before the consent branches below, which return on their own ──
+  // A thread the team is holding (humanMode) is a person's to answer; everything else is looked at here.
+  if (!(session as unknown as Record<string, { on?: boolean } | undefined>).humanMode?.on) {
+    if (await respondToCrisisIfAny(phone, chatId, text, session)) { await stopTyping(chatId).catch(() => {}); return; }
+  }
+
   // ── Pending cold-inbound consent (this session's own consent gate) ─────────
   // Distinguished from the web-signup case below by onboardingStep — the
   // auth-trigger-seeded session never sets one. The reply IS the consent
@@ -1263,8 +1376,24 @@ const handleInboundInner = traceable(
     const checkpoint = (session as any).onboardingCheckpoint as {
       step: string; onboardingData: Record<string, unknown>; savedAt: string;
     } | undefined;
-    const isResumeCommand = norm === "RESUME" || norm === "CONTINUE" || norm === "PICK UP WHERE I LEFT OFF";
-    const isStartOver     = norm === "START OVER" || norm === "RESTART" || norm === "BEGIN AGAIN";
+    let isResumeCommand = norm === "RESUME" || norm === "CONTINUE" || norm === "PICK UP WHERE I LEFT OFF";
+    let isStartOver     = norm === "START OVER" || norm === "RESTART" || norm === "BEGIN AGAIN";
+    // The exact words were the ONLY way out (2026-11-09, fix plan Wave 2): "yes", "continue please", "Resume."
+    // or a question got the same prompt back, forever — and nothing else was answered. Read the reply with the
+    // model (CLAUDE.md: never keyword-match intent): resume / start over / something else. Anything else is
+    // handled below like any normal message; the saved checkpoint stays so they can still pick it up later.
+    if (checkpoint && !isResumeCommand && !isStartOver && session.onboardingStep !== "complete" && text.trim()) {
+      const { parseWithClaude } = await import("../utils/parseWithClaude");
+      const choice = (await parseWithClaude(
+        'The person has an unfinished sign-up saved from before and was asked whether to pick up where they left off or start over. ' +
+        'Reply exactly "resume" if they want to continue / pick it back up (for example "yes", "continue please", "resume."), ' +
+        'exactly "restart" if they want to start over or begin again, otherwise exactly "other" ' +
+        '(a question, a different request, or anything that is not an answer to that).',
+        text,
+      ).catch(() => "other")).trim().toLowerCase();
+      if (choice === "resume") isResumeCommand = true;
+      else if (choice === "restart") isStartOver = true;
+    }
 
     if (checkpoint && (isResumeCommand || isStartOver)) {
       await db.collection("agent_sessions").doc(phone).update({
@@ -1320,14 +1449,8 @@ const handleInboundInner = traceable(
       return;
     }
 
-    // If checkpoint exists but user sent a normal message (not resume/start-over),
-    // nudge them to choose before processing normally
-    if (checkpoint && session.onboardingStep !== "complete") {
-      await sendMessage(chatId,
-        "You have a saved session from before. Want to pick up where you left off, or start over? Say resume, or start over."
-      );
-      return;
-    }
+    // A checkpoint exists but the message is not an answer to the resume question (a question, a new request, an
+    // empty/media turn): do NOT re-send the prompt in a loop — fall through and answer it normally (2026-11-09).
   }
 
   // STOP — works at any stage (CANCEL is NOT here — it cancels a visit, not the account)
@@ -1396,55 +1519,8 @@ const handleInboundInner = traceable(
   // the yearly background-check refresh is the site's own renewal flow —
   // Stripe renewal → consent card on the dashboard — not an Evia-only path.)
 
-  const crisis = detectCrisis(text);
-  const sessionLang = languageFromSession(session as unknown as Record<string, unknown>);
-  if (crisis === "medical") {
-    if (await isLikelyRealCrisis(text, "medical")) {
-      await sendMessage(chatId, tr.crisis_medical(sessionLang));
-      logCrisisDetected(phone, "medical", text).catch(() => {});
-      raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
-      // Arm the NOTIFY follow-up so the family's "NOTIFY" reply reaches the care team.
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
-      }).catch(() => {});
-      return;
-    }
-    console.info("crisisDetector: medical keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
-  }
-  if (crisis === "emotional") {
-    if (await isLikelyRealCrisis(text, "emotional")) {
-      await sendEmotionalCrisisResponse(phone, chatId, sessionLang, text);
-      return;
-    }
-    console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
-  }
-
-  // No crisis keyword fired. For messages that look non-English (Spanish is a
-  // supported language), run a multilingual LLM crisis classify to catch
-  // paraphrased or code-switched crisis text the keyword lists can't enumerate.
-  // Gated to likely-non-English to avoid adding an LLM call to every English
-  // message — see the launch-readiness plan's open question (every-message vs
-  // non-English). The classifier already judges genuineness, so a positive
-  // result routes straight to the crisis response (no second verify call).
-  if (crisis === null) {
-    const looksNonEnglish = sessionLang === "es" || /[ñ¿¡áéíóúü]/i.test(text);
-    if (looksNonEnglish) {
-      const llmCrisis = await classifyCrisisMultilingual(text);
-      if (llmCrisis === "medical") {
-        await sendMessage(chatId, tr.crisis_medical(sessionLang));
-        logCrisisDetected(phone, "medical", text).catch(() => {});
-        raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
-        }).catch(() => {});
-        return;
-      }
-      if (llmCrisis === "emotional") {
-        await sendEmotionalCrisisResponse(phone, chatId, sessionLang, text);
-        return;
-      }
-    }
-  }
+  // (The crisis check itself now runs EARLIER — respondToCrisisIfAny, before the new-contact and
+  // consent branches that return on their own — so no text skips it.)
 
   // ── Zep lazy-init / self-heal — ANY session without a thread ──────────────
   // Was gated to onboardingStep === "complete" (backfill for pre-Zep users),
@@ -1457,6 +1533,9 @@ const handleInboundInner = traceable(
       console.error("Zep lazy-init error:", err)
     );
   }
+
+  // Spend limits come BEFORE the onboarding gate so sign-up turns are limited too (2026-11-09).
+  if (await spendLimitsBlockTurn(phone, chatId, session)) return;
 
   // ── ONBOARDING gate — route to state machine if not complete ─────────────
   // If the session exists but has no onboardingStep (e.g. created by an old
@@ -2120,13 +2199,6 @@ const handleInboundInner = traceable(
     return;
   }
 
-  // Rate limit — only triggers on actual abuse (120+ msgs/hr from one phone).
-  // Drop silently instead of sending a "broken" reply to the user. Log so we
-  // can see if a real user ever hits it.
-  if (await isRateLimited(phone)) {
-    console.warn("handleInbound: phone exceeded 120 msgs/hr rate limit — dropping silently", { phone });
-    return;
-  }
 
   // The webhook signature has been verified by the public handler, and the
   // accepted-session path has passed its rejection guards. Stamp activity
@@ -2271,42 +2343,6 @@ const handleInboundInner = traceable(
     dueAt:     new Date(Date.now() + 10 * 60_000).toISOString(),
   }).catch(() => {/* non-critical */});
 
-  // ── LLM spend guardrails ────────────────────────────────────────────────────
-  // Per-user daily turn cap + global daily kill-switch. Placed AFTER the
-  // crisis fast-path (safety messages always get through) and both fail open.
-  try {
-    const { checkDailyTurnCap, checkGlobalDailyTurnBudget } = await import("../rateLimit");
-    const [userCap, globalCap] = await Promise.all([
-      checkDailyTurnCap(phone),
-      checkGlobalDailyTurnBudget(),
-    ]);
-    if (!globalCap.allowed) {
-      // Platform-wide budget exhausted: flip degraded mode (clears on the
-      // first successful turn after the counter resets at midnight) and give
-      // each user one honest notice per hour instead of silence.
-      const { setSystemDegraded, degradedFailureNotice } = await import("../observability/systemStatus");
-      if (globalCap.justBreached) {
-        await setSystemDegraded("global daily LLM turn budget exhausted").catch(() => {});
-      }
-      const notice = await degradedFailureNotice(
-        phone, session as unknown as Record<string, unknown>,
-        "I've hit my processing limit for today — I'll pick this back up as soon as I'm running normally, and our team has been alerted.",
-      ).catch(() => null);
-      if (notice) await sendMessage(chatId, notice).catch(() => {});
-      return;
-    }
-    if (!userCap.allowed) {
-      if (userCap.justBreached) {
-        await sendMessage(chatId,
-          "We've traded a lot of messages today and I've hit my daily limit for this conversation — " +
-          "I'll pick things back up tomorrow morning. Anything safety-related still gets through right away."
-        ).catch(() => {});
-      }
-      return;
-    }
-  } catch (capErr) {
-    console.error("handleInbound: spend guardrail check failed (fail-open):", capErr);
-  }
 
   // ── Caregiver keyword handling ──────────────────────────────────────────────
   if (session.userType === "caregiver") {
@@ -2613,8 +2649,8 @@ export const linqWebhook = functions
   const sendOk = () => { if (!sent) { sent = true; res.status(200).send("ok"); } };
 
   try {
-    const webhookSecret = process.env.LINQ_WEBHOOK_SECRET;
-    if (!webhookSecret) {
+    const webhookSecrets = webhookSecretsFromEnv();
+    if (webhookSecrets.length === 0) {
       // Fail closed. If the secret is unset, we cannot verify any inbound event,
       // which means replays, spoofed senders, and signature tampering are all
       // accepted as authentic. A missing secret is a deploy-time misconfig, not
@@ -2629,13 +2665,18 @@ export const linqWebhook = functions
     const timestamp = req.headers["x-webhook-timestamp"] as string ?? "";
     const signature = req.headers["x-webhook-signature"] as string ?? "";
     const rawBody   = (req as any).rawBody as Buffer ?? Buffer.from(JSON.stringify(req.body));
-    if (!verifySignature(rawBody, timestamp, signature, webhookSecret)) {
+    if (!verifySignature(rawBody, timestamp, signature, webhookSecrets)) {
       // Diagnostic (2026-10-19): what kind of event fails the check — shape only, never the text, phone or headers' values.
       // (The founder's voice memos never reached transcription; bursts of rejected events line up with the attempts.)
       const bodyAny = (req.body ?? {}) as Record<string, any>;
       const partTypes = Array.isArray(bodyAny?.data?.parts) ? bodyAny.data.parts.map((x: any) => String(x?.type ?? "?")) : Array.isArray(bodyAny?.parts) ? bodyAny.parts.map((x: any) => String(x?.type ?? "?")) : [];
+      // The event name is read from every place Linq may put it (v3 body: event_type; header: x-webhook-event) —
+      // the old log read only "type"/"event", so the failing event kind was invisible in the logs.
+      const failedEventType = String(bodyAny?.event_type ?? req.headers["x-webhook-event"] ?? bodyAny?.type ?? bodyAny?.event ?? "?").slice(0, 60);
+      raiseInvalidSignatureAlert(failedEventType);
       console.warn("linqWebhook: invalid signature — ignoring", {
-        eventType: String(bodyAny?.type ?? bodyAny?.event ?? bodyAny?.event_type ?? "?").slice(0, 60),
+        eventType: failedEventType,
+        secretsConfigured: webhookSecrets.length,
         contentType: String(req.headers["content-type"] ?? "").slice(0, 60),
         bodyBytes: rawBody.length,
         hasRawBody: Boolean((req as any).rawBody),

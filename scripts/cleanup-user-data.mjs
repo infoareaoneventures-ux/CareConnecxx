@@ -14,6 +14,13 @@
  * Run: node scripts/cleanup-user-data.mjs
  */
 
+// Guard: this script writes to the LIVE project (careconnex-d4c8b). It refuses to run unless you pass --live.
+if (!process.argv.includes('--live')) {
+  console.error('Refusing to run: cleanup-user-data.mjs writes to the LIVE careconnex-d4c8b project. Re-run with --live to confirm.');
+  process.exit(1);
+}
+process.argv = process.argv.filter((a) => a !== '--live');
+
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';

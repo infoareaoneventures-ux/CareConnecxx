@@ -119,7 +119,7 @@ vi.mock("../../agents/pendingActions", async (orig) => {
   const actual = await (orig as () => Promise<Record<string, unknown>>)();
   return {
     ...actual,
-    getPendingActionById: vi.fn(async () => ({ status: "awaiting", toolName: "any", phone: "+15125550123" })),
+    getPendingActionById: vi.fn(async () => ({ status: "executing", toolName: "any", phone: "+15125550123" })),
     isConfirmedActionValid: vi.fn(() => true),
   };
 });

@@ -4,6 +4,7 @@ import { createInterviewCallAssets } from "../agents/interviewLinks";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 import { trySend } from "../utils/toolNotify";
 import { parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
+import { zoneForUser } from "../utils/personZone";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
 import { writeUserNotification } from "../notifications/userNotification";
 
@@ -155,7 +156,10 @@ async function processInterview(
   }
   const caregiverName = (doc.caregiverName as string) || "the care provider";
   const clientName    = (doc.clientName as string) || "the family";
-  const formatted     = formatInterviewTime(startMs);
+  // Each person is told the time in THEIR OWN zone (2026-11-09, all U.S. zones).
+  const [cgZone, clZone] = await Promise.all([zoneForUser(doc.caregiverId), zoneForUser(doc.clientId)]);
+  const cgFormatted = formatInterviewTime(startMs, cgZone);
+  const clFormatted = formatInterviewTime(startMs, clZone);
 
   // 1. Ensure link
   let callUrl = doc.callUrl ?? "";
@@ -185,7 +189,7 @@ async function processInterview(
   const noteLine = typeof doc.notes === "string" && doc.notes.trim() ? ` Note: "${doc.notes.trim()}"` : "";
   if (!delivery.caregiver?.status) {
     const cgPhone = await resolveCaregiverPhone(doc.caregiverId);
-    const cgText = `Your interview with ${clientName} is confirmed for ${formatted}.${noteLine} Join from your phone: ${callUrl}` +
+    const cgText = `Your interview with ${clientName} is confirmed for ${cgFormatted}.${noteLine} Join from your phone: ${callUrl}` +
       (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : "");
     const outcome = await deliverLink(cgPhone, interviewId, "caregiver", cgText);
     if (outcome) updates["linkDelivery.caregiver"] = outcome;
@@ -198,7 +202,7 @@ async function processInterview(
       await writeUserNotification({
         sourcePath: `video_interviews/${interviewId}`, eventId: "confirmed-link", recipientId: doc.caregiverId,
         transitionType: "interview_confirmed_link", type: "interview_confirmed", title: "Interview confirmed",
-        body: `Your interview with ${clientName} is confirmed for ${formatted}.${noteLine} Join from your Interviews tab: ${callUrl}`,
+        body: `Your interview with ${clientName} is confirmed for ${cgFormatted}.${noteLine} Join from your Interviews tab: ${callUrl}`,
         data: { interviewId },
       }).catch((err) => console.error(`interview confirmed bell failed for ${interviewId}:`, err));
     }
@@ -207,7 +211,7 @@ async function processInterview(
   if (!delivery.client?.status) {
     const clientPhone = await resolveClientPhone(doc.clientId);
     const outcome = await deliverLink(clientPhone, interviewId, "client",
-      `Your interview with ${caregiverName} is confirmed for ${formatted}.${noteLine} Join from your phone: ${callUrl}` +
+      `Your interview with ${caregiverName} is confirmed for ${clFormatted}.${noteLine} Join from your phone: ${callUrl}` +
       (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : ""));
     if (outcome) updates["linkDelivery.client"] = outcome;
   }

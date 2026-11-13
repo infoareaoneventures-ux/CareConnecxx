@@ -5,7 +5,7 @@ import { startIdentityVerification } from '../services/stripeService';
 import { IdentityGateModal } from '../components/client/IdentityGateModal';
 import { PlanSelectModal } from '../components/client/PlanSelectModal';
 
-export type GateAction = 'message' | 'interview' | 'booking';
+export type GateAction = 'message' | 'interview' | 'booking' | 'post';
 
 type PendingGate = {
   action: GateAction;
@@ -85,6 +85,7 @@ export function useAccessGates() {
       return (
         <IdentityGateModal
           caregiverName={pending.caregiverName}
+          action={pending.action}
           onClose={dismiss}
           onGetVerified={handleGetVerified}
         />

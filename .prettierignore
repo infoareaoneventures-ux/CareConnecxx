@@ -1,0 +1,10 @@
+dist
+node_modules
+functions/node_modules
+functions/lib
+coverage
+public
+third_party
+docs
+package-lock.json
+*.md

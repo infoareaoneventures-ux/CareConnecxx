@@ -5,6 +5,13 @@
  * Run with:  node scripts/runMigration.js
  */
 
+// Guard: this script writes to the LIVE project (careconnex-d4c8b). It refuses to run unless you pass --live.
+if (!process.argv.includes('--live')) {
+  console.error('Refusing to run: runMigration.cjs writes to the LIVE careconnex-d4c8b project. Re-run with --live to confirm.');
+  process.exit(1);
+}
+process.argv = process.argv.filter((a) => a !== '--live');
+
 const admin = require("firebase-admin");
 
 // Use the Firebase CLI's application default credentials (already logged in)

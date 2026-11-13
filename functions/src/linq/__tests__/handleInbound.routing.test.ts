@@ -319,7 +319,7 @@ vi.mock("../../utils/language", () => ({
   t: new Proxy({}, { get: (_t, prop) => () => `[${String(prop)}]` }),
 }));
 
-import { handleInbound, userHasRealOnboardingProgress, resolvePrimarySeniorId } from "../webhooks";
+import { handleInbound, userHasRealOnboardingProgress, resolvePrimarySeniorId, runSerializedByPhone } from "../webhooks";
 
 const PHONE = "+15550001111";
 const CHAT  = "chat-1";
@@ -676,6 +676,49 @@ describe("safety + account gates", () => {
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
+  // 2026-11-09 (Wave 1): the crisis check used to sit AFTER the branches that return on their own
+  // (first-ever text, cold consent reply, web-signup consent reply), so an emergency sent there was
+  // never looked at. It now runs from each of those entry points.
+  it("an emergency from a number with NO session is answered (crisis text + support alert), not treated as a first hello", async () => {
+    detectCrisis.mockReturnValue("medical");
+    isLikelyRealCrisis.mockResolvedValue(true);
+    await handleInbound(makeEvent("my mom fell and she is not breathing"));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
+    expect(hoisted.docState.get("admin_alerts/auto-add")).toMatchObject({ type: "cara_medical_emergency", severity: "critical" });
+    // No session record is created (it would turn the person's next hello into a returning-user turn).
+    expect(hoisted.docState.has(`agent_sessions/${PHONE}`)).toBe(false);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("an emergency sent while the cold consent question is pending is answered, not read as a consent reply", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, service: "SMS", userType: null, onboardingStep: "cold_awaiting_consent", optedOut: false, optedIn: false });
+    detectCrisis.mockReturnValue("medical");
+    isLikelyRealCrisis.mockResolvedValue(true);
+    await handleInbound(makeEvent("my dad collapsed, he is not responding"));
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
+    expect(parseWithClaude).not.toHaveBeenCalled(); // never classified as a consent answer
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).optedIn).toBe(false); // consent untouched
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify).toBeTruthy(); // NOTIFY armed
+  });
+
+  it("an emergency sent while the web-signup consent question is pending is answered first", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: "u1", seniorId: "u1", service: "SMS", optedOut: false, optedIn: false });
+    detectCrisis.mockReturnValue("medical");
+    isLikelyRealCrisis.mockResolvedValue(true);
+    await handleInbound(makeEvent("she is having a stroke"));
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
+    expect(parseWithClaude).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).optedIn).toBe(false);
+  });
+
+  it("a number that opted out gets no crisis text (the STOP is honoured first)", async () => {
+    seedSession({ optedOut: true });
+    detectCrisis.mockReturnValue("medical");
+    await handleInbound(makeEvent("he is not breathing"));
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("crisis keyword judged NOT real falls through to the QA agent", async () => {
     seedSession();
     detectCrisis.mockReturnValue("medical");
@@ -782,7 +825,7 @@ describe("onboarding + rate limit", () => {
     });
   });
 
-  it("rate-limited phones are dropped silently AFTER onboarding routing", async () => {
+  it("rate-limited phones are dropped silently (completed accounts)", async () => {
     seedSession();
     hoisted.docState.set(`agent_rate/${PHONE}`, {
       calls: Array.from({ length: 120 }, () => Date.now()),
@@ -793,12 +836,79 @@ describe("onboarding + rate limit", () => {
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).lastMessageAt).toBeUndefined();
   });
 
+  // 2026-11-09 (Wave 2, "no spending limit during sign-up"): the hourly abuse limit and the daily turn caps
+  // used to sit AFTER the onboarding branch, so sign-up turns (up to ~10 model steps each) were never limited.
+  it("a mid-sign-up phone over the hourly abuse limit is dropped silently BEFORE the onboarding handler runs", async () => {
+    seedSession({ onboardingStep: "caregiver_name" });
+    hoisted.docState.set(`agent_rate/${PHONE}`, { calls: Array.from({ length: 120 }, () => Date.now()) });
+    await handleInbound(makeEvent("Jane Doe"));
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("a mid-sign-up phone past its DAILY cap gets one notice and the onboarding handler does not run", async () => {
+    vi.doMock("../../rateLimit", () => ({
+      checkDailyTurnCap: vi.fn(async () => ({ allowed: false, count: 151, justBreached: true })),
+      checkGlobalDailyTurnBudget: vi.fn(async () => ({ allowed: true, count: 1, justBreached: false })),
+    }));
+    try {
+      seedSession({ onboardingStep: "caregiver_name" });
+      await handleInbound(makeEvent("Jane Doe"));
+      expect(handleOnboardingStep).not.toHaveBeenCalled();
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(String(sendMessage.mock.calls[0][1])).toMatch(/daily limit/i);
+    } finally {
+      vi.doUnmock("../../rateLimit");
+    }
+  });
+
   it("accepted verified SMS stamps lastMessageAt after the rate-limit guard", async () => {
     seedSession();
 
     await handleInbound(makeEvent("hello"));
 
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).lastMessageAt).toEqual({ __serverTimestamp: true });
+  });
+});
+
+// 2026-11-09 (Wave 2, "two quick texts in a row can get lost"): the second text waits out the first (the lock's
+// own lease is 90s) instead of failing after ~3 seconds, then runs in turn.
+describe("runSerializedByPhone — a second message waits for the first", () => {
+  it("claims immediately when the lock is free, runs the work, and releases", async () => {
+    const { claimInboundProcessing, releaseInboundProcessing } = await import("../../utils/sessionState");
+    (claimInboundProcessing as any).mockClear(); (releaseInboundProcessing as any).mockClear();
+    const work = vi.fn(async () => {});
+    await runSerializedByPhone(PHONE, work);
+    expect(work).toHaveBeenCalledTimes(1);
+    expect(releaseInboundProcessing).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps waiting well past the old 3 seconds while another turn holds the lock, then runs", async () => {
+    const { claimInboundProcessing } = await import("../../utils/sessionState");
+    // The lock is busy for 12 polls (~ longer than the old 6 x 500ms budget), then frees.
+    let busy = 12;
+    (claimInboundProcessing as any).mockImplementation(async () => (busy-- > 0 ? false : true));
+    const work = vi.fn(async () => {});
+    await runSerializedByPhone(PHONE, work, { waitMs: 5_000, pollMs: 1 });
+    expect(work).toHaveBeenCalledTimes(1);
+    expect(busy).toBeLessThan(0);
+    (claimInboundProcessing as any).mockImplementation(async () => true);
+  });
+
+  it("gives up with an error only after the whole wait budget, and never runs the work or releases a lock it does not hold", async () => {
+    const { claimInboundProcessing, releaseInboundProcessing } = await import("../../utils/sessionState");
+    (releaseInboundProcessing as any).mockClear();
+    (claimInboundProcessing as any).mockImplementation(async () => false);
+    const work = vi.fn(async () => {});
+    await expect(runSerializedByPhone(PHONE, work, { waitMs: 30, pollMs: 5 })).rejects.toThrow(/lock unavailable/);
+    expect(work).not.toHaveBeenCalled();
+    expect(releaseInboundProcessing).not.toHaveBeenCalled();
+    (claimInboundProcessing as any).mockImplementation(async () => true);
+  });
+
+  it("the default wait outlasts the lock's 90s lease, so a crashed turn can never block the next message forever", async () => {
+    const mod = await import("../webhooks");
+    expect(mod.INBOUND_WAIT_MS).toBeGreaterThan(90_000);
   });
 });
 
@@ -1185,6 +1295,35 @@ describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
     expect(drivePostCollectionHandoff).not.toHaveBeenCalled();
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
     expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
+  });
+
+  // 2026-11-09 (Wave 2, "stuck on Reply resume"): the exact words were the only way out. Now the reply is
+  // read with the model — "yes", "continue please" resume; "start over" restarts; anything else is answered
+  // normally and the saved checkpoint is kept.
+  it("a natural reply ('yes, let's continue please') resumes, read by the model rather than matched as a keyword", async () => {
+    seedCheckpoint("caregiver_awaiting_photo", { name: "Maria" }, "caregiver");
+    parseWithClaude.mockResolvedValueOnce("resume");
+    await handleInbound(makeEvent("yes, let's continue please"));
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
+  });
+
+  it("'begin again from the top' is read as start over", async () => {
+    seedCheckpoint("family_ask_days", { firstName: "Sarah" }, "client");
+    parseWithClaude.mockResolvedValueOnce("restart");
+    await handleInbound(makeEvent("can we begin again from the top"));
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(String(sendMessage.mock.calls.at(-1)?.[1])).toContain("Starting fresh");
+  });
+
+  it("a question is NOT answered with the resume prompt again — it is handled like any normal message, checkpoint kept", async () => {
+    seedCheckpoint("family_ask_days", { firstName: "Sarah" }, "client");
+    parseWithClaude.mockResolvedValueOnce("other");
+    await handleInbound(makeEvent("what does Evia cost?"));
+    const texts = sendMessage.mock.calls.map((c) => String(c[1]));
+    expect(texts.some((t) => /saved session from before/i.test(t))).toBe(false);
+    expect(handleOnboardingStep.mock.calls.some((c) => c[2] === "__RESUME__")).toBe(false);
+    expect((hoisted.docState.get(`agent_sessions/${PHONE}`) as any).onboardingCheckpoint).toBeTruthy();
   });
 
   it("RESUME at a GATE step still resumes through the scripted runner", async () => {

@@ -1,4 +1,6 @@
 import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
+import { swallow } from '../../utils/reportError';
+import { ZoneTag } from '../ui/ZoneTag';
 import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -1309,7 +1311,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                     <p className="text-sm text-slate-700">{fmtDate(s.date)}</p>
                     <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
                       <Clock className="w-3 h-3" />
-                      {fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}
+                      {fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}<ZoneTag visit={s as any} />
                     </p>
                     {/* A visit's own note (e.g. the note on the schedule-change request
                         that created it) — shown only when it differs from the booking's
@@ -1644,7 +1646,7 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
                   <div className="space-y-1">
                     <div className="flex items-center gap-3 text-xs">
                       <span className="w-20 text-slate-400 shrink-0">Scheduled</span>
-                      <span className="font-semibold text-slate-700">{fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}</span>
+                      <span className="font-semibold text-slate-700">{fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}<ZoneTag visit={s as any} /></span>
                     </div>
                     {(actualStart || actualEnd) && (
                       <div className="flex items-center gap-3 text-xs">
@@ -1820,7 +1822,7 @@ export const ClientVisitsPage: React.FC = () => {
       futureSnap.docs.forEach(doc => batch.update(doc.ref, { status: 'cancelled', bulkCancelled: true }));
       await batch.commit();
       // onBookingRequestWrite Cloud Function fires here and notifies the caregiver
-      await db.collection('booking_requests').doc(bookingRequestId).update({ status: 'cancelled' }).catch(() => {});
+      await db.collection('booking_requests').doc(bookingRequestId).update({ status: 'cancelled' }).catch(swallow('ClientVisitsPage: background step 1'));
     } else {
       batch.update(db.collection('shifts').doc(shiftId), { status: 'cancelled', bulkCancelled: true });
       await batch.commit();
@@ -1842,7 +1844,7 @@ export const ClientVisitsPage: React.FC = () => {
       status: 'cancelled',
       cancelledBy: 'client',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {});
+    }).catch(swallow('ClientVisitsPage: background step 2'));
   };
 
   const [replacementShift, setReplacementShift] = useState<Shift | null>(null);
@@ -1903,7 +1905,7 @@ export const ClientVisitsPage: React.FC = () => {
     await db.collection('booking_requests').doc(replacementRequestId).update({
       status: 'cancelled',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {});
+    }).catch(swallow('ClientVisitsPage: background step 3'));
   };
 
   const activeShifts = shifts.filter(s => s.status === 'scheduled' || s.status === 'in-progress' || s.status === 'needs_replacement');
@@ -2004,7 +2006,7 @@ export const ClientVisitsPage: React.FC = () => {
                     </div>
                     <div>
                       <p className="font-semibold text-slate-900">{a.caregiverName || 'Care Provider'}</p>
-                      <p className="text-xs text-slate-400">Schedule change request · Awaiting response</p>
+                      <p className="text-xs text-slate-400">{!a.ongoing && a.startDate && a.startDate === a.endDate ? 'Extra visit request' : 'Schedule change request'} · Awaiting response</p>
                     </div>
                   </div>
                   <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full shrink-0">
@@ -2033,7 +2035,7 @@ export const ClientVisitsPage: React.FC = () => {
                       onClick={async () => {
                         if (!db) return;
                         // onBookingAmendmentWrite Cloud Function fires and notifies the caregiver
-                        await db.collection('booking_amendments').doc(a.id).update({ status: 'cancelled' }).catch(() => {});
+                        await db.collection('booking_amendments').doc(a.id).update({ status: 'cancelled' }).catch(swallow('ClientVisitsPage: background step 4'));
                       }}
                       className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors shrink-0 mt-0.5"
                     >

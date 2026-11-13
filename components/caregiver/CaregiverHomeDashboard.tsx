@@ -1,4 +1,5 @@
 import { serviceLabel } from './signup/constants';
+import { swallow } from '../../utils/reportError';
 import { drivingJobsHiddenFor, jobIncludesDriving } from '../../utils/transportDocs';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -134,11 +135,15 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
         dbService.getOpenJobs().then(all => { setRawJobs(all); setJobsLoaded(true); }).catch(() => setJobsLoaded(true));
       });
 
-    db.collection('job_applications').where('caregiverId', '==', uid).get()
-      .then(snap => setAppliedJobIds(new Set(snap.docs.map(d => (d.data() as any).jobId).filter(Boolean))))
-      .catch(() => {});
+    // LIVE (2026-11-11): this was a one-time read, so a job she had just applied to stayed listed with "Apply Now"
+    // until a page reload. The listener drops it as soon as the application is written.
+    const appsUnsub = db.collection('job_applications').where('caregiverId', '==', uid)
+      .onSnapshot(
+        snap => setAppliedJobIds(new Set(snap.docs.map(d => (d.data() as any).jobId).filter(Boolean))),
+        () => {},
+      );
 
-    return unsub;
+    return () => { unsub(); appsUnsub(); };
   }, [uid]);
 
   // Filter + sort inline so it re-runs whenever profile (radius/location) changes
@@ -402,7 +407,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                                 await db.collection('shifts').doc(s.id).update({
                                   notesLog: firebase.firestore.FieldValue.arrayUnion({ at: new Date().toISOString(), text, by: 'caregiver' }),
                                   updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                                }).catch(() => {});
+                                }).catch(swallow('CaregiverHomeDashboard: background step 1'));
                               }}
                               className="px-2.5 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50">
                               Add
@@ -755,14 +760,14 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
         const toggleTask = async (key: string) => {
           if (!db) return;
           const updated = completed.includes(key) ? completed.filter((t: string) => t !== key) : [...completed, key];
-          await db.collection('shifts').doc(s.id).update({ tasksCompleted: updated }).catch(() => {});
+          await db.collection('shifts').doc(s.id).update({ tasksCompleted: updated }).catch(swallow('CaregiverHomeDashboard: background step 2'));
           setTaskModalShift((prev: any) => prev ? { ...prev, tasksCompleted: updated } : null);
         };
         const toggleCategory = async (subKeys: string[]) => {
           if (!db) return;
           const allDone = subKeys.every(k => completed.includes(k));
           const updated = allDone ? completed.filter((k: string) => !subKeys.includes(k)) : [...new Set([...completed, ...subKeys])];
-          await db.collection('shifts').doc(s.id).update({ tasksCompleted: updated }).catch(() => {});
+          await db.collection('shifts').doc(s.id).update({ tasksCompleted: updated }).catch(swallow('CaregiverHomeDashboard: background step 3'));
           setTaskModalShift((prev: any) => prev ? { ...prev, tasksCompleted: updated } : null);
         };
         let totalTasks = 0; let doneTasks = 0;

@@ -88,7 +88,7 @@ describe('Firebase callable v1- prefix contract', () => {
 
   it('detects known call sites, including generic and getFunctions() inline forms', () => {
     const byName = (name: string) => usages.some((u) => u.name === name);
-    expect(byName('v1-aiProxy')).toBe(true); // multiline generic form (services/ai.ts)
+    // (The multiline generic form's call site, services/ai.ts → v1-aiProxy, was removed 2026-11-09; that form stays covered by the synthetic sample below.)
     // (The inline getFunctions() form's only product call site, FamilyEmergency.tsx,
     // was removed 2026-09-27; that form stays covered by the synthetic sample below.)
   });

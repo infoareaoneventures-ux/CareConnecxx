@@ -19,6 +19,7 @@
 // Numbered lists: every texted chip stores lastTimesheetList on the session, and
 // SUBMIT n / REVIEW n / DETAILS n / VIEW n resolve to document ids from it — never
 // by name or guess. Nothing a person reads carries an id.
+import { careZoneOf, wallToInstantMs } from "../utils/careTime";
 import * as admin from "firebase-admin";
 import { sendMessage, type AgentSession } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
@@ -130,8 +131,10 @@ export function shiftTimes(s: Doc): { startMs: number | null; endMs: number | nu
   const date = String(s.date ?? "");
   const startTime = String(s.startTime ?? "00:00");
   const endTime = typeof s.endTime === "string" && s.endTime ? s.endTime : null;
-  const scheduledStartMs = parseScheduledTimeMs(`${date}T${startTime}:00`);
-  let scheduledEndMs = endTime ? parseScheduledTimeMs(`${date}T${endTime}:00`) : scheduledStartMs + 3_600_000;
+  // The visit's own care-location zone (2026-11-09), not always Pacific.
+  const tz = careZoneOf(s as Record<string, unknown>);
+  const scheduledStartMs = wallToInstantMs(date, startTime, tz);
+  let scheduledEndMs = endTime ? wallToInstantMs(date, endTime, tz) : scheduledStartMs + 3_600_000;
   if (Number.isFinite(scheduledEndMs) && Number.isFinite(scheduledStartMs) && scheduledEndMs <= scheduledStartMs) scheduledEndMs += 24 * 3_600_000;
   const a = tsMs(s.startedAt), b = tsMs(s.completedAt);
   const actual = a !== null && b !== null;

@@ -13,11 +13,11 @@ const base: PendingAction = {
   preview: "Cancel appt",
   proposedAt: new Date(NOW - 1000).toISOString(),
   expiresAt: new Date(NOW + 60_000).toISOString(),
-  status: "awaiting",
+  status: "executing", // claimPendingAction ran after the user's real YES
 };
 
 describe("isConfirmedActionValid", () => {
-  it("accepts a matching, awaiting, unexpired action (the legit re-run)", () => {
+  it("accepts a matching, claimed (executing), unexpired action (the legit re-run after the user's YES)", () => {
     expect(isConfirmedActionValid(base, "cancel_appointment", "+15550001111", NOW)).toBe(true);
   });
 
@@ -44,8 +44,15 @@ describe("isConfirmedActionValid", () => {
     }
   });
 
-  it("accepts an approved action (user approval awaiting execution)", () => {
-    expect(isConfirmedActionValid({ ...base, status: "approved" }, "cancel_appointment", "+15550001111", NOW)).toBe(true);
+  // 2026-11-09 (Wave 1): the AI must not be able to approve its own high-risk action. An action the
+  // user has NOT yet confirmed ("awaiting") or that merely carries an approval flag ("approved") is refused:
+  // only claimPendingAction's "executing" — written after the user's own YES — counts.
+  it("REJECTS an action still awaiting the user's YES (no confirmation has happened)", () => {
+    expect(isConfirmedActionValid({ ...base, status: "awaiting" }, "cancel_appointment", "+15550001111", NOW)).toBe(false);
+  });
+
+  it("REJECTS an approved-but-not-claimed action", () => {
+    expect(isConfirmedActionValid({ ...base, status: "approved" }, "cancel_appointment", "+15550001111", NOW)).toBe(false);
   });
 
   // 2026-09-06 fix: this used to assert `false` — but claimPendingAction

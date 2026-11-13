@@ -98,7 +98,7 @@ describe("safety tools", () => {
   describe("set_block_status", () => {
     describe("action: 'block'", () => {
       // Confirmed-action gate (U12): seed a pending doc for the bypass call below.
-      beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }));
+      beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" }));
 
       it("requires userId, targetUserId, and action", async () => {
         const r = await handleToolCall("set_block_status", { userId: "u1" }) as any;
@@ -143,14 +143,14 @@ describe("safety tools", () => {
         expect(profileClear?.data["blockedUserProfiles.u2"]).toEqual({ __delete: true });
       });
 
-      it("hides the shared chat thread (messagesCutoff/deletedAt) when a room exists", async () => {
+      it("leaves the shared chat thread exactly as it was — unblocking restores the conversation (Wave 2, 2026-11-09)", async () => {
         const roomId = ["u1", "u2"].sort().join("_");
         hoisted.docState.set(`chatRooms/${roomId}`, { participants: ["u1", "u2"] });
         const r = await handleToolCall("set_block_status", { userId: "u1", targetUserId: "u2", action: "unblock" }) as any;
         expect(r.success).toBe(true);
-        const roomSet = hoisted.sets.find(s => s.path === `chatRooms/${roomId}`);
-        expect(roomSet?.data["messagesCutoff.u1"]).toBeTruthy();
-        expect(roomSet?.data["deletedAt.u1"]).toBeTruthy();
+        // No messagesCutoff / deletedAt written: the history is not hidden or wiped by an unblock.
+        expect(hoisted.sets.find(s => s.path === `chatRooms/${roomId}`)).toBeUndefined();
+        expect(hoisted.docState.get(`chatRooms/${roomId}`)).toEqual({ participants: ["u1", "u2"] });
       });
 
       it("does not fail when no chat room exists between the two users", async () => {
@@ -161,7 +161,7 @@ describe("safety tools", () => {
 
     describe("action: 'report'", () => {
       // Confirmed-action gate (U12): seed a pending doc for the bypass calls below.
-      beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" }));
+      beforeEach(() => hoisted.docState.set("pending_actions/test", { toolName: "set_block_status", status: "executing", expiresAt: "2999-01-01T00:00:00.000Z" }));
 
       it("requires category and description", async () => {
         const r = await handleToolCall("set_block_status", { userId: "u1", targetUserId: "u2", action: "report", category: "harassment" }) as any;

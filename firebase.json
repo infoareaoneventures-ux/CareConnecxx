@@ -81,6 +81,7 @@
         "firebase-debug.*.log"
       ],
       "predeploy": [
+        "npm run eval",
         "node scripts/guard-no-agent-native-runtime.mjs",
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ]

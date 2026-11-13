@@ -4,7 +4,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // dashboard would show the job in Nearby Jobs get ONE text (the card's lines +
 // the Jobs page link) and a bell entry; caregivers with an active family, out
 // of radius, paused/opted-out, or who blocked the client are skipped. No
-// yes/no reply flow, no skills filter, membership not required.
+// yes/no reply flow, no skills filter.
+// CHANGED 2026-11-09 (Wave 1): a provider needs a location AND a travel distance (and the job
+// coordinates) to be texted, must be bookable (background check + active membership), and the
+// bell is written even when no text goes.
 
 const hoisted = vi.hoisted(() => {
   const docState = new Map<string, any>();
@@ -67,7 +70,7 @@ import { sendNewJobNotices, caregiverHasActiveFamilies } from "../newJobNotice";
 
 const JOB = { status: "open", clientId: "fam1", title: "Care for Rosy", location: "Santa Clara", lat: 37.3541, lng: -121.9552, rate: 26, jobFrequency: "part-time", timeOfDay: ["morning"], date: "ASAP", paymentMethod: "credit" };
 const cg = (id: string, extra: Record<string, unknown> = {}) =>
-  hoisted.docState.set(`caregivers/${id}`, { onboardingStatus: "profile_complete", phone: `+1${id}`, lat: 37.3382, lng: -121.8863, serviceRadius: 25, ...extra });
+  hoisted.docState.set(`caregivers/${id}`, { onboardingStatus: "profile_complete", verificationStatus: "approved", membershipStatus: "active", phone: `+1${id}`, lat: 37.3382, lng: -121.8863, serviceRadius: 25, ...extra });
 const session = (id: string) => hoisted.docState.set(`agent_sessions/+1${id}`, { chatId: `chat-${id}`, caregiverId: id });
 
 beforeEach(() => hoisted.reset());
@@ -86,21 +89,23 @@ describe("sendNewJobNotices", () => {
     expect(hoisted.bells[0]).toMatchObject({ recipientId: "a", type: "new_job", transitionType: "new_job_posted", sourcePath: "job_posts/job1", eventId: "evt1", data: { jobId: "job1", link: "/care-provider/jobs?job=job1" } });
   });
 
-  it("no Evia session → no text, and so no bell (bell ⇄ text, C11); membership is NOT required for the notice itself", async () => {
-    cg("b", { membershipPaid: false });
+  it("no Evia session → no text, but the bell still goes (2026-11-09)", async () => {
+    cg("b");
     const res = await sendNewJobNotices("job1", JOB, "evt1");
     expect(res.dropped).toEqual(["b"]);
     expect(hoisted.sent).toHaveLength(0);
-    expect(hoisted.bells).toHaveLength(0);
+    expect(hoisted.bells).toHaveLength(1);
+    expect(hoisted.bells[0]).toMatchObject({ recipientId: "b", type: "new_job" });
   });
 
-  it("a text the send layer dropped (opted out / blocked) writes no bell", async () => {
+  it("a text the send layer dropped (opted out / blocked) still writes the bell", async () => {
     const { sendViaInteractionAgent } = await import("../../agents/caraAgent");
     (sendViaInteractionAgent as any).mockResolvedValueOnce(false);
     cg("a"); session("a");
     const res = await sendNewJobNotices("job1", JOB, "evt1");
     expect(res.dropped).toEqual(["a"]);
-    expect(hoisted.bells).toHaveLength(0);
+    expect(res.notified).toEqual([]);
+    expect(hoisted.bells).toHaveLength(1);
   });
 
   it("skips: out of radius, paused, opted out, unfinished profile, blocked the client, active family", async () => {
@@ -119,10 +124,33 @@ describe("sendNewJobNotices", () => {
     expect(hoisted.bells).toHaveLength(0);
   });
 
-  it("a care provider with no travel distance is told about every open job, like their board", async () => {
-    cg("nolimit", { serviceRadius: 0 });
-    const res = await sendNewJobNotices("job1", { ...JOB, lat: 38.5816, lng: -121.4944 }, "evt1");
-    expect(res.dropped).toEqual(["nolimit"]);
+  it("skips a provider who is not bookable: background check not approved, or membership lapsed", async () => {
+    cg("nobgc", { verificationStatus: "pending" }); session("nobgc");
+    cg("lapsed", { membershipStatus: "canceled" }); session("lapsed");
+    const res = await sendNewJobNotices("job1", JOB, "evt1");
+    expect(res.notified).toEqual([]);
+    expect(res.dropped).toEqual([]);
+    expect(res.skipped).toBe(2);
+    expect(hoisted.sent).toHaveLength(0);
+    expect(hoisted.bells).toHaveLength(0);
+  });
+
+  it("a care provider with no travel distance, no location, or a job with no coordinates is NOT texted (the live-test bug)", async () => {
+    cg("nolimit", { serviceRadius: 0 }); session("nolimit");
+    cg("noloc", { lat: undefined, lng: undefined }); session("noloc");
+    cg("ok"); session("ok");
+    const far = { ...JOB, lat: 38.5816, lng: -121.4944 }; // Sacramento — far from everyone above
+    let res = await sendNewJobNotices("job1", far, "evt1");
+    expect(res.notified).toEqual([]); // nobody has a distance that reaches it
+    expect(res.skipped).toBe(3);
+    hoisted.sent.length = 0; hoisted.bells.length = 0;
+    res = await sendNewJobNotices("job1", JOB, "evt2");
+    expect(res.notified).toEqual(["ok"]); // only the provider we can place within range
+    expect(res.skipped).toBe(2);
+    hoisted.sent.length = 0; hoisted.bells.length = 0;
+    res = await sendNewJobNotices("job1", { ...JOB, lat: undefined, lng: undefined }, "evt3");
+    expect(res.notified).toEqual([]); // a job we cannot place is not announced
+    expect(hoisted.sent).toHaveLength(0);
   });
 
   it("does nothing for a job that is not open or whose client is deactivated", async () => {

@@ -26,7 +26,7 @@ interface Props {
   currentPriceId?: string;
   caregiverName?: string;
   caregiverAvatar?: string;
-  context?: 'message' | 'interview' | 'booking';
+  context?: 'message' | 'interview' | 'booking' | 'post';
 }
 
 export function PlanSelectModal({ onClose, currentPriceId, caregiverName, caregiverAvatar, context }: Props) {

@@ -1,4 +1,7 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { swallow } from '../../utils/reportError';
+import { ZoneTag } from '../ui/ZoneTag';
+import { careZoneOf, wallToInstantMs } from '../../utils/careTime';
 import { recordActedForPerson } from '../../services/api';
 import React, { useEffect, useState } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
@@ -776,7 +779,7 @@ const BookingGroupCard: React.FC<{
     await db.collection('shifts').doc(shiftId).update({
       notesLog: firebase.firestore.FieldValue.arrayUnion({ at: new Date().toISOString(), text, by: 'caregiver' }),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => {});
+    }).catch(swallow('CaregiverBookingsPage: background step 1'));
     void recordActedForPerson('visit_note_added', 'added a note to a visit');
   };
 
@@ -928,7 +931,7 @@ const BookingGroupCard: React.FC<{
       ? prev.filter(k => !subtaskKeys.includes(k))
       : [...new Set([...prev, ...subtaskKeys])];
     setTasksByShift(p => ({ ...p, [shiftId]: next }));
-    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(() => {});
+    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(swallow('CaregiverBookingsPage: background step 2'));
   };
 
   const toggleTask = async (shiftId: string, key: string) => {
@@ -937,7 +940,7 @@ const BookingGroupCard: React.FC<{
     const prev = tasksByShift[shiftId] || [];
     const next = prev.includes(key) ? prev.filter(t => t !== key) : [...prev, key];
     setTasksByShift(p => ({ ...p, [shiftId]: next }));
-    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(() => {});
+    if (db) await db.collection('shifts').doc(shiftId).update({ tasksCompleted: next }).catch(swallow('CaregiverBookingsPage: background step 3'));
   };
 
   // Delegated to page-level handler (lifted so orphan amendments in Requests tab can share it)
@@ -1154,8 +1157,11 @@ const BookingGroupCard: React.FC<{
               const d = (a.date || '').localeCompare(b.date || '');
               return d !== 0 ? d : (a.startTime || '').localeCompare(b.startTime || '');
             });
-          const visible = showAllShifts ? allUpcoming : allUpcoming.slice(0, 2);
-          const hiddenCount = allUpcoming.length - 2;
+          // A visit with a pending request is never tucked behind "Show more" (2026-11-11: the family's proposed new
+          // time sat out of sight, so the Accept / Decline box was never seen): it stays in view with the first two.
+          const firstTwo = new Set(allUpcoming.slice(0, 2).map(s => s.id));
+          const visible = showAllShifts ? allUpcoming : allUpcoming.filter(s => firstTwo.has(s.id) || !!s.reschedulePendingDate);
+          const hiddenCount = allUpcoming.length - visible.length;
           return (
             <>
               {visible.map(shift => {
@@ -1194,7 +1200,7 @@ const BookingGroupCard: React.FC<{
                     > 24 check, so overdue shifts are hidden here too — no separate check
                     needed. */}
                 {shift.status === 'scheduled' && shift.rescheduledBy !== 'caregiver' && rescheduleOpenId !== shift.id &&
-                  (new Date(`${shift.date}T${shift.startTime}`).getTime() - Date.now()) / (1000 * 60 * 60) > 24 && (
+                  (wallToInstantMs(shift.date, shift.startTime, careZoneOf(shift as any)) - Date.now()) / (1000 * 60 * 60) > 24 && (
                   <button
                     onClick={() => {
                       setRescheduleOpenId(shift.id);
@@ -1212,7 +1218,7 @@ const BookingGroupCard: React.FC<{
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-slate-800">{fmtDate(shift.date)}</span>
-                    <span className="text-xs text-slate-500">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</span>
+                    <span className="text-xs text-slate-500">{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}<ZoneTag visit={shift as any} /></span>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${shiftStatusBadgeClass(shiftDisplayStatus(shift))}`}>
                       {shiftStatusLabel(shiftDisplayStatus(shift))}
                     </span>
@@ -1252,7 +1258,7 @@ const BookingGroupCard: React.FC<{
                     if (shift.status !== 'scheduled') return null;
                     const ds = shiftDisplayStatus(shift);
                     if (ds === 'overdue') return null;
-                    const minsUntilStart = (new Date(`${shift.date}T${shift.startTime}`).getTime() - Date.now()) / 60000;
+                    const minsUntilStart = (wallToInstantMs(shift.date, shift.startTime, careZoneOf(shift as any)) - Date.now()) / 60000;
                     if (minsUntilStart > 15) return null;
                     const otherOpen = otherVisitInProgress(inProgressVisits, shift.id);
                     if (otherOpen) return (
@@ -2127,7 +2133,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                       </div>
                       <div>
                         <p className="font-semibold text-slate-900">{a.clientName || 'Client'}</p>
-                        <p className="text-xs text-slate-400">Schedule change request</p>
+                        <p className="text-xs text-slate-400">{!a.ongoing && a.startDate && a.startDate === a.endDate ? 'Extra visit request' : 'Schedule change request'}</p>
                       </div>
                     </div>
                     <div className="border-t border-violet-100 bg-violet-50 px-5 py-3">
@@ -2171,7 +2177,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                               await db.collection('booking_amendments').doc(a.id).update({
                                 status: 'declined',
                                 respondedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                              }).catch(() => {});
+                              }).catch(swallow('CaregiverBookingsPage: background step 4'));
                               // Notification handled by onBookingAmendmentWrite Cloud Function
                             }}
                             className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl transition-colors"
@@ -2293,8 +2299,8 @@ export const CaregiverBookingsPage: React.FC = () => {
       // Total hours calculation
       const totalMins = (() => {
         if (!logStartDate || !logStart || !logEndDate || !logEnd) return null;
-        const s = new Date(`${logStartDate}T${logStart}:00`).getTime();
-        const e = new Date(`${logEndDate}T${logEnd}:00`).getTime();
+        const s = wallToInstantMs(logStartDate, logStart, careZoneOf(logHoursShift as any));
+        const e = wallToInstantMs(logEndDate, logEnd, careZoneOf(logHoursShift as any));
         if (isNaN(s) || isNaN(e) || e <= s) return null;
         return Math.round((e - s) / 60000);
       })();
@@ -2438,8 +2444,9 @@ export const CaregiverBookingsPage: React.FC = () => {
                   if (!logHoursShift || !logStart || !logEnd || !logStartDate || !logEndDate) return;
                   setLoggingHours(true);
                   try {
-                    const startedAt = new Date(`${logStartDate}T${logStart}:00`);
-                    const completedAt = new Date(`${logEndDate}T${logEnd}:00`);
+                    // The times are wall clock AT the visit's care location (2026-11-09).
+                    const startedAt = new Date(wallToInstantMs(logStartDate, logStart, careZoneOf(logHoursShift as any)));
+                    const completedAt = new Date(wallToInstantMs(logEndDate, logEnd, careZoneOf(logHoursShift as any)));
                     // The server's logHours writes the modal's patch ({status:'completed', startedAt,
                     // completedAt, loggedManually, tasksCompleted, completionNotes?, updatedAt}) once it
                     // has checked the visit is a missed one and the gate passes.

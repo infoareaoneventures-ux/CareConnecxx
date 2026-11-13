@@ -75,6 +75,8 @@ export default defineConfig(({ mode }) => ({
   },
   // Optimize dependencies
   optimizeDeps: {
+    // Scan every lazy route up front; a dep found mid-session re-optimizes and loads two copies of React.
+    entries: ['index.html', '{components,hooks,services,lib,utils,context,pages}/**/*.{ts,tsx}', '!**/*.test.{ts,tsx}'],
     include: [
       'react',
       'react-dom',

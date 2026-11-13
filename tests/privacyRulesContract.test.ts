@@ -33,3 +33,19 @@ describe("job_postings privacy", () => {
     expect(b).not.toMatch(/allow read:\s*if isAuthenticated\(\);/);
   });
 });
+
+describe("caregivers create (fix plan 2026-11-14)", () => {
+  const b = block("caregivers/{caregiverId}");
+  const create = b.match(/allow create:[\s\S]*?\);\n/)?.[0] ?? "";
+
+  it("is no longer open to any field a caregiver chooses", () => {
+    expect(create).not.toMatch(/allow create:\s*if isAuthenticated\(\) && request\.auth\.uid == caregiverId;/);
+    expect(create).toMatch(/keys\(\)\.hasAny\(/);
+  });
+
+  it("refuses every field that grants trust, money or driver status", () => {
+    for (const k of ["verified", "backgroundCheckStatus", "verificationStatus", "status", "membershipStatus", "membershipPaid", "clearedForFamilies", "payoutsEnabled", "chargesEnabled", "stripeAccountId", "isApprovedDriver", "mvrStatus"]) {
+      expect(create, k).toContain(`'${k}'`);
+    }
+  });
+});

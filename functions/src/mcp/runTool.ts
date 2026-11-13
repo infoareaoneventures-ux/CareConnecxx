@@ -1,4 +1,4 @@
-import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../agents/pendingActions";
+import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 
 /**
@@ -96,7 +96,7 @@ function injectFields(
  *   inject → ownership → confirmation gate → run → audit.
  *
  * The confirmation gate is identical to handleToolCall's: a present
- * `_confirmedActionId` bypasses it (and is stripped); otherwise a high-risk tool
+ * `_confirmedActionId` that a real user YES has claimed bypasses it (and is stripped; an invalid one is refused); otherwise a high-risk tool
  * is turned into a pending-action stub (refused outright if no phone is present).
  */
 export async function runTool(
@@ -117,6 +117,13 @@ export async function runTool(
   const confirmedActionId = input._confirmedActionId as string | undefined;
   if (confirmedActionId) {
     delete input._confirmedActionId;
+    // 2026-11-09 (Wave 1): the id is checked here too — it used to bypass the gate unvalidated, so any
+    // non-empty value skipped the user's YES. Only an action a real user YES already claimed passes.
+    const pending = await getPendingActionById(confirmedActionId);
+    if (!isConfirmedActionValid(pending, handler.name, input.phone as string | undefined, Date.now(), input)) {
+      console.warn("runTool gate: rejected invalid _confirmedActionId", { name: handler.name, status: pending?.status });
+      return toolError("PERMISSION_DENIED", "This confirmation is no longer valid. Please try the action again.");
+    }
   } else if (isHighRisk(handler.name, input)) {
     const phone = input.phone as string | undefined;
     if (!phone) {

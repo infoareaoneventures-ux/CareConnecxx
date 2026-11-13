@@ -1,4 +1,6 @@
 import { stripeService as externalStripeService } from './stripeService';
+import { swallow, reportError } from '../utils/reportError';
+import { replaceAddressIn } from '../utils/addressReplace';
 import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 
 import firebase, { auth, db, functions, storage, isConfigured, setActingAuthUser } from '../lib/firebase';
@@ -279,6 +281,8 @@ export const dbService = {
         if (isConfigured && auth && auth.currentUser) {
             const { submitAccountAction } = await import('./accountActionQueue');
             await submitAccountAction('delete_account', { uid: auth.currentUser.uid });
+            // The login is gone server-side; drop the browser's session too so the page does not sit signed in as nobody.
+            await auth.signOut().catch(swallow('api: background step 1'));
             return true;
         }
         throw new Error("Not logged in");
@@ -293,6 +297,63 @@ export const dbService = {
         // Firebase not configured — immediately resolve as unauthenticated
         callback(null);
         return () => { };
+    },
+
+    /** The hourly rates care providers have set (public profiles), for the post-a-job rate guidance. Never throws. */
+    getPublicCaregiverRates: async (limit = 200): Promise<unknown[]> => {
+        if (!db) return [];
+        try {
+            const snap = await db.collection('publicCaregiverProfiles').limit(limit).get();
+            return snap.docs.map((d) => (d.data() as any).hourlyRate);
+        } catch { return []; }
+    },
+
+    /** A care provider's weekly availability as stored on their public profile (raw), or null. Never throws. */
+    getCaregiverWeeklyAvailability: async (caregiverId: string): Promise<Record<string, any[]> | null> => {
+        if (!db || !caregiverId) return null;
+        try {
+            const snap = await db.collection('publicCaregiverProfiles').doc(caregiverId).get();
+            return snap.exists ? (((snap.data() as any)?.weeklyAvailability as Record<string, any[]>) || {}) : null;
+        } catch { return null; }
+    },
+
+    /**
+     * A family edited a saved care address: rewrite it in every place that holds it (the job post's primary address and saved
+     * locations, and each recipient's care-plan locations), so the location step does not merge the untouched copy back in as
+     * a second location. The care plan's location pool is rewritten by the location step itself (it also re-geocodes). Reports
+     * a failure and carries on: the pool write already lands the edit.
+     */
+    replaceFamilyAddress: async (
+        uid: string,
+        original: { street?: string; zipCode?: string },
+        next: { street: string; city: string; state: string; zipCode: string },
+    ): Promise<void> => {
+        if (!db || !uid) return;
+        try {
+            const jobRef = db.collection('job_postings').doc(uid);
+            const jobSnap = await jobRef.get();
+            if (jobSnap.exists) {
+                const jp = jobSnap.data() as any;
+                const updates: Record<string, unknown> = {};
+                if (jp.street && replaceAddressIn([{ street: jp.street, zipCode: jp.zipCode }], original, next).changed) {
+                    Object.assign(updates, { street: next.street, city: next.city, state: next.state, zipCode: next.zipCode });
+                }
+                const saved = replaceAddressIn<any>(jp.savedLocations, original, next);
+                if (saved.changed) updates.savedLocations = saved.list;
+                if (Object.keys(updates).length) await jobRef.update(updates);
+            }
+            const planRef = db.collection('carePlans').doc(uid);
+            const planSnap = await planRef.get();
+            if (planSnap.exists) {
+                const plans = ((planSnap.data() as any)?.recipientPlans || {}) as Record<string, any>;
+                const updates: Record<string, unknown> = {};
+                for (const [id, plan] of Object.entries(plans)) {
+                    const r = replaceAddressIn<any>(plan?.locations, original, next);
+                    if (r.changed) updates[`recipientPlans.${id}.locations`] = r.list;
+                }
+                if (Object.keys(updates).length) await planRef.update(updates);
+            }
+        } catch (e) { reportError(e, { where: 'Locations: replace an edited address' }); }
     },
 
     getCurrentUser: () => {
@@ -2545,7 +2606,7 @@ export const adminService = {
     },
     clearAdminPresence: async (adminUid: string): Promise<void> => {
         if (!isConfigured || !db) return;
-        await db.collection('admin_presence').doc(adminUid).delete().catch(() => {});
+        await db.collection('admin_presence').doc(adminUid).delete().catch(swallow('api: background step 2'));
     },
     /** Every account the team is acting for or viewing right now (YES windows + fresh presence), live. */
     watchOpenSessions: (onRows: (rows: OpenSessionRow[]) => void): (() => void) => {
@@ -2688,7 +2749,7 @@ export const adminService = {
         if (data.name) mirror.name = data.name;
         if (data.email) mirror.email = data.email;
         if (Object.keys(mirror).length) {
-            try { await db.collection('users').doc(uid).update(mirror); } catch { /* best effort */ }
+            try { await db.collection('users').doc(uid).update(mirror); } catch (e) { reportError(e, { where: 'api: mirror profile to users record' }); }
         }
     },
 
@@ -2865,9 +2926,9 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
     }, { merge: true });
 
     if (photoURL) {
-        await db.collection('users').doc(uid).set({ photoURL }, { merge: true }).catch(() => {});
+        await db.collection('users').doc(uid).set({ photoURL }, { merge: true }).catch(swallow('api: background step 3'));
         // Never the admin's own Auth profile while acting for someone (2026-10-22).
-        try { if (!actingContext) await firebase.auth().currentUser?.updateProfile({ photoURL }); } catch { /* best effort */ }
+        try { if (!actingContext) await firebase.auth().currentUser?.updateProfile({ photoURL }); } catch (e) { reportError(e, { where: 'api: update login photo' }); }
     }
 
     // Best-effort writes — don't block wizard completion if they fail

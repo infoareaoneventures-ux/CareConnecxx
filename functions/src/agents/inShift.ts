@@ -24,10 +24,11 @@
 // background), the 15-minute window, one visit at a time and the status
 // transitions are enforced THERE; this file keeps the texts, the "which
 // visit?" resolution and the keyword protocol.
+import { todayDatesAcrossZones, isTodayAtCareLocation } from "../utils/careTime";
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
-import { businessTodayStr, DEFAULT_TZ } from "../utils/scheduledTime";
+import { DEFAULT_TZ } from "../utils/scheduledTime";
 import { isShiftOverdue } from "./shiftReschedule";
 import { type CareRecipient } from "./caregiverBookingRequests";
 import { getAppUrl } from "../config/appUrl";
@@ -112,8 +113,8 @@ export function noteLines(shift: Doc, bookingNote?: string | null): string[] {
   return out;
 }
 
-export function clock(ms: number): string {
-  return new Date(ms).toLocaleTimeString("en-US", { timeZone: DEFAULT_TZ, hour: "numeric", minute: "2-digit" });
+export function clock(ms: number, timeZone: string = DEFAULT_TZ): string {
+  return new Date(ms).toLocaleTimeString("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
 }
 
 export type VisitLoad = { ok: true; id: string; shift: Doc; ref: FirebaseFirestore.DocumentReference } | { ok: false; reason: "not_found" | "not_yours" | "none_today" | "ambiguous"; message: string; candidates?: Array<{ shiftId: string; line: string }> };
@@ -132,9 +133,10 @@ export async function resolveVisit(caregiverId: string, shiftId: unknown, want: 
     // The id we were given IS the visit's id — the shared write (shifts/visitActions.ts) is keyed by it.
     return { ok: true, id: snap.id || shiftId, shift, ref: snap.ref };
   }
-  const today = businessTodayStr();
-  const snap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("date", "==", today).get();
-  const docs = snap.docs.filter((d) => d.data().caregiverId === caregiverId);
+  // "Today" is the VISIT's own date at its care location (2026-11-09, all U.S. zones): query the dates that are
+  // "today" somewhere in the U.S. right now (1-3 of them), then keep the visits whose own zone says today.
+  const snap = await db.collection("shifts").where("caregiverId", "==", caregiverId).where("date", "in", todayDatesAcrossZones()).get();
+  const docs = snap.docs.filter((d) => d.data().caregiverId === caregiverId && isTodayAtCareLocation(d.data() as Doc));
   const inProgress = docs.filter((d) => d.data().status === "in-progress");
   if (want === "in_progress" || inProgress.length > 0) {
     if (inProgress.length === 1) return { ok: true, id: inProgress[0].id, shift: inProgress[0].data() as Doc, ref: inProgress[0].ref };

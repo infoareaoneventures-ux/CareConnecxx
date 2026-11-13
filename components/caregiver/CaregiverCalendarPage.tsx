@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { swallow } from '../../utils/reportError';
 import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect, useCallback } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
@@ -491,7 +492,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           if (careNeeds.length === 0) setCareNeeds(data.careNeeds || []);
           setBookingData(data);
         })
-        .catch(() => {})
+        .catch(swallow('CaregiverCalendarPage: background step 1'))
         .finally(() => setFetchingTasks(false));
     }, [shift.id]);
 
@@ -503,7 +504,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         ? tasksCompleted.filter(t => t !== task)
         : [...tasksCompleted, task];
       setTasksCompleted(updated);
-      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(() => {});
+      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(swallow('CaregiverCalendarPage: background step 2'));
     };
 
     const handleToggleCategory = async (keys: string[]) => {
@@ -513,7 +514,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         ? tasksCompleted.filter(k => !keys.includes(k))
         : [...new Set([...tasksCompleted, ...keys])];
       setTasksCompleted(updated);
-      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(() => {});
+      await db.collection('shifts').doc(shift.id).update({ tasksCompleted: updated }).catch(swallow('CaregiverCalendarPage: background step 3'));
     };
 
     return (
@@ -899,7 +900,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       if (!fdb) return;
       fdb.collection('job_posts').doc(interview.jobId).get()
         .then(doc => { if (doc.exists) setJob(doc.data()); })
-        .catch(() => {});
+        .catch(swallow('CaregiverCalendarPage: background step 4'));
     }, [interview.jobId]);
 
     useEffect(() => {
@@ -932,7 +933,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 });
             });
         })
-        .catch(() => {});
+        .catch(swallow('CaregiverCalendarPage: background step 5'));
     }, [interview.clientId]);
 
     const handleAccept = async () => {

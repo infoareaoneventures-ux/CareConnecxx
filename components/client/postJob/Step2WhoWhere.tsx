@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { StepError } from './StepError';
 import { Loader2, User, X, Plus, Minus, MapPin, Pencil, Trash2 } from 'lucide-react';
 import { StepProps } from './types';
 import { useCareConnex } from '../../../context/CareConnexContext';
@@ -98,6 +99,9 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   const [editingLocDraft, setEditingLocDraft] = useState<{ street: string; city: string; state: string; zipCode: string; petsInHome?: boolean; smokingHousehold?: boolean } | null>(null);
   const [editLocZipLoading, setEditLocZipLoading] = useState(false);
   const [confirmDeleteLocId, setConfirmDeleteLocId] = useState<string | null>(null);
+  // The Continue checks show their message right above the button (2026-11-13), not as a toast that lingers on the next step.
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setError(null); }, [data.careRecipients, data.recipientsCount, data.streetAddress, data.city, data.state, data.zipCode]);
 
   useEffect(() => {
     if (!currentUser?.uid) {
@@ -415,12 +419,8 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
     if (selectedLocationId === editingLocId) onChange({ streetAddress: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode, petsInHome: updated.petsInHome ?? false, smokingHousehold: updated.smokingHousehold ?? false, locationPoint: updated.point ?? null });
 
     if (db && currentUser?.uid) {
-      if (loc.source === 'job-primary') {
-        db.collection('job_postings').doc(currentUser.uid).update({ street: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode }).catch(() => {});
-      } else if (loc.source === 'job-saved') {
-        const jobSaved = newList.filter(l => l.source === 'job-saved').map(({ street, city, state, zipCode }) => ({ street, city, state, zipCode }));
-        db.collection('job_postings').doc(currentUser.uid).update({ savedLocations: jobSaved }).catch(() => {});
-      }
+      // The address is rewritten wherever it is stored, so the old copy is not merged back in as a second location.
+      dbService.replaceFamilyAddress(currentUser.uid, { street: loc.street, zipCode: loc.zipCode }, { street: updated.street, city: updated.city, state: updated.state, zipCode: updated.zipCode });
       // Every source: the address + pets/smoking live on the Care Plan's
       // location pool (where this step reads the flags back from).
       upsertPoolLocation(currentUser.uid, { street: loc.street, zipCode: loc.zipCode }, {
@@ -466,19 +466,20 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
   };
 
   const handleContinue = () => {
-    if (data.careRecipients.length === 0) { onShowToast('Select at least one care recipient', 'error'); return; }
+    if (data.careRecipients.length === 0) { setError('Select at least one care recipient'); return; }
     if (data.careRecipients.length < data.recipientsCount) {
       const remaining = data.recipientsCount - data.careRecipients.length;
-      onShowToast(`Please select ${remaining} more care recipient${remaining > 1 ? 's' : ''}, or reduce the number of care recipients`, 'error');
+      setError(`Please select ${remaining} more care recipient${remaining > 1 ? 's' : ''}, or reduce the number of care recipients`);
       return;
     }
     for (const r of data.careRecipients) {
-      if (!r.relationship.trim()) { onShowToast(`Please select a relationship for ${r.firstName}`, 'error'); return; }
+      if (!r.relationship.trim()) { setError(`Please select a relationship for ${r.firstName}`); return; }
     }
-    if (!data.streetAddress.trim()) { onShowToast('Please select or add a care location', 'error'); return; }
-    if (!data.city.trim()) { onShowToast('Please enter a city', 'error'); return; }
-    if (!data.state.trim()) { onShowToast('Please enter a state', 'error'); return; }
-    if (!/^\d{5}$/.test(data.zipCode.trim())) { onShowToast('Zip code must be 5 digits', 'error'); return; }
+    if (!data.streetAddress.trim()) { setError('Please select or add a care location'); return; }
+    if (!data.city.trim()) { setError('Please enter a city'); return; }
+    if (!data.state.trim()) { setError('Please enter a state'); return; }
+    if (!/^\d{5}$/.test(data.zipCode.trim())) { setError('Zip code must be 5 digits'); return; }
+    setError(null);
     onContinue();
   };
 
@@ -771,6 +772,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
 
       </div>
 
+      <StepError message={error} />
       <div className="mt-8 flex items-center justify-between">
         <button type="button" onClick={onBack} className="text-sm text-slate-500 hover:text-slate-700 font-medium">Back</button>
         <button type="button" onClick={handleContinue} className="bg-primary-600 hover:bg-primary-700 text-white font-semibold px-10 py-3 rounded-xl shadow-md transition-colors">Continue</button>

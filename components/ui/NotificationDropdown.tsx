@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { plainNotificationBody } from '../../utils/notificationText';
 import { useNavigate } from 'react-router-dom';
 import { Bell, BellRing, Info, Calendar, MessageSquare, AlertTriangle, Trash2, CheckCheck } from 'lucide-react';
 import { useNotifications } from '../../hooks/useNotifications';
@@ -202,7 +203,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ role
                             <Trash2 className="w-3 h-3 text-red-400" aria-hidden="true" />
                           </button>
                         </div>
-                        <p className="text-xs text-slate-500 mt-0.5 leading-snug">{notif.body}</p>
+                        <p className="text-xs text-slate-500 mt-0.5 leading-snug">{plainNotificationBody(notif.body)}</p>
                         <span className="text-[10px] text-slate-400 mt-2 block">
                           {notif.createdAt && (() => {
                             const raw = notif.createdAt as any;

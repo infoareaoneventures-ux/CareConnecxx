@@ -115,6 +115,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
     if (!currentUid || !contactId) return;
     const fdb = db;
     if (!fdb) return;
+    // Blocking is one click in a menu — ask first (2026-11-09). The conversation is hidden, not deleted:
+    // unblocking in Settings brings it back. (Becomes the shared ConfirmDialog in the design-system wave.)
+    if (!window.confirm(`Block ${contactName}? You won't see their messages or conversation. You can unblock them in Settings and the conversation comes back.`)) return;
     try {
       await fdb.collection('users').doc(currentUid).update({
         blockedUsers: firebase.firestore.FieldValue.arrayUnion(contactId),
@@ -314,6 +317,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   const handleSend = async () => {
     if (!inputText.trim() || !selectedRoomId || sending) return;
+    if (activeRoom?.closedReason === 'account_deleted') return; // the other person deleted their account (rules refuse it too)
     if (!isClient && !gateMembership()) return;
     const text = inputText.trim();
     setInputText('');
@@ -615,6 +619,11 @@ export const InboxView: React.FC<InboxViewProps> = ({
                   >
                     Activate Membership →
                   </button>
+                </div>
+              ) : activeRoom?.closedReason === 'account_deleted' ? (
+                <div className="flex items-center gap-2 bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 text-slate-600" role="status">
+                  <Lock className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-sm font-medium">{contact?.name || 'This person'} is no longer on Evia. You can read this conversation, but you can't send new messages.</span>
                 </div>
               ) : (
                 <div className="flex gap-2 items-center">

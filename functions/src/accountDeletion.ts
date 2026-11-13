@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { cancelSubscriptionForUser } from "./stripe";
+import { releaseAccountTies } from "./accountDeletionTies";
 
 // Client-side account deletion used to be just `auth.currentUser.delete()`
 // (services/api.ts) — it removed the login but left every Firestore document
@@ -16,7 +17,10 @@ import { cancelSubscriptionForUser } from "./stripe";
 // IAM set on this project).
 export interface DeleteAccountResult { deleted: true }
 
-export async function deleteAccountForUser(userId: string): Promise<DeleteAccountResult> {
+export async function deleteAccountForUser(
+  userId: string,
+  opts: { beforeLoginRemoved?: () => Promise<void> } = {},
+): Promise<DeleteAccountResult> {
   const db = admin.firestore();
 
   // Stop billing first. "No active subscription" just means there was
@@ -38,6 +42,10 @@ export async function deleteAccountForUser(userId: string): Promise<DeleteAccoun
   const phone = (userSnap.data()?.phone as string | undefined)
     ?? (caregiverSnap.data()?.phone as string | undefined);
 
+  // Release what the account leaves on the other side (visits, applications, job posts, public profile,
+  // conversations) BEFORE the records go, so the normal notices carry the right names. Best-effort per step.
+  await releaseAccountTies(db, userId, caregiverSnap.exists);
+
   const batch = db.batch();
   if (userSnap.exists) batch.delete(userSnap.ref);
   if (caregiverSnap.exists) batch.delete(caregiverSnap.ref);
@@ -53,6 +61,11 @@ export async function deleteAccountForUser(userId: string): Promise<DeleteAccoun
   if (phone) {
     await db.collection("agent_sessions").doc(phone).delete().catch(() => {});
   }
+
+  // Tell the caller the deletion is done BEFORE the login goes (2026-11-09): the page watches its request
+  // document with the very login that is about to be removed, so a result written afterwards was never seen
+  // and the page stayed on "Deleting…" until it was reloaded.
+  await opts.beforeLoginRemoved?.().catch((err) => console.error("[deleteAccountForUser] beforeLoginRemoved failed:", err instanceof Error ? err.message : err));
 
   await admin.auth().deleteUser(userId).catch((err: any) => {
     if (err?.code !== "auth/user-not-found") throw err;

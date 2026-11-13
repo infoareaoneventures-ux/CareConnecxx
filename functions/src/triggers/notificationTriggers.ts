@@ -192,12 +192,10 @@ export const onVideoInterviewWrite = functions.firestore
       // and render in PT — Z-form values rendered without a timeZone showed the
       // UTC clock (7-8h wrong) in the notification.
       if (!before && statusAfter === 'requested' && after.caregiverId) {
-        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
-        const displayTime = new Date(parseScheduledTimeMs(String(after.scheduledTime ?? ''))).toLocaleString('en-US', {
-          timeZone: 'America/Los_Angeles',
-          weekday: 'short', month: 'short', day: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-        });
+        const { parseScheduledTimeMs, formatInterviewTimeShort } = await import('../utils/scheduledTime');
+        const { zoneForUser } = await import('../utils/personZone');
+        // The care provider is told the time in THEIR OWN zone (2026-11-09, all U.S. zones).
+        const displayTime = formatInterviewTimeShort(parseScheduledTimeMs(String(after.scheduledTime ?? '')), await zoneForUser(after.caregiverId));
         // The Interviews tab card, as one line: family, job, date + time, type,
         // and the family's note (2026-09-27 — the note used to be missing).
         const ivType = after.interviewType === 'in-person' ? 'In Person' : after.interviewType === 'phone' ? 'Phone' : 'Video';
@@ -273,12 +271,12 @@ export const onVideoInterviewWrite = functions.firestore
         after.scheduledTime &&
         before.scheduledTime !== after.scheduledTime
       ) {
-        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
-        const displayTime = new Date(parseScheduledTimeMs(String(after.scheduledTime ?? ''))).toLocaleString('en-US', {
-          timeZone: 'America/Los_Angeles',
-          weekday: 'short', month: 'short', day: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-        });
+        const { parseScheduledTimeMs, formatInterviewTimeShort } = await import('../utils/scheduledTime');
+        const { zoneForUser } = await import('../utils/personZone');
+        const scheduledMs = parseScheduledTimeMs(String(after.scheduledTime ?? ''));
+        // Told in the RECIPIENT's zone: the care provider's confirmation in theirs, the family's in theirs (2026-11-09).
+        const recipientIsCaregiver = before.rescheduledBy === 'caregiver';
+        const displayTime = formatInterviewTimeShort(scheduledMs, await zoneForUser(recipientIsCaregiver ? after.caregiverId : after.clientId));
         // accept_interview_reschedule (mcp/server.ts) already texts this
         // direction itself and stamps acceptedRescheduleViaAgent — skip to
         // avoid a double text. rescheduledViaAgent itself is already
@@ -355,10 +353,16 @@ export const onVideoInterviewWrite = functions.firestore
         // The family's ONE text for this event is the confirmed-time + Meet link
         // message from interviewLinkTrigger.ts (it fires on the same accept and
         // retries until delivered). Texting here too made it two or three.
+        // The bell carries what the care provider's does (2026-11-11: it had neither the time nor what happens next):
+        // the time in the FAMILY's own zone and that Evia texts the call link.
+        const { parseScheduledTimeMs: parseMs, formatInterviewTimeShort: fmtShort } = await import('../utils/scheduledTime');
+        const { zoneForUser: zoneOf } = await import('../utils/personZone');
+        const whenMs = parseMs(String(after.scheduledTime ?? ''));
+        const whenText = Number.isFinite(whenMs) ? ` for ${fmtShort(whenMs, await zoneOf(after.clientId))}` : '';
         await tell('client', after.clientId, {
           type: 'interview_accepted',
           title: 'Interview Accepted',
-          body: `${after.caregiverName} accepted your interview request.`,
+          body: `${after.caregiverName} accepted your interview request${whenText}. Evia will text you the call link before it starts.`,
           data: { interviewId: context.params.interviewId },
         }, null, { ...iv, transitionType: 'interview_accepted' }, { textOwnedElsewhere: true });
       }
@@ -658,12 +662,20 @@ export const onBookingAmendmentWrite = functions.firestore
       // Accepted → notify client
       if (statusAfter === 'accepted' && after.clientId) {
         const days = Object.keys(after.newDays || {}).join(', ');
+        // A ONE-DAY request is an extra visit, not a change to the regular schedule (2026-11-11: the family was told
+        // "add Thu to your regular schedule" though only that one visit was added).
+        const oneDay = !after.ongoing && after.startDate && after.endDate && after.startDate === after.endDate;
+        const dayLabel = oneDay ? new Date(`${after.startDate}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
         await tell('client', after.clientId, {
           type: 'amendment_accepted',
-          title: 'Schedule Change Accepted',
-          body: `${after.caregiverName} accepted your request to add ${days} to your regular schedule.`,
+          title: oneDay ? 'Extra Visit Accepted' : 'Schedule Change Accepted',
+          body: oneDay
+            ? `${after.caregiverName} accepted your request for an extra visit on ${dayLabel}.`
+            : `${after.caregiverName} accepted your request to add ${days} to your regular schedule.`,
           data: { amendmentId: context.params.amendmentId },
-        }, `${after.caregiverName || 'Your care provider'} accepted your request to add ${days} to the schedule.`, { ...am, transitionType: 'amendment_accepted' });
+        }, oneDay
+          ? `${after.caregiverName || 'Your care provider'} accepted your request for an extra visit on ${dayLabel}.`
+          : `${after.caregiverName || 'Your care provider'} accepted your request to add ${days} to the schedule.`, { ...am, transitionType: 'amendment_accepted' });
       }
 
       // Declined → notify client
@@ -1001,6 +1013,17 @@ export const onShiftStatusChanged = functions.firestore
       const bookingSnap = await bookingRef.get();
       if (!bookingSnap.exists) return;
       if (bookingSnap.data()!.status !== 'accepted') return; // don't overwrite cancelled
+
+      // An ONGOING booking is never ended by its visits running out or one being cancelled (2026-11-09,
+      // Wave 2): create the next two weeks now and leave it accepted. A dated booking is completed only
+      // when there is nothing left to create. If visits cannot be created (frozen membership / locked care
+      // provider) the booking is left exactly as it is — those paths own that state.
+      const booking = bookingSnap.data()!;
+      const { extendBookingShifts } = await import('../scheduled/shiftGenerator');
+      const extended = await extendBookingShifts(bookingRequestId, booking);
+      if (extended.skipped) return;
+      if (extended.created > 0) return;
+      if (booking.schedule?.ongoing === true) return;
 
       await bookingRef.update({
         status: 'completed',

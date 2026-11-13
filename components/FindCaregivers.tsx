@@ -1,4 +1,5 @@
 import { serviceLabel } from './caregiver/signup/constants';
+import { swallow } from '../utils/reportError';
 import React, { useState, useEffect, useMemo } from 'react';
 import { billedHourlyRate } from '../utils/pricing';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -11,7 +12,7 @@ import {
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
 import { CareKind, CARE_KINDS, CARE_KIND_LABEL, kindsOfProvider, serviceListsForKinds } from './caregiver/signup/constants';
-import { formatExperience } from '../utils/experience';
+import { formatExperience, experienceYears } from '../utils/experience';
 import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
 import { nearestDistanceMiles } from '../hooks/useNearbyCaregiversWithScores';
@@ -95,7 +96,7 @@ export default function FindCaregivers() {
   const [sortBy, setSortBy] = useState<SortOption>('rating');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(searchParams.get('tab') === 'favorites');
   const { gate, Modals: GateModals } = useAccessGates();
-  const { blockedIds } = useCareConnex();
+  const { blockedIds, addToast } = useCareConnex();
   const [viewingCaregiver, setViewingCaregiver] = useState<Caregiver | null>(null);
   const [interviewCaregiver, setInterviewCaregiver] = useState<Caregiver | null>(null);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
@@ -176,7 +177,7 @@ export default function FindCaregivers() {
           );
           setBookedCaregiverIds(liveIds);
 
-          const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
+          const activeStatuses = new Set(['requested', 'pending', 'scheduled', 'accepted', 'confirmed']);
           const requestedIds = new Set<string>(
             interviewsSnap.docs
               .filter(d => activeStatuses.has(d.data().status))
@@ -196,7 +197,7 @@ export default function FindCaregivers() {
           );
           setRebookCaregiverIds(rebookIds);
         })
-        .catch(() => {});
+        .catch(swallow('FindCaregivers: background step 1'));
 
       // ── Collect all client care location lat/lngs in parallel ──
       const [postsSnap, jpDoc, cpDoc, spDoc] = await Promise.all([
@@ -471,14 +472,16 @@ export default function FindCaregivers() {
     return n;
   }, [nameQuery, maxRate, maxDistance, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages]);
 
-  const filteredCaregivers = useMemo(() => {
+  // The visible list for either tab. The tab counts below use the SAME rules, so "All (2)" can no longer sit beside
+  // "1 care provider found" (2026-11-11): both count what passes the filters.
+  const computeVisible = (favoritesOnly: boolean) => {
     // The service checkboxes collapse to the viewed kind; a tick outside it is ignored (Transportation sits under both).
     const visibleServices = new Set(serviceListsForKinds(viewKind ? [viewKind] : CARE_KINDS).flatMap(l => [...l.services]));
     const appliedSpecialties = new Set(Array.from(selectedSpecialties).filter(s => visibleServices.has(s)));
     let list = caregivers.filter(cg => {
       if (blockedIds.has(cg.id)) return false;
       if (viewKind && !cg.careKinds.includes(viewKind)) return false;
-      if (showFavoritesOnly && !favorites.includes(cg.id)) return false;
+      if (favoritesOnly && !favorites.includes(cg.id)) return false;
       // Distance filter — only applied when client has locations AND caregiver has coords
       if (cg.distance != null) {
         if (cg.distance > maxDistance) return false;
@@ -495,7 +498,7 @@ export default function FindCaregivers() {
       }
       if (maxRate < 100 && cg.hourlyRate > maxRate) return false;
       if (cg.rating < minRating) return false;
-      if ((cg.experience || 0) < minExperience) return false;
+      if (experienceYears(cg.experience) < minExperience) return false;
       if (appliedSpecialties.size > 0) {
         // Transportation counts only while it is live on the record (offered + driving record
         // clear) — the same rule that shows the pill, so the filter and the card agree (2026-10-06).
@@ -531,14 +534,36 @@ export default function FindCaregivers() {
         break;
     }
     return sorted;
-  }, [caregivers, blockedIds, favorites, showFavoritesOnly, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
+  };
+  const filteredCaregivers = useMemo(() => computeVisible(showFavoritesOnly), [showFavoritesOnly, caregivers, blockedIds, favorites, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
+  const allCount = useMemo(() => computeVisible(false).length, [caregivers, blockedIds, favorites, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
+  const favCount = useMemo(() => computeVisible(true).length, [caregivers, blockedIds, favorites, clientLocations, maxDistance, nameQuery, maxRate, minRating, minExperience, selectedSpecialties, viewKind, selectedLanguages, sortBy]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50">
         <ClientNavigation />
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+        {/* Placeholder cards in the shape of the results (2026-11-11: a blank page with a small spinner for 3+ seconds). */}
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8" role="status" aria-label="Loading care providers" data-testid="find-care-skeleton">
+          <div className="h-8 w-56 bg-slate-200 rounded mb-6 animate-pulse" />
+          <div className="grid sm:grid-cols-2 gap-5">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="bg-white rounded-2xl border border-slate-200 p-5 animate-pulse">
+                <div className="flex items-start gap-4 mb-5">
+                  <div className="w-20 h-20 rounded-full bg-slate-200 shrink-0" />
+                  <div className="flex-1 space-y-3 pt-1">
+                    <div className="h-5 bg-slate-200 rounded w-2/3" />
+                    <div className="h-3 bg-slate-100 rounded w-1/3" />
+                    <div className="h-3 bg-slate-100 rounded w-1/2" />
+                  </div>
+                </div>
+                <div className="h-3 bg-slate-100 rounded w-full mb-2" />
+                <div className="h-3 bg-slate-100 rounded w-5/6 mb-5" />
+                <div className="h-10 bg-slate-100 rounded-xl" />
+              </div>
+            ))}
+          </div>
+          <span className="sr-only">Loading care providers…</span>
         </div>
       </div>
     );
@@ -726,7 +751,7 @@ export default function FindCaregivers() {
                 : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
             }`}
           >
-            All ({caregivers.length})
+            All ({allCount})
           </button>
           <button
             onClick={() => setShowFavoritesOnly(true)}
@@ -737,7 +762,7 @@ export default function FindCaregivers() {
             }`}
           >
             <Heart className={`w-3.5 h-3.5 ${showFavoritesOnly ? 'fill-current' : ''}`} />
-            Favorites ({favorites.length})
+            Favorites ({favCount})
           </button>
 
           <button
@@ -871,13 +896,14 @@ export default function FindCaregivers() {
           } as any}
           jobPosts={clientOpenPosts}
           onClose={() => setInterviewCaregiver(null)}
-          onSuccess={() => {
+          onSuccess={(msg) => {
             if (interviewCaregiver) {
               setRequestedCaregiverIds(prev => new Set([...prev, interviewCaregiver.id]));
             }
+            addToast(msg, 'success');
             setInterviewCaregiver(null);
           }}
-          onShowToast={() => {}}
+          onShowToast={(msg, type) => addToast(msg, type)}
         />
       )}
 
@@ -970,7 +996,10 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
           </div>
           
           <div className="flex-1 min-w-0 pt-1 pr-10">
-            <h3 className="text-[22px] font-bold text-slate-900 group-hover:text-primary-600 transition-colors truncate mb-1 leading-tight">{fullName}</h3>
+            <h3 className="text-[22px] font-bold text-slate-900 group-hover:text-primary-600 transition-colors truncate mb-1 leading-tight">
+              {/* A real button (2026-11-11): the name is reachable by keyboard and screen readers, not only the photo/area. */}
+              <button type="button" onClick={(e) => { e.stopPropagation(); onViewProfile(); }} className="max-w-full truncate text-left hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded">{fullName}</button>
+            </h3>
             
             <div className="flex items-center gap-0.5 mb-2.5">
               {[...Array(5)].map((_, i) => (

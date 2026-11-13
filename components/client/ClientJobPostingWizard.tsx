@@ -7,6 +7,7 @@ import {
 import { AvatarUpload } from '../ui/AvatarUpload';
 import { evaluateServiceArea, OUT_OF_AREA_MESSAGE } from '../../utils/serviceArea';
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from '../../utils/contactDetails';
 import { resumeStepForDraft } from '../../utils/jobPostingDraftResume';
 import { dbService, createJobPosting, loadJobPostingDraft, saveJobPostingDraft } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -388,6 +389,11 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     if (isMedicationInstruction(form.jobDescription)) {
       setSaveError(MEDICATION_INSTRUCTION_MESSAGE);
       addToast(MEDICATION_INSTRUCTION_MESSAGE, 'error');
+      return;
+    }
+    if (containsContactDetails(form.jobDescription)) {
+      setSaveError(CONTACT_DETAILS_MESSAGE);
+      addToast(CONTACT_DETAILS_MESSAGE, 'error');
       return;
     }
     setSaving(true);

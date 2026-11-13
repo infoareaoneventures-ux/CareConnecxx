@@ -20,6 +20,11 @@ export interface AgentTurnMetrics {
   modelFallbackUsed?: boolean;
 }
 
+// The main reasoning call carries a large system prompt and tools, so it gets its own limit (2026-11-09, fix plan
+// Wave 2): it used the shared client's 10-second limit meant for the quick checks, which pushed many turns onto
+// the slower, costlier backup providers. 28 seconds; the providers behind it get the same.
+export const AGENT_TURN_TIMEOUT_MS = 28_000;
+
 export interface RunAgentModelTurnParams {
   system: unknown;
   tools: unknown;
@@ -52,7 +57,7 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
       tools:       tools as any,
       tool_choice: forceTextReply ? { type: "none" } : { type: "auto" },
       messages:    messages as any,
-    }, { timeoutMs: 15_000, maxAttempts: 1 });
+    }, { timeoutMs: AGENT_TURN_TIMEOUT_MS, maxAttempts: 1 });
 
   if (agentModel.provider !== "openai") {
     // Respect CARA_AGENT_MODEL on the Anthropic path too — but only when it
@@ -84,6 +89,7 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
       tools:      tools as any,
       toolChoice: forceTextReply ? "none" : "auto",
       messages:   messages as any,
+      timeoutMs:  AGENT_TURN_TIMEOUT_MS,
     });
   };
 
@@ -95,6 +101,7 @@ export async function runAgentModelTurn(params: RunAgentModelTurnParams): Promis
     tools:      tools as any,
     toolChoice: forceTextReply ? "none" : "auto",
     messages:   messages as any,
+    timeoutMs:  AGENT_TURN_TIMEOUT_MS,
   }).catch(async (err: unknown) => {
     // A successful fallback still hides a failing primary provider (e.g.
     // OpenAI credit exhaustion) from ops — raise the alert here, before

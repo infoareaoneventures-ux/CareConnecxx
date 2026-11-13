@@ -1,4 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { looksLikeEmail, EMAIL_FORMAT_MESSAGE } from '../../utils/emailFormat';
+import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
 import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, X } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
 import { submitAccountAction } from '../../services/accountActionQueue';
@@ -140,6 +143,7 @@ export const CaregiverAccountSettings: React.FC = () => {
 
   const saveEmail = async () => {
     if (!newEmailDraft.trim() || !currentUser?.uid) return;
+    if (!looksLikeEmail(newEmailDraft)) { addToast(EMAIL_FORMAT_MESSAGE, 'error'); return; }
     setSavingEmail(true);
     try {
       const r = await submitAccountAction<{ stage: 'awaiting_old_approval' | 'awaiting_new_confirm'; token: string; sentTo: string }>('request_email_change', { uid: currentUser.uid, newEmail: newEmailDraft.trim() });
@@ -147,7 +151,7 @@ export const CaregiverAccountSettings: React.FC = () => {
       setFallbackCodeSent(false);
       setFallbackCode('');
       setEmailRequestSent(true);
-    } catch { addToast('Failed to send the link', 'error'); }
+    } catch (e) { addToast(safeErrorMessage(e, 'Failed to send the link'), 'error'); } // the server's own reason when it gave one
     finally { setSavingEmail(false); }
   };
 
@@ -157,7 +161,7 @@ export const CaregiverAccountSettings: React.FC = () => {
     try {
       await submitAccountAction('resend_email_confirmation', { uid: currentUser.uid });
       addToast('Confirmation link sent — check your inbox (and Junk)', 'success');
-    } catch { addToast('Failed to send the link', 'error'); }
+    } catch (e) { addToast(safeErrorMessage(e, 'Failed to send the link'), 'error'); }
     finally { setSavingEmail(false); }
   };
 
@@ -238,28 +242,37 @@ export const CaregiverAccountSettings: React.FC = () => {
 
   const isPaused = !!pausedUntil && pausedUntil > new Date().toISOString();
 
+  // Optimistic (2026-11-11: the page sat on "Saving…" for ~10 seconds waiting for the server round trip even though the
+  // write itself is instant): the state flips and the confirmation shows at once; if the server refuses, it flips back
+  // and says so.
   const handleTogglePause = async () => {
     if (!currentUser?.uid) return;
+    const before = pausedUntil;
+    const wasPaused = isPaused;
+    const until = resumeDateDraft.trim() || undefined;
+    if (wasPaused) {
+      setPausedUntil(null);
+      addToast("You're active again — you'll start showing up for new matches.", 'success');
+    } else {
+      setPausedUntil(until || '2099-12-31');
+      setResumeDateDraft('');
+      addToast(
+        until
+          ? `Account paused — you'll automatically become active again on ${until}.`
+          : "Account paused — you won't be shown for new matches until you reactivate.",
+        'success'
+      );
+    }
     setTogglingPause(true);
     try {
-      if (isPaused) {
+      if (wasPaused) {
         await submitAccountAction('set_caregiver_pause_status', { uid: currentUser.uid, action: 'reactivate' });
-        setPausedUntil(null);
-        addToast("You're active again — you'll start showing up for new matches.", 'success');
       } else {
-        const until = resumeDateDraft.trim() || undefined;
         await submitAccountAction('set_caregiver_pause_status', { uid: currentUser.uid, action: 'pause', ...(until ? { until } : {}) });
-        setPausedUntil(until || '2099-12-31');
-        setResumeDateDraft('');
-        addToast(
-          until
-            ? `Account paused — you'll automatically become active again on ${until}.`
-            : "Account paused — you won't be shown for new matches until you reactivate.",
-          'success'
-        );
       }
-    } catch {
-      addToast(`Failed to ${isPaused ? 'reactivate' : 'pause'} your account. Please try again.`, 'error');
+    } catch (e) {
+      setPausedUntil(before);
+      addToast(safeErrorMessage(e, `Couldn't ${wasPaused ? 'reactivate' : 'pause'} your account. Please try again.`), 'error');
     } finally {
       setTogglingPause(false);
     }
@@ -272,6 +285,8 @@ export const CaregiverAccountSettings: React.FC = () => {
     if (!confirmed) { setDeletingAccount(false); return; }
     try {
       await authService.deleteUserAccount();
+      // Done: signed out, and a clear "your account was deleted" page instead of a screen stuck on "Deleting…".
+      window.location.assign('/account-deleted');
     } catch {
       deleteReauth.setError('Failed to delete account. Please try again.');
       setDeletingAccount(false);
@@ -621,6 +636,7 @@ export const CaregiverAccountSettings: React.FC = () => {
           </div>
           <div className="p-6 space-y-4">
             <p className="text-sm text-slate-600">This action is permanent and cannot be undone.</p>
+            <DeleteAccountConsequences role="caregiver" />
 
             {deleteStep === 'confirm' ? (
               <>

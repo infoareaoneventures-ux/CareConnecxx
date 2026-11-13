@@ -38,8 +38,8 @@
 // The checks are pure (`*Refusal` functions take loaded data) so they can be
 // tested without Firestore; the `startVisit` … `logHours` functions load, check
 // and write.
+import { careZoneOf, wallToInstantMs } from "../utils/careTime";
 import * as admin from "firebase-admin";
-import { parseScheduledTimeMs } from "../utils/scheduledTime";
 import { isShiftOverdue } from "../agents/shiftReschedule";
 import { checkCaregiverAccess, caregiverGateText, type CaregiverGateReason } from "../agents/caregiverAccessGate";
 import { fmtDate, fmtTime } from "../agents/caregiverBookingRequests";
@@ -98,7 +98,8 @@ export function finishFirstText(other: { clientName?: unknown } | null): string 
 }
 
 export function scheduledStartMs(shift: Doc): number {
-  return parseScheduledTimeMs(`${String(shift.date ?? "")}T${String(shift.startTime ?? "00:00").slice(0, 5)}:00`);
+  // The visit's own care-location zone (stamped on it; else its address's ZIP; else Pacific) — 2026-11-09.
+  return wallToInstantMs(String(shift.date ?? ""), String(shift.startTime ?? "00:00").slice(0, 5), careZoneOf(shift as Record<string, unknown>));
 }
 
 /** Minutes until the visit's scheduled start (negative once it has begun); null when the record has no usable time. */

@@ -492,6 +492,21 @@ describe("MCP tool smoke coverage", () => {
     });
   });
 
+  describe("the AI cannot approve its own high-risk action (Wave 1, 2026-11-09)", () => {
+    it("a _confirmedActionId for an action still AWAITING the user's YES is refused and the tool does not run", async () => {
+      // The stub used to hand the model this id; a model that echoed it back executed the action with no
+      // user reply. Only an action the user's own YES has claimed ("executing") may pass.
+      hoisted.docState.set("pending_actions/mine", {
+        phone: "+15550000000", toolName: "delete_memory_file", toolInput: { userId: "c1", file: "profile" },
+        status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z",
+      });
+      const r = await handleToolCall("delete_memory_file", { userId: "c1", file: "profile", phone: "+15550000000", _confirmedActionId: "mine" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("PERMISSION_DENIED");
+      expect(hoisted.docState.get("pending_actions/mine").status).toBe("awaiting"); // untouched: nothing resolved or executed it
+    });
+  });
+
   describe("consequential tool ledger", () => {
     it("records proposed and executed ledger entries for non-read-only tools", async () => {
       hoisted.docState.set("proactive_triggers/t1", { userId: "u1", message: "check in" });

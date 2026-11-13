@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { swallow } from '../../utils/reportError';
+import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { looksLikeEmail, EMAIL_FORMAT_MESSAGE } from '../../utils/emailFormat';
+import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
 import { recordActedForPerson } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -195,7 +199,7 @@ export const AccountSettings: React.FC = () => {
         }
 
         if (d.identityCheckStatus) setIdentityStatus(d.identityCheckStatus);
-      }).catch(() => {});
+      }).catch(swallow('AccountSettings: background step 1'));
     }
 
     // Membership status — mirrors Membership.tsx's own listener exactly
@@ -212,8 +216,9 @@ export const AccountSettings: React.FC = () => {
     try {
       await fn();
       addToast(successMsg, 'success');
-    } catch {
-      addToast('Something went wrong — please try again', 'error');
+    } catch (e) {
+      // The server's own reason when it gave one (2026-11-11: "Valid email required" came back and was dropped).
+      addToast(safeErrorMessage(e, 'Something went wrong — please try again'), 'error');
     } finally {
       setIsLoading(false);
     }
@@ -233,7 +238,7 @@ export const AccountSettings: React.FC = () => {
       await Promise.all([
         db!.collection('users').doc(user.uid).update({ photoURL: url }),
         db!.collection('senior_profiles').doc(user.uid).set({ imageUrl: url }, { merge: true }),
-        (user as any).updateProfile?.({ photoURL: url }).catch(() => {}),
+        (user as any).updateProfile?.({ photoURL: url }).catch(swallow('AccountSettings: background step 2')),
       ]);
       setPhotoURL(url);
       addToast('Profile photo updated', 'success');
@@ -266,6 +271,7 @@ export const AccountSettings: React.FC = () => {
   const handleRequestEmailChange = () => saving(async () => {
     const user = authService.getCurrentUser();
     if (!newEmailDraft.trim() || !user?.uid) return;
+    if (!looksLikeEmail(newEmailDraft)) throw new Error(EMAIL_FORMAT_MESSAGE);
     const r = await submitAccountAction<{ stage: 'awaiting_old_approval' | 'awaiting_new_confirm'; token: string; sentTo: string }>('request_email_change', { uid: user.uid, newEmail: newEmailDraft.trim() });
     setEmailChange(r);
     setFallbackCodeSent(false);
@@ -333,6 +339,8 @@ export const AccountSettings: React.FC = () => {
     if (!confirmed) { setDeletingAccount(false); return; }
     try {
       await authService.deleteUserAccount();
+      // Done: signed out, and a clear "your account was deleted" page instead of a screen stuck on "Deleting…".
+      window.location.assign('/account-deleted');
     } catch {
       deleteReauth.setError('Failed to delete account. Please try again.');
       setDeletingAccount(false);
@@ -774,6 +782,7 @@ export const AccountSettings: React.FC = () => {
             </div>
             <div className="p-6 space-y-4">
               <p className="text-sm text-slate-600">This action is permanent and cannot be undone.</p>
+            <DeleteAccountConsequences role="client" />
 
               {deleteStep === 'confirm' ? (
                 <>

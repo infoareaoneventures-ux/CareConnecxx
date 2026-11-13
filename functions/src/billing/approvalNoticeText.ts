@@ -4,6 +4,7 @@
 // (h:mm:ss), the scheduled window, base pay at the rate, each additional
 // charge, the total, and whether it auto-approves (and when) or needs the
 // family — same facts the page shows, nothing the page doesn't.
+import { careZoneOf, zoneSuffix } from "../utils/careTime";
 import { formatClockTime, formatDateWithWeekday, formatInterviewTimeShort } from "../utils/scheduledTime";
 import { serviceFeeCentsFor } from "./shiftBillingAmounts";
 import { SHIFT_PLATFORM_FEE_RATE } from "./config";
@@ -31,6 +32,8 @@ export interface ApprovalNoticePayload {
   requiresExplicitApproval?: boolean;
   outsideScheduledWindow?: boolean;
   autoApproveAt?: string | null;
+  /** The visit's care-location zone (2026-11-09); the clock times in the notice are shown in it. Absent = Pacific. */
+  timeZone?: string | null;
 }
 
 // fmtDuration on the page: h:mm:ss.
@@ -53,12 +56,13 @@ export function buildApprovalNoticeText(p: ApprovalNoticePayload): string {
   const lineItems = Array.isArray(p.lineItems) ? p.lineItems : [];
   const total = (Number(p.grossPayCents ?? 0) / 100).toFixed(2);
 
+  const tz = careZoneOf({ timeZone: p.timeZone });
   const lines: string[] = [`${caregiverName} submitted hours for ${dateLabel}:`];
   lines.push(Number.isFinite(startMs) && Number.isFinite(endMs)
-    ? `• Clock in ${formatClockTime(startMs)} → clock out ${formatClockTime(endMs)} (${fmtDuration(hours)})`
+    ? `• Clock in ${formatClockTime(startMs, tz)} → clock out ${formatClockTime(endMs, tz)}${zoneSuffix({ timeZone: p.timeZone }, endMs)} (${fmtDuration(hours)})`
     : `• ${fmtDuration(hours)} worked`);
   if (p.scheduledStartMs && p.scheduledEndMs) {
-    lines.push(`• Scheduled ${formatClockTime(p.scheduledStartMs)}–${formatClockTime(p.scheduledEndMs)}`);
+    lines.push(`• Scheduled ${formatClockTime(p.scheduledStartMs, tz)}–${formatClockTime(p.scheduledEndMs, tz)}${zoneSuffix({ timeZone: p.timeZone }, p.scheduledEndMs)}`);
   }
   lines.push(`• Base pay: ${fmtDuration(hours)} @ $${rate}/hr = $${basePay.toFixed(2)}`);
   lines.push(lineItems.length

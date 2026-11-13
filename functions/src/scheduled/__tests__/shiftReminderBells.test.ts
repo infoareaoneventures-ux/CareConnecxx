@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Caregiver sweep C11 (2026-10-11): the 30-minute and day-before visit reminders
 // had no bell. They are fixed strings (C12) and write their bell — in the page's
@@ -68,8 +68,13 @@ describe("the 30-minute reminder", () => {
 });
 
 describe("the day-before reminder", () => {
+  // 2026-11-09 (all U.S. zones): due once the VISIT's own clock reaches 7 PM the evening before. 04:00Z on 2099-02-11
+  // is 8 PM Pacific on 2099-02-10 (11 PM Eastern, 10 PM Central).
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2099-02-11T04:00:00Z")); });
+  afterEach(() => { vi.useRealTimers(); });
+
   it("fixed string → text, then the same sentence as the bell, only when the text went", async () => {
-    hoisted.visits.push({ id: "v3", caregiverId: "cg1", clientId: "fam1", startTime: "09:00", endTime: "12:00", address: "12 Elm St", careRecipients: [{ name: "H M" }] });
+    hoisted.visits.push({ id: "v3", date: "2099-02-11", caregiverId: "cg1", clientId: "fam1", startTime: "09:00", endTime: "12:00", address: "12 Elm St", careRecipients: [{ name: "H M" }] });
     await (sendDayBeforeShiftReminders as any)();
     expect(hoisted.sends[0].out).toMatchObject({ fixedString: true, canDrop: false, sourceAgent: "day_before_shift_reminder" });
     expect(hoisted.sends[0].out.content).toBe("Reminder: H M's visit tomorrow, Wednesday, February 11, 9:00 AM – 12:00 PM at 12 Elm St.");
@@ -77,9 +82,25 @@ describe("the day-before reminder", () => {
     expect(hoisted.updates[0]).toEqual({ id: "v3", d: { dayBeforeConfirmSent: true } });
     hoisted.sends.length = 0; hoisted.bells.length = 0; hoisted.visits.length = 0;
     hoisted.sendResult.value = false;
-    hoisted.visits.push({ id: "v4", caregiverId: "cg1", clientId: "fam1", startTime: "09:00", careRecipients: [{ name: "H M" }] });
+    hoisted.visits.push({ id: "v4", date: "2099-02-11", caregiverId: "cg1", clientId: "fam1", startTime: "09:00", careRecipients: [{ name: "H M" }] });
     await (sendDayBeforeShiftReminders as any)();
     expect(hoisted.sends).toHaveLength(1);
     expect(hoisted.bells).toHaveLength(0);
+  });
+
+  it("an Eastern visit is reminded at ITS 7 PM and the time carries its zone name; a Pacific one waits until its own 7 PM", async () => {
+    vi.setSystemTime(new Date("2099-02-11T00:30:00Z")); // 7:30 PM Eastern, 4:30 PM Pacific on the 10th
+    hoisted.visits.push({ id: "ve", date: "2099-02-11", timeZone: "America/New_York", caregiverId: "cg1", clientId: "fam1", startTime: "09:00", endTime: "12:00", careRecipients: [{ name: "H M" }] });
+    hoisted.visits.push({ id: "vp", date: "2099-02-11", caregiverId: "cg1", clientId: "fam1", startTime: "09:00", careRecipients: [{ name: "P P" }] });
+    await (sendDayBeforeShiftReminders as any)();
+    expect(hoisted.sends).toHaveLength(1);
+    expect(hoisted.sends[0].out.content).toBe("Reminder: H M's visit tomorrow, Wednesday, February 11, 9:00 AM – 12:00 PM ET.");
+  });
+
+  it("a visit two days out, or one already reminded, is left alone", async () => {
+    hoisted.visits.push({ id: "v9", date: "2099-02-12", caregiverId: "cg1", clientId: "fam1", startTime: "09:00", careRecipients: [{ name: "H M" }] });
+    hoisted.visits.push({ id: "v8", date: "2099-02-11", dayBeforeConfirmSent: true, caregiverId: "cg1", clientId: "fam1", startTime: "09:00", careRecipients: [{ name: "H M" }] });
+    await (sendDayBeforeShiftReminders as any)();
+    expect(hoisted.sends).toHaveLength(0);
   });
 });

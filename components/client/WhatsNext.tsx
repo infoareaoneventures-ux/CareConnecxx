@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Check,
   Heart,
@@ -89,57 +89,114 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
     loading,
   } = useOnboardingProgress(uid);
 
-  const hasAutoPosted = useRef(false);
+  // The job post is published ONLY when the family presses "Post this job" (Wave 1, 2026-11-09). It used to
+  // be created here the moment identity and membership were done — the family had just clicked "Looks good" on
+  // their care plan and a public post went out, and nearby care providers were texted, with nothing saying so.
+  // Now this effect only finds the saved answers; the card below shows what will be shared and waits.
+  const [draftPost, setDraftPost] = useState<any | null>(null);
+  const [postState, setPostState] = useState<'idle' | 'posting' | 'posted' | 'error' | 'dismissed'>('idle');
 
   useEffect(() => {
     if (loading || !identityVerified || !membershipActive) return;
-    if (hasAutoPosted.current) return;
     if (!db) return;
-
-    // Check if a job post already exists before creating one
+    let cancelled = false;
+    // Only offer a post when none exists yet.
     db.collection('job_posts').where('clientId', '==', uid).limit(1).get().then(snap => {
-      if (!snap.empty) return;
-      hasAutoPosted.current = true;
+      if (cancelled || !snap.empty) return;
       db!.collection('job_postings').doc(uid).get().then(postingSnap => {
-        if (!postingSnap.exists) return;
-        const w = postingSnap.data() as any;
-        const city = w.city || '';
-        const state = w.state || '';
-        dbService.createJobPost({
-          title: defaultJobTitle(city, kindsOfServices(w.careNeeds || [], w.careKinds)),
-          description: w.jobDescription || 'Looking for a caring and reliable care provider.',
-          careTypes: w.careNeeds || [],
-          careKinds: kindsOfServices(w.careNeeds || [], w.careKinds),
-          ...((() => {
-            // One stage per child (2026-10-18): the roster's per-child stages; the older household list only as a fallback.
-            const roster = [{ relationship: w.relationship, careKind: w.careRecipientCareKind, ageRange: w.careRecipientAgeRange }, ...((w.additionalRecipients || []) as any[])];
-            const stages = stagesOfRecipients(roster);
-            const legacy = Array.isArray(w.ageRanges) ? (w.ageRanges as string[]) : [];
-            const ids = stages.length ? stages : legacy;
-            return ids.length && kindsOfServices(w.careNeeds || [], w.careKinds).includes('child') ? { ageRanges: ids } : {};
-          })()),
-          requirements: w.careNeeds || [],
-          startDate: w.startDate || new Date().toISOString().split('T')[0],
-          city,
-          state,
-          zipCode: w.zipCode || '',
-          location: [city, state].filter(Boolean).join(', '),
-          streetAddress: w.street || '',
-          timeOfDay: w.timeOfDay || [],
-          daysOfWeek: w.selectedDays || [],
-          rate: w.rate || 0,
-          rateFlexible: !w.rate,
-          // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every
-          // job is paid by card now. This used to default to 'cash', the
-          // opposite of every other write path's 'credit' default, which
-          // meant a job could silently go out cash-only if Evia's free-form
-          // intake loop completed without ever asking about payment method.
-          paymentMethod: 'credit',
-          careLevel: w.careLevel || 'moderate',
-        }, uid).catch(() => {});
+        if (cancelled || !postingSnap.exists) return;
+        setDraftPost(postingSnap.data());
       }).catch(() => {});
     }).catch(() => {});
+    return () => { cancelled = true; };
   }, [uid, loading, identityVerified, membershipActive]);
+
+  const publishDraft = () => {
+    const w = draftPost as any;
+    if (!w || postState === 'posting') return;
+    setPostState('posting');
+    const city = w.city || '';
+    const state = w.state || '';
+    dbService.createJobPost({
+      title: defaultJobTitle(city, kindsOfServices(w.careNeeds || [], w.careKinds)),
+      description: w.jobDescription || 'Looking for a caring and reliable care provider.',
+      careTypes: w.careNeeds || [],
+      careKinds: kindsOfServices(w.careNeeds || [], w.careKinds),
+      ...((() => {
+        // One stage per child (2026-10-18): the roster's per-child stages; the older household list only as a fallback.
+        const roster = [{ relationship: w.relationship, careKind: w.careRecipientCareKind, ageRange: w.careRecipientAgeRange }, ...((w.additionalRecipients || []) as any[])];
+        const stages = stagesOfRecipients(roster);
+        const legacy = Array.isArray(w.ageRanges) ? (w.ageRanges as string[]) : [];
+        const ids = stages.length ? stages : legacy;
+        return ids.length && kindsOfServices(w.careNeeds || [], w.careKinds).includes('child') ? { ageRanges: ids } : {};
+      })()),
+      requirements: w.careNeeds || [],
+      startDate: w.startDate || new Date().toISOString().split('T')[0],
+      city,
+      state,
+      zipCode: w.zipCode || '',
+      location: [city, state].filter(Boolean).join(', '),
+      streetAddress: w.street || '',
+      timeOfDay: w.timeOfDay || [],
+      daysOfWeek: w.selectedDays || [],
+      rate: w.rate || 0,
+      rateFlexible: !w.rate,
+      // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every
+      // job is paid by card now. This used to default to 'cash', the
+      // opposite of every other write path's 'credit' default, which
+      // meant a job could silently go out cash-only if Evia's free-form
+      // intake loop completed without ever asking about payment method.
+      paymentMethod: 'credit',
+      careLevel: w.careLevel || 'moderate',
+    }, uid).then(() => setPostState('posted')).catch(() => setPostState('error'));
+  };
+
+  // The explicit step: what will be shared, who sees it, and one clearly labelled button.
+  const postCard = (() => {
+    if (!draftPost || postState === 'dismissed') return null;
+    const w = draftPost as any;
+    const where = [w.city, w.state].filter(Boolean).join(', ');
+    const needs: string[] = Array.isArray(w.careNeeds) ? w.careNeeds.slice(0, 4) : [];
+    if (postState === 'posted') {
+      return (
+        <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800" role="status">
+          Your job is posted. Care providers near {where || 'you'} can see it now.
+        </div>
+      );
+    }
+    return (
+      <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="Post your job">
+        <h3 className="text-base font-bold text-slate-900">Your job isn't posted yet</h3>
+        <p className="mt-1 text-sm text-slate-600">
+          Posting shows it to care providers near {where || 'you'}, and they get a text and a notification about it. Care providers browsing jobs can read what's below. Your street address and contact details are not shown.
+        </p>
+        <dl className="mt-3 grid gap-1 text-sm text-slate-700">
+          {where && <div className="flex gap-2"><dt className="font-semibold">Where:</dt><dd>{where}</dd></div>}
+          {needs.length > 0 && <div className="flex gap-2"><dt className="font-semibold">Help with:</dt><dd>{needs.join(', ')}</dd></div>}
+          {w.rate ? <div className="flex gap-2"><dt className="font-semibold">Rate:</dt><dd>${w.rate}/hr</dd></div> : null}
+          {w.jobDescription && <div className="flex gap-2"><dt className="font-semibold">Details:</dt><dd className="min-w-0 break-words">{String(w.jobDescription).slice(0, 240)}</dd></div>}
+        </dl>
+        {postState === 'error' && <p className="mt-3 text-sm text-red-600" role="alert">We couldn't post it. Please try again.</p>}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={publishDraft}
+            disabled={postState === 'posting'}
+            className="inline-flex items-center justify-center rounded-full bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60"
+          >
+            {postState === 'posting' ? 'Posting…' : 'Post this job'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPostState('dismissed')}
+            className="text-sm font-semibold text-slate-500 hover:text-slate-700"
+          >
+            Not yet
+          </button>
+        </div>
+      </section>
+    );
+  })();
 
   if (loading) return null;
 
@@ -152,10 +209,13 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
   if (allDone) {
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     return (
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Good {tod}, {firstName}!</h1>
-        <p className="text-sm text-slate-500 mt-0.5">{today}</p>
-      </div>
+      <>
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-slate-900">Good {tod}, {firstName}!</h1>
+          <p className="text-sm text-slate-500 mt-0.5">{today}</p>
+        </div>
+        {postCard}
+      </>
     );
   }
   const activeDef = !allDone ? STEP_DEFS.find((s) => s.id === currentStep) : null;
@@ -203,6 +263,8 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
   const fillPct = Math.min(100, (activeIdx / segments) * 100);
 
   return (
+    <>
+    {postCard}
     <section
       className={`relative mb-6 overflow-hidden rounded-3xl bg-gradient-to-br ${gradientClass} p-6 md:p-8 shadow-xl shadow-primary-600/20`}
       aria-label="Onboarding progress"
@@ -227,7 +289,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
             <p className="mt-1 text-sm text-primary-50/90">
               {allDone
                 ? 'Your care coordinator is here if you need anything.'
-                : `You're ${completedCount} of ${STEP_DEFS.length} steps away from care.`}
+                : completedCount >= STEP_DEFS.length - 1 ? `1 step away from care.` : `${completedCount} of ${STEP_DEFS.length} steps done.`}
             </p>
           </div>
           {!allDone && (
@@ -339,5 +401,6 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
         )}
       </div>
     </section>
+    </>
   );
 };

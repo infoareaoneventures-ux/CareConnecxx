@@ -14,9 +14,9 @@ export const CaregiverVerificationBadges: React.FC<Props> = ({ verified: _verifi
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <div className="w-9 h-9 rounded-full bg-blue-500 flex flex-col items-center justify-center text-white pt-1" title="Background check complete">
-        <CheckCircle className="w-4 h-4 mb-0.5" />
-        <span className="text-[7px] font-bold leading-none tracking-wider uppercase">BGC+</span>
+      <div className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2.5 py-1 text-xs font-semibold text-blue-700" title="Background check complete">
+        <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
+        <span>Background checked</span>
       </div>
     </div>
   );

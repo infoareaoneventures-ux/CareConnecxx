@@ -40,6 +40,8 @@ export interface ChatRoom {
   createdAt: any;
   deletedAt?: { [uid: string]: any };
   messagesCutoff?: { [uid: string]: any };
+  /** Set server-side when the other person deleted their account: the conversation is read-only ("no longer on Evia"). */
+  closedReason?: 'account_deleted';
 }
 
 export interface Message {

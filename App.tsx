@@ -1,4 +1,5 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
+import { useToasts } from './context/ToastContext';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { ViewType } from './types';
 
@@ -46,6 +47,7 @@ const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
 const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
 const BgcheckConsentPage  = lazy(() => import('./components/pages/BgcheckConsentPage'));
 const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
+const AccountDeletedPage  = lazy(() => import('./components/pages/AccountDeletedPage'));
 const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
 const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
 const RequestAccountRecoveryPage = lazy(() => import('./components/pages/RequestAccountRecoveryPage'));
@@ -183,8 +185,9 @@ const AppContent: React.FC = () => {
   const location = useLocation();
   const {
     isLoading, authResolved, authRecovery, retryAuth, signOutFromRecovery,
-    toasts, removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen,
+    removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen,
   } = useCareConnex();
+  const toasts = useToasts(); // the toast list lives in its own provider (context/ToastContext.tsx)
 
   const [viewingCaregiver, setViewingCaregiver] = useState<any>(null);
 
@@ -325,6 +328,7 @@ const AppContent: React.FC = () => {
           <Route path="/bgcheck"            element={<BgcheckConsentPage />} />
           <Route path="/bgcheck-direct"     element={<BgcheckConsentPage />} />
           <Route path="/done"               element={<GenericSuccessPage />} />
+          <Route path="/account-deleted"    element={<AccountDeletedPage />} />
           {/* Signup routes redirect into the unified phone-first onboarding at /start.
               The role= query param selects between the senior-friendly family mode and
               the leaner caregiver mode. See components/auth/onboarding/OnboardingFlow.tsx. */}

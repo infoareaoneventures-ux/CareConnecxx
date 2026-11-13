@@ -15,6 +15,7 @@
 // The shift record is the only source: shifts.tasksCompleted (the caregiver
 // pages' checkboxes, keyed `${ri}_${category}` / `${ri}_${category}_${sub}`),
 // shifts.notesLog (append-only `{ at, text, by }` lines), shifts.completionNotes.
+import { careZoneOf, zoneSuffix } from "../utils/careTime";
 import * as admin from "firebase-admin";
 import { formatClockTime, formatDateWithWeekday } from "../utils/scheduledTime";
 
@@ -118,7 +119,7 @@ export function buildVisitCompletionText(shift: Record<string, unknown>): string
   const startMs = toMs(shift.startedAt);
   const endMs = toMs(shift.completedAt) || Date.now();
   const when = Number.isFinite(startMs) && Number.isFinite(endMs)
-    ? ` (${formatClockTime(startMs)}–${formatClockTime(endMs)}, ${fmtDuration((endMs - startMs) / 3_600_000)})`
+    ? ` (${formatClockTime(startMs, careZoneOf(shift))}–${formatClockTime(endMs, careZoneOf(shift))}${zoneSuffix(shift, endMs)}, ${fmtDuration((endMs - startMs) / 3_600_000)})`
     : "";
   const dateLabel = shift.date ? ` on ${formatDateWithWeekday(String(shift.date))}` : "";
   // Four sections separated by a blank line (founder, 2026-09-18): header,

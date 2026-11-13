@@ -1,4 +1,8 @@
 import { serviceLabel, ageRangeLabel, kindsOfPost, serviceListsForKinds, CARE_KINDS, CARE_KIND_LABEL, CareKind } from './signup/constants';
+import { swallow } from '../../utils/reportError';
+import { JOB_PAYMENT_TEXT, isPastJob } from '../../utils/jobDisplay';
+import { localDateStr } from '../../utils/shiftUtils';
+import { formatExperience } from '../../utils/experience';
 import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -188,7 +192,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
         db.collection('job_posts').where('status', '==', 'open').get().then(snap => {
             const all = snap.docs.map(d => normalizeJobPost({ id: d.id, ...d.data() }));
             setHiddenJobs(all.filter(j => hiddenJobIds.has(j.id)));
-        }).catch(() => {}).finally(() => setHiddenJobsLoading(false));
+        }).catch(swallow('JobBoard: background step 1')).finally(() => setHiddenJobsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, hiddenKey]);
 
@@ -359,7 +363,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
             void recordActedForPerson('interview_accepted', 'accepted an interview');
-            onShowToast('Interview accepted', 'success');
+            // Move to the Accepted view so the card is still in sight (2026-11-11: Accept removed the card from the
+            // current view and left an empty list with no message), and say what happens next.
+            setIvFilter('accepted');
+            onShowToast('Interview accepted. You can find it under Accepted, and Evia will text you the call link before it starts.', 'success');
         } catch {
             onShowToast('Failed to accept interview', 'error');
         } finally {
@@ -548,8 +555,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
         setFilterKind(null);
     };
 
+    const todayStr = localDateStr(new Date());
     const filteredJobs = jobs.filter(job => {
         if (blockedIds.has(job.clientId)) return false;
+        // A job dated before today is not takeable (2026-11-11: the list showed August–September jobs in November).
+        if (isPastJob(job as any, todayStr)) return false;
         const q = searchQuery.toLowerCase();
         if (q && !(
             (job.title ?? '').toLowerCase().includes(q) ||
@@ -872,12 +882,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                     <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full">
                                                         {rateLabel(job)}
                                                     </span>
-                                                    {job.paymentMethod && (
-                                                        <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-1">
-                                                            {job.paymentMethod === 'credit' ? <CreditCard className="w-3 h-3" /> : <Banknote className="w-3 h-3" />}
-                                                            via {job.paymentMethod}
-                                                        </p>
-                                                    )}
+                                                    <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-1">
+                                                        <CreditCard className="w-3 h-3" />
+                                                        {JOB_PAYMENT_TEXT}
+                                                    </p>
                                                 </div>
                                             </div>
 
@@ -1132,6 +1140,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                 );
                             })}
                         </div>
+                        {visibleInterviews.filter(iv => ivFilter === 'all' || iv.status === ivFilter).length === 0 && (
+                            <div className="text-center py-8 text-slate-500" data-testid="interviews-empty-filter">
+                                <p className="text-sm">No {ivFilter} interviews right now.</p>
+                                <button type="button" onClick={() => setIvFilter('all')} className="mt-2 text-sm font-semibold text-primary-600 hover:underline">Show all interviews</button>
+                            </div>
+                        )}
                         <div className="space-y-3">
                             {visibleInterviews.filter(iv => ivFilter === 'all' || iv.status === ivFilter).map(iv => {
                                 const date = new Date(iv.scheduledAt);
@@ -1622,7 +1636,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                 <div className="bg-[var(--color-neutral-50)] p-4 rounded-xl">
                                     <h4 className="font-medium text-[var(--color-neutral-900)] mb-2">Your Profile</h4>
                                     <div className="text-sm text-[var(--color-neutral-600)] space-y-1">
-                                        <p><span className="text-[var(--color-neutral-400)]">Experience:</span> {profile?.experience ?? 0} years</p>
+                                        <p><span className="text-[var(--color-neutral-400)]">Experience:</span> {formatExperience(profile?.experience, 'Not set')}</p>
                                         {(profile?.rating != null) && (
                                             <p><span className="text-[var(--color-neutral-400)]">Rating:</span> {Number(profile.rating).toFixed(1)} ⭐</p>
                                         )}

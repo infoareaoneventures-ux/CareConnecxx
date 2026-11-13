@@ -24,9 +24,9 @@
 // checks isBackOutRequest (stepHandler.ts) FIRST, ahead of isQuestionOrOther,
 // so "never mind"/"cancel this" clears the flow immediately at ANY step, not
 // only at the recap.
+import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
-import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
@@ -70,13 +70,7 @@ const IV_DIDNT_CATCH = "Sorry, I'm not sure I followed.";
 
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
-    const response = await getSharedClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      system:     prompt + "\nReply with ONLY the requested value or format — no explanation, no extra text, no questions. Never invent information the user's message doesn't contain.",
-      messages:   [{ role: "user", content: userText }],
-    });
-    const parsed = ((response.content[0] as { text: string }).text ?? "").trim();
+    const parsed = await flowParseCall(prompt + "\nReply with ONLY the requested value or format — no explanation, no extra text, no questions. Never invent information the user's message doesn't contain.", userText, 200);
     if (parsed) {
       const guard = caraOutputGuardEnabled() ? guardModelOutput(parsed) : { ok: true as const };
       if (!guard.ok) {
@@ -120,11 +114,7 @@ async function answerQuestionMidFlow(text: string, caregiverName: string): Promi
   // message, never the rest of the conversation — including anything Evia
   // herself said earlier. Must never claim something was/wasn't mentioned
   // before, and must not force an out-of-scope question into interview terms.
-  const response = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 100,
-    system:
-      CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family set up an interview with a care provider named " +
+  const answer = await flowAnswerCall(CARE_PROVIDER_TERM_RULE + " " + "You are Evia, a care coordinator helping a family set up an interview with a care provider named " +
       `${caregiverName}. You see ONLY this one message, not the rest of the conversation — including anything ` +
       "Evia herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. " +
       "If the message is clearly about something OTHER than finishing this interview request — a different topic " +
@@ -132,10 +122,7 @@ async function answerQuestionMidFlow(text: string, caregiverName: string): Promi
       "what it's about. Instead say plainly that it'll have to wait, e.g. \"That sounds like something else — " +
       "let's finish this first, and I'll help with that right after.\" Otherwise answer their actual question " +
       "about this interview briefly (1–2 sentences). Be warm and helpful. NEVER write out a URL or web address, " +
-      "and never claim a video call link exists yet — it doesn't until the care provider confirms.",
-    messages: [{ role: "user", content: text }],
-  });
-  const answer = ((response.content[0] as { text: string }).text ?? "").trim();
+      "and never claim a video call link exists yet — it doesn't until the care provider confirms.", text, 100);
   if (answer && caraOutputGuardEnabled() && !guardModelOutput(answer).ok) return IV_MIDFLOW_FALLBACK;
   return answer;
 }

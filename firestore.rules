@@ -201,7 +201,19 @@ service cloud.firestore {
       
       // CRITICAL FIX: Allow authenticated users to create their own caregiver profile during signup
       // This must come before the update rule to ensure create is not blocked
-      allow create: if isAuthenticated() && request.auth.uid == caregiverId;
+      // Fix plan (2026-11-14): a new record may not carry any field only the server or the team sets. Before this,
+      // create accepted any fields, so a caregiver could create their own record already verified, paid and cleared.
+      allow create: if isAdmin() || (
+        isAuthenticated() && request.auth.uid == caregiverId
+        && !request.resource.data.keys().hasAny([
+          'verified', 'backgroundCheckStatus', 'verificationStatus', 'status',
+          'membershipStatus', 'membershipPaid', 'clearedForFamilies', 'nameLocked',
+          'stripeAccountId', 'chargesEnabled', 'payoutsEnabled', 'detailsSubmitted',
+          'stripeOnboardingComplete', 'stripeOnboardingCompletedAt',
+          'emailVerified', 'emailVerifiedAt', 'emailVerifiedFor', 'emailConfirmSentFor',
+          'isApprovedDriver', 'mvrPaid', 'mvrReportId', 'mvrStatus'
+        ])
+      );
       
       // Allow caregivers to update their own document
       // Caregivers CAN set verificationStatus to 'submitted' to submit for review
@@ -406,9 +418,13 @@ service cloud.firestore {
         resource == null || request.auth.uid in resource.data.participants || isAdmin()
       );
 
-      // Participants or admin can update (lastMessage, unreadCount, etc.)
+      // Participants or admin can update (lastMessage, unreadCount, etc.). A participant can never
+      // set or clear the closure (closedReason / closedAt / closedBy — written server-side when an
+      // account is deleted, 2026-11-09): only the admin SDK or an admin touches those.
       allow update: if isAuthenticated() && (
-        request.auth.uid in resource.data.participants || isAdmin()
+        (request.auth.uid in resource.data.participants
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['closedReason', 'closedAt', 'closedBy']))
+        || isAdmin()
       );
 
       // Any authenticated user can create a room they're part of; admin can create any room.
@@ -431,9 +447,11 @@ service cloud.firestore {
           || isAdmin()
         );
 
-        // Participants or admin can write messages
+        // Participants or admin can write messages — but not into a conversation closed because
+        // the other person deleted their account (closedReason), which nobody will read.
         allow write: if isAuthenticated() && (
-          request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+          (request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants
+            && get(/databases/$(database)/documents/chatRooms/$(roomId)).data.get('closedReason', null) == null)
           || isAdmin()
         );
       }

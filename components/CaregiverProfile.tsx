@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { containsContactDetails, CONTACT_DETAILS_MESSAGE } from '../utils/contactDetails';
 import {
   ChevronLeft, Star, Loader2,
   CheckCircle, MapPin, Car, AlertCircle
@@ -253,6 +254,8 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                   onSave={() => {
                     // ONE bio rule with the wizard and Evia (founder, 2026-10-19): required, no minimum, the box's cap.
                     if (!editBio.trim()) { onShowToast('Please write a few words about yourself', 'error'); return; }
+                    // No phone, email or link in a public bio (2026-11-09) — the same line on every door.
+                    if (containsContactDetails(editBio)) { onShowToast(CONTACT_DETAILS_MESSAGE, 'error'); return; }
                     saveSection({ bio: editBio.trim(), languages: editLanguages });
                   }}
                 />

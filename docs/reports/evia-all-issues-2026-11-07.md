@@ -890,3 +890,13 @@ Passed: "I'm a care provider" now starts the profile setup; care provider setup 
 - [ ] **Linq delivery receipts rejected ("invalid signature")** — needs the second signing secret set in the functions env (`LINQ_WEBHOOK_SECRET_2`, or `LINQ_WEBHOOK_SECRETS` comma-separated); not a code change
 - [ ] **Replies take 30–90 seconds, and the text handler logged one 60 s Firestore timeout** — investigate after deploying the fixes
 - [ ] **Early answers to later family-intake questions are re-asked** — not changed
+
+### Live text test, round 3 (Nov 14, 2026, after PR #9 deployed)
+
+Verified live: "Can you reschedule the interview please" on an account with no interview → "I don't see any interviews on file right now, so there's nothing for me to reschedule yet." (the founders' bug is fixed); replies now arrive in about 30–40 seconds.
+
+- [x] **Setting up an interview with a care provider the family booked on the website fails: "I couldn't find that care provider to interview"** — _Fixed in code Nov 14 (not yet deployed): the name lookup was limited to care providers Evia had "shown" by text; it now also covers the family's own booked visits, booking requests and interviews._
+- [x] **A failed flow start led to a human handoff and then silence** — _Fixed in code Nov 14 (not yet deployed): when a flow tool fails but has already told the family, the model's follow-up text is discarded (it was judged "unsupported", which handed the family to a human and muted Evia for them). The test account was unmuted by hand (`agent_sessions/+15055281528` `humanMode.on` = false)._
+- [ ] **The interview flow asks the day and time before it knows who the care provider is** — the care provider is resolved last, so a wrong or missing name wastes two answers.
+- [ ] **One text turn cost $0.32** (the interview turn: `costUsd: 0.318525`, 1 tool call, 52 output tokens) — check the prompt size / model for the agent tier.
+- [ ] **After a handoff to a human, Evia says nothing to the person's next message** — by design (human mode), but there is no "a teammate has this" reply for follow-ups, so the person just waits.

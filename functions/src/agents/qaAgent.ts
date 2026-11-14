@@ -75,6 +75,7 @@ import {
   isHandoffActive,
   handoffRoomNote,
   groundingOverrideForTurn,
+  neutralizeHandoffTurns,
 } from "./humanHandoff";
 import {
   classifyGroundingClaims,
@@ -304,11 +305,11 @@ export async function getConversationHistory(
     return [
       { role: "user",      content: `Earlier conversation summary, sanitized as user-authored data: ${summaryText}` },
       { role: "assistant", content: "Got it - I have context from our earlier conversations." },
-      ...messages,
+      ...neutralizeHandoffTurns(messages),
     ];
   }
 
-  return messages;
+  return neutralizeHandoffTurns(messages);
 }
 
 // 2026-07-22 incident: side-channel answer paths (memory query, flow
@@ -840,7 +841,7 @@ export function buildClientSystemPrompt(
     `  · start_review_flow — the website's Leave a Review modal as a scripted text flow (overall stars, optional category ratings, a 10–250 character review, would-you-recommend, recap, YES to post). Use when the family wants to review or rate a care provider; pass rating only if THIS message states a star count. Eligibility (a completed visit with them, one review per care provider) is checked by the flow — do not pre-judge it. It texts the first question itself: send nothing else that turn.`,
     `  · start_correction_flow — FIXING A TIMESHEET (non-negotiable): the moment the family says a submitted clock-in/out, hours or pay is wrong, or wants an additional charge (mileage, supplies…) changed or removed ("can you change the clock in time", "she left at 10:30", "the hours are off", "change the mileage charge to $10"), call this with initialText = their message. It is the Timesheets "Review submitted hours" modal step for step — it asks the proposed clock-in and clock-out, an optional reason, recaps the proposed total, and only on YES sends the correction (care provider has 24h to accept or counter). When a COUNTER is waiting it offers exactly the modal's two choices, ACCEPT or ESCALATE. Never collect the times yourself, never call review_shift_hours with propose_correction for a family's ask — this tool already texts them; send nothing else that turn.`,
     `  · get_notifications — the website's bell as data (newest first, unread count, and for each the page it opens). Use for "what's new", "what was that notification", or "clear my notifications" (action mark_all_read); mark_read / delete take a notificationId from the list. Chat messages are not in the bell — use get_recent_messages for those.`,
-    `  · contact_support — REACHING A PERSON (non-negotiable): the moment the family asks for a human, a person, support, a manager, or to complain about you — or raises a safety worry about a care provider, an accusation, or a dispute you cannot settle — call this with their words as message. It is the website's "Message our team" button: the team is alerted and replies are texted back here. Then say, in one line, that the team has it and will reply here by text. Never promise a time, never pretend to be the team, never keep arguing the point.`,
+    `  · contact_support — REACHING A PERSON (non-negotiable): the moment the family asks for a human, a person, support, a manager, or to complain about you — or raises a safety worry about a care provider, an accusation, or a dispute you cannot settle — call this with their words as message. It is the website's "Message our team" button: the team is alerted and replies are texted back here. Then say, in one line, that the team has it and will reply here by text. Never promise a time, never pretend to be the team, never keep arguing the point. ONLY for what THIS message says: an earlier hand-off in the conversation, a repeated message, or a request you could not finish before are NOT reasons to call it — answer the request with your tools (live bug 2026-11-14: after one hand-off, four ordinary interview requests each went to the team and muted the thread).`,
     `  · MONEY RULE (2026-09-19): a care provider's rate is theirs to keep — 100%. The family pays the rate PLUS Evia's 9% service fee, charged to their card when hours are approved (there is a $1 minimum — mention it only when it actually applied to a small visit, or when asked what the fee is). Quote it the way the site shows it: a rate as "$25/hr, plus the 9% service fee — about $27.25/hr billed to you"; a visit amount as care provider total, service fee, charged to your card (the tools return all three). The 9% covers payment processing and coordinating the visit; never describe it as protection, never mention refunds or insurance. Membership ($29.95/month) is separate and covers the platform.`,
     `  · review_shift_hours — the Timesheets review modal, action for action: approve the hours as submitted; propose_correction with BOTH a corrected start and end (the care provider then accepts or counters within 24h) — to drop an additional charge, pass lineItems without it, exactly like removing a charge in the modal (keep the times as submitted if only the charge is wrong); and after a counter, accept_counter or escalate to Evia's team. Always show the row (get_pending_timesheets) and get a clear yes before approving — approving releases payment.`,
     `  · get_membership_page — the website's Membership page exactly: plan card ($29.95/month), active or not, next billing date, or the end date once a cancel is scheduled, and that state's buttons. Any question about the membership starts here. To add a card / pick a plan → send_onboarding_link (payment); to update the card or see invoices → get_payment_update_link (the page's Manage button).`,
@@ -1713,6 +1714,12 @@ export async function runQaAgent(params: {
       message:  "Held thread received a follow-up message while awaiting a teammate.",
       context:  { text: safeText.slice(0, 300) },
     }).catch(() => {});
+    // The person's next message used to get nothing at all. One short line per hold (not one per message, so the hold
+    // is never re-texted and the self-repeat guard stays quiet) tells them a teammate has it (2026-11-14).
+    if (!skipSend && (session as unknown as Record<string, unknown> | undefined)?.handoffHeldAckSent !== true) {
+      await sendSplit(chatId, HUMAN_HANDOFF_HELD_COPY).catch(() => {});
+      db.collection("agent_sessions").doc(phone).set({ handoffHeldAckSent: true }, { merge: true }).catch(() => {});
+    }
     return skipSend ? HUMAN_HANDOFF_HELD_COPY : "";
   }
 
@@ -3747,6 +3754,7 @@ export async function runQaAgent(params: {
           handedToHuman:       true,
           handedToHumanAt:     handoffIso,
           handedToHumanReason: "low_confidence_unbacked_claim",
+          handoffHeldAckSent:  false,
         }, { merge: true }).catch(() => { /* non-critical */ });
         // 2026-10-22: the same flag the admin's "Hand to human" sets — Evia goes quiet for this
         // person and they show in the admin's "Needs a human" list until the team hands back.

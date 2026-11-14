@@ -3657,11 +3657,26 @@ async function executeToolCall(
         });
         if (!result.started) {
           if (result.reason === "no_visits") {
+            // The family may mean an INTERVIEW (the word "reschedule" is shared). Look them up here, in code, and hand
+            // them back, so the answer never rests on the model choosing the right tool (live bug 2026-11-14: "reschedule
+            // the interview" got "I don't see any upcoming scheduled visits").
+            const ivRows = await listClientInterviews(clientId as string).catch(() => [] as Awaited<ReturnType<typeof listClientInterviews>>);
+            const movable = ivRows.filter((r) => r.displayStatus === "pending" || r.displayStatus === "accepted");
+            const interviews = movable.slice(0, 5).map((r) => ({
+              interviewId: r.interviewId, careProvider: r.caregiverName, when: r.scheduledTimeLocal ?? r.scheduledTime, status: r.displayStatus,
+            }));
+            if (movable.length) {
+              return {
+                success: false, reason: "no_visits_but_interviews", nothingSent: true, interviews,
+                instruction: "The family has NO scheduled visits, but they DO have the interview(s) listed in `interviews`. If they asked to reschedule / move / change \"the interview\", use reschedule_interview with the interviewId " +
+                  "(if more than one could be meant, ask which care provider; if they have not given a new day and time, ask for them first). Never tell them there is nothing to reschedule, and never say it is done until reschedule_interview returns success.",
+              };
+            }
             return {
-              success: false, reason: "no_visits", nothingSent: true,
-              instruction: "The family has NO scheduled visits, so there is nothing to reschedule and NOTHING was texted. " +
-                "If they were actually asking about an INTERVIEW: to set up a NEW one call start_interview_flow now; to move / reschedule one they already have, call list_interviews and then reschedule_interview (ask the family for the new day and time if they have not said). Do NOT say there is nothing to reschedule when they have an interview. " +
-                `Otherwise tell them once, in your own words: ${result.message ?? "there are no upcoming scheduled visits to move."}`,
+              success: false, reason: "no_visits", nothingSent: true, interviews: [],
+              instruction: "The family has NO scheduled visits and NO scheduled interviews, so there is nothing to reschedule and NOTHING was texted. " +
+                "If they were actually asking to set up a NEW interview with a care provider, call start_interview_flow now. " +
+                "Otherwise tell them once, in plain words, what they asked about has nothing to move: if they said interview, \"you don't have an interview scheduled right now\"; if they said visit, \"you don't have an upcoming scheduled visit\" (a visit still waiting on a care provider's acceptance or a replacement can't be rescheduled yet).",
             };
           }
           return {

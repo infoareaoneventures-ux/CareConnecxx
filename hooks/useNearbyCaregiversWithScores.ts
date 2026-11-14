@@ -106,7 +106,8 @@ interface Result {
 }
 
 export function useNearbyCaregiversWithScores(uid: string | null, options: Options = {}): Result {
-  const { maxDistance = 25, limit = 6 } = options;
+  // 50 miles = the farthest a care provider can choose to travel; their own travel distance is checked separately.
+  const { maxDistance = 50, limit = 6 } = options;
   const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
   const [clientLocations, setClientLocations] = useState<{ lat: number; lng: number }[]>([]);
   const [loading, setLoading] = useState(true);

@@ -152,7 +152,7 @@ export const MCP_TOOLS: McpTool[] = [
       "The website's Find Care Providers page (Find Care), exactly: the same care provider pool, the same filter panel and " +
       "the same sort. Call it ANY time a family asks to see, browse or find care providers — browsing is not gated on " +
       "identity or membership (only Message / Request Interview are, and those tools gate themselves). Filters mirror " +
-      "the page: query (name, city or zip search box), maxDistanceMiles (slider, default 25), maxHourlyRate (slider, " +
+      "the page: query (name, city or zip search box), maxDistanceMiles (slider, default 50), maxHourlyRate (slider, " +
       "default 75; 100 = no cap), minRating (Any/3/4/4.5), minExperienceYears (Any/1/3/5/10), transportationOnly (the Specialties › Transportation box: care providers whose Transportation is live — offered and driving record clear), specialties (any of), languages " +
       "(any of), sortBy (rating = Highest rated, the default; price-low; price-high), favoritesOnly (the Favorites tab). " +
       "Every care provider shown is already background-check cleared — never ask the family whether they want that. " +
@@ -167,7 +167,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         clientId:           { type: "string", description: "The client's user ID" },
         query:              { type: "string", description: "The page's search box — matches name, city, state or zip." },
-        maxDistanceMiles:   { type: "number", description: "Distance slider (default 25)." },
+        maxDistanceMiles:   { type: "number", description: "Distance slider (default 50)." },
         maxHourlyRate:      { type: "number", description: "Max rate slider (default 75; 100 or more = no cap)." },
         minRating:          { type: "number", description: "Rating pills: 3, 4 or 4.5 (omit for Any)." },
         minExperienceYears: { type: "number", description: "Experience: 1, 3, 5 or 10 (omit for Any)." },
@@ -373,7 +373,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_reschedule_flow",
     description:
-      "THE way to move an existing scheduled visit to a different day/time (the website's own Reschedule button on " +
+      "THE way to move an existing scheduled VISIT (paid care at the home — never an interview; for an interview use list_interviews + reschedule_interview) to a different day/time (the website's own Reschedule button on " +
       "My Bookings > Active Bookings > UPCOMING SHIFTS): starts Evia's scripted flow, which reads the family's REAL " +
       "upcoming scheduled visits fresh from the database (never from memory), asks which one if more than one could " +
       "be meant, asks the new day + start/end time if not already given, checks it doesn't overlap another visit " +
@@ -2319,7 +2319,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "reschedule_interview",
     description:
-      "Propose a new date/time for an already-scheduled interview (status requested or accepted) — the SAME " +
+      "THE way a family or care provider moves an interview ('reschedule the interview', 'move my interview with Imran'): call list_interviews first to get the interviewId, then this. Propose a new date/time for an already-scheduled interview (status requested or accepted) — the SAME " +
       "interview record, no cancellation, no new doc, same video call link. Matches the website's own Reschedule / " +
       "Propose different time button exactly. This only PROPOSES the new time — the real scheduled time does not " +
       "change until the other party confirms via accept_interview_reschedule. Use this instead of cancelling and " +
@@ -3660,7 +3660,7 @@ async function executeToolCall(
             return {
               success: false, reason: "no_visits", nothingSent: true,
               instruction: "The family has NO scheduled visits, so there is nothing to reschedule and NOTHING was texted. " +
-                "If they were actually asking to set up / schedule an INTERVIEW with a care provider (not to move a visit), call start_interview_flow now. " +
+                "If they were actually asking about an INTERVIEW: to set up a NEW one call start_interview_flow now; to move / reschedule one they already have, call list_interviews and then reschedule_interview (ask the family for the new day and time if they have not said). Do NOT say there is nothing to reschedule when they have an interview. " +
                 `Otherwise tell them once, in your own words: ${result.message ?? "there are no upcoming scheduled visits to move."}`,
             };
           }

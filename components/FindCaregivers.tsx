@@ -117,7 +117,8 @@ export default function FindCaregivers() {
   // Filters
   const [nameQuery, setNameQuery] = useState('');
   const [maxRate, setMaxRate] = useState(75);
-  const [maxDistance, setMaxDistance] = useState(25);
+  // Default 50 = the farthest a care provider can choose to travel; each provider's own travel distance still applies below.
+  const [maxDistance, setMaxDistance] = useState(50);
   const [minRating, setMinRating] = useState(0);
   const [minExperience, setMinExperience] = useState(0);
   const [selectedSpecialties, setSelectedSpecialties] = useState<Set<string>>(new Set());
@@ -457,7 +458,7 @@ export default function FindCaregivers() {
   const clearAllFilters = () => {
     setNameQuery('');
     setMaxRate(75);
-    setMaxDistance(25);
+    setMaxDistance(50);
     setMinRating(0);
     setMinExperience(0);
     setSelectedSpecialties(new Set());
@@ -470,7 +471,7 @@ export default function FindCaregivers() {
     let n = 0;
     if (nameQuery) n++;
     if (maxRate < 75 || maxRate >= 100) n++;
-    if (maxDistance !== 25) n++;
+    if (maxDistance !== 50) n++;
     if (minRating > 0) n++;
     if (minExperience > 0) n++;
     n += selectedSpecialties.size;

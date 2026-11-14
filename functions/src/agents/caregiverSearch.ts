@@ -9,7 +9,7 @@
 //
 //   pool     publicCaregiverProfiles where onboardingStatus == profile_complete,
 //            kept only when isCaregiverBookable (verificationStatus approved)
-//   filters  blocked users, Favorites tab, distance (default 25 mi, and the
+//   filters  blocked users, Favorites tab, distance (default 50 mi, and the
 //            caregiver's own serviceRadius), name/city/state/zip search, max
 //            rate (default $75, 100 = no cap), rating (Any/3+/4+/4.5+),
 //            experience (Any/1+/3+/5+/10+), Background checked only,
@@ -37,7 +37,7 @@ export type CaregiverSortOption = "rating" | "price-low" | "price-high";
 export interface CaregiverSearchFilters {
   /** Name / city / state / zip search box. */
   query?: string;
-  /** Distance slider — page default 25 mi. Applied only when the family has a location and the caregiver has coordinates. */
+  /** Distance slider — page default 50 mi (the farthest a care provider can choose to travel). Applied only when the family has a location and the caregiver has coordinates. */
   maxDistanceMiles?: number;
   /** Max rate slider — page default $75/hr; 100 or more means no cap. */
   maxHourlyRate?: number;
@@ -126,7 +126,7 @@ export async function gatherClientLocations(clientId: string): Promise<Array<{ l
 export async function searchCaregivers(clientId: string, input: CaregiverSearchFilters = {}): Promise<CaregiverSearchResult> {
   const filters = {
     ...input,
-    maxDistanceMiles:   typeof input.maxDistanceMiles === "number" && input.maxDistanceMiles > 0 ? input.maxDistanceMiles : 25,
+    maxDistanceMiles:   typeof input.maxDistanceMiles === "number" && input.maxDistanceMiles > 0 ? input.maxDistanceMiles : 50,
     maxHourlyRate:      typeof input.maxHourlyRate === "number" && input.maxHourlyRate > 0 ? input.maxHourlyRate : 75,
     minRating:          typeof input.minRating === "number" ? input.minRating : 0,
     minExperienceYears: typeof input.minExperienceYears === "number" ? input.minExperienceYears : 0,

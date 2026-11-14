@@ -857,3 +857,15 @@ Passed: sign-in with test numbers on both sides; booking and visit list; cancell
 - [x] **Escape doesn't close the profile window.** — _Fixed in code Nov 14 (not yet deployed)_
 - [x] **Duplicate schedule change requests** — _Leftover test data, not a bug_ — two identical "Schedule change request" cards (Tue 10–1, from Nov 19) sit in Requests on both sides.
 - [ ] **Old test timesheet still Under Review** (Nov 7, $2.37) — approving it would charge a card, left alone.
+
+### Live text test over Call.com (Nov 14, 2026, after the PR #7 deploy)
+
+Family number +1 505-528-1528 (existing complete account), care provider number +1 505-441-6156 (new). Evia's replies take 30-90 seconds.
+
+- [x] **A new care provider cannot sign up by text: "I'm a care provider" is never recognised** — _Fixed in code Nov 14 (not yet deployed). Cause: the Oct 12 rename "caregiver → care provider" changed the role question's prompt to answer "care provider" but the code still compared against "caregiver", so every cold-text provider got "Just so I point you the right way…" forever, even when answering in Evia's own words. Since Oct 12 only providers who started on the website could register. Mapper in `agents/roleAnswer.ts`, tested._
+- [x] **"Reschedule the interview" is answered with "I don't see any upcoming scheduled visits"** — _Still reproduced on the live PR #7 code; follow-up fix in code Nov 14 (not yet deployed): when there are no visits the tool now looks up the family's interviews itself and hands them back._
+- [ ] **A provider who texted first and then used the website sign-up stays stuck at the role question** — the website hand-off does not replace a stale text session; the new "Hey Evia" after verifying the phone got the role question again.
+- [ ] **Firestore timeouts in the text handler** — at 09:04Z the webhook logged "Total timeout of API google.firestore.v1.Firestore exceeded 60000 milliseconds"; each turn took 30-90 seconds.
+- [ ] **Delivery receipts still rejected as "invalid signature"** (message.sent / message.delivered) — the Linq signing secret is still the single configured one.
+
+Passed: first-contact consent (both numbers), "what can you help me with", "do I have interviews" ("No interviews are coming up right now" — correct), website sign-up: name + email, phone code arrives and verifies, hand-off page shows Evia's number.

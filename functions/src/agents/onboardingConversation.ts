@@ -35,6 +35,7 @@ import { evaluateServiceArea } from "../config/serviceArea";
 import { lookupZipPlace } from "../utils/geocode";
 import { isMedicationInstruction as isMedicationInstructionText, MEDICATION_INSTRUCTION_MESSAGE as MEDICATION_INSTRUCTION_TEXT } from "../utils/medicationInstruction";
 import { formatExperience } from "./caregiverProfilePage";
+import { normalizeRoleAnswer } from "./roleAnswer";
 import {
   runFamilyIntakeTurn, nextFamilyStep, familyQuestion, effectiveFamilyData, isFamilyScriptStep,
   readRoster, dataFromRoster, rosterFromData, describeRoster, type FamilyIntakeDeps,
@@ -1542,7 +1543,7 @@ async function findConflictingRoleAccount(
 }
 
 async function handleAskRole(phone: string, chatId: string, text: string, session?: AgentSession): Promise<void> {
-  const raw = await parseWithClaude(
+  const rawAnswer = await parseWithClaude(
     'The user was just asked: "Are you looking for care for a loved one, or are you a care provider yourself?" ' +
     'client = they need care for a LOVED ONE (someone else): "1", "family", "need care", "looking for care", ' +
     '"care for my mom/dad/parent/wife/husband", "for my loved one". ' +
@@ -1555,6 +1556,7 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     'Reply with exactly one word: client, self, or care provider. If truly unclear, reply: unclear',
     text
   );
+  const raw = normalizeRoleAnswer(rawAnswer);
   const emotionalDirective = (session as any)?._emotionalDirective as string | undefined;
 
   const claimedRole: "client" | "caregiver" | null =

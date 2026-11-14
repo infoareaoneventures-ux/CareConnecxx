@@ -2047,6 +2047,8 @@ export const CaregiverBookingsPage: React.FC = () => {
   const handleAcceptAmendment = async (amendment: BookingAmendment) => {
     const fdb = db;
     if (!fdb) return;
+    // Accepting adds visits to the schedule and tells the family; it used to apply on the first click (2026-11-14 test).
+    if (!window.confirm('Accept this request? The visits will be added to your schedule and the family will be told.')) return;
     try {
       // ONE write: the acceptance. The visits (28-day window from the start
       // date, an ongoing change merged into the booking's schedule, the

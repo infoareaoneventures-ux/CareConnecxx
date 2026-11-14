@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosResponse } from "axios";
+import { splitForSms, curlyQuotes } from "../utils/smsChunks";
 import * as admin from "firebase-admin";
 import { randomUUID } from "crypto";
 import { supervise, SuperviseContext } from "../safety/supervisor";
@@ -577,6 +578,11 @@ export async function sendMessage(
   }
 }
 
+// Gaps between the bubbles of ONE logical message. Over plain SMS each bubble is its own message; too short a gap and
+// they arrive out of order.
+const CHUNK_GAP_MS = 1500;
+const LINK_GAP_MS = 1500;
+
 async function sendMessageDeliver(
   chatId: string,
   textOrMessage: string | LinqMessage,
@@ -648,32 +654,43 @@ async function sendMessageDeliver(
       return r;
     }
 
-    const { textOnly, urls } = splitTextAndUrls(textOrMessage);
+    const { textOnly: rawTextOnly, urls } = splitTextAndUrls(curlyQuotes(textOrMessage));
+    const textOnly = rawTextOnly;
 
     if (urls.length === 0) {
-      const msg: LinqMessage = { parts: [{ type: "text", value: textOrMessage }], ...svc };
-      const r = await sendOneMessage(chatId, msg);
-      await recordHistoryOnce();
-      await trackForcedIMessage(r.message_id, chatId, msg);
-      await registerProviderPart(r.message_id);
-      return r;
+      // A long text goes out as several bubbles, split by us at a line / sentence boundary and sent one at a time
+      // with a pause, so over SMS they arrive whole and in order (utils/smsChunks.ts).
+      const chunks = splitForSms(curlyQuotes(textOrMessage));
+      let first: { message_id: string } | null = null;
+      for (let i = 0; i < Math.max(chunks.length, 1); i++) {
+        if (i > 0) await new Promise<void>((res) => setTimeout(res, CHUNK_GAP_MS));
+        const msg: LinqMessage = { parts: [{ type: "text", value: chunks[i] ?? curlyQuotes(textOrMessage) }], ...svc };
+        const r = await sendOneMessage(chatId, msg);
+        if (i === 0) { await recordHistoryOnce(); first = r; }
+        await trackForcedIMessage(r.message_id, chatId, msg);
+        await registerProviderPart(r.message_id);
+      }
+      return first as { message_id: string };
     }
 
     let firstId = "";
 
     // 1. Send the narrative text first (if anything remains after URL strip)
     if (textOnly) {
-      const msg: LinqMessage = { parts: [{ type: "text", value: textOnly }], ...svc };
-      const r = await sendOneMessage(chatId, msg);
-      // First part delivered — record the FULL mirror text once; the link
-      // bubbles below are part of the same logical message.
-      await recordHistoryOnce();
-      firstId = r.message_id;
-      await trackForcedIMessage(r.message_id, chatId, msg);
-      await registerProviderPart(r.message_id);
-      // Small delay so the link cards arrive AFTER the text bubble, not raced
-      // ahead of it by Linq's pipeline.
-      await new Promise<void>((res) => setTimeout(res, 600));
+      const chunks = splitForSms(textOnly);
+      for (let i = 0; i < Math.max(chunks.length, 1); i++) {
+        if (i > 0) await new Promise<void>((res) => setTimeout(res, CHUNK_GAP_MS));
+        const msg: LinqMessage = { parts: [{ type: "text", value: chunks[i] ?? textOnly }], ...svc };
+        const r = await sendOneMessage(chatId, msg);
+        // First part delivered — record the FULL mirror text once; the link
+        // bubbles below are part of the same logical message.
+        if (i === 0) { await recordHistoryOnce(); firstId = r.message_id; }
+        await trackForcedIMessage(r.message_id, chatId, msg);
+        await registerProviderPart(r.message_id);
+      }
+      // A pause so the link cards arrive AFTER the text bubble, not raced ahead of it by Linq's pipeline or the
+      // carrier (2026-11-14, live: the upload link arrived BEFORE the sentence introducing it over SMS).
+      await new Promise<void>((res) => setTimeout(res, LINK_GAP_MS));
     }
 
     // 2. One dedicated link-part message per URL — Linq fetches OG metadata
@@ -681,7 +698,7 @@ async function sendMessageDeliver(
     // preferred_service is propagated to every follow-up so a forced protocol is
     // not silently dropped after the first bubble.
     for (let i = 0; i < urls.length; i++) {
-      if (i > 0) await new Promise<void>((res) => setTimeout(res, 600));
+      if (i > 0) await new Promise<void>((res) => setTimeout(res, LINK_GAP_MS));
       const msg: LinqMessage = { parts: [{ type: "link", value: urls[i] }], ...svc };
       const r = await sendOneMessage(chatId, msg);
       await recordHistoryOnce(); // no-op if the textOnly part already recorded

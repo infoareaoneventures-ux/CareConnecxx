@@ -743,6 +743,19 @@ const handleInboundInner = traceable(
 
   if (!phone || !chatId) return;
 
+  // An iMessage sender with no phone number arrives as an email address (live text test 2026-11-14: an Apple ID
+  // email). Evia's accounts are keyed by a verified phone number and Firebase refuses an email as one
+  // (auth/invalid-phone-number), so such a sender could finish the questions and then be sent an identity link that
+  // led nowhere. Say so once, plainly, instead.
+  if (phone.includes("@")) {
+    const seen = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
+    if (!seen?.exists || !(seen.data() as { emailHandleNoticeSent?: boolean } | undefined)?.emailHandleNoticeSent) {
+      await sendMessage(chatId, "Hi, I'm Evia. I can only set up accounts for a phone number, and your message came from an email address. Could you text me from your phone number instead? You can also start at eviacares.com.");
+      await db.collection("agent_sessions").doc(phone).set({ emailHandleNoticeSent: true }, { merge: true }).catch(() => {});
+    }
+    return;
+  }
+
   // ALLOWLIST: remove before public launch
   if (!isPhoneAllowed(phone)) return;
 
@@ -876,7 +889,11 @@ const handleInboundInner = traceable(
     const existingWebRef  = db.collection("web_onboarding_sessions").doc(phone);
     const existingWebSnap = await existingWebRef.get().catch(() => null);
     const webAwaiting = existingWebSnap?.exists === true && existingWebSnap.data()?.status === "awaiting_inbound";
-    if (webAwaiting && stored.optedIn === false && stored.onboardingStep === "cold_awaiting_consent") {
+    // A person who texted first, said YES and then used the website sign-up is still parked at the role question
+    // (live text test 2026-11-14: after verifying the phone on /start and texting "Hey Evia" they got the role
+    // question again and were asked their name and email a second time). Their website answers are seeded the same way.
+    const parkedAtRoleQuestion = stored.onboardingStep === "ask_role" && !stored.userType;
+    if (webAwaiting && ((stored.optedIn === false && stored.onboardingStep === "cold_awaiting_consent") || parkedAtRoleQuestion)) {
       restartViaWebBridge = true; // the web bridge below flips the tab, seeds the name/email, greets, asks the first question
     } else if (webAwaiting) {
       const bridgeUid = (existingWebSnap.data()?.uid as string | undefined) ?? stored.userId ?? null;

@@ -1900,21 +1900,29 @@ export async function sendUploadLinkIfBlocked(
   const next = missingRequiredFields("caregiver", data)[0];
   if (next !== "profilePhoto") return false;
   if (opts.toolCallsThisTurn?.includes("send_onboarding_link")) return false;
-  const linkType = "caregiver_photo" as const;
-  const { runSendOnboardingLinkAction } = await import("./actions/sendOnboardingLinkAction");
-  const result = await runSendOnboardingLinkAction(
-    { phone, linkType },
-    { caller: "webhook", role: "caregiver", phone },
-  ).catch((err) => {
-    console.error("sendUploadLinkIfBlocked: send failed", err instanceof Error ? err.message : err);
-    return null;
-  });
-  if (!result) return false;
-  if (result.throttled) {
-    const mins = result.minutesSinceLastSend ?? 1;
+  // The photo link goes out here directly, as ONE message (text, then the link bubble after a pause), not through the
+  // idempotent send_onboarding_link action: that action's duplicate guard answered a REPEAT request ("skip", "can I do
+  // it later") with sent:true and sent nothing, so the family-visible text said "here's your link" with no link
+  // (live-caught 2026-11-14 over Call.com), and its separate link bubble landed BEFORE the sentence introducing it.
+  const { checkGateLinkThrottle, stampGateLinkResentIfParked } = await import("./gateLinkCooldown");
+  const throttle = await checkGateLinkThrottle(phone, "caregiver_photo").catch(() => ({ throttled: false } as { throttled: boolean; minutesSinceLastSend?: number }));
+  if (throttle.throttled) {
+    const mins = throttle.minutesSinceLastSend ?? 1;
     await sendMessage(chatId, `That link already went out about ${mins} minute${mins === 1 ? "" : "s"} ago — give it a moment to arrive. Still nothing? Just say so and I'll resend it.`);
-  } else if (result.sent) {
-    await sendMessage(chatId, "Here's your secure upload link — tap it to add a photo, that helps families choose you.");
+    return true;
+  }
+  const repeat = typeof data.photoLinkSentAt === "string" && data.photoLinkSentAt.length > 0;
+  const url = `${APP_URL}/upload/photo?t=${generateToken({ phone, task: "photo_upload" })}`;
+  const lead = repeat
+    ? "I do need a profile photo to finish your profile — it's what families choose from, and it takes 30 seconds. Here's your secure upload link:"
+    : "Here's your secure upload link — tap it to add a photo, that helps families choose you.";
+  try {
+    await sendMessage(chatId, `${lead} ${url}`);
+    await mergeOnboardingData(phone, { photoLinkSentAt: new Date().toISOString() });
+    await stampGateLinkResentIfParked(phone, "caregiver_photo").catch(() => {});
+  } catch (err) {
+    console.error("sendUploadLinkIfBlocked: send failed", err instanceof Error ? err.message : err);
+    return false;
   }
   return true;
 }
@@ -3129,7 +3137,9 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
       cancelUrl: `${APP_URL}/start`,
       includeMVR: mvrCharged,
     });
-    checkoutUrl = stripeSession.url ?? checkoutUrl;
+    // The care provider's checkout goes out as the branded /pay link, like the family's: the raw checkout.stripe.com
+    // address unfurled as a card titled "Something went wrong" (live text test 2026-11-14).
+    checkoutUrl = stripeSession.url ? await createBrandedLink("pay", stripeSession.url, phone) : checkoutUrl;
   } catch (err) {
     // Same class as handleClientSendPayment: the fallback URL still goes out
     // (inline text via the transport's card-safety rule), but ops must know a
@@ -4080,7 +4090,7 @@ export async function sendOnboardingLink(
           cancelUrl: `${APP_URL}/start`,
           includeMVR: mvrCharged,
         });
-        url = stripeSession.url ?? url;
+        url = stripeSession.url ? await createBrandedLink("pay", stripeSession.url, phone) : url;
       }
       await updateSession(phone, { membershipCheckoutUrl: url, membershipCheckoutCreatedAt: new Date().toISOString() });
       break;

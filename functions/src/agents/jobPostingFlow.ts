@@ -1,4 +1,5 @@
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
+import { billedHourly } from "./caregiverProfilePage";
 import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -1052,6 +1053,13 @@ async function handleJpAskDays(
   }
   await mergeJobData(phone, { jobDays: days });
   if (await resumeAfterEdit(phone, chatId, session)) return;
+  // "Mon, Wed, Fri mornings" answers the next question too (live text test 2026-11-14: the time of day was dropped and
+  // asked again).
+  const sameMessageTimes = await readJobTimesOfDay(text).catch(() => [] as string[]);
+  if (sameMessageTimes.length > 0) {
+    await finishJobTimeStep(phone, chatId, session, sameMessageTimes);
+    return;
+  }
   await updateJobStep(phone, "jp_ask_time");
   await sendMessage(chatId,
     `${days.length === 7 ? "Every day" : days.join(", ")} — perfect! What time of day works best — ` +
@@ -1070,26 +1078,33 @@ async function handleJpAskTime(
     await sendMessage(chatId, REASK);
     return;
   }
+  const times: string[] = await readJobTimesOfDay(text);
+  if (times.length === 0) {
+    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    return;
+  }
+  await finishJobTimeStep(phone, chatId, session, times);
+}
+
+/** The time-of-day words in a message as day-parts, read by the model ("mornings", "2" …); empty when none is stated. */
+async function readJobTimesOfDay(text: string): Promise<string[]> {
   const raw = await parseWithClaude(
     'Extract time-of-day preferences as a JSON array. ' +
     '"1" or morning or am or 6am → "morning". ' +
     '"2" or afternoon or pm or noon → "afternoon". ' +
     '"3" or evening or night → "evening". ' +
     '"4" or overnight or graveyard → "overnight". ' +
-    'Return a JSON array with one or more of: morning, afternoon, evening, overnight. ' +
+    'Return a JSON array with one or more of: morning, afternoon, evening, overnight. If the message states no time of day, return []. ' +
     'Return only the JSON array.',
     text
   );
-  let times: string[] = [];
-  const parsedTimes = parseJsonLoose(raw, "handleJpAskTime");
-  if (Array.isArray(parsedTimes)) {
-    const valid = ["morning", "afternoon", "evening", "overnight"];
-    times = parsedTimes.filter((t: string) => valid.includes(t));
-  }
-  if (times.length === 0) {
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
-    return;
-  }
+  const parsedTimes = parseJsonLoose(raw, "readJobTimesOfDay");
+  if (!Array.isArray(parsedTimes)) return [];
+  const valid = ["morning", "afternoon", "evening", "overnight"];
+  return parsedTimes.filter((t: string) => valid.includes(t));
+}
+
+async function finishJobTimeStep(phone: string, chatId: string, session: AgentSession, times: string[]): Promise<void> {
   const timeLabel = times.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(" & ");
   await mergeJobData(phone, { jobTimeOfDay: times });
   if (await resumeAfterEdit(phone, chatId, session)) return;
@@ -1530,14 +1545,14 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
   const stages    = childrenOnPost(recipients).filter((r) => r.ageRange).map((r) => `${r.firstName} · ${ageRangeLabel(r.ageRange as string)}`);
   const ages      = stages.length ? stages : (Array.isArray(jobData.ageRanges) ? (jobData.ageRanges as string[]) : []).map(ageRangeLabel);
   const rate      = (jobData.jobHourlyRate as number)   ?? 0;
-  const payMethod = (jobData.jobPaymentMethod as string) ?? "card";
   const pets      = (jobData.petsInHome       as boolean) ? "yes" : "no";
   const smoking   = (jobData.smokingHousehold  as boolean) ? "yes" : "no";
   const desc      = (jobData.jobDescription as string) ?? "";
   const title     = (jobData.jobTitle as string) ?? "";
 
   const freqLabel: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
-  const rateLabel  = rate > 0 ? `$${rate}/hr` : "Flexible";
+  // The billed amount is shown with the rate, as the site's rate step does (live text test 2026-11-14: the recap said "Rate: $27/hr (card)").
+  const rateLabel  = rate > 0 ? `$${rate}/hr ($${billedHourly(rate).toFixed(2)}/hr billed, includes the 9% service fee)` : "Flexible";
   const daysLabel  = days.length > 0 ? days.join(", ") : "TBD";
   const timesLabel = times.length > 0
     ? times.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(" & ")
@@ -1566,7 +1581,7 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
     `Care needs: ${needsLabel}`,
     kindBadge ? `Care: ${kindBadge}` : "",
     ages.length ? `${STAGE_HEADING}: ${ages.join(", ")}` : "",
-    `Rate: ${rateLabel} (${payMethod})`,
+    `Rate: ${rateLabel}`,
     `Pets: ${pets} | Smoking: ${smoking}`,
     desc ? `"${desc}"` : "",
   ].filter(Boolean).join("\n");

@@ -3094,9 +3094,19 @@ export async function runQaAgent(params: {
             metrics.toolCalls = (metrics.toolCalls ?? 0) + 1;
             (metrics.toolNames ??= []).push(block.name);
             iterationToolCalls += 1;
+            // A flow that FAILED to start but already told the family why (its result says "has already been told")
+            // is just as self-sending: the model's own follow-up text was judged unsupported by the grounding gate and
+            // handed the family to a human, who then got no further replies (live text test 2026-11-14, interview
+            // with a care provider Evia had not "shown" by text).
             if (
               SELF_SENDING_FLOW_STARTS.has(block.name)
-              && (result as { success?: boolean })?.success === true
+              && (
+                (result as { success?: boolean })?.success === true
+                || (
+                  (result as { success?: boolean })?.success === false
+                  && /already been told|already texted/i.test(String((result as { instruction?: unknown })?.instruction ?? ""))
+                )
+              )
             ) {
               selfSendingFlowStartedThisTurn = true;
             }

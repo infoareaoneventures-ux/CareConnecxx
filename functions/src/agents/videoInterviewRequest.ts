@@ -118,19 +118,38 @@ export async function resolveCaregiverForInterview(
   // hits this path — it always passes a real id) also fails closed.
   if (!caregiverSnap.exists && caregiverId.includes(" ") && phone) {
     const sessSnap = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
-    const shownIds = ((sessSnap?.data()?.shownCaregiverIds as string[] | undefined) ?? []).slice(0, 30);
+    // The care providers this family has actually been shown by text, PLUS the ones they already have a relationship
+    // with on the site (booked visits, booking requests, interviews): a provider booked on the website was never
+    // "shown" by text, so "an interview with Test Provider" failed with "couldn't find that care provider" (live text
+    // test 2026-11-14). Still only this family's own people, never a platform-wide name match.
+    const idSet = new Set<string>(((sessSnap?.data()?.shownCaregiverIds as string[] | undefined) ?? []).slice(0, 30));
+    const ownerId = sessSnap?.data()?.userId as string | undefined;
+    if (ownerId) {
+      try {
+        for (const col of ["shifts", "booking_requests", "video_interviews"]) {
+          const rows = await db.collection(col).where("clientId", "==", ownerId).limit(60).get();
+          rows.forEach((r) => { const id = r.data()?.caregiverId; if (typeof id === "string" && id) idSet.add(id); });
+        }
+      } catch { /* the shown list alone still works */ }
+    }
+    const shownIds = Array.from(idSet).slice(0, 90);
     if (shownIds.length > 0) {
-      const scoped = await db.collection("publicCaregiverProfiles")
-        .where(admin.firestore.FieldPath.documentId(), "in", shownIds)
-        .get().catch(() => null);
-      const matches = (scoped?.docs ?? []).filter((d) => (d.data()?.name as string | undefined) === caregiverId);
+      const wanted = caregiverId.trim().toLowerCase();
+      const found: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+      for (let i = 0; i < shownIds.length; i += 30) {
+        const scoped = await db.collection("publicCaregiverProfiles")
+          .where(admin.firestore.FieldPath.documentId(), "in", shownIds.slice(i, i + 30))
+          .get().catch(() => null);
+        for (const d of scoped?.docs ?? []) found.push(d);
+      }
+      const matches = found.filter((d) => String(d.data()?.name ?? "").trim().toLowerCase() === wanted);
       if (matches.length === 1) {
         caregiverSnap = matches[0];
       } else if (matches.length > 1) {
         throw new VideoInterviewRequestError(
           "ambiguous",
           `This family has been shown ${matches.length} care providers named "${caregiverId}" — ask which one they mean, then retry with the correct caregiverId.`,
-          matches.map((d) => ({ id: d.id, hourlyRate: (d.data().hourlyRate as number | undefined) ?? 0 })),
+          matches.map((d) => ({ id: d.id, hourlyRate: (d.data()?.hourlyRate as number | undefined) ?? 0 })),
         );
       }
     }

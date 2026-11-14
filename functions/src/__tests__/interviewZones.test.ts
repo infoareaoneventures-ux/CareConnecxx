@@ -29,7 +29,7 @@ describe("zoneForUser", () => {
 describe("interview times told in each person's zone", () => {
   const ms = Date.UTC(2026, 10, 10, 17, 0); // 9:00 AM Pacific
   it("Pacific text is unchanged; other zones carry their name", () => {
-    expect(formatInterviewTime(ms)).toBe("Tuesday, November 10 at 9:00 AM");
+    expect(formatInterviewTime(ms)).toBe("Tuesday, November 10 at 9:00 AM PT");
     expect(formatInterviewTime(ms, "America/New_York")).toBe("Tuesday, November 10 at 12:00 PM ET");
     expect(formatInterviewTime(ms, "America/Chicago")).toBe("Tuesday, November 10 at 11:00 AM CT");
     expect(formatInterviewTimeShort(ms, "America/Denver")).toBe("Tue, Nov 10, 10:00 AM MT");

@@ -111,7 +111,7 @@ describe("listCaregiverInterviews — the tab", () => {
     expect(acc.joinVideoCall).toBe("https://meet.google.com/abc");
     expect(acc.notes).toBe("bring ID");
     expect(acc.actions).toEqual(["Details", "Join video call", "Reschedule", "Cancel"]);
-    expect(acc.scheduledTimeLocal).toBe("Wednesday, September 30 at 10:00 AM");
+    expect(acc.scheduledTimeLocal).toBe("Wednesday, September 30 at 10:00 AM PT");
   });
 
   it("chips filter by display status; 'requested' rows show under pending", async () => {

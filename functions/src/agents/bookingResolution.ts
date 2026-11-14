@@ -262,8 +262,16 @@ export type CareLocationResolution =
 // family to type an address from scratch when one is already on file. Only
 // when nothing is saved at all does it fall back to a single on-file
 // address, then finally refuse.
+/** When several saved addresses exist, the one in the linked job post's ZIP is the one meant (exactly one match, else none). */
+export function pickPoolAddressByZip(pool: LocationOption[], zip: string | undefined | null): LocationOption | null {
+  const z = String(zip ?? "").trim();
+  if (!z) return null;
+  const hits = pool.filter((a) => String(a.zipCode ?? "").trim() === z);
+  return hits.length === 1 ? hits[0] : null;
+}
+
 export async function resolveCareLocation(
-  clientId: string, careLocation: unknown,
+  clientId: string, careLocation: unknown, preferZip?: string | null,
 ): Promise<CareLocationResolution> {
   if (careLocation) return { ok: true, location: String(careLocation) };
 
@@ -276,6 +284,10 @@ export async function resolveCareLocation(
       return { ok: true, location: [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ") };
     }
     if (validPool.length > 1) {
+      // The booking follows a job post (the interview's): its ZIP picks the address, so the family is not asked
+      // which one when the answer is already known (live text test 2026-11-15).
+      const byZip = pickPoolAddressByZip(validPool, preferZip);
+      if (byZip) return { ok: true, location: [byZip.street, byZip.city, byZip.state, byZip.zipCode].filter(Boolean).join(", ") };
       return { ok: false, ambiguous: true, options: validPool };
     }
   } catch (e) {

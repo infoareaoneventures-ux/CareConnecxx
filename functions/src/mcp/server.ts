@@ -1405,6 +1405,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         caregiverId:   { type: "string", description: "The care provider being interviewed." },
         applicationId: { type: "string", description: "Pass this when the family is interviewing someone who applied to a specific job post — the job is already known and won't be asked about again. Omit for a direct/matching-flow interview with no application involved." },
+        initialText:   { type: "string", description: "The family's own message asking for the interview, verbatim — a day and time they already stated (\"Monday at 10am\") are used and not asked again." },
       },
       required: ["caregiverId"],
     },
@@ -3453,7 +3454,7 @@ async function executeToolCall(
       }
 
       case "start_interview_flow": {
-        const { clientId, caregiverId, applicationId, phone } = input as Record<string, unknown>;
+        const { clientId, caregiverId, applicationId, phone, initialText } = input as Record<string, unknown>;
         if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
         if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
         const ivSessSnap = await db.collection("agent_sessions").doc(phone as string).get();
@@ -3464,6 +3465,7 @@ async function executeToolCall(
         const ivResult = await startInterviewFlow(phone as string, ivChatId, ivSessionData as any, {
           caregiverId: caregiverId as string,
           ...(applicationId ? { applicationId: applicationId as string } : {}),
+          ...(typeof initialText === "string" && initialText ? { initialText } : {}),
         });
         if (!ivResult.started) {
           return {

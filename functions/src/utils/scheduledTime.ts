@@ -128,8 +128,10 @@ export function formatInterviewTime(ms: number, timeZone: string = DEFAULT_TZ): 
     weekday: "long", month: "long", day: "numeric",
     hour: "numeric", minute: "2-digit",
   });
-  // A person outside Pacific is told their own zone's name ("… 9:00 AM CT") so the time is never ambiguous (2026-11-09).
-  return timeZone === DEFAULT_TZ ? text : `${text} ${zoneAbbr(timeZone, ms)}`;
+  // The zone's name always travels with the time ("… 9:00 AM PST", "… 9:00 AM CT") so it is never ambiguous: a care
+  // provider on another zone's clock read "10:00 AM" and "01:00 AM" with no zone (live test 2026-11-15; first for
+  // people outside Pacific 2026-11-09).
+  return `${text} ${zoneAbbr(timeZone, ms)}`;
 }
 
 // Same as formatInterviewTime, short form (no year, abbreviated weekday/
@@ -149,7 +151,7 @@ export function formatInterviewTimeShort(ms: number, timeZone: string = DEFAULT_
     weekday: "short", month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit",
   });
-  return timeZone === DEFAULT_TZ ? text : `${text} ${zoneAbbr(timeZone, ms)}`;
+  return `${text} ${zoneAbbr(timeZone, ms)}`;
 }
 
 // Stored appointment/shift times stay 24h "HH:MM" internally (matches the

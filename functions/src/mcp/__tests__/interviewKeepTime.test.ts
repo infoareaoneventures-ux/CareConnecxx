@@ -81,7 +81,7 @@ describe("accept_interview_reschedule action:'keep'", () => {
   it("care provider keep on the family's proposal: the shared write, not gated even on a pending row, no text of its own", async () => {
     hoisted.docState.set(`video_interviews/${IV}`, { ...base, reschedulePendingTime: "2099-10-06T19:00:00.000Z", rescheduledBy: "client", rescheduledViaAgent: true });
     const r = await handleToolCall("accept_interview_reschedule", { interviewId: IV, caregiverId: CG, action: "keep" }) as any;
-    expect(r).toMatchObject({ success: true, kept: true, interviewId: IV, keptBy: "caregiver", scheduledTime: "2099-10-05T18:00:00.000Z", scheduledTimeLocal: "Monday, October 5 at 11:00 AM", notification: { sent: true, reason: "notification_trigger" } });
+    expect(r).toMatchObject({ success: true, kept: true, interviewId: IV, keptBy: "caregiver", scheduledTime: "2099-10-05T18:00:00.000Z", scheduledTimeLocal: "Monday, October 5 at 11:00 AM PT", notification: { sent: true, reason: "notification_trigger" } });
     expect(r.note).toContain("The Nguyen Family is being told by the site's own notification");
     expect(hoisted.updates).toEqual([{ path: `video_interviews/${IV}`, data: KEPT }]);
     expect(hoisted.docState.get(`video_interviews/${IV}`)).toEqual({ ...base, updatedAt: { __serverTimestamp: true } }); // status + scheduledTime untouched

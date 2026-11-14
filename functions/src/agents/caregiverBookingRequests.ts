@@ -13,6 +13,7 @@
 //   • toasts:  "Booking request accepted!" / "Request declined"
 // Nothing else: the family is told by onBookingRequestWrite / onBookingAccepted,
 // exactly as when the button is clicked on the site.
+import { addressWithoutStreet } from "../utils/addressWithoutStreet";
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parkedDecision } from "./decisionNotices";
@@ -132,7 +133,9 @@ export function requestCardLines(req: BookingRequest): string[] {
     out.push(sch.days.join(", "));
   }
   if (req.address) {
-    out.push(req.address);
+    // Pending: city and ZIP only; the street is shown once the care provider accepts (founder, 2026-11-15) — the same
+    // rule as the site's request card (utils/addressPrivacy.ts).
+    out.push(req.status === "pending" ? addressWithoutStreet(req.address) : req.address);
     if (req.lifestylePreferences?.length) out.push(req.lifestylePreferences.join(" · "));
   }
   if (req.rate != null) out.push(`$${req.rate}/hr · Card${req.isShiftReplacement ? "" : " (agreed rate)"}`); // a replacement is the caregiver's own listed rate — no label (founder, 2026-09-29)

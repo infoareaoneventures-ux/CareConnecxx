@@ -229,12 +229,9 @@ export const onVideoInterviewWrite = functions.firestore
         after.reschedulePendingTime &&
         before?.reschedulePendingTime !== after.reschedulePendingTime
       ) {
-        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
-        const displayTime = new Date(parseScheduledTimeMs(String(after.reschedulePendingTime ?? ''))).toLocaleString('en-US', {
-          timeZone: 'America/Los_Angeles',
-          weekday: 'short', month: 'short', day: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-        });
+        const { parseScheduledTimeMs, formatInterviewTimeShort } = await import('../utils/scheduledTime');
+        // With the zone's name ("Mon, Nov 16, 1:00 AM PT"): the person reading it may be on another clock (2026-11-15).
+        const displayTime = formatInterviewTimeShort(parseScheduledTimeMs(String(after.reschedulePendingTime ?? '')));
         if (after.rescheduledBy === 'caregiver' && after.clientId) {
           // reschedule_interview (mcp/server.ts) already texts this direction
           // itself and stamps rescheduledViaAgent — skip to avoid a double text.

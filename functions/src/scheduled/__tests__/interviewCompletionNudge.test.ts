@@ -84,7 +84,7 @@ const NOW = 1_000_000_000_000;
 // the family's actual local day.
 describe("formatPacificDateTime", () => {
   it("renders a UTC midnight timestamp on its correct Pacific calendar day, not the UTC day", () => {
-    expect(formatPacificDateTime("2026-09-08T00:00:00.000Z")).toBe("Monday, September 7 at 5:00 PM");
+    expect(formatPacificDateTime("2026-09-08T00:00:00.000Z")).toBe("Monday, September 7 at 5:00 PM PT");
   });
 
   it("falls back gracefully for missing or unparseable input", () => {

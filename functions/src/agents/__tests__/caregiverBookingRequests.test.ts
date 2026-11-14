@@ -91,10 +91,14 @@ describe("the collapsed card", () => {
       "Mon 9:00 AM – 1:00 PM (4h)",
       "Wed 1:00 PM – 5:00 PM (4h)",
       "8h / week",
-      "20 Descanso Dr, San Jose, CA 95134",
+      "San Jose, CA 95134",
       "No pets · Non-smoker",
       "$25/hr · Card (agreed rate)",
     ]);
+  });
+  it("the street address is shown only after the request is accepted (founder, 2026-11-15)", () => {
+    expect(requestCardLines(req())).not.toContain("20 Descanso Dr, San Jose, CA 95134");
+    expect(requestCardLines(req({ status: "accepted" }))).toContain("20 Descanso Dr, San Jose, CA 95134");
   });
   it("a one-day request (start === end, not ongoing) says One visit and skips the weekly total", () => {
     const lines = requestCardLines(req({ schedule: { startDate: "2026-09-28", endDate: "2026-09-28", ongoing: false, dayShiftTimes: { Mon: [{ start: "09:00", end: "13:00" }] } } }));

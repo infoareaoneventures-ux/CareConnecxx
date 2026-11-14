@@ -170,7 +170,7 @@ async function handleBackOut(phone: string, chatId: string, session: AgentSessio
 
 export async function startInterviewFlow(
   phone: string, chatId: string, session: AgentSession,
-  args: { caregiverId: string; applicationId?: string },
+  args: { caregiverId: string; applicationId?: string; initialText?: string },
 ): Promise<{ started: boolean; reason?: string }> {
   const clientId = session.userId as string | undefined;
   if (!clientId) {
@@ -197,6 +197,14 @@ export async function startInterviewFlow(
     caregiverId:   resolved.resolvedCaregiverId,
     caregiverName: resolved.caregiverName,
   };
+
+  // "Set up an interview with Test Provider on Monday at 10am": the day and time in the family's own message are used,
+  // not asked again (live text test 2026-11-15).
+  if (args.initialText) {
+    const stated = await readStatedInterviewTime(args.initialText).catch(() => ({} as { date?: string; time?: string }));
+    if (stated.date) data.date = stated.date;
+    if (stated.date && stated.time) data.time = stated.time;
+  }
 
   // applicationId already tells us the job — never ask, matches respond_to_
   // job_application's existing auto-link (the application already IS for a
@@ -249,13 +257,36 @@ export async function startInterviewFlow(
     }
   }
 
+  const first = nextInterviewQuestion(data);
   await db.collection("agent_sessions").doc(phone).update({
-    interviewFlowStep: "iv_ask_date",
+    interviewFlowStep: first.step,
     interviewFlowData: data,
     stateExpiresAt:    expiresAt,
   });
-  await sendMessage(chatId, `Let's set up an interview with ${data.caregiverName}!\n\n${DATE_QUESTION(data.caregiverName)}`);
+  await sendMessage(chatId, `Let's set up an interview with ${data.caregiverName}!\n\n${first.question}`);
   return { started: true };
+}
+
+/** The first interview question not already answered: the day, then the time, then the notes. */
+function nextInterviewQuestion(data: InterviewFlowData): { step: string; question: string } {
+  if (!data.date) return { step: "iv_ask_date", question: DATE_QUESTION(data.caregiverName) };
+  if (!data.time) return { step: "iv_ask_time", question: `${formatDateForDisplay(data.date)} — got it! ${TIME_QUESTION(data.date)}` };
+  return { step: "iv_ask_notes", question: NOTES_QUESTION(data.caregiverName) };
+}
+
+/** A day and time stated in the family's request ("Monday at 10am"), already resolved against today; empty when none. */
+async function readStatedInterviewTime(text: string): Promise<{ date?: string; time?: string }> {
+  const today = businessTodayStr();
+  const raw = await parseWithClaude(
+    `Today is ${today}. Extract the interview day and time the family stated, if any. Resolve the day relative to today. ` +
+    'Return ONLY a JSON object: {"date": "YYYY-MM-DD" or null, "time": "HH:MM" in 24-hour format or null}. ' +
+    'Never invent a day or time the message does not state.',
+    text,
+  );
+  const parsed = parseJsonLoose(raw, "readStatedInterviewTime");
+  const date = typeof parsed?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) && parsed.date >= today ? parsed.date : undefined;
+  const time = typeof parsed?.time === "string" && /^\d{2}:\d{2}$/.test(parsed.time) ? parsed.time : undefined;
+  return { ...(date ? { date } : {}), ...(date && time ? { time } : {}) };
 }
 
 // ── Step dispatch ─────────────────────────────────────────────────────────────
@@ -316,9 +347,10 @@ async function handleIvAskJob(
     const picked = options[idx - 1];
     await mergeFlowData(phone, { jobId: picked.id, jobTitle: picked.title });
   }
-  await updateStep(phone, "iv_ask_date");
   const updated = await getFlowData(phone);
-  await sendMessage(chatId, DATE_QUESTION(updated.caregiverName));
+  const next = nextInterviewQuestion(updated);
+  await updateStep(phone, next.step);
+  await sendMessage(chatId, next.question);
 }
 
 // ── Step: date ────────────────────────────────────────────────────────────────

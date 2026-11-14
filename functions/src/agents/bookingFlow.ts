@@ -1072,7 +1072,13 @@ async function advanceToLocation(phone: string, chatId: string, session: AgentSe
   const clientId = session.userId as string | undefined;
   // A schedule edit from the recap ends here (after ongoing/end) — back to the recap.
   if (await returnToRecapIfEditing(phone, chatId, clientId)) return;
-  const locRes = clientId ? await resolveCareLocation(clientId, undefined) : { ok: false as const, ambiguous: false as const, reason: "" };
+  // The linked job post's ZIP (a job post keeps city/state/ZIP, never the street) picks the saved address when exactly one matches.
+  let jobZip: string | undefined;
+  try {
+    const flow = await getFlowData(phone);
+    if (flow.jobId) jobZip = String((await db.collection("job_posts").doc(flow.jobId).get()).data()?.zipCode ?? "") || undefined;
+  } catch { /* ask as before */ }
+  const locRes = clientId ? await resolveCareLocation(clientId, undefined, jobZip) : { ok: false as const, ambiguous: false as const, reason: "" };
   if (locRes.ok) {
     await mergeFlowData(phone, { careLocation: locRes.location });
     return advanceToConfirm(phone, chatId, session);
@@ -1397,7 +1403,8 @@ export function buildBookingRecap(data: BookingFlowData): string {
       // DOES see a recipient's note: on the request card, Active/Past details,
       // the visit card, Calendar and Families, and in Evia's request details.)
       if (notes) recipientLines.push(`   Notes: ${notes}`);
-      recipientLines.push(`   Lifestyle: ${lifestyle || "Not specified"}`);
+      // Omitted when nothing was set, like Notes (live text test 2026-11-15: a stray "Lifestyle: Not specified" line).
+      if (lifestyle) recipientLines.push(`   Lifestyle: ${lifestyle}`);
     });
   } else {
     const needs = data.topLevelCareNeeds?.length ? data.topLevelCareNeeds.join(", ") : "General care";

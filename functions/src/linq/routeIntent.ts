@@ -301,11 +301,14 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
       try {
         const { startRescheduleFlow } = await import("../agents/rescheduleFlow");
-        await startRescheduleFlow(phone, chatId, session, { initialText: text });
+        // Quiet: with no visits to move the flow no longer sends its dead-end text. The family may have meant an
+        // interview (live bug 2026-11-14: "reschedule the interview" got "I don't see any upcoming scheduled visits"),
+        // so that case goes on to the agent, which has the interview tools.
+        const started = await startRescheduleFlow(phone, chatId, session, { initialText: text, quiet: true });
+        if (started.started || started.reason !== "no_visits") return;
       } finally {
         if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
       }
-      return;
     }
 
     // ── FIND_REPLACEMENT — cover a visit the caregiver cancelled ──────────────

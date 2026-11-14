@@ -600,8 +600,22 @@ describe("RESCHEDULE_REQUEST (client) starts the scripted reschedule flow (2026-
     await routeIntentAndRespond(ctx("move Wednesday's visit to 9/17 10am to 3pm"));
 
     expect(startRescheduleFlow).toHaveBeenCalledOnce();
-    expect(startRescheduleFlow.mock.calls[0][3]).toEqual({ initialText: "move Wednesday's visit to 9/17 10am to 3pm" });
+    expect(startRescheduleFlow.mock.calls[0][3]).toEqual({ initialText: "move Wednesday's visit to 9/17 10am to 3pm", quiet: true });
     expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  // 2026-11-14 (live-caught over text): "reschedule the interview" was answered by the visit flow's own dead-end
+  // ("I don't see any upcoming scheduled visits"). With no visits the flow stays quiet and the agent takes the turn,
+  // which has the interview tools.
+  it("no visits to move → the agent takes the turn instead of a visit dead-end", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "RESCHEDULE_REQUEST", degraded: false });
+    startRescheduleFlow.mockResolvedValueOnce({ started: false, reason: "no_visits" } as any);
+
+    await routeIntentAndRespond(ctx("Can you reschedule the interview please"));
+
+    expect(startRescheduleFlow).toHaveBeenCalledOnce();
+    expect(runQaAgent).toHaveBeenCalled();
   });
 });
 

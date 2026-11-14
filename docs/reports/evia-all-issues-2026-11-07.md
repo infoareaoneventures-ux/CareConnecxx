@@ -869,3 +869,17 @@ Family number +1 505-528-1528 (existing complete account), care provider number 
 - [ ] **Delivery receipts still rejected as "invalid signature"** (message.sent / message.delivered) — the Linq signing secret is still the single configured one.
 
 Passed: first-contact consent (both numbers), "what can you help me with", "do I have interviews" ("No interviews are coming up right now" — correct), website sign-up: name + email, phone code arrives and verifies, hand-off page shows Evia's number.
+
+### Live text test, round 2 (Nov 14, 2026, after PR #8: role fix deployed)
+
+Passed: "I'm a care provider" now starts the profile setup; care provider setup by text end to end (name, address, photo link, job type, days and hours, services, experience, rate, travel 50 miles, email, bio) up to the membership payment link (stopped there: live Stripe, no payments); a phone number in a care provider bio is refused; family posts a job by text (frequency, start "next Monday" = Nov 16, days, time of day, who, how many, address, pets and smoking, care types, rate, note, recap, "yes" posts it); the new-job notice texted nobody outside the test area ("texted 0, dropped 0, skipped 4").
+
+- [x] **"Reschedule the interview" is still answered with the visit dead-end** — _Root cause found and fixed in code Nov 14 (not yet deployed): the intent router (`linq/routeIntent.ts`) sent every family RESCHEDULE_REQUEST straight to the visit-reschedule script, which sent "I don't see any upcoming scheduled visits…" itself, so the model never saw it. Now the script stays quiet when there are no visits and the agent takes the turn; the intent definition says an interview is not a visit._
+- [ ] **A care provider cannot skip the photo, and Evia doesn't say so** — "skip" and "can I skip" both re-send the upload link with the same line.
+- [ ] **Texts arrive in the wrong order or split mid-word** — the long services list arrived as two parts out of order ("Supervis" … "ion"); the photo link arrived before the sentence introducing it; the Stripe link before its explanation.
+- [ ] **The Stripe link preview says "Something went wrong"** — the unfurl under the membership payment link.
+- [ ] **The care provider bio minimum is not enforced** — "Reliable and kind." (18 characters) completed the profile; Evia says "one honest sentence is fine" (already on this list as the docs disagreeing).
+- [ ] **A website sign-up's name and email are asked again by text** — after verifying the phone on the site, Evia asked for the name and the email again.
+- [ ] **Job posting asks the saved address first, which was a real care provider's town** — the saved address was Santa Clara; a new address was given for the test so no real person was texted.
+- [ ] **Literal backslashes in the job texts** — the recap shows the note as `\"Justa is friendly…\"` and the confirmation says `\"show my jobs\"`.
+- [ ] **An answer that holds two things is half-used** — "Mon, Wed, Fri mornings" saved the days and then asked for the time of day.

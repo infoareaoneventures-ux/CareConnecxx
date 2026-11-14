@@ -331,3 +331,22 @@ export function isHandoffActive(
   if (!Number.isFinite(at)) return false; // no/garbled timestamp → treat as expired (fail-open to answering)
   return nowMs - at < handoffTtlMs(env);
 }
+
+
+// ── Closed handoffs must not steer later turns (2026-11-14, live text test) ──────────────────────
+// After "I'm looping in a teammate" the next four requests each made the model call contact_support again ("I've got
+// this to a person") and re-muted the thread, even with every hold flag cleared: its own earlier hand-off replies,
+// sitting in the recent history, read as "this conversation belongs to the team". The history the model sees keeps the
+// person's messages but swaps each of Evia's hand-off replies for a neutral marker, so the next request is answered as
+// the new request it is.
+export const CLOSED_HANDOFF_MARKER =
+  "[Earlier, a request in this conversation was passed to the team and that is closed. Answer the next message as a new request.]";
+
+const HANDOFF_REPLY_PATTERN =
+  /looping in a teammate|passed that along|(?:got|have) this to a person|message to the team|the team (?:has it|will reply|'ll reply)|they['\u2019]?ll reply here by text|team will reply here/i;
+
+export function neutralizeHandoffTurns<T extends { role: string; content: string }>(messages: T[]): T[] {
+  return messages.map((m) =>
+    m.role === "assistant" && HANDOFF_REPLY_PATTERN.test(m.content) ? { ...m, content: CLOSED_HANDOFF_MARKER } : m,
+  );
+}

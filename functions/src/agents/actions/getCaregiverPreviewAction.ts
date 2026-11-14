@@ -5,6 +5,7 @@ import { defineCaraAction } from "../actionNative/defineCaraAction";
 import { runCaraAction } from "../actionNative/runCaraAction";
 import type { CaraActionContext } from "../actionNative/caraActionTypes";
 import { scoreAndRankCaregivers } from "../caregiverMatchScoring";
+import { formatExperience } from "../caregiverProfilePage";
 
 const db = admin.firestore();
 
@@ -276,7 +277,7 @@ export function buildCaregiverPreviewResult(opts: {
 
   const previewText = joinCaregiverPreview(
     items.map(item =>
-      `${item.name}${item.yearsExperience ? `, ${item.yearsExperience} yrs experience` : ""}` +
+      `${item.name}${formatExperience(item.yearsExperience) ? `, ${formatExperience(item.yearsExperience)}` : ""}` +
       `${item.strongestFit ? `, strongest fit for ${item.strongestFit}` : ""}`,
     ),
   );

@@ -37,7 +37,8 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
   const [dayTimes,           setDayTimes]           = useState<Record<string, Array<{ start: string; end: string }>>>({});
   const [visitNotes,         setVisitNotes]         = useState('');
   const [visitStartDate,     setVisitStartDate]     = useState('');
-  const [visitEndOption,     setVisitEndOption]     = useState<'ongoing' | 'end_date'>('ongoing');
+  // A request here is a visit outside the regular schedule, so it starts as a one-off (end date = start date), not ongoing.
+  const [visitEndOption,     setVisitEndOption]     = useState<'ongoing' | 'end_date'>('end_date');
   const [visitEndDate,       setVisitEndDate]       = useState('');
   // Day-of-week → time blocks from actual scheduled shifts for the selected caregiver
   const [cgShiftBlocks, setCgShiftBlocks] = useState<Record<string, Array<{ start: string; end: string }>>>({});
@@ -349,7 +350,15 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
                       <input
                         type="date"
                         value={visitStartDate}
-                        onChange={e => { const _n = new Date(); const _min = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; const v = e.target.value; setVisitStartDate(v && v < _min ? _min : v); }}
+                        onChange={e => {
+                          // Kept as typed. (It used to snap to today on every change, so typing "15" turned into today's
+                          // date the moment "1" made the day "01" — found in the 2026-11-14 live test.) The min is
+                          // applied when the field is left; a one-off visit's end date follows its start date.
+                          const v = e.target.value;
+                          setVisitStartDate(v);
+                          if (v && visitEndOption === 'end_date' && (!visitEndDate || visitEndDate < v)) setVisitEndDate(v);
+                        }}
+                        onBlur={() => { const _n = new Date(); const _min = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; if (visitStartDate && visitStartDate < _min) setVisitStartDate(_min); }}
                         min={(() => { const _n = new Date(); return `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; })()}
                         className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
                       />
@@ -374,6 +383,7 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
                           onChange={e => {
                             setVisitEndOption(e.target.checked ? 'ongoing' : 'end_date');
                             if (e.target.checked) setVisitEndDate('');
+                            else if (visitStartDate && !visitEndDate) setVisitEndDate(visitStartDate);
                           }}
                           className="w-3.5 h-3.5 accent-primary-600"
                         />

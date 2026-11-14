@@ -81,8 +81,8 @@ describe("getCaregiverPreviewAction", () => {
 
     expect(result.available).toBe(true);
     expect(result.message).toContain("I found 3 care providers near San Jose");
-    expect(result.message).toContain("Maria Santos, 8 yrs experience, strongest fit for Dementia Care");
-    expect(result.message).toContain("James Okafor, 5 yrs experience, strongest fit for Companionship");
+    expect(result.message).toContain("Maria Santos, 8 years experience, strongest fit for Dementia Care");
+    expect(result.message).toContain("James Okafor, 5 years experience, strongest fit for Companionship");
     expect(result.message).toContain("I would start with the best fit");
     expect(result.message).not.toContain("•");
     expect(result.message).not.toMatch(/\n\s*1[.)]/);

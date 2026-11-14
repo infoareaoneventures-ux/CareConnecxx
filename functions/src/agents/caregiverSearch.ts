@@ -9,7 +9,7 @@
 //
 //   pool     publicCaregiverProfiles where onboardingStatus == profile_complete,
 //            kept only when isCaregiverBookable (verificationStatus approved)
-//   filters  blocked users, Favorites tab, distance (default 25 mi, and the
+//   filters  blocked users, Favorites tab, distance (default 50 mi, and the
 //            caregiver's own serviceRadius), name/city/state/zip search, max
 //            rate (default $75, 100 = no cap), rating (Any/3+/4+/4.5+),
 //            experience (Any/1+/3+/5+/10+), Background checked only,
@@ -28,7 +28,7 @@ import * as admin from "firebase-admin";
 import { isCaregiverBookable, type CaregiverEligibilityFields } from "../utils/caregiverEligibility";
 import { haversineDistanceMiles, hasValidTransportDocs } from "./caregiverMatchScoring";
 import { getAppUrl } from "../config/appUrl";
-import { billedHourly } from "./caregiverProfilePage";
+import { billedHourly, formatExperience } from "./caregiverProfilePage";
 
 const db = admin.firestore();
 
@@ -37,7 +37,7 @@ export type CaregiverSortOption = "rating" | "price-low" | "price-high";
 export interface CaregiverSearchFilters {
   /** Name / city / state / zip search box. */
   query?: string;
-  /** Distance slider — page default 25 mi. Applied only when the family has a location and the caregiver has coordinates. */
+  /** Distance slider — page default 50 mi (the farthest a care provider can choose to travel). Applied only when the family has a location and the caregiver has coordinates. */
   maxDistanceMiles?: number;
   /** Max rate slider — page default $75/hr; 100 or more means no cap. */
   maxHourlyRate?: number;
@@ -126,7 +126,7 @@ export async function gatherClientLocations(clientId: string): Promise<Array<{ l
 export async function searchCaregivers(clientId: string, input: CaregiverSearchFilters = {}): Promise<CaregiverSearchResult> {
   const filters = {
     ...input,
-    maxDistanceMiles:   typeof input.maxDistanceMiles === "number" && input.maxDistanceMiles > 0 ? input.maxDistanceMiles : 25,
+    maxDistanceMiles:   typeof input.maxDistanceMiles === "number" && input.maxDistanceMiles > 0 ? input.maxDistanceMiles : 50,
     maxHourlyRate:      typeof input.maxHourlyRate === "number" && input.maxHourlyRate > 0 ? input.maxHourlyRate : 75,
     minRating:          typeof input.minRating === "number" ? input.minRating : 0,
     minExperienceYears: typeof input.minExperienceYears === "number" ? input.minExperienceYears : 0,
@@ -262,7 +262,7 @@ export async function searchCaregivers(clientId: string, input: CaregiverSearchF
 // ── The card, as one SMS ────────────────────────────────────────────────────
 export function caregiverCardText(c: CaregiverCard): string {
   const ratingLabel = c.reviewCount > 0 ? `★ ${c.rating.toFixed(1)} (${c.reviewCount} review${c.reviewCount === 1 ? "" : "s"})` : "No reviews yet";
-  const exp = typeof c.experience === "number" ? `${c.experience} yrs experience` : `${c.experience} experience`;
+  const exp = formatExperience(c.experience) || "Experience not listed";
   const where = [c.city, c.stateCode].filter(Boolean).join(", ") + (c.zipCode ? ` ${c.zipCode}` : "");
   // Transportation only counts as a service once it is live (offered + driving record
   // clear) — same gate as the profile page (ClientCaregiverProfile.tsx /

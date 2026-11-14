@@ -55,6 +55,7 @@ import {
 } from "./caregiverServiceLabels";
 import { coerceClientRate, isFieldFilled, FAMILY_STEP_ORDER, FAMILY_STEP_IDS } from "./onboardingContract";
 import { normalizeStartDateToISO, formatWizardPhone, mapTimeOfDayToWizardValues } from "./clientJobPostingContract";
+import { timeOfDayFromClock, CLOCK_TIMES_NOTE } from "./familyClockTimes";
 
 // ── Step ids (in the site's order; the list itself lives in onboardingContract.ts) ──
 export { FAMILY_STEP_ORDER, FAMILY_STEP_IDS };
@@ -488,7 +489,9 @@ async function readDays(deps: FamilyIntakeDeps, text: string, d: Data): Promise<
   try { p = JSON.parse(raw); } catch { return null; }
   const days = normalizeDayCodes(p.days);
   const flexible = p.flexible === true;
-  const tod = mapTimeOfDayToWizardValues(p.timeOfDay);
+  // A stated clock range ("9am to 1pm") is every day-part it touches, not just the one the model picked.
+  const clockParts = timeOfDayFromClock(text);
+  const tod = clockParts.length ? mapTimeOfDayToWizardValues(clockParts) : mapTimeOfDayToWizardValues(p.timeOfDay);
   const prevDays = Array.isArray(d.selectedDays) ? (d.selectedDays as string[]) : [];
   const prevTod = mapTimeOfDayToWizardValues(d.timeOfDay);
   const finalDays = days.length ? days : prevDays;
@@ -500,7 +503,7 @@ async function readDays(deps: FamilyIntakeDeps, text: string, d: Data): Promise<
     ...(tod.length ? { timeOfDay: tod } : {}),
   };
   const dayWords = finalFlex && !finalDays.length ? "flexible days" : finalDays.join("/");
-  const ack = `${[dayWords, finalTod.join("/")].filter(Boolean).join(", ")}, got it.`;
+  const ack = `${[dayWords, finalTod.join("/")].filter(Boolean).join(", ")}, got it.${clockParts.length ? ` ${CLOCK_TIMES_NOTE}` : ""}`;
   return { fields, ack };
 }
 
@@ -552,8 +555,24 @@ export async function readRoster(deps: FamilyIntakeDeps, text: string, accountNa
     });
   }
   if (!roster.length) return null;
-  const capped = roster.length > MAX_RECIPIENTS;
-  return { roster: roster.slice(0, MAX_RECIPIENTS), capped };
+  const merged = mergeSamePerson(roster, text);
+  const capped = merged.length > MAX_RECIPIENTS;
+  return { roster: merged.slice(0, MAX_RECIPIENTS), capped };
+}
+
+/**
+ * "It's for my mom, Linda" is ONE person. The reader sometimes lists "my mom" and "Linda" separately, which left the
+ * family with a nameless parent AND a named one (live text test, 2026-11-14). Two people with the same relationship,
+ * exactly one of them named, in a message with no "and" / "both" / plural, are the same person.
+ */
+export function mergeSamePerson(roster: RosterPerson[], text: string): RosterPerson[] {
+  if (roster.length !== 2) return roster;
+  const [a, b] = roster;
+  if (a.relationship !== b.relationship || a.relationship === "self" || a.relationship === "unknown") return roster;
+  const named = roster.filter((p) => p.name);
+  if (named.length !== 1) return roster;
+  if (/\b(and|&|both|plus|also|parents|siblings)\b|\+/i.test(text)) return roster;
+  return [named[0]];
 }
 
 function rosterAck(roster: RosterPerson[]): string {
@@ -786,6 +805,7 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
       '"recipients":"ONLY if they say WHO the care is for (e.g. me and my child, my mom): copy that phrase here","recipientsMode":"add if they ADD someone to the people already listed (add / also / too / as well), replace if they restate who the care is for",' +
       '"people":{"rename":{"from":"the listed person\'s current name or relationship","to":"new name"},"stage":{"who":"name or relationship","stage":"Infant|Toddler|Preschooler|School-age|Teen"},"relationship":{"who":"name","to":"parent|spouse|adult child|child|other"},"remove":"name or relationship of a listed person to take off"}}. ' +
       'A change to a person ALREADY listed (their name, stage, relationship, or taking them off) is "people", never "recipients". ' +
+      'If they say two listed people are the SAME person, or one is a duplicate, that is people.remove of the duplicate (the one WITHOUT a name when only one has a name; otherwise the one they name), never a rename. ' +
       "Omit everything not clearly stated. No markdown.",
     text,
   ).catch(() => "{}");
@@ -819,7 +839,8 @@ export async function extractOtherFields(deps: FamilyIntakeDeps, text: string, c
   const end = normalizeStartDateToISO(p.endDate, t.iso); if (end && !skip.has("endDate")) { fields.endDate = end; fields.ongoing = false; }
   const days = normalizeDayCodes(p.selectedDays); if (days.length && !skip.has("selectedDays")) { fields.selectedDays = days; fields.daysFlexible = false; }
   if (p.daysFlexible === true && !skip.has("daysFlexible")) { fields.daysFlexible = true; fields.selectedDays = []; }
-  const tod = mapTimeOfDayToWizardValues(p.timeOfDay); if (tod.length && !skip.has("timeOfDay")) fields.timeOfDay = tod;
+  const clockParts = timeOfDayFromClock(text);
+  const tod = clockParts.length ? mapTimeOfDayToWizardValues(clockParts) : mapTimeOfDayToWizardValues(p.timeOfDay); if (tod.length && !skip.has("timeOfDay")) fields.timeOfDay = tod;
   if (typeof p.emergencyContactName === "string" && p.emergencyContactName.trim() && !skip.has("emergencyContactName")) fields.emergencyContactName = p.emergencyContactName.trim();
   const ePhone = formatWizardPhone(p.emergencyContactPhone); if (ePhone && !skip.has("emergencyContactPhone")) fields.emergencyContactPhone = ePhone;
   if (typeof p.emergencyContactRelationship === "string" && p.emergencyContactRelationship.trim() && !skip.has("emergencyContactRelationship")) fields.emergencyContactRelationship = p.emergencyContactRelationship.trim();

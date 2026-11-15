@@ -1426,7 +1426,7 @@ export const PostsPage: React.FC = () => {
                             {new Date(interview.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                           </span>
                           <span className="flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5" />{new Date(`2000-01-01T${interview.time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                            <Clock className="w-3.5 h-3.5" />{new Date(`${interview.date}T${interview.time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' })}
                           </span>
                           <span className="flex items-center gap-1">
                             {typeIcon(interview.type)}

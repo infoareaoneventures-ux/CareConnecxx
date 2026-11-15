@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { addressWithoutStreet } from '../../utils/addressPrivacy';
 import { swallow } from '../../utils/reportError';
 import { ZoneTag } from '../ui/ZoneTag';
 import { careZoneOf, wallToInstantMs } from '../../utils/careTime';
@@ -440,7 +441,8 @@ const RequestCard: React.FC<{
                 <div className="flex items-start gap-2">
                   <MapPin className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
                   <div>
-                    <span>{req.address}</span>
+                    <span>{isPending ? addressWithoutStreet(req.address) : req.address}</span>
+                    {isPending && <span className="block text-[11px] text-slate-400">The street address is shown once you accept.</span>}
                     {req.lifestylePreferences && req.lifestylePreferences.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
                         {req.lifestylePreferences.map(p => (
@@ -1990,6 +1992,8 @@ export const CaregiverBookingsPage: React.FC = () => {
 
   const handleAccept = async (id: string) => {
     if (!db) return;
+    // Accepting adds the visits to the schedule and tells the family; it used to apply on the first click (2026-11-15 test).
+    if (!window.confirm('Accept this booking request? The visits will be added to your schedule and the family will be told.')) return;
     setSubmitting(true);
     try {
       await db.collection('booking_requests').doc(id).update({

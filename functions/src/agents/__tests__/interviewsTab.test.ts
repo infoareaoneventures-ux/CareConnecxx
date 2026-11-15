@@ -64,7 +64,7 @@ describe("listClientInterviews", () => {
     expect(rows.map((r) => r.interviewId)).toEqual(["p1", "p2", "a", "c2", "c1", "x"]);
     expect(rows[0].displayStatus).toBe("pending");
     expect(rows[0].status).toBe("requested");
-    expect(rows[0].scheduledTimeLocal).toBe("Saturday, September 19 at 4:00 PM");
+    expect(rows[0].scheduledTimeLocal).toBe("Saturday, September 19 at 4:00 PM PT");
   });
 
   it("applies the filter pill using stored statuses", async () => {
@@ -99,7 +99,7 @@ describe("listClientInterviews", () => {
     const byId = Object.fromEntries((await listClientInterviews(C, undefined, NOW)).map((r) => [r.interviewId, r]));
     expect(byId.theirs.actions).toEqual(["message", "accept_new_time", "keep_current_time", "propose_time", "cancel"]); // Keep current time beside Accept new time (B5, 2026-10-11)
     expect(byId.theirs.rescheduleWaitingOn).toBe("you");
-    expect(byId.theirs.reschedulePendingTimeLocal).toBe("Monday, September 21 at 2:00 PM");
+    expect(byId.theirs.reschedulePendingTimeLocal).toBe("Monday, September 21 at 2:00 PM PT");
     expect(byId.mine.actions).toEqual(["message", "cancel"]);
     expect(byId.mine.rescheduleWaitingOn).toBe("care provider");
   });
@@ -138,7 +138,7 @@ describe("listClientInterviews", () => {
     expect(byId.ns).toMatchObject({ notSelected: true, actions: [] });
     expect(byId.cgd.actions).toEqual(["view_other_applicants"]);
     expect(byId.prop.actions).toEqual(["accept_proposed_time", "propose_another_time"]);
-    expect(byId.prop.proposedTimeLocal).toBe("Friday, September 25 at 2:00 PM");
+    expect(byId.prop.proposedTimeLocal).toBe("Friday, September 25 at 2:00 PM PT");
   });
 
   it("never reads another client's interviews", async () => {

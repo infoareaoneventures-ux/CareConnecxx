@@ -56,7 +56,7 @@ describe("the write — the proposal cleared, nothing else", () => {
     const r = await keepInterviewTime({ by: "caregiver", userId: CG, interviewId: "iv1", source: "test" });
     expect(r).toEqual({
       ok: true, interviewId: "iv1", keptBy: "caregiver", clientName: "Basra Yousuf", caregiverName: "Alice Mahad",
-      scheduledTime: "2099-10-05T18:00:00.000Z", scheduledTimeLocal: "Monday, October 5 at 11:00 AM",
+      scheduledTime: "2099-10-05T18:00:00.000Z", scheduledTimeLocal: "Monday, October 5 at 11:00 AM PT",
     });
     expect(hoisted.updates).toEqual([{ path: "video_interviews/iv1", data: CLEARED }]);
     expect(hoisted.docs.get("video_interviews/iv1")).toEqual({ ...base, updatedAt: { __ts: true } });
@@ -92,10 +92,10 @@ describe("the write — the proposal cleared, nothing else", () => {
   it("the confirm names the OTHER side and the time that stands", async () => {
     hoisted.docs.set("video_interviews/iv1", familyProposal);
     const cg = await keepInterviewTime({ by: "caregiver", userId: CG, interviewId: "iv1", source: "t" });
-    expect(keptInterviewLine(cg as any)).toBe("Kept the current time — your interview with Basra Yousuf stays at Monday, October 5 at 11:00 AM.");
+    expect(keptInterviewLine(cg as any)).toBe("Kept the current time — your interview with Basra Yousuf stays at Monday, October 5 at 11:00 AM PT.");
     hoisted.docs.set("video_interviews/iv1", caregiverProposal);
     const fam = await keepInterviewTime({ by: "client", userId: FAM, interviewId: "iv1", source: "t" });
-    expect(keptInterviewLine(fam as any)).toBe("Kept the current time — your interview with Alice Mahad stays at Monday, October 5 at 11:00 AM.");
+    expect(keptInterviewLine(fam as any)).toBe("Kept the current time — your interview with Alice Mahad stays at Monday, October 5 at 11:00 AM PT.");
     expect(keptInterviewLine({ ...(fam as any), scheduledTimeLocal: null })).toBe("Kept the current time — your interview with Alice Mahad stays as it is.");
   });
 });

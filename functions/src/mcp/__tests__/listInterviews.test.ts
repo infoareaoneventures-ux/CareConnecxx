@@ -70,7 +70,7 @@ describe("list_interviews", () => {
     expect(r.success).toBe(true);
     expect(r.interviews).toHaveLength(1);
     expect(r.interviews[0].scheduledTime).toBe("2026-09-08T00:00:00.000Z");
-    expect(r.interviews[0].scheduledTimeLocal).toBe("Monday, September 7 at 5:00 PM");
+    expect(r.interviews[0].scheduledTimeLocal).toBe("Monday, September 7 at 5:00 PM PT");
   });
 
   it("returns the row's note, the same one the site shows under the interview (2026-09-16)", async () => {

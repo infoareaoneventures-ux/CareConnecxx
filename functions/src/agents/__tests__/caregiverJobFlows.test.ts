@@ -203,7 +203,7 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "when is it now?", session());
     expect(hoisted.sent.at(-1)).toBe("Answer. What day works for you?");
     let facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
-    expect(facts).toContain('Interview with Basra Yousuf for "Senior care in San Jose", currently Sunday, September 27 at 10:00 AM.');
+    expect(facts).toContain('Interview with Basra Yousuf for "Senior care in San Jose", currently Sunday, September 27 at 10:00 AM PT.');
     expect(facts).toContain("No new date chosen yet.");
     expect(facts).toContain("the interview stays at its current time until they confirm");
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).interviewRescheduleFlowStep).toBe("rs_date");
@@ -217,7 +217,7 @@ describe("Interview reschedule flow — Propose new time / Reschedule", () => {
     await handleInterviewRescheduleFlowStep(PHONE, CHAT, "will she be told right away?", session());
     expect(hoisted.sent.at(-1)).toMatch(/^Answer\. So that's Monday, September 28 at 10:30 AM/);
     facts = String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts);
-    expect(facts).toContain("New time chosen so far: Monday, September 28 at 10:30 AM.");
+    expect(facts).toContain("New time chosen so far: Monday, September 28 at 10:30 AM PT.");
     expect(hoisted.docState.get("video_interviews/iv1").reschedulePendingTime).toBeUndefined(); // nothing proposed by a question
   });
 

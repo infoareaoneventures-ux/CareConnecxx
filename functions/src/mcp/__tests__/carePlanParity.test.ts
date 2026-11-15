@@ -152,6 +152,34 @@ describe("get_care_plan / update_care_plan — emergency contacts collection fix
     expect(hoisted.docState.get(`carePlans/${CLIENT}`)?.emergencyContacts).toBeUndefined();
   });
 
+  // Founders' text test 2026-11-15: the model sent value as [{...}] with action "append" and got "The contact needs a name".
+  it("append accepts one contact object", async () => {
+    const r = await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "emergencyContacts", action: "append",
+      value: { name: "Hamse Mo", relation: "Son", phone: "4088745451", isPrimary: true },
+    }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.docState.get(`care_plans/${CLIENT}`)?.emergencyContacts).toMatchObject([{ name: "Hamse Mo", relation: "Son", isPrimary: true }]);
+  });
+
+  it("append also accepts a list holding that one contact", async () => {
+    const r = await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "emergencyContacts", action: "append",
+      value: [{ name: "Hamse Mo", relation: "Son", phone: "4088745451", isPrimary: true }],
+    }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.docState.get(`care_plans/${CLIENT}`)?.emergencyContacts).toMatchObject([{ name: "Hamse Mo" }]);
+  });
+
+  it("append still refuses a contact with no name, and remove accepts either shape", async () => {
+    const bad = await handleToolCall("update_care_plan", { clientId: CLIENT, field: "emergencyContacts", action: "append", value: [{ phone: "4088745451" }] }) as any;
+    expect(bad.success).toBe(false);
+    await handleToolCall("update_care_plan", { clientId: CLIENT, field: "emergencyContacts", action: "append", value: { name: "Hamse Mo", phone: "4088745451" } });
+    const gone = await handleToolCall("update_care_plan", { clientId: CLIENT, field: "emergencyContacts", action: "remove", value: [{ name: "Hamse Mo" }] }) as any;
+    expect(gone.success).toBe(true);
+    expect(hoisted.docState.get(`care_plans/${CLIENT}`)?.emergencyContacts).toEqual([]);
+  });
+
   it("get_care_plan overlays emergencyContacts from care_plans onto the carePlans result", async () => {
     hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: { careNeeds: ["Personal Care"] } } });
     hoisted.docState.set(`care_plans/${CLIENT}`, { emergencyContacts: [{ id: "c1", name: "Jane", relation: "Daughter", phone: "5551234567", isPrimary: true }] });

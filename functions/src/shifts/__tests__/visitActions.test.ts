@@ -111,8 +111,14 @@ describe("startRefusal — the Start Shift button's conditions, in order", () =>
     const early = inMinutes(90);
     expect(startRefusal({ ...ok, shift: { ...base(), date: early.date, startTime: early.time } })).toMatchObject({ reason: "too_early", message: expect.stringMatching(/Start opens 15 minutes before the visit/) });
     expect(startRefusal({ ...ok, shift: base() })).toBeNull();
+    // Late but not ended. Within the half hour after midnight Pacific "30 minutes ago" is the previous day, where an end
+    // time of 23:59 is already past, so the end is built from the clock instead of hard-coded (this failed every night
+    // from 00:00 to 00:30 Pacific).
     const late = inMinutes(-30);
-    expect(startRefusal({ ...ok, shift: { ...base(), date: late.date, startTime: late.time, endTime: "23:59" } })).toBeNull();
+    const ends = inMinutes(60);
+    if (late.date === ends.date) {
+      expect(startRefusal({ ...ok, shift: { ...base(), date: late.date, startTime: late.time, endTime: ends.time } })).toBeNull();
+    }
   });
   it("the gate is checked before the one-visit rule and the window (the page swaps the button for the gate first)", () => {
     const early = inMinutes(90);

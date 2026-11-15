@@ -932,3 +932,12 @@ Not testable here, and why:
 - **The text sign-up of a care provider past the payment link:** stops at the Stripe checkout.
 
 Still open after this batch: **a booking can be sent with no card on file** (held, Stripe) · **Linq delivery receipts** need the second signing secret set (`LINQ_WEBHOOK_SECRET_2`) · **each agent turn uses about 59,000 input tokens** (about $0.18 for a two-step turn, $0.32 seen once): the prompt and the whole tool list go in every step; worth trimming the tools per request · **early answers to later questions in the family intake** are re-asked · **visit times on the care provider's booking pages have no zone** · **the shift clock-in / timesheet flows** need a test visit created for "now".
+
+
+### Founders' text test (Nov 15, 2026): adding an emergency contact took three tries and two confirmations
+
+Seen in their screenshots: "Add emergency contact" → name → phone → relationship → "I'm ready to add… reply yes" → yes → "I'm about to add… Reply YES and I'll save it" → yes → "I tried, but it didn't go through. I've flagged it for review." → "can you try again" → the same two confirmations → the same failure → a third try saved ("Done.").
+
+- [x] **The save failed twice with "The contact needs a name"** — _Fixed in code Nov 15 (not yet deployed). The pending-action record shows the model sent the contact as a list, `[{name, phone, relation}]`, with action "append", and the handler only read one object. Both shapes are accepted now for append and remove (tests in `carePlanParity.test.ts`)._
+- [x] **The family has to say yes twice** — _Fixed in code Nov 15 (not yet deployed). The tool description told the model to read the change back and wait for a yes, and then the system's own confirmation gate asked again. For `update_care_plan` (all sections except notes), `set_subscription_status` and `set_block_status` the description now says the system asks, so the model calls the tool straight away._
+- [x] **A refused confirmed action only says "didn't go through, flagged for review"** — _Fixed in code Nov 15 (not yet deployed): when the refusal is for invalid details the text now says what was wrong ("That didn't save: the contact needs a name…") and asks for the corrected details; the ops alert is unchanged._

@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { coerceToolInput } from "./coerceToolInput";
 import { randomUUID } from "crypto";
 import { requestVideoInterview, VideoInterviewRequestError, resolveCaregiverForInterview } from "../agents/videoInterviewRequest";
 import { logHealthDataAccessed, logAudit } from "../observability/auditLog";
@@ -1597,7 +1598,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "cancel_job_post",
     description:
-      "Close an open job post. Only call after the client has explicitly confirmed they want to close it.",
+      "Close an open job post. Call it as soon as the client says they want it closed — the platform asks them to confirm before it closes, so do NOT ask for a separate yes first.",
     input_schema: {
       type: "object",
       properties: {
@@ -2369,7 +2370,7 @@ export const MCP_TOOLS: McpTool[] = [
       "Delete one of Evia's memory files for a user entirely — the file content AND its search index. Permanent. " +
       "Use when the family asks you to forget a whole topic/file, or to clean up an ad-hoc offloaded file. " +
       "For correcting a single fact use edit_memory_file instead. " +
-      "MANDATORY: read back which file you're deleting and wait for explicit confirmation before calling.",
+      "The platform asks for the confirmation before it deletes, so call as soon as you know which file — do NOT ask for a separate yes first.",
     input_schema: {
       type: "object",
       properties: {
@@ -3105,6 +3106,9 @@ export async function handleToolCall(
   input: Record<string, unknown>,
   shadowMode = false,
 ): Promise<unknown> {
+  // Common model slips in the arguments (a one-item list for an object, "3" for 3, …) are repaired from the tool's own
+  // declared schema first, so a handler never answers with a validation error for a shape mistake (2026-11-15).
+  input = coerceToolInput(input, (MCP_TOOLS.find((t) => t.name === name)?.input_schema ?? undefined) as Parameters<typeof coerceToolInput>[1]);
   // U11: under shadow, never execute a non-read-only tool — return a synthetic
   // "would-have-run" result the harness records as the shadow end-state.
   if (shadowMode && !READ_ONLY_TOOLS.has(name)) {

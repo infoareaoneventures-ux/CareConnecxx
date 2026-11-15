@@ -112,6 +112,11 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   review_shift_hours: (input) => input.action === "approve" || input.action === "accept_counter",
 };
 
+/** Every tool that can be held behind the confirmation gate (always, or for some arguments). */
+export function gatedToolNames(): string[] {
+  return Array.from(new Set<string>([...Array.from(ALWAYS_CONFIRM), ...Object.keys(CONDITIONAL_CONFIRM)])).sort();
+}
+
 export function isHighRisk(toolName: string, toolInput: Record<string, unknown>): boolean {
   if (ALWAYS_CONFIRM.has(toolName)) return true;
   const pred = CONDITIONAL_CONFIRM[toolName];

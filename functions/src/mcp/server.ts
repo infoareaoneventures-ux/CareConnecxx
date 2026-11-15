@@ -936,8 +936,11 @@ export const MCP_TOOLS: McpTool[] = [
       "added to the pool), 'emergencyContacts' (the Emergency Contacts card — items {name, relation, phone, isPrimary}; the " +
       "card holds at most 2 contacts including the signup contact; phone must be 10+ digits), or 'reviewed' (the 'Looks good' " +
       "button — value true). This is a non-medical marketplace: never solicit or record medications, diagnoses, or other medical " +
-      "details. MANDATORY: read the change back in plain English and wait for explicit confirmation before calling. When the " +
-      "household has more than one recipient, pass recipientFirstName.",
+      "details. For every section EXCEPT 'notes' the system itself reads the change back and asks the person to confirm before " +
+      "anything is saved, so call this as soon as you have the details and do NOT ask for a separate yes first (the family was " +
+      "asked to say yes twice, and the first save failed, in the founders' text test 2026-11-15). For 'notes', read it back and " +
+      "wait for a yes before calling. For 'emergencyContacts' with action append or remove, pass ONE contact object as value, not an array. " +
+      "When the household has more than one recipient, pass recipientFirstName.",
     input_schema: {
       type: "object",
       properties: {
@@ -1096,7 +1099,7 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Cancel or reactivate the family's Evia membership. Cancel takes effect at end of billing period — " +
       "scheduled visits are unaffected. MANDATORY for action:'cancel': tell the family when their subscription " +
-      "ends and confirm before calling. Reactivate needs no confirmation.",
+      "ends. Cancelling is confirmed by the system itself (it reads the change back and asks the person to say yes), so call it as soon as you know they want to cancel — do NOT ask for a separate yes first. Reactivate needs no confirmation.",
     input_schema: {
       type: "object",
       properties: {
@@ -1971,7 +1974,7 @@ export const MCP_TOOLS: McpTool[] = [
   // ── Safety: block + report ────────────────────────────────────────────────
   {
     name: "set_block_status",
-    description: "Block, unblock, or file an abuse report against another user. MANDATORY for action:'block' or 'report': confirm with the family first (who — and for 'report', what happened) and wait for explicit confirmation before calling. Unblocking needs no confirmation. Reporting tells the family ops will follow up within 24 hours.",
+    description: "Block, unblock, or file an abuse report against another user. For action:'block' or 'report': get who (and for 'report', what happened), then call — the system itself reads it back and asks the family to say yes before anything is saved, so do NOT ask for a separate yes first. Unblocking needs no confirmation. Reporting tells the family ops will follow up within 24 hours.",
     input_schema: {
       type: "object",
       properties: {
@@ -4525,16 +4528,20 @@ async function executeToolCall(
           phone: String(c.phone ?? "").replace(/[^\d+\-() ]/g, "").slice(0, 16), isPrimary: c.isPrimary === true,
         });
         let next = [...page.emergencyContacts];
+        // One contact or a list of one: the model sent [{...}] with "append" and was told "The contact needs a name" twice
+        // before a third try worked (founders' text test 2026-11-15). Either shape is accepted now.
+        const items: Array<Record<string, unknown>> = (Array.isArray(value) ? value : [value ?? {}]) as Array<Record<string, unknown>>;
         if (action === "append") {
-          const c = norm((value ?? {}) as Record<string, unknown>);
-          if (!c.name) return toolError("INVALID_INPUT", "The contact needs a name");
-          if (digits(c.phone).length < 10) return toolError("INVALID_INPUT", "Phone number must be at least 10 digits");
-          if (next.length + (page.setupContact ? 1 : 0) >= 2) return toolError("INVALID_INPUT", "The Emergency Contacts card holds at most 2 contacts (including the signup contact) — remove or edit one instead");
-          next.push(c);
+          for (const raw of items) {
+            const c = norm((raw ?? {}) as Record<string, unknown>);
+            if (!c.name) return toolError("INVALID_INPUT", "The contact needs a name");
+            if (digits(c.phone).length < 10) return toolError("INVALID_INPUT", "Phone number must be at least 10 digits");
+            if (next.length + (page.setupContact ? 1 : 0) >= 2) return toolError("INVALID_INPUT", "The Emergency Contacts card holds at most 2 contacts (including the signup contact) — remove or edit one instead");
+            next.push(c);
+          }
         } else if (action === "remove") {
-          const v = (value ?? {}) as Record<string, unknown>;
           const before = next.length;
-          next = next.filter((c) => !(v.id && c.id === v.id) && !(!v.id && v.name && c.name.toLowerCase() === String(v.name).toLowerCase()));
+          next = next.filter((c) => !items.some((v) => (v?.id && c.id === v.id) || (!v?.id && v?.name && c.name.toLowerCase() === String(v.name).toLowerCase())));
           if (next.length === before) return toolError("NOT_FOUND", "No emergency contact matched — get_care_plan lists them");
         } else {
           if (!Array.isArray(value)) return toolError("INVALID_INPUT", "emergencyContacts set needs an array of contacts");

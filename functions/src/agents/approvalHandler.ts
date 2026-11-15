@@ -99,7 +99,7 @@ async function executeConfirmedAction(params: {
   userId?:  string;
   userType: "client" | "caregiver";
   pending:  PendingAction;
-}): Promise<{ succeeded: boolean; alertFlagged: boolean; skipped: boolean }> {
+}): Promise<{ succeeded: boolean; alertFlagged: boolean; skipped: boolean; invalidReason?: string }> {
   const { phone, chatId, userId, userType, pending } = params;
 
   console.info("approvalHandler.execute", {
@@ -154,8 +154,12 @@ async function executeConfirmedAction(params: {
 
   let executionPreview = "";
   let succeeded = false;
+  let invalidReason: string | undefined;
   try {
     const result = await dispatch(pending.toolName, enrichedInput);
+    // A refusal for invalid details (not an outage) names what was wrong, so the person can fix it (2026-11-15).
+    const r = result as { code?: unknown; message?: unknown };
+    if (r?.code === "INVALID_INPUT" && typeof r.message === "string") invalidReason = r.message.slice(0, 200);
     succeeded = !(result as { _toolError?: boolean; error?: unknown })?._toolError &&
                 !(result as { error?: unknown })?.error;
     executionPreview = JSON.stringify(result).slice(0, 500);
@@ -206,7 +210,7 @@ async function executeConfirmedAction(params: {
     });
   }
 
-  return { succeeded, alertFlagged, skipped: false };
+  return { succeeded, alertFlagged, skipped: false, ...(invalidReason ? { invalidReason } : {}) };
 }
 
 // Main entry point. Loads or accepts the pending action, classifies the
@@ -257,7 +261,7 @@ export async function handlePendingApproval(params: {
   }
 
   // decision === "YES" — execute the tool with the bypass flag set.
-  const { succeeded, alertFlagged, skipped } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
+  const { succeeded, alertFlagged, skipped, invalidReason } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
 
   // Acknowledge to the family. Keep it short — the tool itself may have
   // already sent richer downstream notifications (e.g. caregiver SMS). A
@@ -268,6 +272,8 @@ export async function handlePendingApproval(params: {
     ? (isDeletion ? DELETE_ACCOUNT_DONE : "Done.")
     : skipped
       ? "That's already been taken care of — nothing more needed."
+      : invalidReason
+        ? `That didn't save: ${invalidReason.replace(/[.\s]+$/, "")}. Tell me the corrected details and I'll set it up again.`
       : alertFlagged
         ? "I tried, but it didn't go through. I've flagged it for review."
         : "I tried, but it didn't go through, and I couldn't log it for review automatically. Text me what happened and I can try the next step here.";

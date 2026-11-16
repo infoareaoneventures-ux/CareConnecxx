@@ -42,7 +42,7 @@ vi.mock("../caregiverJobFlows", () => ({ startApplyFlow: (...a: any[]) => (start
 
 import {
   jobListText, jobDetailsText, resolveJobRef, sendJobList, sendJobDetails, LIST_FOOTER, listFooter,
-  extractJobBoardFilters, jobListIsLatest, handleJobsKeyword, handleJobsFilterFollowUp, JOB_LIST_FOLLOW_UP_WINDOW_MS,
+  extractJobBoardFilters, beyondRadiusNote, jobListIsLatest, handleJobsKeyword, handleJobsFilterFollowUp, JOB_LIST_FOLLOW_UP_WINDOW_MS,
 } from "../jobBoardText";
 import type { JobCard } from "../jobBoardPage";
 
@@ -339,5 +339,20 @@ describe("handleJobsFilterFollowUp — \"only weekends\" right after the list na
     parseWithClaude.mockResolvedValueOnce('{"clear":true}');
     expect(await handleJobsFilterFollowUp("+1555", "chat", "cg1", "never mind, show everything", session)).toBe("handled");
     expect(hoisted.sent[0].startsWith("Here's what's open right now:\n1. Job 1")).toBe(true);
+  });
+});
+
+
+describe("beyondRadiusNote — a job past her travel distance is said so, never silently changed", () => {
+  const card = (d: number | null) => ({ distanceMiles: d }) as unknown as JobCard;
+  it("names the job, its distance and her travel distance, and only offers to update it", () => {
+    const note = beyondRadiusNote([card(31.4), card(31.4)], 0, 10)!;
+    expect(note).toBe("Jobs 1 and 2 are up to 31.4 mi away, further than the 10 mi travel distance you have set. If you'd like me to update it, let me know.");
+    expect(beyondRadiusNote([card(4.9), card(31.4)], 0, 10)).toMatch(/^Job 2 is 31\.4 mi away, further than the 10 mi/);
+  });
+  it("is silent when every job is in range, the distance is unknown, or no travel distance is set", () => {
+    expect(beyondRadiusNote([card(4.9)], 0, 10)).toBeNull();
+    expect(beyondRadiusNote([card(null)], 0, 10)).toBeNull();
+    expect(beyondRadiusNote([card(31.4)], 0, 0)).toBeNull();
   });
 });

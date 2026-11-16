@@ -355,6 +355,11 @@ describe("applyJobBoardFilters — JobBoard.tsx filteredJobs (:510-550) as one p
     expect(ids(applyJobBoardFilters(jobs, undefined, cg))).toEqual(["near", "sc", "nocoords"]);
     expect(ids(applyJobBoardFilters(jobs, {}, cg))).toEqual(["near", "sc", "nocoords"]);
   });
+  it("a named-place search lists every match even past her travel distance; without a search the rule stays", () => {
+    expect(ids(applyJobBoardFilters(jobs, { search: "Sacramento" }, cg))).toEqual(["far"]);
+    expect(ids(applyJobBoardFilters(jobs, { search: "  " }, cg))).toEqual(["near", "sc", "nocoords"]);
+    expect(ids(applyJobBoardFilters(jobs, { timeOfDay: ["morning"] }, cg))).toEqual(["near"]);
+  });
   it("no care provider coords, or no travel distance set → distance never excludes (the page's cgLat && cgLng && cgRadius > 0 guard)", () => {
     expect(ids(applyJobBoardFilters(jobs, {}, { serviceRadius: 10 }))).toEqual(["near", "sc", "far", "nocoords"]);
     expect(ids(applyJobBoardFilters(jobs, {}, { ...cg, serviceRadius: 0 }))).toEqual(["near", "sc", "far", "nocoords"]);

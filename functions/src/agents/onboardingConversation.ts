@@ -563,6 +563,8 @@ async function detectRoleSwitch(
     "Use \"client\" if they are clearly saying they need care for a loved one (not their own job). " +
     "Use \"care provider\" if they are clearly saying they are a care provider looking for work. " +
     `Use \"none\" if their message is just answering the current question or is ambiguous. ` +
+    "Asking about or applying to jobs, bookings, visits, the schedule or their account is ordinary use of the product by " +
+    "either role, never a role switch, so that is \"none\". " +
     "Only flag clear role-switch intent; do NOT flag a client mentioning they have a care provider background, " +
     "or a care provider mentioning their own elderly parent in passing. The word \"care provider\" appearing in the " +
     "message is NOT enough by itself — a client asking about care provider MATCHES (e.g. \"any more care providers?\", " +
@@ -574,7 +576,8 @@ async function detectRoleSwitch(
   try {
     const parsed = JSON.parse(raw) as { switchTo?: string };
     if (parsed.switchTo === "client" && currentRole !== "client") return "client";
-    if (parsed.switchTo === "caregiver" && currentRole !== "caregiver") return "caregiver";
+    // The prompt above asks for "care provider"; accept the legacy "caregiver" spelling too (the old comparison never matched).
+    if ((parsed.switchTo === "care provider" || parsed.switchTo === "caregiver") && currentRole !== "caregiver") return "caregiver";
     return null;
   } catch {
     return null;
@@ -1136,6 +1139,9 @@ export async function handleOnboardingStep(
       && !step.endsWith("_awaiting_bgcheck") && !step.endsWith("_awaiting_membership")
       && !step.endsWith("_awaiting_documents") && !step.endsWith("_awaiting_photo")
       && !step.endsWith("_awaiting_identity") && !step.endsWith("_awaiting_mvr")
+      // The membership offer (live 2026-11-16: a care provider at "Ready to activate?" texted "Apply to job 1 please", the
+      // detector read it as a family and wiped her session). Everyone here already picked a role and has an account.
+      && step !== "caregiver_membership" && step !== "caregiver_send_membership"
       // Post-collection browsing (matches shown, deciding on membership) — a
       // family asking "any more caregivers?" here was live-caught getting
       // misread as "I'm a caregiver looking for work," wiping their whole

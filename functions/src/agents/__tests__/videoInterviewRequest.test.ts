@@ -251,6 +251,14 @@ describe("requestVideoInterview", () => {
       expect(stored).toMatchObject({ caregiverId: CAREGIVER });
     });
 
+    it("resolves a first name alone within this family's own care providers (live 2026-11-16: \"Hire Riya\")", async () => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER] });
+      const result = await requestVideoInterview({
+        clientId: CLIENT, caregiverId: "Alice", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
+      });
+      expect(result.caregiverId).toBe(CAREGIVER);
+    });
+
     it("still fails when no care provider matches that name within this family's shown list", async () => {
       hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER] });
       await expect(requestVideoInterview({

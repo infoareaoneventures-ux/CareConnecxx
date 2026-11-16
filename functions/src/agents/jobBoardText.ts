@@ -94,9 +94,27 @@ export function jobListText(
   const header = from === 0 ? (opts.limited ? `Here's what's open near you${label}:` : `Here's what's open right now${label}:`) : `Here are the next ones${label}:`;
   const lines = shown.map((card, i) =>
     `${from + i + 1}. ${jobCardLine(card)}${card.action !== "Apply Now" ? ` — ${card.action}` : ""}`);
+  const farNote = beyondRadiusNote(shown, from, page.radiusMiles);
   const footerBase = listFooter(shown, from);
   const footer = remaining > 0 ? `${footerBase} There are more too, just say more and I'll show the next two.` : footerBase;
-  return { text: [header, ...lines, "", footer].join("\n"), shown, remaining };
+  return { text: [header, ...lines, "", ...(farNote ? [farNote, ""] : []), footer].join("\n"), shown, remaining };
+}
+
+/**
+ * A job past her travel distance (only a named-place search lists one): say so, and offer — never change — the distance.
+ * Founder 2026-11-16: "only show the jobs… send a message that this job is X miles away, further than your travel
+ * distance… do it only when the user says so."
+ */
+export function beyondRadiusNote(shown: AvailableJobsResult["jobs"], from: number, radiusMiles: number): string | null {
+  if (!(radiusMiles > 0)) return null;
+  const far = shown
+    .map((card, i) => ({ n: from + i + 1, d: card.distanceMiles }))
+    .filter((x): x is { n: number; d: number } => x.d != null && x.d > radiusMiles);
+  if (far.length === 0) return null;
+  const nums = far.map((x) => x.n);
+  const label = nums.length === 1 ? `Job ${nums[0]} is` : `Jobs ${nums.slice(0, -1).join(", ")} and ${nums[nums.length - 1]} are`;
+  const miles = nums.length === 1 ? `${far[0].d.toFixed(1)} mi away` : `up to ${Math.max(...far.map((x) => x.d)).toFixed(1)} mi away`;
+  return `${label} ${miles}, further than the ${radiusMiles} mi travel distance you have set. If you'd like me to update it, let me know.`;
 }
 
 /** The Job Details modal, top to bottom, ending in the ONE footer the modal shows. */

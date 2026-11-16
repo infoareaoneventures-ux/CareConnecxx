@@ -335,7 +335,10 @@ export function applyJobBoardFilters(jobs: Doc[], filters: JobBoardFilters | und
   const coords = caregiverCoords(caregiver);
   const radius = caregiverRadiusMiles(caregiver);
   // The Care type filter is an optional VIEW for every provider (founder 2026-10-19) — none = every post.
-  return jobs.filter((j) => passesJobBoardFilters(j, filters) && withinCaregiverRadius(j, coords, radius));
+  // Texted search (2026-11-16, founder): when the provider names a place or words ("jobs in Gilroy"), every match shows —
+  // the travel distance narrows the default list only. The list text then notes the ones past her distance.
+  const explicitSearch = !!filters?.search?.trim();
+  return jobs.filter((j) => passesJobBoardFilters(j, filters) && (explicitSearch || withinCaregiverRadius(j, coords, radius)));
 }
 
 async function caregiverBlockedIds(caregiverId: string): Promise<Set<string>> {

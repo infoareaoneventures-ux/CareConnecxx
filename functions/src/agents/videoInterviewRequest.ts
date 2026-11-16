@@ -116,7 +116,9 @@ export async function resolveCaregiverForInterview(
   // UNIQUE match within that small set; anything ambiguous or unscoped fails
   // closed rather than guessing. No `phone` (e.g. the website, which never
   // hits this path — it always passes a real id) also fails closed.
-  if (!caregiverSnap.exists && caregiverId.includes(" ") && phone) {
+  // A first name alone ("Riya") is a name too (live 2026-11-16: "Hire Riya" → "couldn't find that care provider"): anything that
+  // does not look like a Firestore auto-id (20+ letters/digits, no spaces) is tried as a name within this family's own people.
+  if (!caregiverSnap.exists && caregiverId.trim() && !/^[A-Za-z0-9]{20,}$/.test(caregiverId.trim()) && phone) {
     const sessSnap = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
     // The care providers this family has actually been shown by text, PLUS the ones they already have a relationship
     // with on the site (booked visits, booking requests, interviews): a provider booked on the website was never
@@ -126,7 +128,8 @@ export async function resolveCaregiverForInterview(
     const ownerId = sessSnap?.data()?.userId as string | undefined;
     if (ownerId) {
       try {
-        for (const col of ["shifts", "booking_requests", "video_interviews"]) {
+        // job_applications: the people who applied to this family's own posts.
+        for (const col of ["shifts", "booking_requests", "video_interviews", "job_applications"]) {
           const rows = await db.collection(col).where("clientId", "==", ownerId).limit(60).get();
           rows.forEach((r) => { const id = r.data()?.caregiverId; if (typeof id === "string" && id) idSet.add(id); });
         }
@@ -142,7 +145,11 @@ export async function resolveCaregiverForInterview(
           .get().catch(() => null);
         for (const d of scoped?.docs ?? []) found.push(d);
       }
-      const matches = found.filter((d) => String(d.data()?.name ?? "").trim().toLowerCase() === wanted);
+      const nameOf = (d: FirebaseFirestore.QueryDocumentSnapshot) => String(d.data()?.name ?? "").trim().toLowerCase();
+      // The full name first; failing that, the first name alone — still only within this family's own care providers, and
+      // a first name shared by two of them is "ambiguous", never a guess.
+      let matches = found.filter((d) => nameOf(d) === wanted);
+      if (matches.length === 0) matches = found.filter((d) => nameOf(d).split(/\s+/)[0] === wanted);
       if (matches.length === 1) {
         caregiverSnap = matches[0];
       } else if (matches.length > 1) {

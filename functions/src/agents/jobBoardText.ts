@@ -243,6 +243,8 @@ const refinePrompt = (providerKinds: unknown) =>
   "A care provider was just texted the Jobs page list. Decide whether her new message is CHANGING THE FILTER SIDEBAR of that list " +
   "(narrowing or changing it — e.g. 'only weekends', 'over $25', 'mornings instead', 'just companionship ones', 'show everything again'). " +
   "If it is anything else — a number, 'apply', 'hide', 'details', a question, an answer to something, a greeting, a different page — reply NONE. " +
+  "A request to change HER OWN profile or account ('update my availability', 'change my rate', 'set my travel distance', 'I'm free every day', " +
+  "'change my services') is NOT a filter change even when it mentions days or times — reply NONE. " +
   "Otherwise reply with ONLY a JSON object of the sidebar controls she is setting: " +
   "search (free text), payMin / payMax (dollars per hour), timeOfDay (morning, afternoon, evening, overnight), " +
   "days (Mon, Tue, Wed, Thu, Fri, Sat, Sun — 'weekends' = Sat and Sun, 'weekdays' = Mon to Fri), seniors (\"1\", \"2\", \"3+\"), " +

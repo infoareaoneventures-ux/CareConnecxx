@@ -40,3 +40,22 @@ describe("gated tools do not also ask the model to collect a yes", () => {
     });
   }
 });
+
+// The system prompt carries its own line per tool (qaAgent.ts "· tool_name — …"); a contradicting line there caused the
+// 2026-11-16 live repeat ("Say yes and I'll save it" from the model, then the gate's own yes). Same rule for those lines.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+describe("gated tools: the system prompt lines do not tell the model to ask first", () => {
+  const src = readFileSync(join(__dirname, "../../agents/qaAgent.ts"), "utf8");
+  for (const name of gatedToolNames().filter((n) => n !== "delete_account")) {
+    const lines = src.split("\n").filter((l) => l.includes(`· ${name} —`) || l.includes(`· ${name} -`));
+    for (const [i, line] of lines.entries()) {
+      it(`${name} prompt line ${i + 1}`, () => {
+        const cleaned = line
+          .replace(/[^.]*\b(?:do not|don't|never)\b[^.]*\bask\b[^.]*\./gi, "")
+          .replace(/[^.]*\bnotes\b[^.]*\./gi, "");
+        expect(cleaned).not.toMatch(MODEL_ASKS_FIRST);
+      });
+    }
+  }
+});

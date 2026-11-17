@@ -309,6 +309,19 @@ export async function handleJobsKeyword(
   return "passthrough";
 }
 
+/** The text of Evia's most recent message to this phone ("" when unknown). Read-only, fail-soft. */
+async function lastAssistantText(phone: string): Promise<string> {
+  try {
+    const snap = await db.collection("agent_conversations").doc(phone).collection("messages")
+      .orderBy("timestamp", "desc").limit(6).get();
+    for (const d of snap.docs) {
+      const row = d.data() as { role?: string; content?: string };
+      if (row.role === "assistant" && typeof row.content === "string" && row.content.trim()) return row.content;
+    }
+  } catch { /* unknown → the list is assumed to be the last thing said */ }
+  return "";
+}
+
 /**
  * A free-text follow-up to the job list ("only weekends", "over $25") narrows
  * the last sidebar set — only while that list is the newest list texted and
@@ -321,6 +334,11 @@ export async function handleJobsFilterFollowUp(
 ): Promise<"handled" | "passthrough"> {
   const raw = text.trim();
   if (!raw || /^\d+$/.test(raw) || !jobListIsLatest(session)) return "passthrough";
+  // What Evia said last: an answer to a question about something else ("Which days would you like to update?" → "Every day")
+  // is not a filter change, even though it names days (live 2026-11-16: it re-sent the job list instead of updating availability).
+  const lastSaid = await lastAssistantText(phone);
+  const jobListIsLast = !lastSaid || /what's open (?:near you|right now)|here are the next ones/i.test(lastSaid);
+  if (!jobListIsLast) return "passthrough";
   const { filters, clear } = await extractJobBoardFilters(raw, "refine");
   if (clear) { await sendJobList(phone, chatId, caregiverId); return "handled"; }
   if (!hasJobBoardFilters(filters)) return "passthrough";

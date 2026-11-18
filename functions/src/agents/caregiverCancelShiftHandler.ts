@@ -166,6 +166,21 @@ async function parkChoice(sessionRef: FirebaseFirestore.DocumentReference, o: Ca
   await sessionRef.update({ cancelShiftId: o.id, cancelKind: o.kind, cancelShiftDate: o.date, cancelShiftClientId: o.clientId, stateExpiresAt: expires });
 }
 
+/** The write for one chosen option + the care provider's reply. Shared by the YES at the dialog and a pick from the list (the pick IS the confirmation — each option is spelled out in full). */
+async function executeCancel(caregiverId: string, chosen: CancelOption, chatId: string): Promise<void> {
+  if (chosen.kind === "booking") {
+    const r = await cancelBookingLikeThePage(caregiverId, chosen.id);
+    if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That booking's next visit is already ${r.status}, so there's nothing to cancel.` : "That booking isn't on your bookings any more."); return; }
+    await sendMessage(chatId, `${r.toast} (${chosen.clientName}, ${r.count} visit${r.count === 1 ? "" : "s"}). The family has been told.`);
+    return;
+  }
+  const r = await cancelShiftLikeThePage(chosen.id, "caregiver", caregiverId);
+  if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That shift is already ${r.status}, so there's nothing to cancel.` : "That shift isn't on your bookings any more."); return; }
+  await sendMessage(chatId, r.status === "needs_replacement"
+    ? `Cancelled: ${optionLine(chosen)}. It starts within 24 hours, so the family is being offered a replacement care provider.`
+    : `Cancelled: ${optionLine(chosen)}. The family has been told.`);
+}
+
 export async function handleCaregiverCancelShift(
   caregiverId:    string,
   _caregiverName: string,
@@ -225,21 +240,7 @@ export async function handleCaregiverCancelShift(
         '"yes", "yeah", "confirm", "do it", "cancel it" → YES. "no", "wait", "never mind", "keep it", "back" → NO. Reply with exactly YES or NO.',
         text, 5,
       );
-      if (decision === "YES") {
-        await sessionRef.update(CLEAR);
-        if (chosen.kind === "booking") {
-          const r = await cancelBookingLikeThePage(caregiverId, chosen.id);
-          if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That booking's next visit is already ${r.status}, so there's nothing to cancel.` : "That booking isn't on your bookings any more."); return; }
-          await sendMessage(chatId, `${r.toast} (${chosen.clientName}, ${r.count} visit${r.count === 1 ? "" : "s"}). The family has been told.`);
-          return;
-        }
-        const r = await cancelShiftLikeThePage(chosen.id, "caregiver", caregiverId);
-        if (!r.ok) { await sendMessage(chatId, r.reason === "not_scheduled" ? `That shift is already ${r.status}, so there's nothing to cancel.` : "That shift isn't on your bookings any more."); return; }
-        await sendMessage(chatId, r.status === "needs_replacement"
-          ? `Cancelled: ${optionLine(chosen)}. It starts within 24 hours, so the family is being offered a replacement care provider.`
-          : `Cancelled: ${optionLine(chosen)}. The family has been told.`);
-        return;
-      }
+      if (decision === "YES") { await sessionRef.update(CLEAR); await executeCancel(caregiverId, chosen, chatId); return; }
       if (decision === "NO") {
         // A worded "never mind" leaves the flow entirely; a bare NO still goes back to the list.
         if (options.length > 1 && norm !== "NO" && await isBackOutRequest(text, confirm)) { await sessionRef.update(CLEAR); await sendMessage(chatId, "No problem, your shifts are unchanged."); return; }
@@ -256,15 +257,17 @@ export async function handleCaregiverCancelShift(
     if (await isBackOutRequest(text, reAskPick)) { await sessionRef.update(CLEAR); await sendMessage(chatId, "No problem, your shifts are unchanged."); return; }
     // The screen is the numbered list they were just sent; the facts are what cancelling does (nothing yet).
     if (await isQuestionOrOther(text, reAskPick)) {
-      const facts = `The numbered list on their screen:\n${listText(options)}\n\nNothing is cancelled by picking a number — a YES/NO dialog follows. ${CANCEL_RULES}`;
+      const facts = `The numbered list on their screen:\n${listText(options)}\n\nPicking a number cancels that option right away. ${CANCEL_RULES}`;
       await sendMessage(chatId, await answerMidFlow(text, reAskPick, facts));
       return;
     }
     const pick = parseInt(text.trim(), 10);
     const option = options.find((o) => o.index === pick) ?? (Number.isNaN(pick) ? await resolveOptionFromText(text, options) : null);
     if (!option) { await sendMessage(chatId, `I need a number between 1 and ${options.length}, or say never mind to leave everything as it is.`); return; }
-    await parkChoice(sessionRef, option, expires());
-    await sendMessage(chatId, confirmFor(option));
+    // The pick is the confirmation: the list spelled the option out ("this visit only" / "the whole booking, every upcoming visit"),
+    // so asking "just checking" again was a second yes for one decision (founder 2026-11-18).
+    await sessionRef.update(CLEAR);
+    await executeCancel(caregiverId, option, chatId);
     return;
   }
 

@@ -262,6 +262,19 @@ const NEUTRAL_COPY_FAMILY: Partial<Record<GroundingClaimCategory, NeutralCopyCat
 
 const NEUTRAL_COPY_PRIORITY: ReadonlyArray<NeutralCopyCategory> = ["medical", "payment", "action", "identity"];
 
+const HUMAN_HOLD_CATEGORIES: ReadonlySet<GroundingClaimCategory> = new Set<GroundingClaimCategory>([
+  "medical_condition", "allergy", "medical_event", "money_payment",
+]);
+
+/** True when a draft's unbacked claims include a high-risk health or money claim — the only case that still hands off to a person. */
+export function claimsNeedHumanHold(claims: ReadonlyArray<GroundingClaim>): boolean {
+  return claims.some((c) => c.risk === "high" && HUMAN_HOLD_CATEGORIES.has(c.category));
+}
+
+/** The reply for an unbacked, non-risky claim: honest, holds nothing, asks once for the request again. */
+export const GROUNDING_REASK_COPY =
+  "I want to get this exactly right. Could you tell me once more what you'd like me to change, in a few words?";
+
 export function neutralCopyForClaims(claims: ReadonlyArray<GroundingClaim>): string | null {
   const families = new Set<NeutralCopyCategory>();
   for (const claim of claims) {
@@ -292,7 +305,7 @@ export function neutralCopyForClaims(claims: ReadonlyArray<GroundingClaim>): str
 //                                       never a stranded thread)
 // With the kill switch off the caller never reaches indeterminate (legacy
 // parse maps garbage → supported), but resolve defensively to "send" anyway.
-export type GroundingGateAction = "send" | "neutralize" | "handoff";
+export type GroundingGateAction = "send" | "neutralize" | "handoff" | "reask";
 
 // 2026-09-27 (live, both sides): "accept" / "Yes confirm" replies got the
 // "looping in a teammate" hold even though the accept tool had SUCCEEDED
@@ -313,7 +326,10 @@ export function resolveGroundingGateAction(args: {
   claims: ReadonlyArray<GroundingClaim>;
   riskTiersEnabled: boolean;
 }): GroundingGateAction {
-  if (args.verdict === "unsupported") return "handoff";
+  // An unbacked claim holds the thread for a human ONLY when it is a risky one (a health detail or money). Everything else
+  // (live 2026-11-18, founders: "add another person to the care plan" → "looping in a teammate") gets a short re-ask that
+  // keeps the conversation going — a person is never silenced over a care plan edit.
+  if (args.verdict === "unsupported") return claimsNeedHumanHold(args.claims) ? "handoff" : "reask";
   if (args.verdict === "supported") return "send";
   if (args.riskTiersEnabled && neutralCopyForClaims(args.claims)) return "neutralize";
   return "send";

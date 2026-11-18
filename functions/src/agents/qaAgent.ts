@@ -69,6 +69,7 @@ import {
   parseGroundingVerdictTyped,
   isRiskTierGroundingEnabled,
   neutralCopyForClaims,
+  GROUNDING_REASK_COPY,
   resolveGroundingGateAction,
   type GroundingVerdict,
   shouldHandOffToHuman,
@@ -831,7 +832,7 @@ export function buildClientSystemPrompt(
     `  · start_visit_request_flow — ADDING A VISIT (non-negotiable): "add Thursdays", "can Basra also come Saturday 9 to 1", "one more day next week" → call this with initialText = the family's message (caregiverId if named). It is the website's Request Visit button (My Calendar, My Bookings, each Active Bookings card) step for step (which care provider/booking, days, per-day times with the site's own availability checks, start, ongoing/end, note, recap, YES → the care provider's accept request) and ALREADY TEXTS THE FAMILY — send NOTHING else this turn. Never collect these fields yourself.`,
     `  · get_calendar — the website's My Calendar page for a date range: every visit with the page's display status (scheduled / in-progress / overdue / completed / cancelled) and its click-through details (address, recipients, care needs vs tasks completed, actual start/end, completion notes) plus every interview the page shows (with its Meet link and job banner), each with 'actions' = the popover's buttons. Use for "what's on my calendar this week / next week", "how many visits in October", "what happened last week". Adding a visit = start_visit_request_flow (the page's "+ Request Visit"); cancelling one = start_cancel_flow; an interview's cancel = cancel_interview.`,
     `  · request_schedule_amendment — low-level write behind start_visit_request_flow; prefer the flow. Only for a request already fully resolved outside the conversation. To move an EXISTING already-scheduled visit to a different day/time instead, use manage_booking's propose_reschedule — do not cancel_visit + request_schedule_amendment for that, it loses the original visit instead of just moving it. Confirm the date/time with the family, then call; the care provider gets a YES/NO text.`,
-    `  · start_replacement_flow — THE way to handle a visit that shows "Needs Replacement" (the care provider cancelled it): first get_upcoming_appointments to find that visit's id (status "needs_replacement") if you don't have it, then call start_replacement_flow with that shiftId. It runs Evia's own scripted flow matching the website's Find Replacement modal step for step (texts each candidate's profile card, asks which one and whether to keep or change the visit's day/time, shows a recap, and only on the family's YES sends the replacement booking request) and ALREADY TEXTS THE FAMILY ITSELF — send NOTHING else this turn. Never start_interview_flow here: there is no interview step in a replacement.`,
+    `  · start_replacement_flow — THE way to handle a visit that shows "Needs Replacement" (the care provider cancelled it): first get_upcoming_appointments to find that visit's id (status "needs_replacement") if you don't have it, then call start_replacement_flow with that shiftId. It runs Evia's own scripted flow matching the website's Find Replacement modal step for step (texts each candidate's profile card, asks which one and whether to keep or change the visit's day/time, shows a recap, and only on the family's YES sends the replacement booking request) and ALREADY TEXTS THE FAMILY ITSELF — send NOTHING else this turn. Never start_interview_flow here: there is no interview step in a replacement. If that visit shows plain "cancelled" (the care provider cancelled with more than 24 hours' notice, so the site offers no Find Replacement button) there is no replacement flow to start: say so in one sentence and offer to find another care provider for that day — find_nearby_caregivers, then start_booking_flow for a one-time visit on that date — never answer "I couldn't find that visit".`,
     `  · get_callout_backups / select_callout_backup — the same two steps as individual tools, only for a replacement already mid-conversation outside the flow. get_callout_backups finds candidates ranked the same way the website's own Find Replacement picker does (Care Team first, then nearby matches) and ALREADY TEXTS THE FAMILY each one's real profile card itself (tappable photo-preview link, same as find_nearby_caregivers) — send NOTHING else this turn beyond following its own instruction (which one they'd like). The candidates also land in pendingMatches, so a later "send me Maria's profile again" works via resend_caregiver_profile exactly like any other care provider search. select_callout_backup then sends a NEW booking request to the family's chosen candidate (they get the normal accept/decline text — this does not reassign the visit outright). If the family decides they don't need a replacement, use manage_booking's cancel_visit on that same shift instead (matches the website's Skip button) — there is no refund tool; refunds are handled separately, not through this flow.`,
     `  · react_to_message — add an iMessage tapback (heart, thumbs-up, laugh, or any custom emoji) to the family's most recent message. Use it the way a person texting would: heart a photo of ${seniorName}, thumbs-up a quick "sounds good", laugh at a joke. It's silent — a reaction alone is often the whole answer, so don't follow it with a redundant text. If the tool reports a fallback (SMS chat), express the sentiment briefly in your reply instead.`,
     `  · get_pending_tasks — everything the website shows as pending (Requests tab, Needs Replacement / Review buttons, interview proposals, Care Plan review banner, timesheets), each marked waitingOn you/care provider. Call it when the family says hello or asks if anything needs attention, and never say something is waiting on them unless it came back from this tool this turn.`,
@@ -843,7 +844,7 @@ export function buildClientSystemPrompt(
     `  · get_notifications — the website's bell as data (newest first, unread count, and for each the page it opens). Use for "what's new", "what was that notification", or "clear my notifications" (action mark_all_read); mark_read / delete take a notificationId from the list. Chat messages are not in the bell — use get_recent_messages for those.`,
     `  · contact_support — REACHING A PERSON (non-negotiable): the moment the family asks for a human, a person, support, a manager, or to complain about you — or raises a safety worry about a care provider, an accusation, or a dispute you cannot settle — call this with their words as message. It is the website's "Message our team" button: the team is alerted and replies are texted back here. Then say, in one line, that the team has it and will reply here by text. Never promise a time, never pretend to be the team, never keep arguing the point. ONLY for what THIS message says: an earlier hand-off in the conversation, a repeated message, or a request you could not finish before are NOT reasons to call it — answer the request with your tools (live bug 2026-11-14: after one hand-off, four ordinary interview requests each went to the team and muted the thread).`,
     `  · MONEY RULE (2026-09-19): a care provider's rate is theirs to keep — 100%. The family pays the rate PLUS Evia's 9% service fee, charged to their card when hours are approved (there is a $1 minimum — mention it only when it actually applied to a small visit, or when asked what the fee is). Quote it the way the site shows it: a rate as "$25/hr, plus the 9% service fee — about $27.25/hr billed to you"; a visit amount as care provider total, service fee, charged to your card (the tools return all three). The 9% covers payment processing and coordinating the visit; never describe it as protection, never mention refunds or insurance. Membership ($29.95/month) is separate and covers the platform.`,
-    `  · review_shift_hours — the Timesheets review modal, action for action: approve the hours as submitted; propose_correction with BOTH a corrected start and end (the care provider then accepts or counters within 24h) — to drop an additional charge, pass lineItems without it, exactly like removing a charge in the modal (keep the times as submitted if only the charge is wrong); and after a counter, accept_counter or escalate to Evia's team. Always show the row (get_pending_timesheets) and get a clear yes before approving — approving releases payment.`,
+    `  · review_shift_hours — the Timesheets review modal, action for action: approve the hours as submitted; propose_correction with BOTH a corrected start and end (the care provider then accepts or counters within 24h) — to drop an additional charge, pass lineItems without it, exactly like removing a charge in the modal (keep the times as submitted if only the charge is wrong); and after a counter, accept_counter or escalate to Evia's team. Always show the row (get_pending_timesheets) first, then call it once they say what they want — the platform reads the approval back (it releases payment) and asks for the YES itself, so never ask for a separate yes first.`,
     `  · get_membership_page — the website's Membership page exactly: plan card ($29.95/month), active or not, next billing date, or the end date once a cancel is scheduled, and that state's buttons. Any question about the membership starts here. To add a card / pick a plan → send_onboarding_link (payment); to update the card or see invoices → get_payment_update_link (the page's Manage button).`,
     `  · set_subscription_status — cancel or reactivate the Evia membership (action: 'cancel'|'reactivate'). Cancel takes effect at end of billing period. For cancel, call it as soon as they ask — the platform asks for the YES itself (never ask first); afterwards tell them when it ends. Reactivate needs no confirmation.`,
     `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
@@ -3664,7 +3665,9 @@ export async function runQaAgent(params: {
     // candidate reply. When the GROUNDING_RISK_TIERS_ENABLED kill switch is OFF
     // the pre-U7 detector + fail-open verdict path is restored verbatim.
     const riskTiersOn = isRiskTierGroundingEnabled();
-    const groundingClaims: GroundingClaim[] = riskTiersOn ? classifyGroundingClaims(reply) : [];
+    // Classified on every path (not only with the risk-tier switch on): the gate needs the categories to decide whether an
+    // unbacked claim is risky enough to hold the thread for a person.
+    const groundingClaims: GroundingClaim[] = classifyGroundingClaims(reply);
     // Deterministic safety copy (neutral copy) must not be re-worded by the
     // self-repeat guard below — track it like handedOff.
     let groundingNeutralizedThisTurn = false;
@@ -3801,6 +3804,28 @@ export async function runQaAgent(params: {
           },
         }).catch(() => {});
         reply = HUMAN_HANDOFF_COPY;
+      } else if (gateAction === "reask") {
+        // Unbacked claim that is NOT a health or money one: no hold, no teammate — an honest one-line re-ask, and the
+        // turn is logged for tuning. The next message is handled like any other.
+        groundingNeutralizedThisTurn = true;
+        metrics.groundingNeutralized = true;
+        console.warn("qaAgent: unbacked non-risky claim — re-ask sent, no hold", {
+          userId, turnHash: turnTextHash, draftHash,
+          claimCategories: metrics.groundingClaimCategories,
+        });
+        db.collection("agent_uncertainty_log").add({
+          userId,
+          turnHash:  turnTextHash,
+          draftHash,
+          claimCategories: metrics.groundingClaimCategories ?? [],
+          claimRisk:       metrics.groundingClaimRisk ?? null,
+          groundingVerdict,
+          action:          "reask",
+          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+          detectedAt:  new Date().toISOString(),
+          groundingReask: true,
+        }).catch(() => {});
+        reply = GROUNDING_REASK_COPY;
       } else if (gateAction === "neutralize") {
         // High-risk claim + indeterminate verification → FAIL CLOSED (R19).
         // Deterministic category-specific neutral copy: honest, invents

@@ -64,6 +64,18 @@ type ShiftHoursStatus =
   | 'payment_failed';
 
 const MAX_PAYMENT_ATTEMPTS = 5;
+/**
+ * Why a shift payment failed, for the words the family hears. 'payout' = the charge or the money movement to the care
+ * provider failed on OUR side (no payout account yet, platform balance, a transfer error) — the family's card is not
+ * the problem and must not be blamed; 'no_card' = nothing to charge; 'card' = the bank said no.
+ */
+export function classifyPaymentFailure(message: string): 'payout' | 'no_card' | 'card' {
+  const m = String(message || '').toLowerCase();
+  if (/transfer|destination|connected account|available funds|payouts?\b|stripe connect|account.*(not|isn't).*(enabled|set up|capabilit)/.test(m)) return 'payout';
+  if (/no payment method|payment method|no card|no such customer|customer/.test(m)) return 'no_card';
+  return 'card';
+}
+
 const PAYMENT_RETRY_DELAYS_MINUTES = [5, 30, 120, 360, 720];
 
 // ---------- helpers ----------
@@ -1163,12 +1175,21 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
       const failedTotal = failedGross + serviceFeeCentsFor(failedGross);
       const cgFirst = String(shift.caregiverName ?? 'your care provider').split(' ')[0];
       const amount = `$${(failedTotal / 100).toFixed(2)}`;
-      const lower = errorMessage.toLowerCase();
-      const why = lower.includes('no payment method') || lower.includes('payment method') || lower.includes('no card') || lower.includes('customer') ? "there's no card on file" : 'the card was declined';
-      await Promise.all([
-        pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment failed', `The ${amount} charge for ${cgFirst}'s visit didn't go through — ${why}. Add or update your card under Payments › Payment Method and we'll retry.`, { appointmentId }),
-        textClient(shift.clientId, `The ${amount} charge for ${cgFirst}'s visit didn't go through — ${why}. Say "update my card" and I'll send the link, or add one under Payments › Payment Method. I'll retry in ${PAYMENT_RETRY_DELAYS_MINUTES[0]} minutes.`),
-      ]).catch((err) => console.warn('first-failure notice failed (non-fatal)', err instanceof Error ? err.message : err));
+      const cause = classifyPaymentFailure(errorMessage);
+      if (cause === 'payout') {
+        // The family's card is not the problem (live 2026-11-18: a missing payout account / platform balance was
+        // reported as "the card was declined"). Nothing for them to do; the retry is automatic.
+        await Promise.all([
+          pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment delayed', `The ${amount} payment for ${cgFirst}'s visit is delayed on our side. Your card is fine and you don't need to do anything — we'll retry automatically.`, { appointmentId }),
+          textClient(shift.clientId, `The ${amount} payment for ${cgFirst}'s visit is delayed on our side. Your card is fine and you don't need to do anything. I'll retry it automatically and text you when it's done.`),
+        ]).catch((err) => console.warn('first-failure notice failed (non-fatal)', err instanceof Error ? err.message : err));
+      } else {
+        const why = cause === 'no_card' ? "there's no card on file" : 'the card was declined';
+        await Promise.all([
+          pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment failed', `The ${amount} charge for ${cgFirst}'s visit didn't go through — ${why}. Add or update your card under Payments › Payment Method and we'll retry.`, { appointmentId }),
+          textClient(shift.clientId, `The ${amount} charge for ${cgFirst}'s visit didn't go through — ${why}. Say "update my card" and I'll send the link, or add one under Payments › Payment Method. I'll retry automatically once it's updated.`),
+        ]).catch((err) => console.warn('first-failure notice failed (non-fatal)', err instanceof Error ? err.message : err));
+      }
     }
 
     if (attempt >= MAX_PAYMENT_ATTEMPTS) {
@@ -1178,9 +1199,12 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
         `Appointment ${appointmentId}: ${errorMessage}`,
         { appointmentId, attempt }
       );
+      const capCause = classifyPaymentFailure(errorMessage);
       await Promise.all([
         pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment needs review', 'We could not complete this visit payment. Evia support is reviewing it.', { appointmentId }),
-        textClient(shift.clientId, `We couldn't complete the payment for ${shift.caregiverName ?? 'your care provider'}'s visit. Please check the card on file (say "update my card" and I'll send the link), then tell me to retry the payment.`),
+        textClient(shift.clientId, capCause === 'payout'
+          ? `We couldn't finish the payment for ${shift.caregiverName ?? 'your care provider'}'s visit, and it's on our side, not your card. Our team is on it and you don't need to do anything.`
+          : `We couldn't complete the payment for ${shift.caregiverName ?? 'your care provider'}'s visit. Please check the card on file (say "update my card" and I'll send the link), then tell me to retry the payment.`),
         tellCaregiver(shift.caregiverId, 'shift_hours_payment_failed', 'Payment needs review', 'This visit payment could not be completed automatically. Evia support is reviewing it.',
           `The payment for your visit${fmtDay(shift.finalStartTime ?? shift.submittedStartTime) ? ` on ${fmtDay(shift.finalStartTime ?? shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'} couldn't be completed automatically. Our team is reviewing it; we'll text you when it's resolved.`,
           { appointmentId }),

@@ -186,9 +186,10 @@ async function handlePick(phone: string, chatId: string, text: string, session: 
     idx = await resolveByText(text, data);
     if (idx === null) { await sendMessage(chatId, `${CX_DIDNT_CATCH} ${question}`); return; }
   }
-  await mergeFlowData(phone, { pickIndex: idx });
-  await updateStep(phone, "cx_confirm");
-  await sendMessage(chatId, CONFIRM_QUESTION(data.options[idx]));
+  // The pick from the list IS the confirmation (founder 2026-11-18: asking "just checking" after a numbered pick was a
+  // second yes for one decision). The "just checking" question remains only where the family's own words named the
+  // item and nothing was listed for them to choose from (startCancelFlow above).
+  return commit(phone, chatId, session, data.options[idx]);
 }
 
 async function handleConfirm(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {

@@ -370,6 +370,9 @@ function splitTextAndUrls(text: string): UrlSplit {
     .map((l) => l.replace(/[ \t]+/g, " ").replace(/^[\s\-→:,]+|[\s\-→:,]+$/g, "").trim())
     .filter((l) => l.length > 0)
     .join("\n")
+    // A bare ">" between words ("My Bookings > Requests") arrived on the phone as "&gt;" (live 2026-11-18: the text
+    // is stored with ">" and escaped after it leaves us). "›" has no HTML meaning, so it arrives as typed.
+    .replace(/ > /g, " › ")
     .trim();
 
   return { textOnly, urls };

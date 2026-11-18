@@ -12,6 +12,7 @@ import {
   isRiskTierGroundingEnabled,
   neutralCopyForClaims,
   resolveGroundingGateAction,
+  claimsNeedHumanHold,
   GROUNDING_NEUTRAL_COPY,
   HANDOFF_GROUNDING_SYSTEM_PROMPT,
 } from "./humanHandoff";
@@ -278,9 +279,19 @@ describe("U7: resolveGroundingGateAction", () => {
   const high = classifyGroundingClaims("She has Parkinson's.");
   const low = classifyGroundingClaims("She lives in Sacramento.");
 
-  it("unsupported → handoff (the true invented-fact case, unchanged)", () => {
+  it("unsupported + a high-risk health/money claim → handoff (the true invented-fact case)", () => {
     expect(resolveGroundingGateAction({ verdict: "unsupported", claims: high, riskTiersEnabled: true })).toBe("handoff");
-    expect(resolveGroundingGateAction({ verdict: "unsupported", claims: low, riskTiersEnabled: true })).toBe("handoff");
+    expect(resolveGroundingGateAction({ verdict: "unsupported", claims: high, riskTiersEnabled: false })).toBe("handoff");
+    const money = classifyGroundingClaims("Your invoice was $340 and it was paid.");
+    expect(resolveGroundingGateAction({ verdict: "unsupported", claims: money, riskTiersEnabled: true })).toBe("handoff");
+  });
+
+  it("unsupported + anything else → reask, never a hold (live 2026-11-18, founders: a care plan edit was handed to a teammate)", () => {
+    expect(resolveGroundingGateAction({ verdict: "unsupported", claims: low, riskTiersEnabled: true })).toBe("reask");
+    expect(resolveGroundingGateAction({ verdict: "unsupported", claims: [], riskTiersEnabled: false })).toBe("reask");
+    const action = classifyGroundingClaims("I've added Mahad to your care plan.");
+    expect(claimsNeedHumanHold(action)).toBe(false);
+    expect(resolveGroundingGateAction({ verdict: "unsupported", claims: action, riskTiersEnabled: false })).toBe("reask");
   });
 
   it("supported → send (grounded claims pass unchanged)", () => {

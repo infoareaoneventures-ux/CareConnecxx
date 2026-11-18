@@ -966,14 +966,15 @@ export const onShiftStatusChanged = functions.firestore
             data: { shiftId: context.params.shiftId },
           }, `${cg} isn't available for the visit${whenText}, so it's been released. Text me to find another care provider for that day, or to skip it.`, key);
         } else if (after.cancelledBy === 'caregiver' && after.clientId) {
-          // Caregiver cancelled, but with enough notice (site rule: > 24h) that
-          // no replacement is needed — a plain heads-up, no call to action.
+          // Caregiver cancelled, but with enough notice (site rule: > 24h) that the site shows no Find
+          // Replacement button. The heads-up still says what the family can do next (live 2026-11-18: it
+          // ended at "cancelled the visit", and "find me a replacement" then hit a dead end).
           await tell('client', after.clientId, {
             type: 'shift_cancelled',
             title: 'Shift Cancelled',
             body: `${after.caregiverName || 'Your care provider'} cancelled the shift${whenText}.`,
             data: { shiftId: context.params.shiftId },
-          }, `${after.caregiverName || 'Your care provider'} cancelled the visit${whenText}.`, key);
+          }, `${after.caregiverName || 'Your care provider'} cancelled the visit${whenText}. Text me if you'd like me to find another care provider for that day.`, key);
         } else if (after.cancelledBy !== 'system' && after.caregiverId) {
           // Client cancelled → notify caregiver
           await tell('caregiver', after.caregiverId, {

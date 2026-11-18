@@ -149,10 +149,23 @@ describe("startCancelFlow", () => {
   });
 });
 
-describe("cx_pick → cx_confirm → YES", () => {
-  async function pick(n: string) {
+describe("a numbered pick from the list is the confirmation (founder 2026-11-18)", () => {
+  it("'2' cancels that visit straight away — no second 'just checking'", async () => {
+    seed();
     await startCancelFlow(PHONE, CHAT, session(), {});
-    await handleCancelFlowStep(PHONE, CHAT, n, session({ cancelFlowStep: "cx_pick" }));
+    await handleCancelFlowStep(PHONE, CHAT, "2", session({ cancelFlowStep: "cx_pick" }));
+    expect(hoisted.docState.get("shifts/sh-wed")).toMatchObject({ status: "cancelled", cancelledBy: "client" });
+    expect(sess().cancelFlowStep).toBeUndefined();
+    expect(lastSent()).toContain("Done — the Wednesday, September 16, 2026, 8:00 PM–9:30 PM visit is cancelled");
+    expect(lastSent()).not.toContain("Just checking");
+  });
+});
+
+describe("named item → cx_confirm → YES", () => {
+  // The family's own words name the item → the one "just checking" dialog (a numbered list pick commits at once, below).
+  async function pick(n: string) {
+    modelReplies(JSON.stringify({ pickIndex: Number(n) }));
+    await startCancelFlow(PHONE, CHAT, session(), { initialText: "cancel that one" });
     expect(sess().cancelFlowStep).toBe("cx_confirm");
   }
 
@@ -160,7 +173,6 @@ describe("cx_pick → cx_confirm → YES", () => {
     seed();
     await pick("2");
     await handleCancelFlowStep(PHONE, CHAT, "yes", session({ cancelFlowStep: "cx_confirm" }));
-    expect(messagesCreate).not.toHaveBeenCalled();
     const shift = hoisted.docState.get("shifts/sh-wed");
     expect(shift).toMatchObject({ status: "cancelled", cancelledBy: "client" });
     expect(shift.reschedulePendingDate).toBeUndefined();

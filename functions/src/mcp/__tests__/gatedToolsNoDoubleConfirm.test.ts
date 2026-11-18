@@ -17,7 +17,7 @@ import { gatedToolNames } from "../../agents/pendingActions";
 // tool description that ALSO tells the model to collect a yes first makes people confirm the same thing twice (the
 // founders' emergency-contact test, 2026-11-15: "ready to add… reply yes" → yes → "I'm about to add… Reply YES").
 // delete_account is the one exception by design: it runs only on the exact phrase DELETE MY ACCOUNT.
-const MODEL_ASKS_FIRST = /wait for (?:their |an? |explicit )*(?:confirmation|yes)|MANDATORY: read|confirm (?:with|before)|only call after .{0,40}confirm|explicit confirmation before calling/i;
+const MODEL_ASKS_FIRST = /wait for (?:their |an? |explicit )*(?:confirmation|yes)|MANDATORY: read|confirm (?:with|before)|only call after .{0,40}confirm|explicit confirmation before calling|get (?:an? |their |the )?(?:clear |explicit |express )*(?:yes|ok|okay|go-ahead|approval|confirmation) (?:from them )?before|ask (?:for|them for) (?:an? |their )?(?:clear |explicit )*(?:yes|confirmation|ok) before/i;
 
 describe("gated tools do not also ask the model to collect a yes", () => {
   const gated = gatedToolNames().filter((n) => n !== "delete_account");

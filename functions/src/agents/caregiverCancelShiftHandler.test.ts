@@ -141,11 +141,18 @@ describe("confirm — the page's dialogs, then the page's writes", () => {
     { index: 2, kind: "visit", id: "b", bookingRequestId: "br1", date: "2099-10-03", startTime: "19:30", endTime: "21:30", clientName: "Basra Yousuf", clientId: "fam1" },
     { index: 3, kind: "booking", id: "a", bookingRequestId: "br1", date: "2099-09-28", startTime: "11:00", endTime: "14:00", clientName: "Basra Yousuf", clientId: "fam1", count: 2 },
   ]);
-  it("a number picks the visit and asks the ✕ dialog; the booking number asks the Cancel Booking dialog", async () => {
+  it("a number from the list IS the confirmation: it writes the ✕'s patch straight away, no second 'just checking'", async () => {
+    shift("b", { date: "2099-10-03", startTime: "19:30", endTime: "21:30" });
     await handleCaregiverCancelShift(CG, "Maria", PHONE, "2", { cancelStep: "confirm_shift", cancelCandidates: options }, CHAT);
-    expect(hoisted.sent[0]).toBe(`Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only).\n\n${VISIT_CONFIRM}`);
+    expect(hoisted.updates.find((u) => u.path === "shifts/b")!.data).toEqual({ status: "cancelled", cancelledBy: "caregiver", updatedAt: "__ts__" });
+    expect(hoisted.sent).toEqual(["Cancelled: Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only). The family has been told."]);
+  });
+  it("the whole-booking number also cancels straight away (the option line spells out 'every upcoming visit')", async () => {
+    shift("a", { date: "2099-09-28" });
+    shift("b", { date: "2099-10-03" });
+    hoisted.docs.set("booking_requests/br1", { status: "accepted" });
     await handleCaregiverCancelShift(CG, "Maria", PHONE, "3", { cancelStep: "confirm_shift", cancelCandidates: options }, CHAT);
-    expect(hoisted.sent[1]).toBe(`The whole booking with Basra Yousuf — every upcoming visit (2).\n\n${BOOKING_CONFIRM}`);
+    expect(hoisted.sent[0]).toBe("Booking cancelled (Basra Yousuf, 2 visits). The family has been told.");
   });
   it("YES on a visit writes exactly the ✕'s patch and clears the flow", async () => {
     shift("b", { date: "2099-10-03", startTime: "19:30", endTime: "21:30" });
@@ -217,7 +224,7 @@ describe("confirm — the page's dialogs, then the page's writes", () => {
     expect(call.situation).toContain("1. Mon, Sep 28, 2099 at 11:00 AM – 2:00 PM — Basra Yousuf (this visit only)");
     expect(call.situation).toContain("2. Sat, Oct 3, 2099 at 7:30 PM – 9:30 PM — Basra Yousuf (this visit only)");
     expect(call.situation).toContain("3. The whole booking with Basra Yousuf — every upcoming visit (2)");
-    expect(call.situation).toContain("Nothing is cancelled by picking a number");
+    expect(call.situation).toContain("Picking a number cancels that option right away");
     expect(hoisted.sent.at(-1)).toBe("Answer. Which one do you need to cancel? Tell me the number (1–3), or say never mind to leave everything as it is.");
   });
 });

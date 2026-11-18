@@ -94,7 +94,7 @@ describe("C8 — a 'system' release (care provider locked) tells the FAMILY, nev
 
   it("the care provider's own cancellation and the family's own cancellation keep their directions", async () => {
     await (onShiftStatusChanged as any)(change({ ...base, status: "scheduled" }, "s1", { ...base, status: "cancelled", cancelledBy: "caregiver" }), ctx());
-    expect(textsTo(CL_PHONE)).toEqual(["Alice cancelled the visit on Wed, Mar 4."]);
+    expect(textsTo(CL_PHONE)).toEqual(["Alice cancelled the visit on Wed, Mar 4. Text me if you'd like me to find another care provider for that day."]);
     expect(textsTo(CG_PHONE)).toEqual([]);
     sendViaInteractionAgent.mockClear();
     await (onShiftStatusChanged as any)(change({ ...base, status: "scheduled" }, "s2", { ...base, status: "cancelled", cancelledBy: "client" }), ctx("s2"));

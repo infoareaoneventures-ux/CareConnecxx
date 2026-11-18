@@ -603,7 +603,7 @@ async function commitResend(phone: string, chatId: string, session: AgentSession
   if (existing.status !== "declined" && existing.status !== "cancelled") {
     await clearFlow(phone);
     await sendMessage(chatId, existing.status === "pending"
-      ? `That request is already pending with ${data.caregiverName} — nothing to resend. It's on your My Bookings > Requests tab.`
+      ? `That request is already pending with ${data.caregiverName} — nothing to resend. It's on your My Bookings page, on the Requests tab.`
       : "That booking request isn't cancelled or declined anymore, so I didn't resend it — it's up to date on your Care Requests page.");
     return;
   }
@@ -646,7 +646,7 @@ async function commitResend(phone: string, chatId: string, session: AgentSession
   await clearFlow(phone);
   await sendMessage(chatId,
     `Resent — ${data.caregiverName} has your booking request again. Nothing is booked until they accept; ` +
-    `I'll text you as soon as they respond. It's back on your My Bookings > Requests tab too.`);
+    `I'll text you as soon as they respond. It's back on your My Bookings page, on the Requests tab too.`);
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -1818,7 +1818,7 @@ async function handleBkConfirm(
       if (result.reason === "already_pending") {
         await sendMessage(chatId,
           `You already have a booking request pending with ${data.caregiverName}, so I didn't send a second one. ` +
-          `It's on your My Bookings > Requests tab.`);
+          `It's on your My Bookings page, on the Requests tab.`);
         return;
       }
       await sendMessage(chatId,
@@ -1830,7 +1830,7 @@ async function handleBkConfirm(
     await import("../utils/knownNames").then((m) => m.addKnownNames(phone, [data.caregiverName])).catch(() => {});
     await sendMessage(chatId,
       `Sent — ${data.caregiverName} has your booking request. Nothing is booked until they accept; ` +
-      `I'll text you as soon as they respond. It's on your My Bookings > Requests tab too.`);
+      `I'll text you as soon as they respond. It's on your My Bookings page, on the Requests tab too.`);
   } catch (err) {
     console.error("[bookingFlow] sendBookingRequest error:", err);
     await sendMessage(chatId, await generateCaraMessage({

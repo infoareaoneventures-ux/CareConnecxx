@@ -122,7 +122,7 @@ describe("bookingFlow — back-off at every step (2026-09-13)", () => {
   for (const step of steps) {
     it(`clears the flow and confirms nothing was sent when the family backs out at ${step}`, async () => {
       await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
-      quickCompleteMock.mockResolvedValueOnce("YES"); // isBackOutRequest -> true
+      quickCompleteMock.mockResolvedValueOnce("STOP"); // isBackOutRequest -> true
       await handleBookingFlowStep(PHONE, CHAT, "never mind, cancel this", session({ bookingFlowStep: step }));
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.bookingFlowStep).toBeUndefined();

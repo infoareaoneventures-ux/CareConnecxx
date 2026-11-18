@@ -296,7 +296,7 @@ describe("back-off — the new capability, checked at EVERY step", () => {
     it(`clears the flow and confirms nothing was sent when the family backs out at ${step}`, async () => {
       seed?.();
       await startInterviewFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
-      quickCompleteMock.mockResolvedValueOnce("YES"); // isBackOutRequest -> true
+      quickCompleteMock.mockResolvedValueOnce("STOP"); // isBackOutRequest -> true
       await handleInterviewFlowStep(PHONE, CHAT, "never mind, forget it", session({ interviewFlowStep: step }));
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.interviewFlowStep).toBeUndefined();

@@ -317,7 +317,7 @@ describe("rp_pick", () => {
   it("'never mind' backs out and clears the flow without sending anything", async () => {
     seedNeedsReplacement();
     hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, replacementFlowStep: "rp_pick", replacementFlowData: PICKED });
-    modelReplies("YES"); // isBackOutRequest
+    modelReplies("STOP"); // isBackOutRequest
     await handleReplacementFlowStep(PHONE, CHAT, "never mind", session({ replacementFlowStep: "rp_pick" }));
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.replacementFlowStep).toBeUndefined();

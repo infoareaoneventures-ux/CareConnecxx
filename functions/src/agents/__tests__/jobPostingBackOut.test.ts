@@ -126,7 +126,7 @@ describe("jobPostingFlow — back-off at every step (2026-09-13)", () => {
 
   for (const step of steps) {
     it(`clears the flow and confirms nothing was posted when the family backs out at ${step}`, async () => {
-      quickCompleteMock.mockResolvedValueOnce("YES"); // isBackOutRequest -> true
+      quickCompleteMock.mockResolvedValueOnce("STOP"); // isBackOutRequest -> true
       await handleJobPostingStep(PHONE, CHAT, "never mind, cancel this", session(step));
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.jobPostingStep).toBeUndefined();

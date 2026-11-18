@@ -73,6 +73,17 @@ describe("first-visit prompt", () => {
     expect(system).toContain('"decline" = ONLY a reply about the review itself');
     expect(system).toContain("ANY reply that names a person or asks to decline, cancel, book, interview or change something");
   });
+  it("a newer pending confirmation owns a YES: the review prompt steps aside (live 2026-11-18, a payment approval's YES started a review)", async () => {
+    const session = { userId: "c1", pendingReviewPromptCaregiverId: "cg1", pendingReviewPromptCaregiverName: "Basra Ali", pendingReviewPromptSetAt: new Date().toISOString() };
+    const deps = { startReviewFlow: vi.fn(async () => ({ started: true })), sendMessage: vi.fn(async () => undefined), clearAnchor: vi.fn(async () => undefined), classify: vi.fn(), hasNewerPendingConfirmation: vi.fn(async () => true) };
+    deps.classify.mockResolvedValue({ kind: "start", rating: null });
+    expect(await handleReviewPromptReply({ phone: "+1", chatId: "ch", text: "YES", session }, deps)).toBe(false);
+    expect(deps.startReviewFlow).not.toHaveBeenCalled();
+    expect(deps.classify).not.toHaveBeenCalled();
+    deps.hasNewerPendingConfirmation.mockResolvedValueOnce(false);
+    expect(await handleReviewPromptReply({ phone: "+1", chatId: "ch", text: "YES", session }, deps)).toBe(true);
+    expect(deps.startReviewFlow).toHaveBeenCalledTimes(1);
+  });
   it("a star reply starts the review flow with the rating prefilled; a decline clears the anchor; other turns are not consumed", async () => {
     const session = { userId: "c1", pendingReviewPromptCaregiverId: "cg1", pendingReviewPromptCaregiverName: "Basra Ali", pendingReviewPromptSetAt: new Date().toISOString() };
     const deps = { startReviewFlow: vi.fn(async () => ({ started: true })), sendMessage: vi.fn(async () => undefined), clearAnchor: vi.fn(async () => undefined), classify: vi.fn() };

@@ -696,6 +696,17 @@ export async function startBookingFlow(
     return { started: true };
   }
 
+  // The model sometimes passes the care provider's NAME ("Riya", "Riya Careprovider") instead of an id (live 2026-11-17:
+  // "Please book Riya Careprovider" → "I couldn't find that care provider to book"). Resolve a name to an id the same way
+  // the interview request does — only among this family's own care providers, a first name shared by two is ambiguous.
+  if (args.caregiverId && !/^[A-Za-z0-9]{20,}$/.test(args.caregiverId.trim())) {
+    try {
+      const { resolveCaregiverForInterview } = await import("./videoInterviewRequest");
+      const r = await resolveCaregiverForInterview(args.caregiverId, phone);
+      args = { ...args, caregiverId: r.resolvedCaregiverId };
+    } catch { /* falls through to the not-found message below, never a guess */ }
+  }
+
   // Case B: no specific interview given — one single process regardless of
   // whether a caregiver was named: find what's eligible (scoped to that
   // caregiver if named, across all of them otherwise), then branch only on

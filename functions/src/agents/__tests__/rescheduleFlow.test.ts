@@ -282,7 +282,7 @@ describe("rs_ask_time", () => {
   it("'never mind' backs out and changes nothing", async () => {
     seedBookings();
     hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, rescheduleFlowStep: "rs_ask_time", rescheduleFlowData: PICKED });
-    modelReplies("YES"); // isBackOutRequest
+    modelReplies("STOP"); // isBackOutRequest
     await handleRescheduleFlowStep(PHONE, CHAT, "never mind", session({ rescheduleFlowStep: "rs_ask_time" }));
     expect(sess().rescheduleFlowStep).toBeUndefined();
     expect(hoisted.updates.find((u) => u.path === "shifts/sh-wed")).toBeUndefined();

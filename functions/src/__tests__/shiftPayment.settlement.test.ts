@@ -55,6 +55,7 @@ const hoisted = vi.hoisted(() => {
       retrieve: vi.fn(async () => ({ id: "pi_1", status: "succeeded" })),
     },
     transfers: {
+      list:           vi.fn(async () => ({ data: [] as any[] })),
       create:         vi.fn(async () => ({ id: "tr_1" })),
       createReversal: vi.fn(async () => ({ id: "trr_1" })),
     },
@@ -73,6 +74,8 @@ const hoisted = vi.hoisted(() => {
       stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_1", status: "succeeded" } as any);
       stripeApi.paymentIntents.retrieve.mockResolvedValue({ id: "pi_1", status: "succeeded" } as any);
       stripeApi.transfers.create.mockClear();
+      stripeApi.transfers.list.mockReset();
+      stripeApi.transfers.list.mockResolvedValue({ data: [] } as any);
       stripeApi.transfers.createReversal.mockClear();
       stripeApi.paymentIntents.create.mockClear();
       stripeApi.paymentIntents.retrieve.mockClear();
@@ -128,6 +131,23 @@ describe("U1 — charge-before-transfer settlement", () => {
     await completeShiftPaymentAfterCharge("a3");
     expect(hoisted.stripeApi.transfers.create).toHaveBeenCalledTimes(1);
     expect(hoisted.docState.get("shiftHours/a3")?.status).toBe("paid");
+  });
+
+  it("a retry reuses a transfer Stripe already made for this timesheet instead of creating a second one", async () => {
+    hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_sync", status: "succeeded" } as any);
+    hoisted.stripeApi.transfers.list.mockResolvedValue({ data: [{ id: "tr_existing", reversed: false, metadata: { appointmentId: "a7" } }] } as any);
+    const r = await processSeededShift("a7", { ...baseShift });
+    expect(r.ok).toBe(true);
+    expect(hoisted.stripeApi.transfers.create).not.toHaveBeenCalled();
+    expect(hoisted.docState.get("shiftHours/a7")?.stripeTransferId).toBe("tr_existing");
+    expect(hoisted.docState.get("shiftHours/a7")?.status).toBe("paid");
+  });
+
+  it("each attempt uses its own transfer idempotency key, so one failed attempt is not replayed on the retry (live 2026-11-17: 'insufficient funds' replayed after a top-up)", async () => {
+    hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_sync", status: "succeeded" } as any);
+    await processSeededShift("a8", { ...baseShift, paymentAttemptCount: 0 });
+    const key1 = (hoisted.stripeApi.transfers.create.mock.calls.at(-1) as any)[1].idempotencyKey as string;
+    expect(key1).toMatch(/^shift-transfer-a8-generation-1-attempt-\d+$/);
   });
 
   it("completeShiftPaymentAfterCharge is a no-op on an already-paid shift (no double transfer)", async () => {

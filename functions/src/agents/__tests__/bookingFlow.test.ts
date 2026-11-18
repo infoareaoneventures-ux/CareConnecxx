@@ -95,6 +95,13 @@ vi.mock("../flowModelCall", () => {
 const sendBookingRequest = vi.fn(async (_input: any, _opts: any): Promise<any> => ({ ok: true, bookingRequestId: "br-new" }));
 vi.mock("../bookingSend", () => ({ sendBookingRequest: (input: unknown, opts: unknown) => sendBookingRequest(input, opts) }));
 vi.mock("../onboardingConversation", () => ({ sendOnboardingLink: vi.fn(async () => ({ success: true })) }));
+// A name given as caregiverId resolves among the family's own care providers (the interview resolver does the lookup).
+vi.mock("../videoInterviewRequest", () => ({
+  resolveCaregiverForInterview: vi.fn(async (name: string) => {
+    if (name.trim().toLowerCase().startsWith("basra")) return { resolvedCaregiverId: "cg-1", caregiverName: "Basra Yousuf" };
+    throw new Error("not found");
+  }),
+}));
 
 import { startBookingFlow, startResendBookingFlow, handleBookingFlowStep, buildBookingRecap } from "../bookingFlow";
 
@@ -151,6 +158,19 @@ describe("startBookingFlow", () => {
     const r = await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
     expect(r).toEqual({ started: false, reason: "gated" });
     expect(sendMessage.mock.calls.map((c: any[]) => (typeof c[1] === "string" ? c[1] : JSON.stringify(c[1]))).join(" ")).toMatch(/identity check/);
+  });
+
+  it("a care provider NAME passed as caregiverId is resolved to the family's care provider instead of 'couldn't find'", async () => {
+    seedOneEligibleInterview();
+    const r = await startBookingFlow(PHONE, CHAT, session(), { caregiverId: "Basra Yousuf" });
+    expect(r.started).toBe(true);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.bookingFlowStep).toBe("bk_ask_rate");
+  });
+
+  it("a name that matches nobody still gets the not-found text, never a guess", async () => {
+    seedOneEligibleInterview();
+    const r = await startBookingFlow(PHONE, CHAT, session(), { caregiverId: "Nobody Here" });
+    expect(r.started).toBe(false);
   });
 
   it("asks for the rate when no job post rate is known", async () => {

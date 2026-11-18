@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../utils/parseWithClaude", () => ({ parseWithClaude: vi.fn() }));
 vi.mock("../utils/openaiClient", () => ({ quickComplete: vi.fn() }));
 
-import { runStep, isQuestionOrOther, classifyAwaitingReply } from "./stepHandler";
+import { runStep, isQuestionOrOther, classifyAwaitingReply, isBackOutRequest } from "./stepHandler";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { quickComplete } from "../utils/openaiClient";
 
@@ -24,6 +24,25 @@ describe("isQuestionOrOther", () => {
   it("fails toward answer (NO) when the classifier errors", async () => {
     mockParse.mockRejectedValueOnce(new Error("down"));
     expect(await isQuestionOrOther("$25/hr")).toBe(false);
+  });
+});
+
+describe("isBackOutRequest", () => {
+  // Live 2026-11-18: a family's "yes send it" to a correction recap was read as a back-out and the correction was dropped.
+  // The detector is 3-way (STOP / AGREE / OTHER): only STOP abandons a flow, an affirmation never does.
+  it("only a STOP label backs out of the flow", async () => {
+    mockParse.mockResolvedValue("STOP");
+    expect(await isBackOutRequest("never mind", "Reply YES to send it")).toBe(true);
+  });
+  it("an AGREE label (\"yes send it\") never backs out", async () => {
+    mockParse.mockResolvedValue("AGREE");
+    expect(await isBackOutRequest("yes send it", "Reply YES to send it, NO to cancel")).toBe(false);
+  });
+  it("OTHER, a stray answer, or a failed parse never backs out", async () => {
+    mockParse.mockResolvedValueOnce("OTHER");
+    expect(await isBackOutRequest("what is the fee?", "Reply YES")).toBe(false);
+    mockParse.mockRejectedValueOnce(new Error("down"));
+    expect(await isBackOutRequest("hmm", "Reply YES")).toBe(false);
   });
 });
 

@@ -98,6 +98,8 @@ export interface ReviewPromptDeps {
   dismissOnSite?: (clientId: string, caregiverId: string) => Promise<void>;
   /** Not now already pressed on the site → the prompt is over here as well. */
   isDismissedOnSite?: (clientId: string, caregiverId: string) => Promise<boolean>;
+  /** True when a confirmation Evia asked for ("Reply YES to approve…") is still awaiting and was asked AFTER this prompt. */
+  hasNewerPendingConfirmation?: (phone: string, sinceMs: number) => Promise<boolean>;
 }
 
 async function defaultDeps(): Promise<ReviewPromptDeps> {
@@ -117,6 +119,11 @@ async function defaultDeps(): Promise<ReviewPromptDeps> {
     dismissOnSite: async (clientId, caregiverId) => {
       // ClientDashboard.tsx dismissReviewPrompt, the same write.
       await admin.firestore().collection("users").doc(clientId).set({ dismissedReviewPrompts: admin.firestore.FieldValue.arrayUnion(caregiverId) }, { merge: true }).catch(() => {});
+    },
+    hasNewerPendingConfirmation: async (phone, sinceMs) => {
+      const { getLatestPending } = await import("./pendingActions");
+      const p = await getLatestPending(phone).catch(() => null);
+      return !!p && Date.parse(p.proposedAt) > sinceMs;
     },
     isDismissedOnSite: async (clientId, caregiverId) => {
       const snap = await admin.firestore().collection("users").doc(clientId).get().catch(() => null);
@@ -143,6 +150,9 @@ export async function handleReviewPromptReply(
   const anchorAt = Date.parse(String(params.session?.pendingReviewPromptSetAt ?? ""));
   if (pd?.parkedAt && Number.isFinite(anchorAt) && Date.parse(pd.parkedAt) > anchorAt) return false;
   const d = deps ?? await defaultDeps();
+  // A newer "Reply YES to approve…" confirmation owns the reply (live 2026-11-18: a family's YES to approve a timesheet's
+  // payment was taken as "yes, start my review" because the 18:45 review prompt was still fresh; the approval stayed pending).
+  if (Number.isFinite(anchorAt) && d.hasNewerPendingConfirmation && await d.hasNewerPendingConfirmation(params.phone, anchorAt)) return false;
   const clientId = String(params.session?.userId ?? "");
   if (clientId && d.isDismissedOnSite && await d.isDismissedOnSite(clientId, anchor.caregiverId)) {
     await d.clearAnchor(params.phone); // Not now was pressed on the site — the prompt is over on both channels

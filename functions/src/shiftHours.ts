@@ -866,6 +866,18 @@ export async function settleShiftTransfer(
 
   let transferId: string | undefined = shift.stripeTransferId;
   if (!transferId) {
+    // A transfer Stripe already made for this timesheet (our Firestore write after it may have failed) is reused, never repeated.
+    // Live 2026-11-17: the idempotency key used to be the same on every attempt, and Stripe replays the stored RESULT of a
+    // key, errors included — so one "insufficient available funds" failure was replayed on every retry for 24 hours even after
+    // the platform balance was topped up, and the care provider could never be paid. The existing-transfer lookup below is what
+    // now guards against a double payout, so the key can change per attempt.
+    try {
+      const existing = await stripe.transfers.list({ transfer_group: appointmentId, destination: caregiverStripeAccountId, limit: 10 });
+      const live = existing.data.find((t) => !t.reversed && t.metadata?.appointmentId === appointmentId);
+      if (live) transferId = live.id;
+    } catch { /* a failed lookup falls through to the keyed create below */ }
+  }
+  if (!transferId) {
     const transfer = await stripe.transfers.create({
       amount: grossCents,
       currency: shift.currency || 'usd',
@@ -873,13 +885,9 @@ export async function settleShiftTransfer(
       transfer_group: appointmentId,
       metadata: { appointmentId, shiftHoursId: appointmentId },
     }, {
-      // STABLE per appointment — never attempt-suffixed. A shift is paid out
-      // exactly once, so Stripe must dedupe the transfer even across retries.
-      // The Firestore `stripeTransferId` guard above is written by the SAME
-      // update that can fail (leaving transferId unrecorded), so a per-attempt
-      // key would let a retry create a SECOND real transfer — double-paying the
-      // caregiver. This key is the only durable guarantee, so it must not vary.
-      idempotencyKey: `shift-transfer-${appointmentId}-generation-${generation}`,
+      // One key per attempt: Stripe replays a key's stored result (errors too), so a fixed key would repeat a transient
+      // failure forever. Double payment is prevented by the existing-transfer lookup above and by the stored stripeTransferId.
+      idempotencyKey: `shift-transfer-${appointmentId}-generation-${generation}-attempt-${attempt}`,
     });
     transferId = transfer.id;
   }

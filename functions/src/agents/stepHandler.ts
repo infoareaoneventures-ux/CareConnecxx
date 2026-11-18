@@ -70,19 +70,22 @@ export const TRIVIAL_CONFIRM_WORDS = new Set([
 ]);
 
 export async function isBackOutRequest(text: string, currentQuestion: string): Promise<boolean> {
+  // A 3-way label, not YES/NO: asked "is this a back-out?" the small model flagged "yes send it" as one (live 2026-11-18: a
+  // family's "yes send it" to a correction recap was read as a cancel and the correction was dropped). With an explicit
+  // AGREE label an affirmation has somewhere to go, so only a genuine request to stop is STOP.
   const result = await parseWithClaude(
     `The user is in the middle of a guided step-by-step flow with Evia (e.g. scheduling an interview, sending a ` +
-      `booking, posting a job). Evia just asked: "${currentQuestion}". Reply YES only if their message is a clear, ` +
-      "genuine request to stop, cancel, or abandon this flow entirely right now — e.g. \"never mind\", \"forget " +
-      "it\", \"cancel this\", \"cancel the request\", \"stop\", \"I don't want to do this anymore\", \"let's not " +
-      "do this\". Reply NO for anything else — a real answer to the question just asked (even a partial, vague, " +
-      "or one-word one — this includes a plain \"yes\"/\"no\" answering a yes/no or confirm/decline question, " +
-      "which is NOT the same as wanting to abandon the flow), an off-topic question, an unrelated comment, or a " +
-      "request to CHANGE something about this flow (that's an edit, not a cancellation). Only reply YES or NO.",
+      `booking, posting a job). Evia just asked: "${currentQuestion}". Classify the user's reply with ONE word: ` +
+      "STOP = a clear, genuine request to stop, cancel, or abandon this flow entirely right now (\"never mind\", \"forget it\", " +
+      "\"cancel this\", \"cancel the request\", \"stop\", \"I don't want to do this anymore\", \"let's not do this\", \"no, don't send it\"). " +
+      "AGREE = agreeing to or confirming what Evia just proposed or asked (\"yes\", \"yes send it\", \"yes, go ahead\", \"sounds good, send it\", " +
+      "\"approve it\") — sending or approving it is the opposite of stopping. " +
+      "OTHER = anything else: a real answer to the question (even a partial, vague, or one-word one), an off-topic question, an unrelated comment, " +
+      "or a request to CHANGE something about this flow (that's an edit, not a cancellation). Reply with exactly STOP, AGREE or OTHER.",
     text,
     5,
-  ).catch(() => "NO"); // fail toward NOT cancelling — never silently abandon on an ambiguous/failed parse
-  return result.trim().toUpperCase().startsWith("Y");
+  ).catch(() => "OTHER"); // fail toward NOT cancelling — never silently abandon on an ambiguous/failed parse
+  return result.trim().toUpperCase().startsWith("STOP");
 }
 
 // A bare number answering a numbered list ("1", "2.", "3)") is a strict-protocol

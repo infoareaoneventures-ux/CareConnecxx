@@ -207,6 +207,24 @@ describe("update_care_plan — lifestyle", () => {
     expect(plan.careNeeds).toEqual(["Personal Care"]);
   });
 
+  it("a plan stored before the recipient had a last name (jane_noname) is that recipient's plan — not a second 'Jane' that makes every update ambiguous (live 2026-11-20)", async () => {
+    hoisted.docState.set(`carePlans/${CLIENT}`, {
+      recipientPlans: { jane_noname: { name: "Jane Doe", careNeeds: ["Companionship"], lifestyle: { prefersQuiet: true } } },
+    });
+    const r = await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "lifestyle", value: { entertainment: ["Music"] }, action: "set", recipientFirstName: "Jane",
+    }) as any;
+    expect(r.success).toBe(true);
+    const plans = hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans;
+    expect(plans.jane_doe.lifestyle).toMatchObject({ prefersQuiet: true, entertainment: ["Music"] });
+    expect(plans.jane_doe.careNeeds).toEqual(["Companionship"]);
+    // and a second update still resolves (the old row does not come back as another Jane)
+    const r2 = await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "lifestyle", value: { enjoysConversation: true }, action: "set", recipientFirstName: "Jane",
+    }) as any;
+    expect(r2.success).toBe(true);
+  });
+
   it("rejects a non-object lifestyle value", async () => {
     hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: {} } });
     const r = await handleToolCall("update_care_plan", {

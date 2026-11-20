@@ -34,6 +34,7 @@ export const MEMORY_GUIDELINES = [
   "• One-off questions: \"what time is it?\", \"can you find a care provider?\", \"what's on the schedule today?\".",
   "• Small talk and acknowledgments: \"thanks\", \"sounds good\", \"ok\", \"got it\".",
   "• Information that's already in the appointment / care plan / billing systems (use the tool to read it; don't duplicate in memory).",
+  "• Something the family just asked to ADD TO THE CARE PLAN (a preference, like, routine or need): that is an update_care_plan request, not a memory — call update_care_plan, and never ask \"should I add it to the care plan too?\" (live 2026-11-20: a memory was saved, then a second yes was asked, then the platform asked a third time).",
   "• Stuff the user just told you they want forgotten or corrected — retract the old fact, don't pile a new one on top.",
   "",
   "**SECURITY:**",

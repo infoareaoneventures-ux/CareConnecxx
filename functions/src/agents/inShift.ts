@@ -24,7 +24,7 @@
 // background), the 15-minute window, one visit at a time and the status
 // transitions are enforced THERE; this file keeps the texts, the "which
 // visit?" resolution and the keyword protocol.
-import { todayDatesAcrossZones, isTodayAtCareLocation } from "../utils/careTime";
+import { todayDatesAcrossZones, isTodayAtCareLocation, wallToInstantMs, careZoneOf } from "../utils/careTime";
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
@@ -254,7 +254,15 @@ export async function endVisit(caregiverId: string, shiftId: unknown, closingNot
   if (r.alreadyCompleted) return { ok: true, shiftId: v.id, alreadyCompleted: true, completedAt: String(shift.completedAt ?? ""), text: `That visit already ended, ${visitLine(shift)}.` };
   const items = taskItems(shift);
   const doneCount = items.filter((t) => t.done).length;
-  return { ok: true, shiftId: v.id, alreadyCompleted: false, completedAt: new Date(nowMs).toISOString(), text: `Ended ${clock(nowMs)} — ${visitLine(shift)}.${items.length ? ` Tasks ${doneCount}/${items.length}.` : ""}${notes ? " Your closing note is on the visit." : ""} Thank you! When you're ready, say submit and I'll send your hours in for payment.` };
+  return { ok: true, shiftId: v.id, alreadyCompleted: false, completedAt: new Date(nowMs).toISOString(), text: `Ended ${clock(nowMs)} — ${visitLine(shift)}.${items.length ? ` Tasks ${doneCount}/${items.length}.` : ""}${notes ? " Your closing note is on the visit." : ""} Thank you! When you're ready, say submit and I'll send your hours in for payment.${lateEndHint(shift, nowMs)}` };
+}
+
+/** The visit was ended long after it was due (forgot to tap Finish): the end time is "now", so say where the real times are fixed. */
+function lateEndHint(shift: Record<string, any>, nowMs: number): string {
+  const due = shift.date && shift.endTime ? wallToInstantMs(shift.date, shift.endTime, careZoneOf(shift)) : NaN;
+  return Number.isFinite(due) && nowMs - due > 60 * 60 * 1000
+    ? " I ended it just now, so when you submit, tell me the times you really worked and I'll use those."
+    : "";
 }
 
 // ── The texted keywords (routeCaregiver): START · DONE n · UNDO n · NOTE … · TASKS · FINISH · SKIP ──

@@ -15,7 +15,7 @@
 // The shift record is the only source: shifts.tasksCompleted (the caregiver
 // pages' checkboxes, keyed `${ri}_${category}` / `${ri}_${category}_${sub}`),
 // shifts.notesLog (append-only `{ at, text, by }` lines), shifts.completionNotes.
-import { careZoneOf, zoneSuffix } from "../utils/careTime";
+import { careZoneOf, zoneSuffix, wallToInstantMs } from "../utils/careTime";
 import * as admin from "firebase-admin";
 import { formatClockTime, formatDateWithWeekday } from "../utils/scheduledTime";
 
@@ -118,7 +118,11 @@ export function buildVisitCompletionText(shift: Record<string, unknown>): string
   const cg = firstName(cgFull);
   const startMs = toMs(shift.startedAt);
   const endMs = toMs(shift.completedAt) || Date.now();
-  const when = Number.isFinite(startMs) && Number.isFinite(endMs)
+  // A visit ended hours after it was due (the care provider forgot to tap Finish: live 2026-11-20, "6:35 AM–9:30 PM,
+  // 38:54:47" two days later) has no honest clock range yet — the hours are corrected when she submits them.
+  const scheduledEndMs = shift.date && shift.endTime ? wallToInstantMs(shift.date, shift.endTime, careZoneOf(shift)) : NaN;
+  const endedLate = Number.isFinite(scheduledEndMs) && Number.isFinite(endMs) && endMs - scheduledEndMs > 60 * 60 * 1000;
+  const when = !endedLate && Number.isFinite(startMs) && Number.isFinite(endMs)
     ? ` (${formatClockTime(startMs, careZoneOf(shift))}–${formatClockTime(endMs, careZoneOf(shift))}${zoneSuffix(shift, endMs)}, ${fmtDuration((endMs - startMs) / 3_600_000)})`
     : "";
   const dateLabel = shift.date ? ` on ${formatDateWithWeekday(String(shift.date))}` : "";
@@ -164,7 +168,9 @@ export function buildVisitCompletionText(shift: Record<string, unknown>): string
   if (log.length) sections.push(["Visit notes", ...log.map((t) => `· ${t}`)].join("\n"));
   if (typeof shift.completionNotes === "string" && shift.completionNotes.trim()) sections.push(`Care Provider note\n${shift.completionNotes.trim()}`);
   if (lines.length) sections.push(lines.join("\n"));
-  sections.push(`${cg} will submit the hours next; you'll get them here to review.`);
+  sections.push(endedLate
+    ? `${cg} ended it after the scheduled time, so the actual hours will come on the timesheet ${cg} submits next; you'll get them here to review.`
+    : `${cg} will submit the hours next; you'll get them here to review.`);
   return sections.join("\n\n");
 }
 

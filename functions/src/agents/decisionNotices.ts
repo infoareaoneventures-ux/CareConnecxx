@@ -100,7 +100,7 @@ export async function classifyDecision(text: string, pd: PendingDecision): Promi
     `Evia texted a person about ${pd.label} and offered these choices, in plain words: ${pd.options.join(", ")}.${who} ` +
     `Classify their reply as exactly one of those words when it clearly means that choice — including when it is phrased naturally or sits inside a sentence about this same item ` +
     `(e.g. "please decline the booking request" / "pass" / "not this one" → DECLINE, "yes confirm" → CONFIRM, "I can't make it" / "I can't accept this" → DECLINE, ` +
-    `"sounds good" / "let's do it" / "I'll take it" → the positive option, "tell me more" / "show me" → DETAILS or VIEW when offered, "set up an interview" / "let's meet" → INTERVIEW when offered, ` +
+    `"sounds good" / "let's do it" / "I'll take it" / "accept" / "accept it" / "that works" / "okay with the new time" → the positive option (ACCEPT, or CONFIRM when the choices are CONFIRM / KEEP / PROPOSE for a proposed new time — accepting a proposed time IS confirming it, never KEEP; live 2026-11-20: "Accept" kept the current time),  "tell me more" / "show me" → DETAILS or VIEW when offered, "set up an interview" / "let's meet" → INTERVIEW when offered, ` +
     `"the original time is fine" / "leave it as it is" / "keep the current time" → KEEP when offered, else DECLINE when the item is a proposed new time, ` +
     `"a different time" / "another day" → PROPOSE when offered). ` +
     `If the reply names a DIFFERENT person than ${pd.party ? pd.party : "the one this item is with"} (e.g. "decline Imran" when this item is with Mahad), ` +

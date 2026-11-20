@@ -192,6 +192,16 @@ describe("handlePendingDecisionReply — the reply runs the page's write, or fal
       expect(hoisted.quick.mock.calls[0][0]).toContain("CONFIRM, KEEP, PROPOSE");
       expect(hoisted.keepInterviewTime).toHaveBeenCalledTimes(1);
     });
+
+    it("'Accept' on a proposed new time is briefed to the classifier as CONFIRM, never KEEP (live 2026-11-20: it kept the current time)", async () => {
+      hoisted.quick.mockResolvedValueOnce("CONFIRM");
+      const pd = parkedDecision("interview_proposal", "iv1", "x", "caregiver", Date.now(), "The Nguyen Family");
+      await handlePendingDecisionReply("+1", "chat", "Accept", session(pd));
+      const brief = hoisted.quick.mock.calls[0][0] as string;
+      expect(brief).toContain('"accept"');
+      expect(brief).toContain("accepting a proposed time IS confirming it, never KEEP");
+      expect(hoisted.keepInterviewTime).not.toHaveBeenCalled();
+    });
   });
 
   it("booking request: DETAILS texts the request whole and stays parked; DECLINE asks the page's confirm; YES then declines", async () => {

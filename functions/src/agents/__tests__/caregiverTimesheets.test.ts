@@ -174,6 +174,31 @@ describe("the tab — the page's reads and chips", () => {
 });
 
 describe("Submit hours worked — the modal as a flow", () => {
+  // Live 2026-11-20: a visit finished two days late recorded "38:54:47 · $972.83" and the submit failed with
+  // "A visit cannot exceed 24 hours", dropping the flow. Now she is asked what time she really finished.
+  it("a clock-out days after the visit asks for the real finish time instead of showing 38 hours of pay; the time she gives replaces it", async () => {
+    shift("late", { startedAt: IN, completedAt: "2026-09-20T04:30:00.000Z" }); // ~31 h after clock-in
+    const r = await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "late" });
+    expect(r.started).toBe(true);
+    expect(hoisted.sessionWrites[0].submitHoursFlowStep).toBe("sh_endtime");
+    expect(hoisted.sent[0]).toContain("What time did you actually finish on Sep 18?");
+    expect(hoisted.sent[0]).not.toContain("Base pay");
+    hoisted.quick.mockResolvedValueOnce("17:10");
+    await handleSubmitHoursFlowStep("+1", "chat", "I left at 5:10 pm", session() as never);
+    const w = hoisted.docs.get("agent_sessions/+1");
+    expect(w.submitHoursFlowStep).toBe("sh_items");
+    expect(w.submitHoursFlowData.endIso).toBe(OUT);
+    expect(hoisted.sent.at(-1)).toContain("Base pay (3:04:51 @ $25/hr) $77.02");
+  });
+  it("a finish time before the clock-in is refused and re-asked; cancel leaves it under Unsubmitted", async () => {
+    shift("late", { startedAt: IN, completedAt: "2026-09-20T04:30:00.000Z" });
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "late" });
+    hoisted.quick.mockResolvedValueOnce("NONE");
+    await handleSubmitHoursFlowStep("+1", "chat", "no idea", session() as never);
+    expect(hoisted.sent.at(-1)).toMatch(/^Sorry, I'm not sure I followed\./);
+    await handleSubmitHoursFlowStep("+1", "chat", "CANCEL", session() as never);
+    expect(hoisted.sent.at(-1)).toMatch(/didn't submit anything/);
+  });
   it("starts with the modal (clock in/out from the visit, duration, base pay) and asks for additional charges", async () => {
     shift("s1");
     const r = await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });

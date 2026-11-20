@@ -145,6 +145,14 @@ describe("recordVisitProgress — the 2-minute window", () => {
 });
 
 describe("buildVisitCompletionText — the Past Booking card in words", () => {
+  it("a visit ended hours after it was due prints no clock range or duration — the hours come on the timesheet (live 2026-11-20: 38:54:47)", () => {
+    const late = { ...shift, date: "2026-11-18", startTime: "06:30", endTime: "08:30", startedAt: "2026-11-18T14:35:00.000Z", completedAt: "2026-11-20T05:30:00.000Z" };
+    const t = buildVisitCompletionText(late);
+    expect(t).toContain("is complete.");
+    expect(t).not.toMatch(/\d:\d\d (AM|PM)–/);
+    expect(t).not.toContain("38:");
+    expect(t).toContain("ended it after the scheduled time");
+  });
   it("notes first (the log, then the closing note), then tasks done / not done per recipient with the count, then what happens next", () => {
     const t = buildVisitCompletionText(shift);
     expect(t).toContain("Basra Yousuf's visit on Thursday, September 17, 2026 is complete (7:05 PM–7:06 PM, 0:00:46).");

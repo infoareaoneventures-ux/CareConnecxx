@@ -401,6 +401,8 @@ export interface SubmitHoursFlowData {
   shiftId: string; clientName: string; date: string;
   startIso: string; endIso: string; totalHours: number; rate: number;
   scheduledStartMs: number | null; scheduledEndMs: number | null;
+  /** the visit's care-location zone — the real finish time she texts is read in it */
+  tz?: string;
   items: Array<{ type: "custom"; label: string; amount: number; note?: string }>;
 }
 // How every figure on the Timesheets page is worked out — briefed with any mid-flow question (live 2026-10-11:
@@ -469,6 +471,22 @@ export async function parseCharge(text: string): Promise<{ kind: "none" } | { ki
   } catch { return null; }
 }
 
+/** A recorded clock-out that cannot be the real one: over 24 h after clock-in, or more than 4 h past the visit's scheduled end. */
+export function isImplausibleEnd(startMs: number | null, endMs: number | null, scheduledEndMs: number | null): boolean {
+  if (startMs === null || endMs === null) return false;
+  if (endMs - startMs > 24 * 3_600_000) return true;
+  return scheduledEndMs !== null && endMs - scheduledEndMs > 4 * 3_600_000;
+}
+const ENDTIME_Q = (d: SubmitHoursFlowData) =>
+  `Your clock-out was recorded as ${clock(Date.parse(d.endIso))}, ${shortDate(Date.parse(d.endIso))}, which is much later than this visit was meant to run` +
+  `${d.scheduledEndMs ? ` (it was scheduled to end ${clock(d.scheduledEndMs)})` : ""}. What time did you actually finish on ${shortDate(Date.parse(d.startIso))}? For example 8:30 AM. (Say cancel to leave it under Unsubmitted.)`;
+/** "I left around 8:30" → "08:30" (24 h) or null when no clock time is in the text. */
+async function parseFinishTime(text: string): Promise<string | null> {
+  const raw = await parse('The care provider is telling Evia what time they actually finished a visit. Reply with ONLY the time as 24-hour HH:MM (for example 08:30 or 17:45). If there is no clock time in the message, reply NONE.', text);
+  const m = raw.trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
+}
+
 export async function startSubmitHoursFlow(phone: string, chatId: string, _session: AgentSession, args: { caregiverId: string; shiftId: string }): Promise<{ started: boolean; reason?: string }> {
   const snap = await db.collection("shifts").doc(args.shiftId).get();
   const shift = snap.data() as Doc | undefined;
@@ -485,6 +503,15 @@ export async function startSubmitHoursFlow(phone: string, chatId: string, _sessi
     scheduledStartMs: Number.isFinite(t.scheduledStartMs) ? t.scheduledStartMs : null, scheduledEndMs: Number.isFinite(t.scheduledEndMs) ? t.scheduledEndMs : null,
     items: [],
   };
+  data.tz = careZoneOf(shift as Record<string, unknown>);
+  // She forgot to tap Finish: the recorded clock-out is when she finally said so (live 2026-11-20: two days later,
+  // "38:54:47 · $972.83", then "A visit cannot exceed 24 hours" and the flow dropped with no way out). Ask what time
+  // she really finished instead of letting her submit — or fail on — a clock-out that cannot be right.
+  if (isImplausibleEnd(t.startMs, t.endMs, Number.isFinite(t.scheduledEndMs) ? t.scheduledEndMs : null)) {
+    await db.collection("agent_sessions").doc(phone).update({ submitHoursFlowStep: "sh_endtime", submitHoursFlowData: data, stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() });
+    await sendMessage(chatId, ENDTIME_Q(data));
+    return { started: true };
+  }
   await db.collection("agent_sessions").doc(phone).update({ submitHoursFlowStep: "sh_items", submitHoursFlowData: data, stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() });
   await sendMessage(chatId, ITEMS_Q(data));
   return { started: true };
@@ -501,6 +528,25 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     await sendMessage(chatId, question);
   };
 
+  if (step === "sh_endtime") {
+    const q = ENDTIME_Q(data);
+    if (text.trim().toUpperCase() === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
+    const hhmm = await parseFinishTime(text);
+    if (!hhmm) {
+      if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: SUBMIT_FACTS(data) })); return; }
+      await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return;
+    }
+    const tz = data.tz || DEFAULT_TZ;
+    const startMs = Date.parse(data.startIso);
+    const day = new Date(startMs).toLocaleDateString("en-CA", { timeZone: tz });
+    let endMs = wallToInstantMs(day, hhmm, tz);
+    if (Number.isFinite(endMs) && endMs <= startMs) endMs += 24 * 3_600_000; // finished after midnight
+    if (!Number.isFinite(endMs) || endMs - startMs > 24 * 3_600_000) { await sendMessage(chatId, `That doesn't work with your clock-in (${clock(startMs)}). ${q}`); return; }
+    const fixed = { ...data, endIso: new Date(endMs).toISOString(), totalHours: (endMs - startMs) / 3_600_000 };
+    await ref.update({ submitHoursFlowStep: "sh_items", submitHoursFlowData: fixed });
+    await sendMessage(chatId, ITEMS_Q(fixed));
+    return;
+  }
   if (step === "sh_items") {
     const q = data.items.length === 0 ? ITEMS_Q(data) : ANOTHER_Q(data.items[data.items.length - 1]);
     if (text.trim().toUpperCase() === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();

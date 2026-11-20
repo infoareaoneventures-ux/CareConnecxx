@@ -193,6 +193,15 @@ async function load(clientId: string): Promise<LoadedPage> {
       seen.add(rKey);
       list.push({ key: rKey, firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(" "), relationship: String(r.relationship ?? ""), careKind: asKind(r.careKind), photoURL: (r.photoURL as string | undefined) ?? null, isPrimary: false });
     }
+    // A plan stored before the recipient had a last name lives under "<first>_noname"; once the roster row has a last name
+    // its key is "<first>_<last>" and that plan would show as a SECOND person with the same first name (live 2026-11-20:
+    // "Justa" matched two recipients, so a care plan update failed as ambiguous). Read it as that roster row's plan.
+    for (const row of list) {
+      const legacyKey = recipientPlanKey(row.firstName, "");
+      if (legacyKey === row.key || !rawPlans[legacyKey]) continue;
+      if (!rawPlans[row.key]) rawPlans[row.key] = rawPlans[legacyKey];
+      delete rawPlans[legacyKey]; // the old row never shows as a second person, even after a save under the new key
+    }
     // Orphaned plans (a plan with no roster row that wasn't deliberately deleted) still show.
     const deletedKeys = new Set(((wizard.deletedRecipients as Array<Record<string, unknown>> | undefined) ?? []).map((d) => recipientPlanKey(String(d.firstName ?? "").trim(), String(d.lastName ?? "").trim())));
     for (const [key, p] of Object.entries(rawPlans)) {

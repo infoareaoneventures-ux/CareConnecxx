@@ -345,6 +345,7 @@ describe("Review correction — the modal as a flow", () => {
     hoisted.quick.mockResolvedValueOnce('{"1": 10}');
     await handleReviewCorrectionFlowStep("+1", "chat", "mileage 10", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Want to add a note for the family on why you disagree? If not, just say no.");
+    hoisted.quick.mockResolvedValueOnce("NOTE");
     await handleReviewCorrectionFlowStep("+1", "chat", "I stayed until she was settled", session() as never);
     expect(hoisted.sent.at(-1)).toBe([
       "Your counter — Basra Yousuf",
@@ -484,13 +485,15 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Want to add a note for the family on why you disagree? If not, just say no.");
-    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    hoisted.quick.mockResolvedValueOnce("QUESTION");
     await handleReviewCorrectionFlowStep("+1", "chat", "does the family see this note?", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Answer. Want to add a note for the family on why you disagree? If not, just say no.");
     expect(lastFacts()).toContain("The note goes to the family with the counter, in the care provider's own words.");
     expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowStep).toBe("rc_note");
     expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowData.note).toBeUndefined();
-    // the real note still lands
+    // the real note still lands — even when it pushes back on the family's correction (live 2026-11-22: it was echoed back
+    // as "you can add: …" and the NEXT text became the note)
+    hoisted.quick.mockResolvedValueOnce("NOTE");
     await handleReviewCorrectionFlowStep("+1", "chat", "I stayed until she was settled", session() as never);
     expect(hoisted.sent.at(-1)).toContain("Note: \"I stayed until she was settled\"");
   });

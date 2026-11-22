@@ -766,7 +766,12 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     if (norm === "CANCEL" || await isBackOutRequest(text, C_NOTE_Q)) return cancelled();
     if (norm === "SKIP" || norm === "NONE" || norm === "NO") return next({}, "rc_confirm", C_CONFIRM_Q(data));
     // A question here is answered and the note re-asked — it never becomes the note the family reads (2026-10-11).
-    if (await isQuestionOrOther(text, C_NOTE_Q)) { await sendMessage(chatId, await answerMidFlow(text, C_NOTE_Q, { facts: `${REVIEW_FACTS(data)} The note goes to the family with the counter, in the care provider's own words.` })); return; }
+    // The note IS an objection ("I stayed to settle her for her nap"), so the generic isQuestionOrOther — which treats any
+    // objection as "not an answer" — echoed it back and the next text became the note (live 2026-11-22). Classify the
+    // reply as the note itself, a question to Evia, or a decline, like the log-hours note step does.
+    const kind = await parse(`A care provider disagreed with the family's proposed hours and was asked: "${C_NOTE_Q}" Classify their reply: NOTE if the message is the note itself (their reason or explanation, even if it pushes back), QUESTION if they are asking Evia something or it is unrelated, NONE if they are declining to add one ("nothing", "nope", "I'm good"). Reply with ONE word.`, text);
+    if (kind.toUpperCase().startsWith("NONE")) return next({}, "rc_confirm", C_CONFIRM_Q(data));
+    if (kind.toUpperCase().startsWith("Q")) { await sendMessage(chatId, await answerMidFlow(text, C_NOTE_Q, { facts: `${REVIEW_FACTS(data)} The note goes to the family with the counter, in the care provider's own words.` })); return; }
     return next({ note: text.trim().slice(0, 500) }, "rc_confirm", C_CONFIRM_Q({ ...data, note: text.trim() }));
   }
   if (step === "rc_confirm") {

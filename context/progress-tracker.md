@@ -1070,3 +1070,12 @@ From the Notion "UI & product" list, one batch (merge + hosting deploy together)
 - Payouts page: the fee/timing sentence is no longer shown twice.
 - Ending a visit confirms ("Visit ended") and offers "Submit hours" (opens Payments).
 - Left open: Start/End still wait on a cold-started Firestore-trigger function (processVisitActionQueue); `minInstances: 1` would fix it but costs a warm instance; family dashboard speed; unpaid visits in History (unclear intent); the "Contact" first name was a data record, no code default exists.
+
+### 2026-11-23 — Small finishes on the open UI items (built locally, not deployed)
+- Login code boxes: group + per-box labels (`Code digit n of 6`), `autocomplete=one-time-code`, and a pasted/autofilled code fills all six boxes (test added).
+- Care provider wizard: service options expose their selected state (`aria-pressed`); the ✓ glyph is hidden from screen readers.
+- Family dashboard: an upcoming shift card shows its date when it isn't today.
+- Settings: the address row is named "Care location" (one address; saving replaces it everywhere).
+- Care provider dashboard: the application row says "Applied <date>" so it isn't read as the job's date.
+- Checked, no code change needed: the Ongoing checkbox is already a labelled control; family "Membership: None" is test data without a subscription; post-a-job drafts were already built (Nov 11).
+- Still open and why: Start/End and interview-request waits are Firestore-trigger cold starts (needs minInstances decision); look and theme (needs screenshot review); Terms (founder); time zones (own batch); weekly availability in the Find Care profile window; pending reschedules under Requests; listing jobs only with a location (decision).

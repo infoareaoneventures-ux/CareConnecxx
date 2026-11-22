@@ -69,6 +69,18 @@ describe('AuthLoginPage', () => {
     await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/client/dashboard', { replace: true }));
   });
 
+  it('names the code boxes and fills all six when a code is pasted', async () => {
+    render(<AuthLoginPage />);
+    await enterPhoneAndSend();
+    expect(screen.getByRole('group', { name: '6-digit code' })).toBeTruthy();
+    expect(screen.getByLabelText('Code digit 1 of 6')).toBeTruthy();
+    const first = screen.getByLabelText('Code digit 1 of 6');
+    await act(async () => {
+      fireEvent.paste(first, { clipboardData: { getData: () => '654 321' } });
+    });
+    await waitFor(() => expect(hoisted.confirm).toHaveBeenCalledWith('654321'));
+  });
+
   it('routes a caregiver to the caregiver dashboard', async () => {
     hoisted.getUser.mockResolvedValue({ userType: 'caregiver' });
     render(<AuthLoginPage />);

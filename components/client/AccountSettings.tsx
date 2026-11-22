@@ -677,7 +677,7 @@ export const AccountSettings: React.FC = () => {
                 </Row>
 
                 {/* Location */}
-                <Row label="Location">
+                <Row label="Care location">
                   {editingLocation ? (
                     <div className="space-y-2 max-w-sm">
                       <input

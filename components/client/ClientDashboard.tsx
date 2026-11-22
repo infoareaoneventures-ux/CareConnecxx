@@ -116,6 +116,9 @@ async function buildSeniorProfile(
   };
 }
 
+// Today as the viewer's own calendar day (YYYY-MM-DD), for "is this visit today?" checks.
+const localToday = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`; };
+
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) => {
   const navigate = useNavigate();
   const { addToast: onShowToast, blockedIds } = useCareConnex();
@@ -1288,7 +1291,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 {(shift.startTime || shift.endTime) && (
                                   <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-0.5">
                                     <Clock className="w-3 h-3 flex-shrink-0" />
-                                    <span>{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}<ZoneTag visit={shift as any} /></span>
+                                    <span>{shift.date && shift.date !== localToday() ? `${formatDay(shift.date, { withYear: false })}, ` : ''}{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}<ZoneTag visit={shift as any} /></span>
                                   </div>
                                 )}
                                 {shift.address && (

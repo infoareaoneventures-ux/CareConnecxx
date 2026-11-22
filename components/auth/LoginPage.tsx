@@ -182,7 +182,7 @@ export const AuthLoginPage: React.FC = () => {
               <p className="text-ink-600 text-sm">Sent to {countryCode} {phone}</p>
             </div>
 
-            <div className="flex gap-2 justify-center">
+            <div className="flex gap-2 justify-center" role="group" aria-label="6-digit code">
               {otp.map((digit, idx) => (
                 <input
                   key={idx}
@@ -194,6 +194,19 @@ export const AuthLoginPage: React.FC = () => {
                   onChange={e => handleOtpChange(idx, e.target.value)}
                   onKeyDown={e => handleOtpKeyDown(idx, e)}
                   autoFocus={idx === 0}
+                  aria-label={`Code digit ${idx + 1} of 6`}
+                  autoComplete={idx === 0 ? 'one-time-code' : 'off'}
+                  onPaste={e => {
+                    // A pasted (or autofilled) code fills all six boxes instead of one digit.
+                    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                    if (pasted.length < 2) return;
+                    e.preventDefault();
+                    const next = ['', '', '', '', '', ''];
+                    pasted.split('').forEach((d, i) => { next[i] = d; });
+                    setOtp(next);
+                    otpRefs.current[Math.min(pasted.length, 5)]?.focus();
+                    if (pasted.length === 6) confirmOtp(pasted);
+                  }}
                   className="w-12 h-14 text-center text-xl font-semibold bg-white border hairline rounded-xl text-ink-900 focus:outline-none focus:border-ink-400"
                 />
               ))}

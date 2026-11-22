@@ -199,6 +199,16 @@ describe("Submit hours worked — the modal as a flow", () => {
     await handleSubmitHoursFlowStep("+1", "chat", "CANCEL", session() as never);
     expect(hoisted.sent.at(-1)).toMatch(/didn't submit anything/);
   });
+  it("a charge named in the message that starts the flow is kept — only 'anything else?' is asked", async () => {
+    shift("s1");
+    hoisted.quick.mockResolvedValueOnce('{"label":"Supplies","amount":12.5,"note":"groceries"}');
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1", charges: ["supplies 12.50 - groceries"] });
+    const w = hoisted.sessionWrites.at(-1);
+    expect(w.submitHoursFlowStep).toBe("sh_items");
+    expect(w.submitHoursFlowData.items).toEqual([{ type: "custom", label: "Supplies", amount: 12.5, note: "groceries" }]);
+    expect(hoisted.sent.at(-1)).toContain("Added Supplies · $12.50. Anything else to add?");
+    expect(hoisted.sent.at(-1)).not.toContain("Any additional charges, like overtime");
+  });
   it("starts with the modal (clock in/out from the visit, duration, base pay) and asks for additional charges", async () => {
     shift("s1");
     const r = await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });

@@ -487,7 +487,7 @@ async function parseFinishTime(text: string): Promise<string | null> {
   return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
 }
 
-export async function startSubmitHoursFlow(phone: string, chatId: string, _session: AgentSession, args: { caregiverId: string; shiftId: string }): Promise<{ started: boolean; reason?: string }> {
+export async function startSubmitHoursFlow(phone: string, chatId: string, _session: AgentSession, args: { caregiverId: string; shiftId: string; charges?: string[] }): Promise<{ started: boolean; reason?: string }> {
   const snap = await db.collection("shifts").doc(args.shiftId).get();
   const shift = snap.data() as Doc | undefined;
   if (!snap.exists || !shift || shift.caregiverId !== args.caregiverId) { await sendMessage(chatId, "That visit isn't on your Timesheets tab."); return { started: false, reason: "not_found" }; }
@@ -512,8 +512,14 @@ export async function startSubmitHoursFlow(phone: string, chatId: string, _sessi
     await sendMessage(chatId, ENDTIME_Q(data));
     return { started: true };
   }
+  // Charges already named in the message that started the flow ("submit my hours, I spent $12.50 on groceries") are
+  // kept — only "anything else?" is asked, never the question they already answered.
+  for (const c of args.charges ?? []) {
+    const p = await parseCharge(c);
+    if (p && p.kind === "item") data.items.push({ type: "custom" as const, label: p.label, amount: p.amount, ...(p.note ? { note: p.note } : {}) });
+  }
   await db.collection("agent_sessions").doc(phone).update({ submitHoursFlowStep: "sh_items", submitHoursFlowData: data, stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() });
-  await sendMessage(chatId, ITEMS_Q(data));
+  await sendMessage(chatId, data.items.length ? `${ITEMS_Q(data).split("\n").slice(0, -2).join("\n")}\n\n${ANOTHER_Q(data.items[data.items.length - 1])}` : ITEMS_Q(data));
   return { started: true };
 }
 

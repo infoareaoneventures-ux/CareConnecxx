@@ -2160,6 +2160,7 @@ export const MCP_TOOLS: McpTool[] = [
         caregiverId: { type: "string", description: "The care provider's Firestore document ID" },
         number:      { type: "number", description: "The visit number from the last texted Timesheets list" },
         shiftId:     { type: "string", description: "The shifts document ID (instead of number)" },
+        charges:     { type: "array", items: { type: "string" }, description: "Additional charges the care provider ALREADY named in their message, one string each in their own words with the amount (e.g. \"supplies 12.50 - groceries for her dinner\"). Leave out when they named none — never invent one." },
       },
       required: ["caregiverId"],
     },
@@ -5456,7 +5457,7 @@ async function executeToolCall(
 
     // ── Payments › Timesheets (2026-10-01): the tab, the Submit hours modal and the Review correction modal, texted ──
     if (name === "show_timesheets" || name === "start_submit_hours_flow" || name === "start_review_correction_flow") {
-      const { caregiverId, chip, number, more, shiftId, appointmentId, phone: tsPhone } = input as Record<string, unknown>;
+      const { caregiverId, chip, number, more, shiftId, appointmentId, charges, phone: tsPhone } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const { findCaregiverSession } = await import("../agents/caregiverAccessGate");
       const sess = await findCaregiverSession(caregiverId as string, tsPhone);
@@ -5485,7 +5486,7 @@ async function executeToolCall(
             return { success: false, reason: tab.submittable.length === 0 ? "nothing_to_submit" : "no_visit_ref", note: "The Unsubmitted list was texted so they can answer with a number — send nothing else." };
           }
         }
-        const r = await ts.startSubmitHoursFlow(sess.phone, sess.chatId, sessionData as never, { caregiverId: caregiverId as string, shiftId: target });
+        const r = await ts.startSubmitHoursFlow(sess.phone, sess.chatId, sessionData as never, { caregiverId: caregiverId as string, shiftId: target, ...(Array.isArray(charges) ? { charges: (charges as unknown[]).filter((c): c is string => typeof c === "string" && !!c.trim()).slice(0, 5) } : {}) });
         return { success: r.started, reason: r.reason, note: "The flow (or its refusal) was texted — send nothing else this turn." };
       }
       let target = typeof appointmentId === "string" && appointmentId ? appointmentId : ts.resolveTimesheetRef(sessionData, { number })?.id;

@@ -148,7 +148,7 @@ describe("startVisitRequestFlow", () => {
 
   it("one care provider, one booking, and the family's words carry the day + time → straight to the start-date question", async () => {
     seed();
-    modelReplies(JSON.stringify({ days: ["Thu"], dayTimes: { Thu: [{ start: "09:00", end: "13:00" }] }, allDays: null }));
+    modelReplies("1", JSON.stringify({ days: ["Thu"], dayTimes: { Thu: [{ start: "09:00", end: "13:00" }] }, allDays: null }));
     const r = await startVisitRequestFlow(PHONE, CHAT, session(), { initialText: "add Thursdays 9am to 1pm with Basra" });
     expect(r.started).toBe(true);
     expect(sess().visitRequestFlowStep).toBe("vr_ask_start");
@@ -159,12 +159,21 @@ describe("startVisitRequestFlow", () => {
 
   it("a one-time visit with a date and time in the first message skips the day, start and end questions → straight to notes", async () => {
     seed();
-    modelReplies(JSON.stringify({ days: [], date: "2099-01-05", oneTime: true, dayTimes: {}, allDays: { start: "23:25", end: "23:55" } }));
+    modelReplies("1", JSON.stringify({ days: [], date: "2099-01-05", oneTime: true, dayTimes: {}, allDays: { start: "23:25", end: "23:55" } }));
     const r = await startVisitRequestFlow(PHONE, CHAT, session(), { initialText: "add a one-time extra visit with Basra on January 5 from 11:25 PM to 11:55 PM" });
     expect(r.started).toBe(true);
     expect(sess().visitRequestFlowStep).toBe("vr_ask_notes");
     expect(sess().visitRequestFlowData).toMatchObject({ days: ["Mon"], startDate: "2099-01-05", ongoing: false, endDate: "2099-01-05", dayTimes: { Mon: [{ start: "23:25", end: "23:55" }] } });
     expect(lastSent()).toContain("Any notes for");
+  });
+
+  it("a named person who is not on an active booking is never swapped for the one care provider on file ('Book Riya' when only Basra is booked)", async () => {
+    seed();
+    modelReplies("-1");
+    const r = await startVisitRequestFlow(PHONE, CHAT, session(), { initialText: "add a visit with Riya on Thursday" });
+    expect(r).toEqual({ started: false, reason: "not_booked" });
+    expect(lastSent()).toContain("I don't see an active booking with that care provider");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.visitRequestFlowStep).toBeUndefined();
   });
 
   it("started from a booking (the My Bookings card button, 2026-10-07): skips the care provider and booking questions even with two care providers", async () => {

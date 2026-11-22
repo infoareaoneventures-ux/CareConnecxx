@@ -739,7 +739,7 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
 
 ### P3: Low (small fixes)
 
-- [ ] **Leftover "(1)" and "(2)" labels on the home page**
+- [x] **Leftover "(1)" and "(2)" labels on the home page** — removed (Nov 22, built, awaiting hosting deploy)
     - **The issue:** Small "(1)" and "(2)" markers sit above two home-page sections.
     - **Why it matters:** They look like unfinished placeholders.
     - **How we'll fix it:** Remove them, or turn them into proper section labels.
@@ -759,12 +759,12 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** It's a minor dead end for people who follow an old link.
     - **How we'll fix it:** Make the 404 readable, and show only links that make sense for the visitor.
 
-- [ ] **"Admin" link in the public footer**
+- [x] **"Admin" link in the public footer** — removed; the admin area is still reached by its address (Nov 22, built, awaiting hosting deploy)
     - **The issue:** Every visitor sees an "Admin" link in the footer.
     - **Why it matters:** It invites curiosity and looks unprofessional. The admin area is protected, so this isn't a security hole.
     - **How we'll fix it:** Hide it from the public footer.
 
-- [ ] **Every page has the same browser-tab title**
+- [x] **Every page has the same browser-tab title** — each page now has its own ("Calendar · Evia"); the home page keeps the search title (Nov 22, built, awaiting hosting deploy)
     - **The issue:** Every page, including the dashboard and settings, shows the same tab title, "Senior & Child Care San Jose & Santa Clara County | Evia."
     - **Why it matters:** People with several tabs open can't tell them apart, and search engines see duplicate pages.
     - **How we'll fix it:** Give each page its own title, for example "Calendar · Evia."
@@ -900,7 +900,7 @@ Verified live: "Can you reschedule the interview please" on an account with no i
 
 - [x] **Setting up an interview with a care provider the family booked on the website fails: "I couldn't find that care provider to interview"** — _Fixed in code Nov 14 (not yet deployed): the name lookup was limited to care providers Evia had "shown" by text; it now also covers the family's own booked visits, booking requests and interviews._
 - [x] **A failed flow start led to a human handoff and then silence** — _Fixed in code Nov 14 (not yet deployed): when a flow tool fails but has already told the family, the model's follow-up text is discarded (it was judged "unsupported", which handed the family to a human and muted Evia for them). The test account was unmuted by hand (`agent_sessions/+15055281528` `humanMode.on` = false)._
-- [ ] **The interview flow asks the day and time before it knows who the care provider is** — the care provider is resolved last, so a wrong or missing name wastes two answers.
+- [x] **The interview flow asks the day and time before it knows who the care provider is** — already fixed Nov 15: the care provider is resolved first and a day/time in the first message is used — the care provider is resolved last, so a wrong or missing name wastes two answers.
 - [ ] **One text turn cost $0.32** (the interview turn: `costUsd: 0.318525`, 1 tool call, 52 output tokens) — check the prompt size / model for the agent tier.
 - [x] **After a handoff to a human, Evia says nothing to the person's next message** — _Fixed in code Nov 15 (not yet deployed): one short line per hold ('My teammate still has this one…'), reset on a new handoff (`handoffHeldAckSent`)._ — — by design (human mode), but there is no "a teammate has this" reply for follow-ups, so the person just waits.
 
@@ -1005,9 +1005,9 @@ Booking by text, accept and decline by the care provider, whole-booking cancel w
 - [ ] **"Hi Evia" is answered with the next visit** instead of a greeting — by design (the greeting prompt leads with the most relevant item); founder to decide whether to keep
 - [ ] **Stale "Tuesday is not included" warning on the site's booking form** after the schedule is edited
 - [ ] **The site shows interview times in the browser's time zone** ("GMT+5")
-- [ ] **The booking notice lists "Pets in home" and "Card" though neither was chosen**
+- [x] **The booking notice lists "Pets in home" and "Card" though neither was chosen** — "Pets in home" comes from the family's own Care Plan location flags (not a default); "Card" is the open card-before-booking item (Nov 22)
 - [ ] **The applicant reply reached the family twice, with raw `**bold**` markdown; no automatic "new applicant" text reached the family**
-- [ ] **"Book Riya" with Riya not yet hired was read as "add a visit for Test Provider"**
+- [x] **"Book Riya" with Riya not yet hired was read as "add a visit for Test Provider"** — a named person who is not on an active booking now gets "I don't see an active booking with that care provider. Want me to send them a booking request instead?" (Nov 22, awaiting deploy)
 - [ ] **A decline by the care provider is confirmed even when they typed "decline" clearly** (one "just checking" kept because it can't be undone; founder to decide)
 - [ ] **A mixed request puts the whole thread in human mode** ("change my name and turn off reminders": the name goes to the team, and Evia then ignores every text, including the unrelated ones); founder to decide
 - [x] **The pause confirmation showed the date as "2026-11-28"** — now "Saturday, November 28, 2026" (Nov 22)

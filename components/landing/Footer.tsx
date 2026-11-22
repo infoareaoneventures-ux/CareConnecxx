@@ -39,7 +39,6 @@ export const Footer: React.FC = () => {
                         <Link to="/login" className={linkClass}>Log in</Link>
                         <Link to="/privacy" className={linkClass}>Privacy</Link>
                         <Link to="/terms" className={linkClass}>Terms</Link>
-                        <Link to="/admin" className={linkClass}>Admin</Link>
                     </nav>
                 </div>
             </div>

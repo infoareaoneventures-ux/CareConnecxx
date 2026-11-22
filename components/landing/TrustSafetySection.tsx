@@ -26,7 +26,6 @@ export const TrustSafetySection: React.FC<TrustSafetySectionProps> = () => {
 
                     {/* Left Column: Text & Features */}
                     <div className="w-full lg:w-2/3 pb-8 lg:pb-16 z-10 relative">
-                        <p className="section-number mb-4">(1)</p>
                         <h2 className="font-display text-4xl md:text-[42px] font-semibold text-ink-900 leading-[1.1] mb-6 tracking-[-0.02em]">
                             Care you can look into before you book
                         </h2>

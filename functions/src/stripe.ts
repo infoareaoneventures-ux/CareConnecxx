@@ -1547,6 +1547,52 @@ export const createCaregiverBillingPortalSession = functions.https.onCall(async 
   }
 });
 
+/**
+ * "Add a card" for a family that has none: a Stripe Checkout session in SETUP mode (no charge). The card that
+ * lands is made the customer's default by handlePaymentMethodAttached below, which is what visit payments read.
+ * Used by the site's booking forms ("Add a card to send this booking") and the Payments page.
+ */
+export async function createCardSetupUrlFor(userId: string, returnPath = "/client/payments"): Promise<string> {
+  const db = admin.firestore();
+  const custRef = db.collection("customers").doc(userId);
+  let customerId = (await custRef.get()).data()?.stripeCustomerId as string | undefined;
+  if (!customerId) {
+    const userData = (await db.collection("users").doc(userId).get()).data() ?? {};
+    const customer = await stripe.customers.create({
+      ...(userData.email ? { email: userData.email as string } : {}),
+      ...(userData.phone ? { phone: userData.phone as string } : {}),
+      metadata: { firebaseUID: userId },
+    });
+    customerId = customer.id;
+    await custRef.set({ stripeCustomerId: customerId, createdAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  }
+  const session = await stripe.checkout.sessions.create({
+    mode: "setup",
+    payment_method_types: ["card"],
+    customer: customerId,
+    success_url: appLink(`${returnPath}${returnPath.includes("?") ? "&" : "?"}card=added`),
+    cancel_url: appLink(returnPath),
+    metadata: { task: "client_card_setup", firebaseUID: userId },
+  });
+  if (!session.url) throw new Error("Stripe returned no checkout URL");
+  return session.url;
+}
+
+export const createCardSetupSession = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "User must be authenticated");
+  }
+  const raw = typeof (data as any)?.returnPath === "string" ? ((data as any).returnPath as string) : "/client/payments";
+  // Only a path on this site (never an absolute URL) so the redirect can't be pointed elsewhere.
+  const returnPath = raw.startsWith("/") && !raw.startsWith("//") ? raw.slice(0, 200) : "/client/payments";
+  try {
+    return { url: await createCardSetupUrlFor(context.auth.uid, returnPath) };
+  } catch (error) {
+    console.error("Error creating card setup session:", error);
+    throw new functions.https.HttpsError("internal", "Could not open the card form");
+  }
+});
+
 // ── Auto-retry booking tasks when client adds a payment method ────────────────
 
 async function handlePaymentMethodAttached(pm: Stripe.PaymentMethod): Promise<void> {

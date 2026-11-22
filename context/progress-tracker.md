@@ -1046,3 +1046,13 @@ From the Notion "UI & product" list, one batch (merge + hosting deploy together)
 - Tests: `promptRoutes`, `replaceAddress`, `samePhone`, `pageTitle` (+signup titles). Full suite 470 files pass; `tsc` clean; lint 0 errors.
 - Not yet checked signed-in on the local build (needs a test login): Settings, calendars, job board, review window.
 - Still open from the UI list: theme/colour/button/layout unification, shared Modal/ConfirmDialog/EmptyState, accessibility labels, error-message wording, card before booking, failed-payment messaging to the care provider, slow Membership/dashboard, interview/visit action speed.
+
+### 2026-11-22 — UI fixes, accessibility + money flows (built locally, not deployed)
+- **Branded confirm box:** every browser `confirm`/`alert` (~30) is gone — `askConfirm()` (`utils/confirmDialog.ts`, host in App) and `notify()` toasts.
+- **Pop-up accessibility net (`utils/dialogA11y.ts`, installed in App):** pop-ups become `role=dialog`, close on Escape, lock page scroll; icon-only buttons get a spoken name from their lucide icon; global `:focus-visible` ring. A net for all ~40 windows, not a per-button rewrite (div-onClick "buttons" and focus trapping remain).
+- **Card before booking:** `createCardSetupSession` callable (Stripe Checkout setup mode, `createCardSetupUrlFor`), `services/cardOnFile.ts ensureCardOnFile` gates the site's Send Booking; Payments "Add a card" opens the same form (`?card=added` toast); Evia's booking flow `holdForCard` keeps the flow and texts the link (YES sends after). Test: bookingFlow no-card case.
+- **Failed payment:** care provider told once on first failure (`shiftHours.ts`, text + bell; payout-side vs family-side wording); their Timesheets page and Evia's list drop Stripe's error text for a plain sentence; `utils/correctionHistory.ts` hides the false "Correction: Accepted" on a plain approval.
+- **Smaller:** extra-charge form one-tap Overtime/Mileage/Supplies; sign-in error wording; Membership page uses the listener's first answer + placeholder.
+- Tests: 473 files pass (site + functions); `tsc` clean; lint 0 errors; site and functions build.
+- **Deploy needs:** hosting + functions (new callable `v1-createCardSetupSession`). Re-check live after: Add a card → Stripe form → back with toast; Send Booking with no card; Evia booking with no card; a failed payment's caregiver text; Escape closes a pop-up; the confirm box on a cancel.
+- Not done from this round: look/theme unification (waiting on screenshot review), shared EmptyState/Modal components, slow Start/End + end-of-visit confirmation, family dashboard speed, unpaid visits in History.

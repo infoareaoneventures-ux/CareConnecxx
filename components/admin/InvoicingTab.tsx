@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { askConfirm } from '../../utils/confirmDialog';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { db, functions } from '../../lib/firebase';
 import { dbService } from '../../services/api';
@@ -114,7 +115,7 @@ export const InvoicingTab = () => {
             addToast('Unauthorized: Admin access required', 'error');
             return;
         }
-        if (!confirm('Are you sure you want to delete this invoice?')) return;
+        if (!await askConfirm('Are you sure you want to delete this invoice?')) return;
         try {
             await db!.collection('invoices').doc(id).delete();
             // Invoice list refreshes via the onSnapshot listener

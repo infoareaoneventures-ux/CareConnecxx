@@ -325,6 +325,15 @@ export const getClientPaymentMethodStatus = async (): Promise<PaymentMethodStatu
   return res.data;
 };
 
+/** Opens Stripe's card form (setup mode, no charge) and returns its URL; the card becomes the default for visit payments. */
+export const getCardSetupUrl = async (returnPath: string = '/client/payments'): Promise<string> => {
+  if (!auth) throw new Error('Auth not initialized');
+  if (!auth.currentUser) throw new Error('User must be logged in');
+  const fn = httpsCallable<{ returnPath: string }, { url: string }>(getFunctions(), 'v1-createCardSetupSession');
+  const res = await fn({ returnPath });
+  return res.data.url;
+};
+
 // Stripe service object for backward compatibility
 export const stripeService = {
   getStripe,

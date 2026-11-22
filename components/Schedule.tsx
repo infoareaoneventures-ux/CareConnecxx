@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './caregiver/signup/constants';
+import { askConfirm } from '../utils/confirmDialog';
 import { recordActedForPerson } from '../services/api';
 import { useState, useEffect } from 'react';
 import { VisitNotesBlock } from './shared/VisitNotesBlock';
@@ -221,7 +222,7 @@ export default function Schedule() {
   };
 
   const handleCancel = async (id: string) => {
-    if (!confirm('Cancel this shift?')) return;
+    if (!await askConfirm('Cancel this shift?')) return;
     if (!db) return;
     // onShiftCancelled Cloud Function fires and notifies the caregiver
     await db.collection('shifts').doc(id).update({
@@ -507,7 +508,7 @@ export default function Schedule() {
     }, [interview.jobId]);
 
     const handleCancel = async () => {
-      if (!window.confirm('Cancel this interview?')) return;
+      if (!await askConfirm('Cancel this interview?')) return;
       if (!db) return;
       const fdb = db;
       setCancelling(true);

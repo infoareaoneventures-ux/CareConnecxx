@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { askConfirm } from '../../utils/confirmDialog';
 import { 
   Plus, Search, Mail, Phone, User, Star, Users, CheckCircle, X, 
   MoreVertical, Edit2, Trash2, Loader2, Award
@@ -81,7 +82,7 @@ export const CoordinatorManagement: React.FC<CoordinatorManagementProps> = ({
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to deactivate this coordinator?')) return;
+    if (!await askConfirm('Are you sure you want to deactivate this coordinator?')) return;
     
     try {
       await dbService.updateCareCoordinator(id, { isActive: false });

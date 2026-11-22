@@ -101,7 +101,7 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
 
   // A compact banner at the bottom edge (it used to be a large card that covered the dashboard).
   return (
-    <div className="fixed bottom-4 right-4 left-4 md:left-auto md:w-96 z-50 animate-slide-up" role="region" aria-label="Notifications">
+    <div className="fixed bottom-4 right-4 left-4 md:left-auto md:w-96 z-50 animate-slide-up" role="region" aria-label="Turn on notifications">
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 px-4 py-3 flex items-center gap-3">
         <Bell className="w-5 h-5 text-ink-600 flex-shrink-0" aria-hidden="true" />
         <p className="flex-1 text-sm text-slate-700">Get a notification when a care provider messages you or a visit is close.</p>

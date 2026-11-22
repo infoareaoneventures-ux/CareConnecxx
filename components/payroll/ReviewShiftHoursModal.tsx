@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { realCorrection } from '../../utils/correctionHistory';
 import { X, CheckCircle2, AlertTriangle, ArrowUpRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { shiftHoursService } from '../../services/api';
 import { paymentMethodLabel } from '../../types';
@@ -236,7 +237,7 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
     }
   };
 
-  const hasHistory = Array.isArray(shift.correctionHistory) && shift.correctionHistory.some((e: any) => e.action !== 'submitted');
+  const hasHistory = Array.isArray(shift.correctionHistory) && shift.correctionHistory.some((e: any) => realCorrection(e.action));
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>

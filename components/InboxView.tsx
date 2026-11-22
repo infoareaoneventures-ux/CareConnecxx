@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { askConfirm } from '../utils/confirmDialog';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronLeft, Send, Search, MoreVertical, CheckCheck, Flag, Lock } from 'lucide-react';
 import { chatService, ChatRoom, Message } from '../services/chatService';
@@ -117,7 +118,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
     if (!fdb) return;
     // Blocking is one click in a menu — ask first (2026-11-09). The conversation is hidden, not deleted:
     // unblocking in Settings brings it back. (Becomes the shared ConfirmDialog in the design-system wave.)
-    if (!window.confirm(`Block ${contactName}? You won't see their messages or conversation. You can unblock them in Settings and the conversation comes back.`)) return;
+    if (!await askConfirm(`Block ${contactName}? You won't see their messages or conversation. You can unblock them in Settings and the conversation comes back.`)) return;
     try {
       await fdb.collection('users').doc(currentUid).update({
         blockedUsers: firebase.firestore.FieldValue.arrayUnion(contactId),

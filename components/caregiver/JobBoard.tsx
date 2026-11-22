@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel, kindsOfPost, serviceListsForKinds, CARE_KINDS, CARE_KIND_LABEL, CareKind } from './signup/constants';
+import { askConfirm } from '../../utils/confirmDialog';
 import { swallow } from '../../utils/reportError';
 import { JOB_PAYMENT_TEXT, isPastJob } from '../../utils/jobDisplay';
 import { localDateStr } from '../../utils/shiftUtils';
@@ -350,7 +351,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
 
     const handleAcceptInterview = async (iv: InterviewItem) => {
         // The interview is put on both calendars and the family is texted the link; it used to apply on the first click (2026-11-15 test).
-        if (!window.confirm('Accept this interview? It is added to your calendar and the family is told.')) return;
+        if (!await askConfirm('Accept this interview? It is added to your calendar and the family is told.')) return;
         if (!db || !profile) return;
         // Same fresh-read gate as Apply Now (the rules gate the write again).
         if (!(await gateFresh())) return;
@@ -407,7 +408,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
     // off something already agreed to) — mirrors the client side's Cancel.
     const handleCancelInterview = async (iv: InterviewItem) => {
         if (!db || !profile) return;
-        if (!window.confirm('Cancel this interview?')) return;
+        if (!await askConfirm('Cancel this interview?')) return;
         setSubmittingInterview(iv.id);
         try {
             await db.collection('video_interviews').doc(iv.id).update({

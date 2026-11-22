@@ -1,4 +1,6 @@
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { ensureCardOnFile } from '../../services/cardOnFile';
+import { askConfirm } from '../../utils/confirmDialog';
 import { addressForPost } from './bookingPrefill';
 import { recordActedForPerson } from '../../services/api';
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../../utils/medicationInstruction';
@@ -416,7 +418,7 @@ export const PostsPage: React.FC = () => {
   const handleCancelPost = async (postId: string) => {
     if (!currentUser?.uid) return;
     setOpenMenuId(null);
-    if (!window.confirm('Cancel this job post? Care providers will no longer be able to apply.')) return;
+    if (!await askConfirm('Cancel this job post? Care providers will no longer be able to apply.')) return;
     try {
       await dbService.cancelJobPost(postId, currentUser.uid);
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, status: 'cancelled' } : p));
@@ -470,7 +472,7 @@ export const PostsPage: React.FC = () => {
   // its buttons on an interview that was already over. Terminal actions must
   // always clear these two fields.
   const handleCancelInterview = async (interviewId: string) => {
-    if (!window.confirm('Cancel this interview?') || !db) return;
+    if (!await askConfirm('Cancel this interview?') || !db) return;
     try {
       await db.collection('video_interviews').doc(interviewId).update({
         status: 'cancelled',
@@ -888,6 +890,8 @@ export const PostsPage: React.FC = () => {
     const noteTexts = [bookingDraft.note, ...Object.values(bookingDraft.recipientDrafts).map(d => d?.notes ?? '')];
     if (noteTexts.some(isMedicationInstruction)) { addToast(MEDICATION_INSTRUCTION_MESSAGE, 'error'); return; }
     gate('booking', interview.caregiverName, async () => {
+    // A card must be on file before a booking request can be sent (the family is only charged after a visit).
+    if (!(await ensureCardOnFile('/client/posts'))) return;
     setSendingBooking(true);
     try {
       const post = interview.jobId ? posts.find(p => p.id === interview.jobId) : undefined;

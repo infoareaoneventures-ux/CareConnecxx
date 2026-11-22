@@ -89,6 +89,11 @@ vi.mock("firebase-admin", () => ({
   apps: [{}], initializeApp: vi.fn(), firestore: hoisted.firestoreFn,
 }));
 
+const smsSent = vi.hoisted(() => [] as Array<{ to: string; text: string }>);
+vi.mock("../sms", () => ({
+  sendSMSToUser: vi.fn(async (to: string, text: string) => { smsSent.push({ to, text }); return { success: true }; }),
+}));
+
 vi.mock("stripe", () => ({ __esModule: true, default: hoisted.StripeClass }));
 
 import { processShiftPayment, completeShiftPaymentAfterCharge, reverseShiftTransfer } from "../shiftHours";
@@ -216,6 +221,17 @@ describe("U1 — charge-before-transfer settlement", () => {
     expect(shift?.status).toBe("payment_failed");
     expect(shift?.status).not.toBe("paid");
     expect(shift?.stripeFailureReason).toMatch(/default payment method/i);
+  });
+
+  it("tells the care provider, once, when the family's payment fails on the first attempt (they used to see only 'Awaiting Payment')", async () => {
+    smsSent.length = 0;
+    hoisted.stripeApi.customers.retrieve.mockResolvedValueOnce({ invoice_settings: {} } as any);
+    await processSeededShift("a9b", { ...baseShift, clientName: "Sprout LLC" });
+    const toCaregiver = smsSent.filter((m) => m.to === "cg1");
+    expect(toCaregiver).toHaveLength(1);
+    expect(toCaregiver[0].text).toMatch(/Sprout LLC/);
+    expect(toCaregiver[0].text).toMatch(/didn't go through/);
+    expect(toCaregiver[0].text).toMatch(/don't need to do anything/);
   });
 
   // U11 scenario 4 (highest-value) — duplicate approval / re-fire of the

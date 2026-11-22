@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { notify } from '../../utils/reportError';
 import { plainNotificationBody } from '../../utils/notificationText';
 import { useNavigate } from 'react-router-dom';
 import { Bell, BellRing, Info, Calendar, MessageSquare, AlertTriangle, Trash2, CheckCheck } from 'lucide-react';
@@ -63,7 +64,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ role
 
   // Admin assist view mode (2026-10-22): the bell can be read, never changed — no mark-read, no
   // clear, no opening an item (which would mark it read). The list itself stays visible.
-  const viewOnly = (): boolean => { if (!isViewingOnly()) return false; window.alert(VIEW_ONLY_MESSAGE); return true; };
+  const viewOnly = (): boolean => { if (!isViewingOnly()) return false; notify(VIEW_ONLY_MESSAGE); return true; };
 
   const handleMarkAllRead = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

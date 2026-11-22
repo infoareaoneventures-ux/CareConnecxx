@@ -1871,6 +1871,9 @@ async function handleBkConfirm(
   }
   // PostsPage.tsx handleSendBooking runs inside gate('booking', caregiverName) — re-checked at send time.
   if (await enforceClientGate(phone, chatId, clientId, "booking", data.caregiverName)) return;
+  // A card must be on file before a request goes out (the family is only charged after a visit; with no card that
+  // charge failed after the care provider had worked). The flow is kept, so adding the card and texting YES sends it.
+  if (await holdForCard(chatId, clientId, data.caregiverName)) return;
   // Resend: the site's isResend branch updates the SAME booking_requests
   // doc — no new doc (2026-09-16).
   if (data.resendBookingRequestId) return commitResend(phone, chatId, session, data);
@@ -1946,4 +1949,28 @@ async function handleBkConfirm(
       maxTokens: 70,
     }));
   }
+}
+
+/** True (and the family is told how to add a card) when there is no card on file. A failed check lets the booking through. */
+export async function holdForCard(chatId: string, clientId: string, caregiverName: string): Promise<boolean> {
+  let hasCard = true;
+  try {
+    const { getPaymentMethodStatusFor } = await import("../stripe");
+    hasCard = (await getPaymentMethodStatusFor(clientId)).hasCard;
+  } catch (err) {
+    console.warn("[bookingFlow] card check failed; sending anyway", err instanceof Error ? err.message : err);
+    return false;
+  }
+  if (hasCard) return false;
+  let link = "";
+  try {
+    const { createCardSetupUrlFor } = await import("../stripe");
+    link = await createCardSetupUrlFor(clientId, "/client/payments");
+  } catch (err) {
+    console.warn("[bookingFlow] card setup link failed", err instanceof Error ? err.message : err);
+  }
+  await sendMessage(chatId,
+    `I need a card on file before I can send this to ${caregiverName}. You're only charged after a visit, when you approve the hours. ` +
+    (link ? `Add one here: ${link}\n\nThen text me YES and I'll send the request.` : `You can add one on your Payments page, then text me YES and I'll send the request.`));
+  return true;
 }

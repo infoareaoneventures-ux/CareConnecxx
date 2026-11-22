@@ -1,4 +1,5 @@
 import { serviceLabel } from './signup/constants';
+import { realCorrection } from '../../utils/correctionHistory';
 import { swallow } from '../../utils/reportError';
 import React, { useState, useEffect, useMemo } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
@@ -795,7 +796,7 @@ const PendingShiftRow: React.FC<{
             )}
           </div>
 
-          {row.correctionHistory && row.correctionHistory.some(e => e.action !== 'submitted') && (
+          {row.correctionHistory && row.correctionHistory.some(e => realCorrection(e.action)) && (
             <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
           )}
           <button
@@ -931,13 +932,13 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
             )}
           </div>
 
-          {row.status === 'payment_failed' && row.stripeFailureReason && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-              ⚠ {row.stripeFailureReason}
+          {row.status === 'payment_failed' && (
+            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+              This payment didn't go through yet, so you haven't been paid for this visit. We've told {row.clientName ?? 'the family'} and we retry automatically. You don't need to do anything.
             </p>
           )}
 
-          {row.correctionHistory && row.correctionHistory.some(e => e.action !== 'submitted') && (
+          {row.correctionHistory && row.correctionHistory.some(e => realCorrection(e.action)) && (
             <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
           )}
           <button

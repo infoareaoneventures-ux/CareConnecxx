@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { askConfirm } from '../../utils/confirmDialog';
 import { swallow } from '../../utils/reportError';
 import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect, useCallback } from 'react';
@@ -270,7 +271,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     // Same dialog and server write as the Bookings page's per-visit ✕ (cancelVisit):
     // within 24h of the start the family gets the fast replacement picker
     // (needs_replacement); further out it is a plain cancellation.
-    if (!user || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
+    if (!user || !await askConfirm('Cancel this shift only? The rest of your booking stays active.')) return;
     const shift = shifts.find(s => s.id === shiftId);
     if (!shift) return;
     try {
@@ -964,7 +965,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     };
 
     const handleDecline = async () => {
-      if (!window.confirm('Decline this interview request?')) return;
+      if (!await askConfirm('Decline this interview request?')) return;
       const fdb = db;
       if (!fdb) return;
       setDeclining(true);
@@ -1013,7 +1014,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     };
 
     const handleCancel = async () => {
-      if (!window.confirm('Cancel this interview?')) return;
+      if (!await askConfirm('Cancel this interview?')) return;
       const fdb = db;
       if (!fdb) return;
       setCancelling(true);

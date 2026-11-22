@@ -59,6 +59,8 @@ export default function Membership() {
     // Firestore listener leaked on unmount and a second one stacked on every re-run.
     const unsubscribe = listenToSubscriptionStatus(user.uid, (updatedStatus) => {
       setSubscription(updatedStatus);
+      // The listener's first answer is all the page needs; it used to wait on the slower one-time fetch too (3s+ of spinner).
+      setLoading(false);
     });
     return () => unsubscribe();
   }, []);
@@ -139,11 +141,13 @@ export default function Membership() {
   }, []);
 
   if (loading) {
+    // A placeholder in the shape of the page, not a sentence.
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
-          <p className="text-slate-500">Loading membership status...</p>
+      <div className="min-h-screen bg-slate-50" aria-busy="true" aria-label="Loading your membership">
+        <div className="max-w-2xl mx-auto px-4 py-10 space-y-4 animate-pulse">
+          <div className="h-7 w-48 rounded-lg bg-slate-200" />
+          <div className="h-40 rounded-2xl bg-slate-200" />
+          <div className="h-12 rounded-xl bg-slate-200" />
         </div>
       </div>
     );

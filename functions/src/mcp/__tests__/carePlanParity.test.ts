@@ -225,6 +225,16 @@ describe("update_care_plan — lifestyle", () => {
     expect(r2.success).toBe(true);
   });
 
+  it("a recipient it cannot place is an INVALID_INPUT refusal naming what to fix (so a confirmed action tells the family, not 'I tried, but it didn't go through')", async () => {
+    hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: {} } });
+    const r = await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "lifestyle", value: { prefersQuiet: true }, action: "set", recipientFirstName: "Zed",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("INVALID_INPUT");
+    expect(r.message).toMatch(/Zed/);
+  });
+
   it("rejects a non-object lifestyle value", async () => {
     hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: {} } });
     const r = await handleToolCall("update_care_plan", {

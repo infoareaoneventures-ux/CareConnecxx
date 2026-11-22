@@ -680,6 +680,20 @@ async function parseCounterTime(text: string, keepIso: string): Promise<string |
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
+/** Times the care provider already stated in a counter message ("counter: I stayed until 2:15 AM" → end only). */
+async function parseCounterBoth(text: string, d: ReviewCorrectionFlowData): Promise<{ start?: string; end?: string }> {
+  const raw = await parse(`Today is ${businessTodayStr()} (Pacific). The care provider is countering a family's corrected hours for a visit that already happened. Reply ONLY JSON {"start":"HH:MM"|null,"end":"HH:MM"|null} (24-hour) for the clock times they actually STATED: "until / till / stayed until / left at / finished at" is the END, "from / started at / arrived at" is the START, a range gives both. null for any they did not state ("keep" counts as not stated). Never invent a time.`, text);
+  let j: { start?: unknown; end?: unknown } = {};
+  try { j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); } catch { return {}; }
+  const toIso = (v: unknown, day: string): string | undefined => {
+    const m = typeof v === "string" ? /^(\d{1,2}):(\d{2})$/.exec(v.trim()) : null;
+    if (!m) return undefined;
+    const ms = parseScheduledTimeMs(`${day}T${m[1].padStart(2, "0")}:${m[2]}:00`);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+  };
+  return { start: toIso(j.start, localDay(Date.parse(d.proposedStart))), end: toIso(j.end, localDay(Date.parse(d.proposedEnd))) };
+}
+
 export async function startReviewCorrectionFlow(phone: string, chatId: string, _session: AgentSession, args: { caregiverId: string; appointmentId: string }): Promise<{ started: boolean; reason?: string }> {
   const snap = await db.collection("shiftHours").doc(args.appointmentId).get();
   const row = snap.data() as Doc | undefined;
@@ -732,7 +746,18 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
       else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
       return;
     }
-    if (action === "counter") return next({}, "rc_start", C_START_Q(data));
+    if (action === "counter") {
+      // "counter: I stayed until 2:15 AM" already says the end — keep it, ask only for what is missing.
+      const bareWord = norm === "COUNTER" || norm === "SEND COUNTER" || norm === "NO";
+      const got = bareWord ? {} as { start?: string; end?: string } : await parseCounterBoth(text, data);
+      if (got.start && got.end && Date.parse(got.end) > Date.parse(got.start)) {
+        const patch = { counterStart: got.start, counterEnd: got.end };
+        return data.proposedItems.length > 0 ? next(patch, "rc_items", C_ITEMS_Q(data)) : next({ ...patch, counterItems: [] }, "rc_note", C_NOTE_Q);
+      }
+      if (got.start) return next({ counterStart: got.start }, "rc_end", C_END_Q(data));
+      if (got.end) return next({ counterEnd: got.end }, "rc_start", C_START_Q(data));
+      return next({}, "rc_start", C_START_Q(data));
+    }
     await clear();
     const { respondToCorrectionAs } = await import("../shiftHours");
     try { await respondToCorrectionAs(await caregiverId(), { appointmentId: data.appointmentId, action: "accept" }); }
@@ -746,6 +771,10 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) })); return; }
     const iso = await parseCounterTime(text, data.proposedStart);
     if (!iso) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
+    if (data.counterEnd) { // the end was already given with the counter — don't ask for it again
+      if (Date.parse(data.counterEnd) <= Date.parse(iso)) { await sendMessage(chatId, `The start has to be before your end (${clockShort(Date.parse(data.counterEnd))}). ${q}`); return; }
+      return data.proposedItems.length > 0 ? next({ counterStart: iso }, "rc_items", C_ITEMS_Q(data)) : next({ counterStart: iso, counterItems: [] }, "rc_note", C_NOTE_Q);
+    }
     return next({ counterStart: iso }, "rc_end", C_END_Q(data));
   }
   if (step === "rc_end") {

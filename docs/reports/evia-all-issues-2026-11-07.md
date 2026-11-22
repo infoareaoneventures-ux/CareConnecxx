@@ -996,9 +996,9 @@ Safety net added Nov 15 so this class cannot come back (not yet deployed):
 Booking by text, accept and decline by the care provider, whole-booking cancel with one confirm, rebook with one confirm and a clean "never mind", cancel one visit, reschedule, care provider cancel, replacement, extra one-time visit, START / done / NOTE / FINISH in plain words (a task check-off plus a note in one message), the closing-note step, submit hours with an additional charge (summary, family review text with correct math, approval read-back and YES), family correction, care provider counter, family accept with both payments, forgot-to-start logging, nudges (unsubmitted hours, still in progress, day-before reminder), care plan update, care provider pause and reactivate, Update Availability by text.
 
 ### Open (found live, not fixed)
-- [ ] **Counter-hours flow asks the end time again** after "counter: I stayed until 2:15 AM"
+- [x] **Counter-hours flow asked the end time again** after "counter: I stayed until 2:15 AM" — the stated end is kept; only the start is asked (Nov 22)
 - [x] **Family charge text read "charged 51.94"** (no "$") and started with "Evia:" — now "Your card was charged $14.68 for Riya's visit: $13.47 to them plus the service fee…"; the "Evia: " prefix is dropped from timesheet and payment texts (Nov 22)
-- [ ] **When the care recipient is ambiguous, the family is told "I tried, but it didn't go through"** instead of being asked which person
+- [x] **When the care recipient was ambiguous, the family was told "I tried, but it didn't go through"** — now "That didn't save: This household has more than one care recipient — say which one…" (Nov 22)
 - [ ] **An internal summary line is logged as an assistant message** in the conversation record (not sent as a text)
 - [ ] **"Skip the review" does not exit the review flow** (the word "cancel" does)
 - [x] **A reminder "uses the wrong name"** ("Test is scheduled for Justa Test's visit") — not a bug: "Test" is the test provider's first name ("Test Provider") and "Justa Test" is the care recipient

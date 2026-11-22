@@ -232,7 +232,7 @@ export const ClientNavigation: React.FC = () => {
                 <div className="border-t border-gray-100 mt-1">
                   <button onClick={handleLogout}
                     className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">
-                    <LogOut className="w-4 h-4" /><span>Sign Out</span>
+                    <LogOut className="w-4 h-4" /><span>Sign out</span>
                   </button>
                 </div>
               </div>
@@ -379,7 +379,7 @@ export const ClientNavigation: React.FC = () => {
                 onClick={async () => { setMoreOpen(false); await handleLogout(); }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
               >
-                <LogOut className="w-4 h-4" /><span>Sign Out</span>
+                <LogOut className="w-4 h-4" /><span>Sign out</span>
               </button>
             </div>
           </div>

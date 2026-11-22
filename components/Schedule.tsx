@@ -91,6 +91,12 @@ const H_START = 0;
 const H_END   = 24;
 const CELL_H  = 56;
 const TOTAL_H = (H_END - H_START) * CELL_H;
+// The day opens at 7 AM, not midnight (the useful hours were below the fold). Runs once per grid.
+const openAtWorkday = (el: HTMLDivElement | null) => {
+  if (el && !el.dataset.opened) { el.dataset.opened = '1'; el.scrollTop = 7 * CELL_H - 8; }
+};
+// Phones start on the list (seven day columns don't fit); wider screens start on the week.
+const initialCalendarView = (): 'week' | 'list' => (typeof window !== 'undefined' && window.innerWidth < 640 ? 'list' : 'week');
 const HOURS   = Array.from({ length: H_END - H_START }, (_, i) => i + H_START);
 const DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const MONTH_NAMES = [
@@ -138,7 +144,7 @@ export default function Schedule() {
   const navigate = useNavigate();
   const { gate, Modals: GateModals } = useAccessGates();
 
-  const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
+  const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>(initialCalendarView);
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthDate,  setMonthDate]  = useState(new Date());
@@ -714,7 +720,7 @@ export default function Schedule() {
                     </div>
 
                     {/* Time grid */}
-                    <div className="overflow-y-auto" style={{ maxHeight: 560 }}>
+                    <div className="overflow-y-auto" ref={openAtWorkday} style={{ maxHeight: 560 }}>
                       <div className="relative" style={{ height: TOTAL_H }}>
                         {/* Grid lines */}
                         <div className="absolute inset-0 pointer-events-none" style={{ display: 'grid', gridTemplateColumns: '52px repeat(7, 1fr)' }}>
@@ -818,7 +824,7 @@ export default function Schedule() {
                         <div className={`mx-auto mt-1 w-8 h-8 flex items-center justify-center rounded-full text-base font-bold ${isToday(dayDate) ? 'bg-primary-600 text-white' : 'text-slate-700'}`}>{dayDate.getDate()}</div>
                       </div>
                     </div>
-                    <div className="overflow-y-auto" style={{ maxHeight: 560 }}>
+                    <div className="overflow-y-auto" ref={openAtWorkday} style={{ maxHeight: 560 }}>
                       <div className="relative" style={{ height: TOTAL_H }}>
                         <div className="absolute inset-0 pointer-events-none" style={{ display: 'grid', gridTemplateColumns: '52px 1fr' }}>
                           <div className="border-r border-slate-200">

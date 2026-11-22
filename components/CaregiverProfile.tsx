@@ -296,7 +296,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 </div>
               ) : (
                 <div>
-                  <p className="text-sm text-slate-600 leading-relaxed mb-3 break-all">
+                  <p className="text-sm text-slate-600 leading-relaxed mb-3 break-words">
                     {profile.bio?.trim()
                       ? profile.bio.trim()
                       : <span className="text-slate-400 italic">Add a bio to introduce yourself to families.</span>

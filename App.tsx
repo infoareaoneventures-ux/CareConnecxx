@@ -78,6 +78,7 @@ import { pushNotificationService } from './services/pushNotificationService';
 
 // PWA Components
 import { PWAInstallPrompt, registerServiceWorker } from './utils/pwa';
+import { promptsAllowedOn } from './utils/promptRoutes';
 import { ActingBanner } from './components/admin/ActingBanner';
 import { preloadCriticalResources } from './utils/performance';
 
@@ -448,14 +449,14 @@ const AppContent: React.FC = () => {
       </Suspense>
 
       {/* Push Notification Permission Prompt */}
-      {currentUser?.uid && (
+      {currentUser?.uid && promptsAllowedOn(location.pathname) && (
         <PushNotificationPrompt
           userId={currentUser.uid}
         />
       )}
 
       {/* PWA Install Prompt */}
-      <PWAInstallPrompt />
+      {currentUser?.uid && promptsAllowedOn(location.pathname) && <PWAInstallPrompt />}
 
       {/* Caregiver Membership Modal */}
       {membershipModalOpen && (

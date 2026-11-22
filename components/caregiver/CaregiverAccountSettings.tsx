@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { formatPhoneDisplay } from '../../utils/validation';
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
 import { looksLikeEmail, EMAIL_FORMAT_MESSAGE } from '../../utils/emailFormat';
 import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
@@ -473,7 +474,7 @@ export const CaregiverAccountSettings: React.FC = () => {
                   </div>
                 )
               ) : (
-                <EditableRow value={phone || '—'} onEdit={() => { setPhoneRequestSent(false); setEditingPhone(true); }} />
+                <EditableRow value={phone ? formatPhoneDisplay(phone) : '—'} onEdit={() => { setPhoneRequestSent(false); setEditingPhone(true); }} />
               )}
             </Field>
 
@@ -641,7 +642,7 @@ export const CaregiverAccountSettings: React.FC = () => {
             {deleteStep === 'confirm' ? (
               <>
                 <p className="text-sm text-slate-600">
-                  We'll text a verification code to {phone || 'your phone'} to confirm it's you.
+                  We'll text a verification code to {phone ? formatPhoneDisplay(phone) : 'your phone'} to confirm it's you.
                 </p>
                 {deleteReauth.error && <p className="text-xs text-red-500">{deleteReauth.error}</p>}
                 <button
@@ -709,7 +710,7 @@ const ReadOnly: React.FC<{ value: string }> = ({ value }) => (
 
 const EditableRow: React.FC<{ value: string; onEdit: () => void }> = ({ value, onEdit }) => (
   <div className="flex items-center justify-between gap-2">
-    <span className="text-sm text-slate-700">{value}</span>
+    <span className="text-sm text-slate-700 min-w-0 break-words">{value}</span>
     <button onClick={onEdit}
       className="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-medium flex-shrink-0">
       <Pencil className="w-3 h-3" /> Edit

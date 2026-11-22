@@ -365,7 +365,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   useEffect(() => {
     if (!selectedRoomId) return;
     const careTeamLabel = isClient ? 'My Care Team' : 'My Families';
-    const otherLabel = isClient ? 'Other Care Providers' : 'Other Clients';
+    const otherLabel = isClient ? 'Other Care Providers' : 'Other Families';
     if (careTeamRooms.findIndex(r => r.id === selectedRoomId) >= 3)
       setExpandedSections(prev => prev[careTeamLabel] ? prev : { ...prev, [careTeamLabel]: true });
     if (otherRooms.findIndex(r => r.id === selectedRoomId) >= 3)
@@ -403,12 +403,14 @@ export const InboxView: React.FC<InboxViewProps> = ({
             )}
           </div>
           <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" aria-hidden="true" />
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search conversations…"
-              className="w-full pl-9 pr-3 py-2 bg-slate-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 transition-all"
+              className="w-full pr-3 py-2 bg-slate-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 transition-all"
+              style={{ paddingLeft: 40 }}
+              aria-label="Search conversations"
             />
           </div>
         </div>
@@ -420,13 +422,18 @@ export const InboxView: React.FC<InboxViewProps> = ({
               <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
                 <Send className="w-6 h-6 text-slate-300" />
               </div>
-              No conversations yet
+              <p>No conversations yet</p>
+              {isClient && !search && (
+                <button type="button" onClick={() => navigate('/client/find-care-providers')} className="mt-3 text-primary-600 hover:underline font-medium">
+                  Find a care provider to message
+                </button>
+              )}
             </div>
           ) : (
             <>
               {[
                 { label: isClient ? 'My Care Team' : 'My Families', rooms: careTeamRooms, collapsible: true },
-                { label: isClient ? 'Other Care Providers' : 'Other Clients', rooms: otherRooms, collapsible: true },
+                { label: isClient ? 'Other Care Providers' : 'Other Families', rooms: otherRooms, collapsible: true },
                 { label: 'Support', rooms: supportRooms, collapsible: false },
               ].map(({ label, rooms: sectionRooms, collapsible }) => {
                 if (sectionRooms.length === 0) return null;

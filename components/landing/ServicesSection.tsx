@@ -153,7 +153,7 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({ onNavigate }) 
                         onClick={() => onNavigate('client-apply')}
                         className="btn-depth-primary px-8 py-4 rounded-2xl font-semibold text-sm inline-flex items-center justify-center"
                     >
-                        Find Your Care Provider
+                        Find a care provider
                     </button>
                 </div>
             </div>

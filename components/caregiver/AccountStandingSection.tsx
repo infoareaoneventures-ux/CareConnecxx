@@ -297,7 +297,7 @@ export const AccountStandingSection: React.FC<{
                 <>
                   <p className="font-semibold text-slate-900 text-sm flex items-center gap-1.5">Background check cleared</p>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {bg.clearedOn ? `Cleared ${bg.clearedOn}` : 'Cleared'}{p?.renewalRefresh?.status === 'running' ? " · this year's refresh is running" : ''}
+                    {bg.clearedOn ? `Passed on ${bg.clearedOn}` : 'No issues found'}{p?.renewalRefresh?.status === 'running' ? " · this year's refresh is running" : ''}
                     {isActive && renewalDate ? ` · Next check with your renewal on ${renewalDate}` : ''}
                   </p>
                 </>

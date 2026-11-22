@@ -392,7 +392,7 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Families judge trust by consistency. A page that suddenly looks different, especially the one asking for background-check consent, feels like a different or unsafe site.
     - **How we'll fix it:** Set up one central theme (see "One central theme" in the code plan) and apply the same colours, buttons and logo across the website, the app and the texted-link pages.
 
-- [ ] **Pop-ups cover the page as soon as it loads**
+- [x] **Pop-ups cover the page as soon as it loads**
     - **The issue:**
         - An "Install Evia" box appears on the first visit to every page, including the background-check consent page.
         - After sign-in, a large "Stay Updated – Enable Notifications" box sits over the dashboard and hides the Bookings card.
@@ -402,16 +402,19 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
         - Ask for install or notifications only after a meaningful moment, such as the first booking request.
         - Show the prompts as a small banner that doesn't cover content.
         - Never show them on sign-up, consent or payment pages, and remember when someone says "Not now."
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** Install and notification banners show only inside the signed-in app (never on the public site, sign-up, consent, upload or payment pages, utils/promptRoutes.ts); notifications is a compact banner with 'Turn on' / 'Not now' (remembered); the Install button is no longer teal.
 
-- [ ] **Settings page is cramped and cut off on mobile**
+- [x] **Settings page is cramped and cut off on mobile**
     - **The issue:** Settings keeps a two-column "label | value" layout on phones. Values get squeezed into a narrow column, and the "Not confirmed yet" badge and email address run off the right edge of the screen.
     - **Why it matters:** People can't read or fix their own account details on a phone, which is where most families will use Evia.
     - **How we'll fix it:** Stack each label above its value on small screens, and let long values wrap.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** Rows stack (label above value) below the sm breakpoint and long values wrap.
 
-- [ ] **The calendar is hard to use, especially on mobile**
+- [~] **The calendar is hard to use, especially on mobile**
     - **The issue:** The week view always opens at 12am, so the useful daytime hours are below the fold. On mobile it squeezes seven days into a phone screen and cuts off Thursday through Saturday.
     - **Why it matters:** Families and care providers can't see upcoming visits at a glance.
     - **How we'll fix it:** Scroll to 7am, or the first visit, when the calendar opens. Default phones to the List or Day view, and let people swipe between days.
+    - **Partly done (Nov 22, built locally, awaiting merge + hosting deploy):** Week and day views open at 7 AM; phones open on the list view. NOT done: swiping between days.
 
 - [x] **Texted-link pages open with no valid link**
     - **The issue:** The background-check page and the photo-upload page show the full form even when someone opens them without the personal link Evia texts.
@@ -425,10 +428,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Show placeholder cards in the shape of the results straight away, and speed up the provider search.
     - **Partly done (Nov 11):** The spinner is replaced by placeholder cards in the shape of the results at once. NOT done: speeding up the provider search itself.
 
-- [ ] **The brand font isn't showing anywhere**
+- [x] **The brand font isn't showing anywhere**
     - **The issue:** Because of a setup error, the site downloads the brand font (Plus Jakarta Sans) but displays the device's default font instead. Only the large headings use the brand serif font. A third, unused font is also downloaded.
     - **Why it matters:** The product doesn't look the way it was designed, and visitors download font files that are never used.
     - **How we'll fix it:** Correct the theme setting so body text uses the brand font, and remove the unused font.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** The theme token was named for the old Tailwind; it is now --font-sans so body text uses Plus Jakarta Sans. The unused Inter download is removed.
 
 - [x] **"Looks good" on the care plan publishes a job post without saying so**
     - **The issue:** Confirming the care plan with "Looks good" creates a public job post straight away, and nearby care providers are texted about it. Nothing on the button or the page says this will happen.
@@ -540,23 +544,26 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
         - Capitalise names for display.
         - Redesign the card layout for small screens.
 
-- [ ] **Phone numbers, dates and prices are formatted differently on each page**
+- [~] **Phone numbers, dates and prices are formatted differently on each page**
     - **The issue:** Settings shows the phone as "+15055281528." Other pages format numbers, dates and prices in their own ways.
     - **Why it matters:** It looks unpolished, and the same detail can look different on two pages.
     - **How we'll fix it:** One shared set of formatting tools, so the phone shows as (505) 528-1528 and prices and dates look the same everywhere.
+    - **Partly done (Nov 22, built locally, awaiting merge + hosting deploy):** Both Settings pages show the phone as (505) 528-1528. NOT done: one shared formatter module for dates and prices everywhere.
 
-- [ ] **Care Plan "care needs" look like text boxes**
+- [x] **Care Plan "care needs" look like text boxes**
     - **The issue:** Selected care needs such as "Meal Preparation" appear as large blue outlined boxes, which look like a text field you can type into.
     - **Why it matters:** People try to click into them and get confused.
     - **How we'll fix it:** Show them as small labels (chips) and keep editing behind the pencil icon.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** Read-only care needs are small chips; editing stays behind the pencil.
 
-- [ ] **Empty pages don't say what to do next**
+- [~] **Empty pages don't say what to do next**
     - **The issue:**
         - Messages with no conversations shows two empty panels and no next step.
         - On mobile, the search icon overlaps the "Search conversations" text.
         - Empty states look different on every page.
     - **Why it matters:** New families land on empty screens with nothing to do.
     - **How we'll fix it:** One shared "nothing here yet" component with a clear action, such as "Find a care provider to message," and fix the search field spacing.
+    - **Partly done (Nov 22, built locally, awaiting merge + hosting deploy):** Messages with no conversations offers 'Find a care provider to message' and the search box text no longer sits under its icon. NOT done: one shared empty-state component.
 
 - [ ] **Accessibility gaps (keyboard and screen readers)**
     - **The issue:**
@@ -590,10 +597,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Word the message for the action that was blocked, for example "To post a care request…".
     - **Done (Nov 11):** The identity check now names the blocked action: 'To post a care request…', 'To interview …', 'To book …'.
 
-- [ ] **Some form checks don't explain themselves**
+- [~] **Some form checks don't explain themselves**
     - **The issue:** A $0 hourly rate just greys out "Continue" with no explanation. On the Care Plan page, a missing first name only shows as a pop-up at the top of the screen, away from the field. The emergency contact can be the account holder's own phone number.
     - **Why it matters:** People can't tell what's wrong. An emergency contact who is the user themselves is no help in an emergency.
     - **How we'll fix it:** Show the reason next to the field, and don't accept an emergency contact with the same number as the account.
+    - **Partly done (Nov 22, built locally, awaiting merge + hosting deploy):** The emergency contact shows its reasons under the fields (first name, 10-digit phone) and refuses the account holder's own number (utils/samePhone.ts). The $0 rate already explains itself (Nov 11).
 
 - [ ] **The page behind a pop-up scrolls too**
     - **The issue:** Scrolling inside the care provider profile pop-up also scrolls the page behind it.
@@ -618,10 +626,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Offer times from the care provider's availability, show the time zone, and show one confirmation.
     - **Partly done (Nov 11):** Times are now offered from the care provider's own availability for the chosen day (all day when none is set), the window states the zone, and there is one confirmation (Find Care showed none before). NOT done: the ~8 second wait to send.
 
-- [ ] **Editing a care location adds a second one** — _Found in live testing, Nov 7_
+- [x] **Editing a care location adds a second one** — _Found in live testing, Nov 7_
     - **The issue:** Changing the family's care location to a new address kept the old one, so the post-a-job form lists both Santa Clara and Gilroy.
     - **Why it matters:** Families may post a job at an old address.
     - **How we'll fix it:** Editing should replace the address; adding a new one should be a separate action.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** Saving the address in Settings now replaces it on the job record, saved addresses and the care plan's address pool (utils/replaceAddress.ts).
 
 - [x] **The job review step shows details the family never entered** — _Found in live testing, Nov 7_
     - **The issue:** The review page shows the raw date ("2026-11-10"), and adds "Pets in home" and "Credit Card" without the form ever asking.
@@ -642,10 +651,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Partly done (Nov 11):** The rate step shows its error under the field and clears it when the rate is typed; moving to another step scrolls to the top and clears leftover error toasts. NOT done: moving the other steps' errors under their fields.
     - **Done (Nov 11):** All six post-a-job steps now show their error inline above Continue and clear it when fixed or when the step changes; no step uses a toast for validation any more.
 
-- [ ] **Days of the week are in a different order on each side** — _Found in live testing, Nov 7_
+- [x] **Days of the week are in a different order on each side** — _Found in live testing, Nov 7_
     - **The issue:** Care provider pages list Mon–Sun; family pages list Sun–Sat.
     - **Why it matters:** Small, but it makes the two sides feel like different products.
     - **How we'll fix it:** Pick one order and use a shared day list.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** Every displayed day list is Sun to Sat (job board filter, visits, edit post, request a visit, care team).
 
 - [x] **"BGC+" badge on care provider cards** — _Found in live testing, Nov 7_
     - **The issue:** The background-check badge on the family's care provider card reads "BGC+" in tiny text.
@@ -719,10 +729,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **How we'll fix it:** Show the server's message, and check the email format on the page before sending.
     - **Done (Nov 11):** Both Settings pages show the server's own reason when it gave one (e.g. 'Valid email required') and check the email format before sending.
 
-- [ ] **Visit and timesheet screens: slow, and the money shown doesn't match** — _Found in live testing, Nov 7_
+- [~] **Visit and timesheet screens: slow, and the money shown doesn't match** — _Found in live testing, Nov 7_
     - **The issue:** Start and End each spun for about 12 seconds; ending a visit gave no confirmation and no prompt to submit hours. The extra-charge type list only offers "Custom" though the hint names overtime, mileage and supplies. The family's review window shows $2.37 while the card above says $3.37 will be charged (the 9% fee, $1 minimum, is left out). The banner says "Shifts auto-approve after 24 hours" while this timesheet (with an extra charge) needs manual approval. The care provider's message says "awaiting client approval".
     - **Why it matters:** The money step is where trust matters most; mismatched totals and slow buttons cause double clicks and disputes.
     - **How we'll fix it:** Speed up the visit actions, confirm the end and link to submitting hours, offer the named charge types, show the full amount charged everywhere, and word the auto-approve banner per timesheet.
+    - **Partly done (Nov 22, built locally, awaiting merge + hosting deploy):** The family's review window shows the subtotal, the service fee and 'Charged to your card' (it showed the subtotal as the total); the banner no longer promises auto-approval for every timesheet. NOT done: the slow Start/End, the end-of-visit confirmation, named charge types.
 
 - [x] **Reviews and blocking don't update everything** — _Found in live testing, Nov 7_
     - **The issue:** After the family left a 5-star review, the review appeared in the profile's Reviews section (5.0, 1 review) but the header still said "No reviews yet". Blocking the family from the care provider's chat happened with one click and no confirmation, and after unblocking in Settings the conversation never came back.
@@ -744,20 +755,23 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** They look like unfinished placeholders.
     - **How we'll fix it:** Remove them, or turn them into proper section labels.
 
-- [ ] **Same call to action written three ways**
+- [x] **Same call to action written three ways**
     - **The issue:** The site uses "Find a care provider," "Find Your Care Provider" and "Find a Care Provider."
     - **Why it matters:** Small inconsistencies make the product feel less polished.
     - **How we'll fix it:** One wording in sentence case everywhere.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** All three read 'Find a care provider'.
 
-- [ ] **Sign-in page repeats the logo and sits too high**
+- [x] **Sign-in page repeats the logo and sits too high**
     - **The issue:** "Evia" appears in the header and again as a heading right under it, with almost no gap. The form is pushed to the top with empty space below.
     - **Why it matters:** It looks cramped and unfinished.
     - **How we'll fix it:** Remove the duplicate heading and centre the form vertically.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** The duplicate 'Evia' heading is gone (the page heading is 'Welcome back') and the form has room above it.
 
-- [ ] **The "page not found" screen needs polish**
+- [x] **The "page not found" screen needs polish**
     - **The issue:** The large "404" is very faint, and the screen offers "Go to Dashboard" even to visitors who aren't signed in.
     - **Why it matters:** It's a minor dead end for people who follow an old link.
     - **How we'll fix it:** Make the 404 readable, and show only links that make sense for the visitor.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** The 404 is readable; a signed-out visitor gets 'Go to the home page' and 'Find a care provider', a signed-in one 'Go to my dashboard'.
 
 - [x] **"Admin" link in the public footer** — removed; the admin area is still reached by its address (Nov 22, built, awaiting hosting deploy)
     - **The issue:** Every visitor sees an "Admin" link in the footer.
@@ -769,10 +783,11 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** People with several tabs open can't tell them apart, and search engines see duplicate pages.
     - **How we'll fix it:** Give each page its own title, for example "Calendar · Evia."
 
-- [ ] **Care provider bios break words in half**
+- [x] **Care provider bios break words in half**
     - **The issue:** On a care provider's profile, a word at the end of a line is split across two lines, for example "blessin" / "g".
     - **Why it matters:** It looks broken on the page families use to choose a care provider.
     - **How we'll fix it:** Use normal word wrapping for profile text.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** Profile text wraps at word boundaries (break-words, not break-all).
 
 - [x] **Sign-up steps open scrolled down, and the terms checkbox has no label**
     - **The issue:** After pressing "Continue" on the sign-up page, the next step opens part-way down the page, so its heading is cut off. The "I agree to the terms" checkbox is read out by screen readers as just "on".
@@ -786,16 +801,18 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **Why it matters:** Blind and low-vision users can't complete these steps, and the two code inputs behave differently.
     - **How we'll fix it:** Add labels, and use one shared code-input component for sign-in and sign-up.
 
-- [ ] **Small wording and layout slips** — _Found in live testing, Nov 7_
+- [x] **Small wording and layout slips** — _Found in live testing, Nov 7_
     - **The issue:** The jobs page has two "CARE TYPE" filter labels. The menu says "Log out" for care providers and "Sign Out" for families. The care provider sign-up page's tab title is "Find a Care Provider…". "Myself(Testfam E2E)" is missing a space. Date fields show two calendar icons (the browser's and a custom one).
     - **Why it matters:** Each is minor; together they make the product feel unfinished.
     - **How we'll fix it:** Fix each one; the shared building blocks in the code plan stop them coming back.
+    - **Done (Nov 22, built locally, awaiting merge + hosting deploy):** Menu says 'Sign out' on both sides; 'Myself (Name)' has its space; the two jobs-page filters are 'Kind of care' and 'Services'; the care provider sign-up tab is 'Become a care provider'; the post-a-job date fields have one calendar icon.
 
 
-- [ ] **More wording slips on the care provider side** — _Found in live testing, Nov 7_
+- [~] **More wording slips on the care provider side** — _Found in live testing, Nov 7_
     - **The issue:** The apply window says "3-5 years years" and "Client's budget: 25/hr" ("client" where the product says "family", and no $). The inbox groups conversations under "OTHER CLIENTS" (the family side says "OTHER CARE PROVIDERS"). Job cards show a "Day" label next to "Morning" and "(0.0 mi away)". Settings shows the phone as "+16505550102" and the background check as "Background check cleared / Cleared". The payouts page repeats the fee and timing text twice. A past interview still offers "Join video call", "Reschedule" and "Cancel". The calendar opens at midnight, so the working day is below the fold. The emergency contact's first name was saved as "Contact".
     - **Why it matters:** Each is small; together they make the care provider side feel unfinished.
     - **How we'll fix it:** Fix each one, and use the shared formatters for money, phone numbers and distances.
+    - **Partly done (Nov 22, built locally, awaiting merge + hosting deploy):** 'Family's budget: $25/hr'; inbox 'Other Families'; job cards show Morning / Afternoon / Evening / Overnight instead of 'Day' and 'Under 1 mi away' instead of '(0.0 mi away)'; Settings phone is (505) 528-1528; background check reads 'Passed on <date>'. NOT done: the payouts page's repeated fee text, the past interview still offering Join / Reschedule / Cancel, the emergency contact first name 'Contact'.
 
 ---
 

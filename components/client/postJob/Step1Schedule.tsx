@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StepError } from './StepError';
-import { Calendar, CalendarDays, Clock, Briefcase } from 'lucide-react';
+import { CalendarDays, Clock, Briefcase } from 'lucide-react';
 import { DayOfWeekPicker } from '../../ui/DayOfWeekPicker';
 import { StepProps, TIME_OF_DAY_OPTIONS } from './types';
 
@@ -120,7 +120,6 @@ export const Step1Schedule: React.FC<StepProps> = ({ data, onChange, onContinue,
                 onChange={e => onChange({ startDate: e.target.value })}
                 className="w-full px-4 py-3 pr-10 rounded-xl border-2 border-slate-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100 focus:outline-none"
               />
-              <Calendar className="w-4 h-4 text-primary-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
           <div>
@@ -135,7 +134,6 @@ export const Step1Schedule: React.FC<StepProps> = ({ data, onChange, onContinue,
                 placeholder="End date (optional)"
                 className="w-full px-4 py-3 pr-10 rounded-xl border-2 border-slate-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
               />
-              <Calendar className="w-4 h-4 text-primary-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
             <label className="inline-flex items-center gap-2 mt-2 text-sm text-slate-600 cursor-pointer">
               <input

@@ -9,6 +9,7 @@ describe("pageTitleFor", () => {
     expect(pageTitleFor("/admin/audit")).toBe("Audit · Evia");
     expect(pageTitleFor("/admin")).toBe("Admin · Evia");
     expect(pageTitleFor("/login")).toBe("Log in · Evia");
+    expect(pageTitleFor("/care-provider/signup")).toBe("Become a care provider · Evia");
   });
   it("matches profile pages by prefix and prefers the more specific route", () => {
     expect(pageTitleFor("/client/care-provider/abc123")).toBe("Care provider · Evia");

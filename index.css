@@ -36,7 +36,7 @@ html {
 }
 
 @theme {
-  --font-family-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
 
   /* Landing — warm paper surfaces (Poke-style calm cream) */
   --color-paper-50: #FCFAF6;

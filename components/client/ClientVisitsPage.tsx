@@ -238,7 +238,7 @@ function fmtTime(t?: string): string {
   });
 }
 
-const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // "HH:MM" (or "~HH:MM" for a next-day block) → minutes since midnight —
 // mirrors CaregiverBookingsPage.tsx's own parseMinutes exactly.

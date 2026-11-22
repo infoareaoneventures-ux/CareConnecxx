@@ -134,12 +134,12 @@ export const AuthLoginPage: React.FC = () => {
       <TaskPageBar />
       {/* RecaptchaVerifier needs a stable DOM target; created per send. */}
       <div id={RECAPTCHA_CONTAINER} />
-      <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-14">
       <div className="w-full max-w-sm space-y-8">
 
-        <div className="text-center space-y-2">
-          <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
-          <p className="text-ink-600 text-sm">Welcome back</p>
+        {/* The site header already carries the logo — no second "Evia" heading under it. */}
+        <div className="text-center">
+          <h1 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Welcome back</h1>
         </div>
 
         {/* Step: phone */}

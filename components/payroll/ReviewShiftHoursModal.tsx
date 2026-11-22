@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { X, CheckCircle2, AlertTriangle, ArrowUpRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { shiftHoursService } from '../../services/api';
 import { paymentMethodLabel } from '../../types';
-import { totalChargedDollars, SERVICE_FEE_PERCENT_LABEL } from '../../utils/pricing';
+import { totalChargedDollars, serviceFeeDollars, SERVICE_FEE_PERCENT_LABEL } from '../../utils/pricing';
 
 interface CorrectionHistoryEntry {
   by: string;
@@ -282,10 +282,26 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
                 ))}
               </>
             )}
-            <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200">
-              <span className="font-semibold text-slate-700">Total</span>
-              <span className="font-bold text-slate-900">${Number(shift.grossPay ?? shift.submittedTotalHours * shift.payRate).toFixed(2)}</span>
-            </div>
+            {(() => {
+              const gross = Number(shift.grossPay ?? shift.submittedTotalHours * shift.payRate) || 0;
+              const fee = serviceFeeDollars(gross);
+              return (
+                <>
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200">
+                    <span className="text-slate-600">Subtotal (to your care provider)</span>
+                    <span className="font-semibold text-slate-700">${gross.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-600">Service fee ({SERVICE_FEE_PERCENT_LABEL}, min $1)</span>
+                    <span className="font-semibold text-slate-700">${fee.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200">
+                    <span className="font-semibold text-slate-700">Charged to your card</span>
+                    <span className="font-bold text-slate-900">${totalChargedDollars(gross).toFixed(2)}</span>
+                  </div>
+                </>
+              );
+            })()}
           </div>
 
           {shift.status === 'pending_client_review' && shift.autoApproveAt && (

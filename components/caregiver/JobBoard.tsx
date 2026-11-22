@@ -616,7 +616,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
             {/* Care type — for everyone: one kind at a time, none = both (a post's kinds come from its ticked services) */}
             {(
                 <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care type</label>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Kind of care</label>
                     <div className="flex flex-wrap gap-2">
                         {CARE_KINDS.map(k => (
                             <button key={k} type="button" onClick={() => setFilterKind(filterKind === k ? null : k)}
@@ -694,7 +694,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
             <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Days</label>
                 <div className="flex flex-wrap gap-1.5">
-                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
                         <button key={d} onClick={() => toggleChip(filterDays, setFilterDays, d)} className={CHIP(filterDays.includes(d))}>
                             {d}
                         </button>
@@ -722,7 +722,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
 
             {/* Care type */}
             <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Care Type</label>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Services</label>
                 {/* Both lists (Transportation under each); the view filter collapses to one */}
                 <div className="space-y-3">
                     {careTypeLists.map(list => (
@@ -876,7 +876,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                     <div className="flex items-center text-sm text-[var(--color-neutral-500)] mt-1 gap-3 flex-wrap">
                                                         <span className="flex items-center"><MapPin className="w-3 h-3 mr-1" /> {job.location}</span>
                                                         {cgLat && cgLng && (job as any).lat && (job as any).lng && (
-                                                            <span className="text-xs">({haversineDistance(cgLat, cgLng, (job as any).lat, (job as any).lng).toFixed(1)} mi away)</span>
+                                                            <span className="text-xs">({(() => { const mi = haversineDistance(cgLat, cgLng, (job as any).lat, (job as any).lng); return mi < 1 ? 'Under 1 mi away' : `${mi.toFixed(1)} mi away`; })()})</span>
                                                         )}
                                                     </div>
                                                 </div>
@@ -897,12 +897,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                                     const freqLabel: Record<string,string> = { 'one-time': 'Occasional', 'occasional': 'Occasional', 'part-time': 'Part-time', 'full-time': 'Full-time' };
                                                     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-primary-50 text-primary-700 text-[11px] font-semibold uppercase tracking-wide">{freqLabel[freq] || freq}</span>;
                                                 })()}
-                                                {(Array.isArray(job.timeOfDay) ? job.timeOfDay : []).some((t: any) => t === 'morning' || t === 'afternoon') && (
-                                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-primary-50 text-primary-700 text-[11px] font-medium"><Sun className="w-3 h-3" /> Day</span>
-                                                )}
-                                                {(Array.isArray(job.timeOfDay) ? job.timeOfDay : []).some((t: any) => t === 'evening' || t === 'overnight') && (
-                                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium"><Moon className="w-3 h-3" /> Night</span>
-                                                )}
+                                                {(Array.isArray(job.timeOfDay) ? job.timeOfDay : []).filter((t: any) => ['morning', 'afternoon', 'evening', 'overnight'].includes(t)).map((t: any) => (
+                                                    <span key={t} className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium ${t === 'morning' || t === 'afternoon' ? 'bg-primary-50 text-primary-700' : 'bg-indigo-50 text-indigo-700'}`}>
+                                                        {t === 'morning' || t === 'afternoon' ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {t.charAt(0).toUpperCase() + t.slice(1)}
+                                                    </span>
+                                                ))}
                                                 {job.recipientsCount && job.recipientsCount > 1 && (
                                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-medium"><Users className="w-3 h-3" /> {job.recipientsCount} people</span>
                                                 )}
@@ -1650,7 +1649,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                 </div>
 
                                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-800">
-                                    <strong>Client's budget:</strong> {rateLabel(applyingJob)}
+                                    <strong>Family's budget:</strong> {rateLabel(applyingJob)}
                                 </div>
                             </form>
                         </div>

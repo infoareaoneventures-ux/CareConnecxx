@@ -843,7 +843,7 @@ export const Payments: React.FC = () => {
                     {pendingCount} shift{pendingCount > 1 ? 's' : ''} to review
                   </p>
                   <p className="text-xs text-amber-600 mt-0.5">
-                    Approve or propose a correction. Shifts auto-approve after 24 hours.
+                    Approve or propose a correction. A timesheet with extra charges or times outside the booking waits for you; the others approve on their own after 24 hours.
                   </p>
                 </div>
               </div>

@@ -17,6 +17,8 @@ const TITLES: Array<[prefix: string, title: string]> = [
   ["/client/care-plan", "Care plan"],
   ["/client/inbox", "Inbox"],
   ["/client/connect", "Connect"],
+  ["/care-provider/signup", "Become a care provider"],
+  ["/client/signup", "Find a care provider"],
   ["/care-provider/dashboard", "Dashboard"],
   ["/care-provider/profile", "My profile"],
   ["/care-provider/inbox", "Inbox"],

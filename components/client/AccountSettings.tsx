@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { formatPhoneDisplay } from '../../utils/validation';
 import { swallow } from '../../utils/reportError';
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
 import { looksLikeEmail, EMAIL_FORMAT_MESSAGE } from '../../utils/emailFormat';
 import { DeleteAccountConsequences } from '../ui/DeleteAccountConsequences';
 import { recordActedForPerson } from '../../services/api';
+import { replaceAddressInList } from '../../utils/replaceAddress';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronUp, ChevronDown, Check, X, Loader2, Trash2,
@@ -30,13 +32,14 @@ interface CareLocation  { address: string; city: string; state: string; zip: str
 // the Care Plan decides their list; nothing to pick here.
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-const LABEL_W = 'w-40 flex-shrink-0';
+// On phones the label sits above its value (a two-column row squeezed values off the edge).
+const LABEL_W = 'sm:w-40 sm:flex-shrink-0';
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-6 py-4 border-b border-slate-100 last:border-0">
-      <span className={`${LABEL_W} text-sm text-slate-500 pt-1`}>{label}</span>
-      <div className="flex-1 min-w-0">{children}</div>
+    <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6 py-4 border-b border-slate-100 last:border-0">
+      <span className={`${LABEL_W} text-sm text-slate-500 sm:pt-1`}>{label}</span>
+      <div className="flex-1 min-w-0 break-words">{children}</div>
     </div>
   );
 }
@@ -86,6 +89,8 @@ export const AccountSettings: React.FC = () => {
   // ── Data state ────────────────────────────────────────────────────────────
   const [personalInfo, setPersonalInfo] = useState<PersonalInfo>({ firstName: '', lastName: '', email: '', phone: '' });
   const [careLocation,  setCareLocation] = useState<CareLocation>({ address: '', city: '', state: '', zip: '' });
+  // The address as loaded, so a save can replace it (not add a second one) wherever it is also stored.
+  const loadedLocation = useRef<CareLocation | null>(null);
   const [identityStatus, setIdentityStatus]      = useState<'verified' | 'pending' | 'not_started'>('not_started');
   const [joinedDate, setJoinedDate]              = useState('');
   const [googleEmail, setGoogleEmail]            = useState<string | null>(null);
@@ -188,13 +193,16 @@ export const AccountSettings: React.FC = () => {
         // Address — prefer flat fields saved by signup, fall back to old careLocation object
         const flat = d.street || d.zipCode || d.city || d.state;
         if (flat) {
-          setCareLocation({
+          const loaded = {
             address: d.street   || '',
             zip:     d.zipCode  || '',
             city:    d.city     || '',
             state:   d.state    || '',
-          });
+          };
+          loadedLocation.current = loaded;
+          setCareLocation(loaded);
         } else if (d.careLocation) {
+          loadedLocation.current = d.careLocation;
           setCareLocation(d.careLocation);
         }
 
@@ -313,6 +321,41 @@ export const AccountSettings: React.FC = () => {
       location: `${careLocation.city}, ${careLocation.state} ${careLocation.zip}`.trim(),
       careLocation, // keep legacy field in sync
     });
+    // Replace (not add) the address on the job record and in the care plan's address pool.
+    const before = loadedLocation.current;
+    if (before && (before.address || before.zip)) {
+      const oldAddr = { street: before.address, zipCode: before.zip };
+      const newAddr = { street: careLocation.address, city: careLocation.city, state: careLocation.state, zipCode: careLocation.zip };
+      try {
+        const jobRef = db.collection('job_postings').doc(user.uid);
+        const jobSnap = await jobRef.get();
+        if (jobSnap.exists) {
+          const jd = jobSnap.data() as any;
+          const patch: Record<string, unknown> = {};
+          if ((jd.street || '').toLowerCase().trim() === (before.address || '').toLowerCase().trim() && (jd.zipCode || '') === (before.zip || '')) {
+            Object.assign(patch, { street: newAddr.street, city: newAddr.city, state: newAddr.state, zipCode: newAddr.zipCode });
+          }
+          if (Array.isArray(jd.savedLocations)) patch.savedLocations = replaceAddressInList(jd.savedLocations, oldAddr, newAddr);
+          if (Object.keys(patch).length) await jobRef.update(patch);
+        }
+        const planRef = db.collection('carePlans').doc(user.uid);
+        const planSnap = await planRef.get();
+        if (planSnap.exists) {
+          const pd = planSnap.data() as any;
+          const patch: Record<string, unknown> = {};
+          if (Array.isArray(pd.locationPool)) patch.locationPool = replaceAddressInList(pd.locationPool, oldAddr, newAddr);
+          if (pd.recipientPlans && typeof pd.recipientPlans === 'object') {
+            const rp: Record<string, any> = {};
+            for (const [k, v] of Object.entries<any>(pd.recipientPlans)) {
+              rp[k] = Array.isArray(v?.locations) ? { ...v, locations: replaceAddressInList(v.locations, oldAddr, newAddr) } : v;
+            }
+            patch.recipientPlans = rp;
+          }
+          if (Object.keys(patch).length) await planRef.update(patch);
+        }
+      } catch (e) { swallow('AccountSettings: replace saved care address')(e); }
+    }
+    loadedLocation.current = { ...careLocation };
     void recordActedForPerson('account_updated', 'updated your care address in Account Settings');
     setEditingLocation(false);
   }, 'Location saved');
@@ -622,7 +665,7 @@ export const AccountSettings: React.FC = () => {
                     )
                   ) : (
                     <div>
-                      <p className="text-sm text-slate-700">{personalInfo.phone || <span className="text-slate-400">Not set</span>}</p>
+                      <p className="text-sm text-slate-700">{personalInfo.phone ? formatPhoneDisplay(personalInfo.phone) : <span className="text-slate-400">Not set</span>}</p>
                       <button
                         onClick={() => { setPhoneRequestSent(false); setEditingPhone(true); }}
                         className="text-xs text-primary-600 hover:underline mt-0.5"
@@ -787,7 +830,7 @@ export const AccountSettings: React.FC = () => {
               {deleteStep === 'confirm' ? (
                 <>
                   <p className="text-sm text-slate-600">
-                    We'll text a verification code to {personalInfo.phone || 'your phone'} to confirm it's you.
+                    We'll text a verification code to {personalInfo.phone ? formatPhoneDisplay(personalInfo.phone) : 'your phone'} to confirm it's you.
                   </p>
                   {deleteReauth.error && <p className="text-xs text-red-500">{deleteReauth.error}</p>}
                   <button

@@ -1,6 +1,6 @@
 # Evia: All Open Issues
 
-**Updated:** November 7, 2026
+**Updated:** November 22, 2026 (statuses and a new section 5 for the live text rounds of Nov 16-22)
 **Covers:** the full codebase review (Nov 3), the AI and UI reviews (Nov 4), and live end-to-end testing on Nov 7 (family and care provider on the website, against the live backend).
 
 The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items with screenshots. Every item here is also in Notion (as of Nov 7).
@@ -496,6 +496,7 @@ The Notion doc "Evia: Codebase Review & Improvement Plan" has the same items wit
     - **The issue:** With no card on file, the family could still approve hours. The charge failed and the family was told "the card was declined" (there was no card). The timesheet then showed "Correction history: Accepted" though no correction was made, and stayed under "Needs Review". The care provider only sees "Awaiting Payment", with no word that the family's payment failed, and their History says "No completed shifts yet".
     - **Why it matters:** Care providers aren't paid and aren't told why; families get a wrong reason.
     - **How we'll fix it:** Require a card before approval (see "Families can book without a card on file"), say "no card on file" when that's the cause, tell the care provider when a payment fails and what happens next, and drop the false correction entry.
+    - **Partly done (Nov 18-22): the family is no longer told "the card was declined" when the cause was on the payout side (no payout account, platform funds, transfer error); the first-failure and cap messages pick the wording from the real cause (`classifyPaymentFailure`); "I'll retry in 5 minutes" is now "I'll retry automatically"; payouts are now funded from the family's charge (`source_transaction`), which removes the "insufficient available funds" failure for new charges. Still open: tell the care provider when a payment fails, the false "Correction: Accepted" entry, unpaid visits in History, and the card-before-booking rule. In code; the payout change and the last wording fixes await deploy**
 
 ### P2: Medium (consistency and polish)
 
@@ -843,6 +844,7 @@ Tested over iMessage against Evia's live line, as a new family, after the Nov 14
 - [x] **Provider card reads "3-5 years yrs experience"** — _Fixed in code Nov 14: all three text sites use the shared formatter (not yet deployed)_ — — the site's wording was fixed in Wave 3, the text version wasn't.
 - [ ] **Pricing answer on the cost side question is vague** — "your cost depends on the care plan…" without mentioning the family membership price.
 - [ ] **iMessage senders arrive as an email address** — a sender with no phone number on iMessage is stored as an email under `agent_conversations`; phone steps are unverified for them.
+    - **Mostly done (Nov 22, in code, awaiting deploy): the booking flow, the booking-recap edit, the extra-visit flow, Update Availability and Submit hours now keep what was given in the first message and ask only what is missing. Still open: the counter-hours flow (end time re-asked) and the family intake**
 
 ### Website booking test (Nov 14, 2026, live site, test family + test care provider)
 
@@ -890,6 +892,7 @@ Passed: "I'm a care provider" now starts the profile setup; care provider setup 
 - [ ] **Linq delivery receipts rejected ("invalid signature")** — needs the second signing secret set in the functions env (`LINQ_WEBHOOK_SECRET_2`, or `LINQ_WEBHOOK_SECRETS` comma-separated); not a code change
 - [ ] **Replies take 30–90 seconds, and the text handler logged one 60 s Firestore timeout** — investigate after deploying the fixes
 - [ ] **Early answers to later family-intake questions are re-asked** — not changed
+    - **Same fix applied to the other text flows on Nov 22 (see above); the family intake script is unchanged**
 
 ### Live text test, round 3 (Nov 14, 2026, after PR #9 deployed)
 
@@ -948,3 +951,70 @@ Safety net added Nov 15 so this class cannot come back (not yet deployed):
 - [x] **Tool arguments are repaired from each tool's own schema before the handler runs** (`mcp/coerceToolInput.ts`): a one-item list for an object, a single object for a list, a number or boolean sent as text and the reverse.
 - [x] **The prompt's confirmation rule matches the gate** — it lists the gated tools, tells the model not to ask for a yes first, and names the two exceptions (delete_account by exact phrase, manage_booking). cancel_job_post and delete_memory_file descriptions no longer ask first either.
 - [x] **A regression test** (`mcp/__tests__/gatedToolsNoDoubleConfirm.test.ts`) fails if any tool behind the gate (`gatedToolNames()` in `pendingActions.ts`) tells the model to collect a yes first.
+
+---
+
+## 5. Live text testing, Nov 16-22, 2026 (production Firebase, Stripe sandbox, test family + test care provider, all by text)
+
+**Status:** everything here marked "Done" was found live and fixed in code with a test. Rounds up to Nov 20 are deployed and re-checked live. Everything marked "awaiting deploy" is committed or in the working tree and goes live in one deploy.
+
+### Done and live (deployed, re-checked live)
+- [x] **A care provider texting "Apply to job 1" was treated as a role switch and her session wiped** — fixed (Nov 16)
+- [x] **"Hire Riya" / a first name alone failed with "couldn't find that care provider"** — fixed (Nov 16); same for interview and booking by name
+- [x] **A job-filter reply was applied to the wrong list** ("Every day" answering the availability question re-sent the job list) — fixed (Nov 17)
+- [x] **"Interview Riya" started an interview with a different, real care provider** — prompt rule: the person named, never one from earlier context (caught by the recap, nothing sent)
+- [x] **A refusal reply could put the person on a human hold** (one unbacked claim silenced Evia) — now a neutral re-ask unless the claim is high-risk medical or money (Nov 18)
+- [x] **"yes send it" read as a back-out and dropped a correction** — back-out check is now a three-way stop / agree / other (Nov 17)
+- [x] **A YES meant for a timesheet approval was taken by the first-visit review prompt** — fixed (Nov 17)
+- [x] **A care provider could never be paid after a platform top-up** (a cached "insufficient funds" error replayed for 24 hours) — one idempotency key per attempt, existing transfers reused (Nov 17)
+- [x] **Double confirmations on cancel** — a number picked from the list cancels at once (care provider and family); the single "just checking" stays only where the user's own words named the item (Nov 18)
+- [x] **"&gt;" arriving in texts** — now " › "; copy says "My Bookings page, on the Requests tab" (Nov 18)
+- [x] **Family told "the card was declined" when the cause was the payout side** — wording by real cause (Nov 18)
+- [x] **A >24 h care provider cancel left the family with no next step** — the text now says to ask Evia to find another care provider (Nov 18)
+- [x] **A visit finished two days late showed "38:54:47" hours and $972.83, then failed with "A visit cannot exceed 24 hours"** — Evia asks the real finish time; the family text drops the range for a very late end (Nov 20)
+- [x] **"Accept" on a proposed interview time was read as "keep"** — accept maps to the positive option (Nov 20; re-check after the next deploy)
+- [x] **Adding a care plan preference took three confirmations, then failed on a recipient stored without a last name** — one confirmation, and the old-format plan is read as that recipient's plan (Nov 20-21)
+
+### Done in code, awaiting deploy
+- [x] **Counter-hours note echoed back and the next text became the note** — classified as note / question / none (Nov 22)
+- [x] **"Accept the counter" and "approve it" answered "I need the pending timesheet list first"** — Evia looks the timesheet up itself (Nov 22)
+- [x] **"I forgot to start my visit" said Evia couldn't see past visits** — goes straight to the log-hours flow (Nov 22)
+- [x] **Changing one detail in the booking recap restarted the whole schedule** ("start next Wednesday instead" asked for days again) — only that detail changes (Nov 22)
+- [x] **Days, hours and start date in one message were asked again one by one** — booking flow, extra-visit flow, Update Availability and Submit hours keep what was already said (Nov 22)
+- [x] **A resent booking started on a date that had already passed** — starts on the next matching weekday (Nov 22)
+- [x] **Cancel-booking confirm asked twice and read "all 1 upcoming visit"** — one question, correct wording (Nov 22)
+- [x] **The provider's text for a cancelled booking didn't say the visits were cancelled too** — now says so (Nov 22)
+- [x] **The family's "booking declined" text left a dead end** — now offers to find another care provider (Nov 22)
+- [x] **"What's my availability? I want to add Saturday mornings" asked which days again** — the named day is used; a plain question shows the current grid (Nov 22)
+- [x] **A one-time extra visit given in the first message ("tonight 11:25-11:55 PM") re-asked the day, start and end** — kept (Nov 22)
+- [x] **A bare "no" to "Anything else to add?" cancelled the whole hours submission** — now means no more charges; same on the counter-note step (Nov 22)
+- [x] **A charge named in the "submit my hours" message was asked again** — kept (Nov 22)
+- [x] **Payouts failed with "insufficient available funds" even though the family's charge had succeeded** — the payout is now funded from the charge itself, so it works while Stripe still holds the money as pending. This would have failed every payout in the first days of live use (Nov 22). Changes how money moves: review before deploy
+- [x] **"What notification settings do I have?" got a generic "tell me once more" reply** — Evia now says quiet hours are the only setting (Nov 22; re-check after deploy)
+
+### Checked live and working (no change needed)
+Booking by text, accept and decline by the care provider, whole-booking cancel with one confirm, rebook with one confirm and a clean "never mind", cancel one visit, reschedule, care provider cancel, replacement, extra one-time visit, START / done / NOTE / FINISH in plain words (a task check-off plus a note in one message), the closing-note step, submit hours with an additional charge (summary, family review text with correct math, approval read-back and YES), family correction, care provider counter, family accept with both payments, forgot-to-start logging, nudges (unsubmitted hours, still in progress, day-before reminder), care plan update, care provider pause and reactivate, Update Availability by text.
+
+### Open (found live, not fixed)
+- [ ] **Counter-hours flow asks the end time again** after "counter: I stayed until 2:15 AM"
+- [x] **Family charge text read "charged 51.94"** (no "$") and started with "Evia:" — now "Your card was charged $14.68 for Riya's visit: $13.47 to them plus the service fee…"; the "Evia: " prefix is dropped from timesheet and payment texts (Nov 22)
+- [ ] **When the care recipient is ambiguous, the family is told "I tried, but it didn't go through"** instead of being asked which person
+- [ ] **An internal summary line is logged as an assistant message** in the conversation record (not sent as a text)
+- [ ] **"Skip the review" does not exit the review flow** (the word "cancel" does)
+- [x] **A reminder "uses the wrong name"** ("Test is scheduled for Justa Test's visit") — not a bug: "Test" is the test provider's first name ("Test Provider") and "Justa Test" is the care recipient
+- [ ] **"Hi Evia" is answered with the next visit** instead of a greeting — by design (the greeting prompt leads with the most relevant item); founder to decide whether to keep
+- [ ] **Stale "Tuesday is not included" warning on the site's booking form** after the schedule is edited
+- [ ] **The site shows interview times in the browser's time zone** ("GMT+5")
+- [ ] **The booking notice lists "Pets in home" and "Card" though neither was chosen**
+- [ ] **The applicant reply reached the family twice, with raw `**bold**` markdown; no automatic "new applicant" text reached the family**
+- [ ] **"Book Riya" with Riya not yet hired was read as "add a visit for Test Provider"**
+- [ ] **A decline by the care provider is confirmed even when they typed "decline" clearly** (one "just checking" kept because it can't be undone; founder to decide)
+- [ ] **A mixed request puts the whole thread in human mode** ("change my name and turn off reminders": the name goes to the team, and Evia then ignores every text, including the unrelated ones); founder to decide
+- [x] **The pause confirmation showed the date as "2026-11-28"** — now "Saturday, November 28, 2026" (Nov 22)
+- [ ] **Slow webhook cold starts** (replies often 30-90 seconds)
+- [ ] **Linq has two active webhook subscriptions to the same URL and only one signing secret** (`LINQ_WEBHOOK_SECRET_2` not set), so events from one are rejected; admin alerts `linq_webhook_signature_invalid`. Needs a decision: delete the older all-numbers one (`be0dc047-50b2-4230-9458-e2bd7eedcaf4`)
+- [ ] **LangSmith tracing is on in production**
+- [ ] **Five old non-`v1-` functions still hold the live Stripe key** (`stripeWebhook`, `stripeConnectWebhook`, `checkrWebhook`, `reviewShiftHours`, `submitShiftHours`); delete pending approval
+
+### Test-data cleanup still to do (end of testing)
+Firebase test phone numbers (support line and the 555 numbers); test records; Stripe sandbox customers; six stale live `stripeCustomerId`s; duplicate Stripe webhooks in `acct_1SGMsaL7Ss5iuUb7`; restore live Stripe keys and prices in `functions/.env` and the root `.env`; hand-set holds; Riya and Test Provider hand edits; test shifts (Test Provider's Nov 25 replacement visit, Riya's Wednesday booking and the Nov 21 test visit with its stuck `payment_failed` timesheet).

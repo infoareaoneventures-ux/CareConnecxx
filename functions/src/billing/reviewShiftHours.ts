@@ -45,7 +45,7 @@ export function resolveBillableOrHttpsError(input: Parameters<typeof resolveShif
 export async function textCaregiver(caregiverId: string, message: string): Promise<void> {
   try {
     const { sendSMSToUser } = await import("../sms");
-    await sendSMSToUser(caregiverId, `Evia: ${message}`);
+    await sendSMSToUser(caregiverId, message);
   } catch (err) {
     console.warn("shiftHours: caregiver text failed (in-app notification still written)", err instanceof Error ? err.message : err);
   }

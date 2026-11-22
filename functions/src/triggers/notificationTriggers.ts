@@ -552,7 +552,7 @@ export const onBookingRequestWrite = functions.firestore
           title: 'Booking Declined',
           body: `${after.caregiverName || 'Your care provider'} is unable to accept your booking request.`,
           data: { bookingId: context.params.bookingId },
-        }, `${after.caregiverName || 'Your care provider'} isn't able to accept that booking request.`, { ...br, transitionType: 'booking_declined' });
+        }, `${after.caregiverName || 'Your care provider'} isn't able to accept that booking request. Text me if you'd like me to find another care provider.`, { ...br, transitionType: 'booking_declined' });
       }
 
       // Cancelled → notify caregiver
@@ -563,7 +563,7 @@ export const onBookingRequestWrite = functions.firestore
           title: 'Booking Cancelled',
           body: `${after.clientName || 'A client'} cancelled their ${noun}.`,
           data: { bookingId: context.params.bookingId },
-        }, `${after.clientName || 'A client'} cancelled their ${noun}. Sorry for the inconvenience.`, { ...br, transitionType: 'booking_cancelled' });
+        }, `${after.clientName || 'A client'} cancelled their ${noun}.${noun === 'booking' ? ' Every upcoming visit on it is cancelled too, so you can clear those times.' : ''} Sorry for the inconvenience.`, { ...br, transitionType: 'booking_cancelled' });
       }
 
       // Expired — a replacement request nobody answered in 30 minutes

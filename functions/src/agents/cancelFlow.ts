@@ -103,7 +103,7 @@ function PICK_QUESTION(d: CancelFlowData): string {
   return `Here's what you can cancel right now:\n\n${d.options.map((o, i) => `${i + 1}. ${o.label}`).join("\n")}\n\nWhich one? Just tell me the number.`;
 }
 function CONFIRM_QUESTION(o: CancelOption): string {
-  return `${o.confirmText}\n\nJust checking, do you want to cancel it?`;
+  return o.confirmText;
 }
 
 async function resolveByText(text: string, d: CancelFlowData): Promise<number | null> {

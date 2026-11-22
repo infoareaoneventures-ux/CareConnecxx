@@ -103,7 +103,7 @@ vi.mock("../videoInterviewRequest", () => ({
   }),
 }));
 
-import { startBookingFlow, startResendBookingFlow, handleBookingFlowStep, buildBookingRecap } from "../bookingFlow";
+import { startBookingFlow, startResendBookingFlow, handleBookingFlowStep, buildBookingRecap, nextScheduleDate } from "../bookingFlow";
 
 const PHONE = "+15551234567";
 const CHAT  = "chat-1";
@@ -1059,6 +1059,50 @@ describe("bk_confirm", () => {
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_days");
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("What days of the week would you like");
+  });
+
+  it("changing only the start date keeps the days and times and goes straight back to the recap", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "edit_schedule" }), JSON.stringify({ startDate: "2026-11-25" }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "start next Wednesday instead", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData.startDate).toBe("2026-11-25");
+    expect(stored.bookingFlowData.days).toEqual(["Tuesday", "Thursday"]);
+    expect(stored.bookingFlowData.dayTimes.Tuesday).toEqual({ start: "09:00", end: "17:00" });
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Does that look right?");
+  });
+
+  it("days, hours and start date given in one message are all kept — nothing is asked twice", async () => {
+    const daysData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, startDate: "2026-11-18" };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_days", bookingFlowData: daysData });
+    hoisted.docState.set("carePlans/client-uid", {
+      locationPool: [{ street: "1 Elm St", city: "Springfield", state: "CA", zipCode: "90000" }],
+    });
+    modelReplies("NO", JSON.stringify({ days: ["Wednesday"], startDate: "2026-11-25", time: { start: "06:00", end: "08:00" } }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "every Wednesday, 6 to 8 AM, starting next Wednesday", session({ bookingFlowStep: "bk_ask_days", bookingFlowData: daysData }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowData.startDate).toBe("2026-11-25");
+    expect(stored.bookingFlowData.dayTimes).toEqual({ Wednesday: { start: "06:00", end: "08:00" } });
+    expect(["bk_ask_start_date", "bk_ask_times"]).not.toContain(stored.bookingFlowStep);
+  });
+
+  it("new days without a date or hours ask for the date (the old date is not carried over)", async () => {
+    const daysData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, startDate: "2026-11-18" };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_days", bookingFlowData: daysData });
+    modelReplies("NO", JSON.stringify({ days: ["Wednesday"] }));
+    await handleBookingFlowStep(PHONE, CHAT, "every Wednesday", session({ bookingFlowStep: "bk_ask_days", bookingFlowData: daysData }));
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).bookingFlowStep).toBe("bk_ask_start_date");
+  });
+
+  it("nextScheduleDate rolls a past start forward to the next matching weekday", () => {
+    expect(nextScheduleDate("2026-11-22", ["Wednesday"])).toBe("2026-11-25"); // Sunday → Wednesday
+    expect(nextScheduleDate("2026-11-25", ["Wednesday"])).toBe("2026-11-25"); // today counts
+    expect(nextScheduleDate("2026-11-22", [])).toBeNull();
   });
 
   it("an edit_location request lists the saved addresses again for a fresh pick", async () => {

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { useToasts } from './context/ToastContext';
+import { pageTitleFor } from './utils/pageTitle';
+const HOME_TITLE = typeof document !== 'undefined' ? document.title : 'Evia'; // the title in index.html, kept for the home page
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { ViewType } from './types';
 
@@ -183,6 +185,10 @@ const AdminRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  // Each page gets its own tab title ("Calendar · Evia"); the home page keeps the one in index.html.
+  useEffect(() => {
+    document.title = pageTitleFor(location.pathname) ?? HOME_TITLE;
+  }, [location.pathname]);
   const {
     isLoading, authResolved, authRecovery, retryAuth, signOutFromRecovery,
     removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen,

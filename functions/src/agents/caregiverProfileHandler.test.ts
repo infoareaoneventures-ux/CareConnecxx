@@ -419,7 +419,7 @@ describe("caregiverProfileHandler", () => {
         profileUpdateField: "pause",
         profileUpdateValue: "2026-07-12",
       }));
-      expect(sendMessage.mock.calls[0][1]).toMatch(/until 2026-07-12/);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/until Sunday, July 12, 2026/);
     });
 
     it("confirm YES writes pausedUntil to care provider doc", async () => {
@@ -477,9 +477,9 @@ describe("caregiverProfileHandler", () => {
         { profileUpdateStep: "confirm", profileUpdateField: "pause", profileUpdateValue: "2026-07-12" },
         CHAT, "pause",
       );
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No — your existing bookings stay exactly as they are.\n\nPause your account until 2026-07-12? Should I go ahead?");
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toBe("No — your existing bookings stay exactly as they are.\n\nPause your account until Sunday, July 12, 2026? Should I go ahead?");
       expect(briefing()).toContain("Audience: care provider");
-      expect(briefing()).toContain("Pause your account until 2026-07-12? Should I go ahead?");
+      expect(briefing()).toContain("Pause your account until Sunday, July 12, 2026? Should I go ahead?");
       expect(briefing()).toContain("It does NOT cancel anything that already exists");
       expect(briefing()).toContain("Fully reversible anytime: say reactivate, or use the Reactivate button on the Account Settings page");
       expect(briefing()).toContain("Nothing is paused until the care provider says yes");

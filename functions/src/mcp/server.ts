@@ -4562,14 +4562,14 @@ async function executeToolCall(
       // Everything else is a section of ONE recipient's plan (the page's saveSection).
       const res = await resolveRecipient(clientId, recipientFirstName);
       if (!res.ok) {
-        return {
-          success: false,
-          error: res.reason === "ambiguous"
+        // INVALID_INPUT, so a confirmed action that hits this tells the person what to fix instead of "I tried, but it
+        // didn't go through" (live 2026-11-20: two recipients, the family got the generic failure after saying yes).
+        return toolError("INVALID_INPUT",
+          res.reason === "ambiguous"
             ? "This household has more than one care recipient — say which one (recipientFirstName) before I update this."
             : res.reason === "not_found"
               ? `I don't see a care recipient named "${recipientFirstName}" on the Care Plan page.`
-              : "I don't have a care recipient on file yet to attach this to.",
-        };
+              : "I don't have a care recipient on file yet to attach this to.");
       }
       const { recipient, page } = res;
       const plan = recipient.plan;

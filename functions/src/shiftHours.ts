@@ -21,7 +21,7 @@ export { notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
 async function textClient(clientId: string, message: string): Promise<void> {
   try {
     const { sendSMSToUser } = await import('./sms');
-    await sendSMSToUser(clientId, `Evia: ${message}`);
+    await sendSMSToUser(clientId, message);
   } catch (err) {
     console.warn('shiftHours: client text failed (in-app notification still written)', err instanceof Error ? err.message : err);
   }
@@ -38,7 +38,7 @@ async function tellCaregiver(caregiverId: string, type: string, title: string, b
   let sent = false;
   try {
     const { sendSMSToUser } = await import('./sms');
-    sent = (await sendSMSToUser(caregiverId, `Evia: ${text}`)).success === true;
+    sent = (await sendSMSToUser(caregiverId, text)).success === true;
   } catch (err) {
     console.warn('shiftHours: caregiver text failed (no bell written)', err instanceof Error ? err.message : err);
   }
@@ -951,7 +951,7 @@ export async function settleShiftTransfer(
   // the card was actually charged (stored at approval), not the caregiver gross.
   const chargedCents = Number(shift.totalChargeCents ?? (grossCents + serviceFeeCentsFor(grossCents)));
   await textClient(shift.clientId,
-    `your card was charged ${(chargedCents / 100).toFixed(2)} for ${shift.caregiverName ?? 'your care provider'}'s visit — ${(grossCents / 100).toFixed(2)} to them plus the service fee. It's marked Paid on your Timesheets page.`);
+    `Your card was charged $${(chargedCents / 100).toFixed(2)} for ${shift.caregiverName ?? 'your care provider'}'s visit: $${(grossCents / 100).toFixed(2)} to them plus the service fee. It's marked Paid on your Timesheets page.`);
 }
 
 /**

@@ -111,9 +111,10 @@ describe("the one public page says only what the product does", () => {
     expect(src).toMatch(/never administer or manage medication/);
   });
 
-  it("the footer is the mark, one line, the help phone and six links", () => {
+  it("the footer is the mark, one line, the help phone and five links (no Admin link — the admin area is reached by its address)", () => {
     const src = copyOf(read("components/landing/Footer.tsx"));
-    for (const label of [">Privacy<", ">Terms<", ">Log in<", ">Find care<", ">Apply as a care provider<", ">Admin<"]) expect(src).toContain(label);
+    for (const label of [">Privacy<", ">Terms<", ">Log in<", ">Find care<", ">Apply as a care provider<"]) expect(src).toContain(label);
+    expect(src).not.toContain(">Admin<");
     expect(src).not.toMatch(/Twitter|Facebook|Instagram|For Families|For Caregivers|For Care Providers|Family FAQ|Help Center|How It Works|LegalDocs/);
     expect(src).toContain("supportPhone"); // the help phone lives in the footer (2026-10-12)
   });

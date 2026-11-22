@@ -339,6 +339,18 @@ describe("Review correction — the modal as a flow", () => {
     expect(hoisted.respond).toHaveBeenCalledWith("cg1", { appointmentId: "a1", action: "accept" });
     expect(hoisted.sent.at(-1)).toBe("Done, the correction is accepted.");
   });
+  it("a counter that already names the end ('counter: I stayed until 5:30 PM') is kept — only the start is asked, and the end is not asked again", async () => {
+    correction();
+    await startReviewCorrectionFlow("+1", "chat", session() as never, { caregiverId: "cg1", appointmentId: "a1" });
+    hoisted.quick.mockResolvedValueOnce("COUNTER").mockResolvedValueOnce('{"start":null,"end":"17:30"}');
+    await handleReviewCorrectionFlowStep("+1", "chat", "counter: I stayed until 5:30 PM", session() as never);
+    expect(hoisted.sent.at(-1)).toBe("What start time are you countering with? If 2:30 PM is right, just say keep.");
+    expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowStep).toBe("rc_start");
+    expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowData.counterEnd).toBeTruthy();
+    await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
+    expect(hoisted.sent.at(-1)).not.toContain("And the end time?");
+    expect(hoisted.sent.at(-1)).toContain("Additional charges");
+  });
   it("COUNTER asks start (KEEP), end, the charge amounts, a note, then SEND runs the counter write with the modal's payload", async () => {
     correction();
     await startReviewCorrectionFlow("+1", "chat", session() as never, { caregiverId: "cg1", appointmentId: "a1" });

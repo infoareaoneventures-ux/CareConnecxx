@@ -230,16 +230,26 @@ export async function startVisitRequestFlow(
     ? caregivers.flatMap((c) => c.bookings.map((b) => ({ cg: c, b }))).find((x) => x.b.bookingId === args.bookingRequestId)
     : undefined;
   let cg = preBooking?.cg ?? (args.caregiverId ? caregivers.find((c) => c.id === args.caregiverId) : undefined);
-  if (!cg && caregivers.length === 1) cg = caregivers[0];
   if (!cg && args.initialText?.trim()) {
+    // Also with ONE care provider on file: a named person who is not one of them ("Book Riya" when only Test Provider
+    // has an active booking) must never be silently swapped for that one (live 2026-11-16).
     const raw = await parseWithClaude(
-      `Care Providers, numbered:\n${caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\n` +
-      "If the family's message clearly names one of these care providers, return ONLY that number. Otherwise return 0.",
+      `Care Providers this family has an active booking with, numbered:\n${caregivers.map((c, i) => `${i + 1}. ${c.name}`).join("\n")}\n\n` +
+      "If the family's message clearly names one of these care providers, return ONLY that number. " +
+      "If it names a DIFFERENT person who is not in this list, return -1. If it names nobody, return 0.",
       args.initialText,
     );
     const n = parseInt(raw.trim(), 10);
+    if (n === -1) {
+      await clearFlow(phone);
+      await sendMessage(chatId,
+        "I can only add a visit to a booking that's already active, and I don't see an active booking with that care provider. " +
+        "Want me to send them a booking request instead?");
+      return { started: false, reason: "not_booked" };
+    }
     if (n >= 1 && n <= caregivers.length) cg = caregivers[n - 1];
   }
+  if (!cg && caregivers.length === 1) cg = caregivers[0];
   if (!cg) {
     await sendMessage(chatId, CAREGIVER_QUESTION(data));
     return { started: true };

@@ -10,6 +10,7 @@ import { businessTodayStr } from "../utils/scheduledTime";
 import { mapCaregiverServices, orderedCanonicalServices, serviceLabels, SERVICE_LABELS, serviceMenuText } from "./caregiverServices";
 import { CHILD_SERVICE_LABELS, careKindsFromWords, kindsOfServices, serviceListsForKinds, CareKind, CARE_KINDS } from "./caregiverServiceLabels";
 import { RATE_EXAMPLE, RATE_RULE_TEXT, EXPERIENCE_BUCKETS, BIO_MAX_CHARS, toExperienceBucket, toServiceRadius } from "./onboardingContract";
+import { formatDateWithWeekday } from "../utils/scheduledTime";
 import { LANGUAGE_OPTIONS, JOB_TYPE_OPTIONS, MAX_CLIENTS_OPTIONS, TRAVEL_OPTIONS, jobTypeLabel } from "./caregiverMyProfile";
 
 const db = admin.firestore();
@@ -39,6 +40,7 @@ export type ProfileUpdateField =
   | "pause"
   | "reactivate";
 
+const niceDate = (v: string): string => formatDateWithWeekday(v); // "2026-11-28" → "Saturday, November 28, 2026"; "indefinite" etc. pass through
 const FLOW_TTL = () => new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
 /** Legacy sessions parked as "rate" (before 2026-10-04) continue in the rates flow. */
@@ -86,7 +88,7 @@ export const PROFILE_BACKED_OUT = "No problem, your profile wasn't changed.";
 /** The question the care provider is looking at, for the back-out classifier's context (per editor and step). */
 function profileFlowQuestion(field: ProfileUpdateField, step: string, session: Record<string, unknown>): string {
   if (step === "confirm") {
-    if (field === "pause") return `Pause your account ${(session.profileUpdateValue as string) === "indefinite" || !session.profileUpdateValue ? "indefinitely" : `until ${session.profileUpdateValue}`}? Should I go ahead?`;
+    if (field === "pause") return `Pause your account ${(session.profileUpdateValue as string) === "indefinite" || !session.profileUpdateValue ? "indefinitely" : `until ${niceDate(String(session.profileUpdateValue))}`}? Should I go ahead?`;
     return "Want me to save this change to your profile? Say yes, or no to leave it, or tell me another change.";
   }
   switch (field) {
@@ -713,7 +715,7 @@ async function handlePauseAccount(
       profileUpdateValue: until,
       stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    const untilLabel = until === "indefinite" ? "indefinitely" : `until ${until}`;
+    const untilLabel = until === "indefinite" ? "indefinitely" : `until ${niceDate(until)}`;
     await sendMessage(chatId,
       `Pause your account ${untilLabel}? You won't receive job matches during this time. ` +
       `Should I go ahead?`,
@@ -723,7 +725,7 @@ async function handlePauseAccount(
 
   // confirm
   const until = (session.profileUpdateValue as string) ?? "indefinite";
-  const untilLabel = until === "indefinite" ? "indefinitely" : `until ${until}`;
+  const untilLabel = until === "indefinite" ? "indefinitely" : `until ${niceDate(until)}`;
   const reAskConfirm = `Pause your account ${untilLabel}? Should I go ahead?`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm, PAUSE_FACTS));
@@ -740,7 +742,7 @@ async function handlePauseAccount(
     // This door texts its own "Done" line below, so the shared write stamps the session
     // and the lifecycle notice (B7) keeps the bell only — one text per event.
     await pauseCaregiver(caregiverId, until, { phone });
-    const backWhen = until === "indefinite" ? "Say reactivate whenever you're ready to come back." : `You'll be reactivated on ${until}. Say reactivate sooner if your plans change.`;
+    const backWhen = until === "indefinite" ? "Say reactivate whenever you're ready to come back." : `You'll be reactivated on ${niceDate(until)}. Say reactivate sooner if your plans change.`;
     await sendMessage(chatId, `Done, your account is paused. ${backWhen}`);
   } else {
     await sendMessage(chatId, "No problem, your account is still active.");

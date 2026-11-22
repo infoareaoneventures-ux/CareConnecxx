@@ -549,7 +549,11 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
   }
   if (step === "sh_items") {
     const q = data.items.length === 0 ? ITEMS_Q(data) : ANOTHER_Q(data.items[data.items.length - 1]);
-    if (text.trim().toUpperCase() === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
+    // The question itself says "just say no" — a bare no is the answer (no more charges), never a back-out
+    // (live 2026-11-21: "no" after "Anything else to add?" cancelled the whole submission).
+    const bare = text.trim().toUpperCase().replace(/[.!]+$/g, "");
+    if (["NO", "N", "NOPE", "NAH", "NONE", "NO THANKS", "NOTHING"].includes(bare)) return next({}, "sh_confirm", SUBMIT_CONFIRM_Q(data));
+    if (bare === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
     const parsed = await parseCharge(text);
     if (parsed === null || parsed.kind === "no_amount" || parsed.kind === "no_label") {
       if (parsed === null && await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: SUBMIT_FACTS(data) })); return; }
@@ -763,8 +767,8 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     return next({ counterItems }, "rc_note", C_NOTE_Q);
   }
   if (step === "rc_note") {
+    if (norm === "SKIP" || norm === "NONE" || norm === "NO") return next({}, "rc_confirm", C_CONFIRM_Q(data)); // the question says "just say no"
     if (norm === "CANCEL" || await isBackOutRequest(text, C_NOTE_Q)) return cancelled();
-    if (norm === "SKIP" || norm === "NONE" || norm === "NO") return next({}, "rc_confirm", C_CONFIRM_Q(data));
     // A question here is answered and the note re-asked — it never becomes the note the family reads (2026-10-11).
     // The note IS an objection ("I stayed to settle her for her nap"), so the generic isQuestionOrOther — which treats any
     // objection as "not an answer" — echoed it back and the next text became the note (live 2026-11-22). Classify the

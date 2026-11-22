@@ -66,7 +66,6 @@ export async function handleAvailabilityUpdate(
 
   if (step === "start") {
     if (await isBackOutRequest(text, WHICH_DAYS_Q)) { await clear(); await sendMessage(BACKED_OUT); return; }
-    if (await isQuestionOrOther(text)) { await sendMessage(`I can update your availability, it's the same grid as Update Availability on your Calendar. ${WHICH_DAYS_Q}`); return; }
     const raw = await parseWithClaude(
       `The care provider wants to change their weekly availability. Extract the days and the action. Return ONLY JSON: {"action":"add"|"remove"|"replace","days":["monday",...],"blocks":["morning","afternoon","evening","overnight"]}. ` +
       `"weekdays" = monday..friday, "weekends" = saturday+sunday, "every day" = all seven. "remove"/"not available"/"take off" = remove. "add" when they add hours. Otherwise "replace". ` +
@@ -77,7 +76,15 @@ export async function handleAvailabilityUpdate(
     try { parsed = JSON.parse(raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "")); } catch { /* unclear */ }
     const days = [...new Set((parsed.days ?? []).map(normalizeDay).filter((d): d is Grid extends Record<infer K, unknown> ? K & string : never => !!d))];
     const action = parsed.action === "add" || parsed.action === "remove" || parsed.action === "replace" ? parsed.action : "unclear";
-    if (action === "unclear" || days.length === 0) { await sendMessage(WHICH_DAYS_Q); return; }
+    if (action === "unclear" || days.length === 0) {
+      // No day named: a question gets an answer (with the current grid), anything else the days question.
+      if (await isQuestionOrOther(text)) {
+        await sendMessage(`Your availability right now:\n${gridText(await loadGrid())}\n\nI can update it, it's the same grid as Update Availability on your Calendar. ${WHICH_DAYS_Q}`);
+        return;
+      }
+      await sendMessage(WHICH_DAYS_Q);
+      return;
+    }
     const current = await loadGrid();
     if (action === "remove") {
       return toConfirm({ remove: Object.fromEntries(days.map((d) => [d, "all" as const])) }, current);

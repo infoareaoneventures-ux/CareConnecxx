@@ -419,6 +419,19 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     proposedLineItems: [{ type: "custom", label: "Mileage", note: "", amount: 12.5 }], proposedGrossPay: 75, proposalReason: "She left early",
   });
   const lastFacts = () => String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts ?? "");
+  it('a bare "no" to "Anything else to add? If not, just say no" moves to the confirm — it is never read as a back-out', async () => {
+    shift("s1");
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    hoisted.quick.mockResolvedValueOnce('{"label":"Supplies","amount":12.5}');
+    await handleSubmitHoursFlowStep("+1", "chat", "supplies 12.50", session() as never);
+    const { isBackOutRequest } = await import("../stepHandler");
+    vi.mocked(isBackOutRequest).mockResolvedValue(true); // a back-out classifier that misreads the "no"
+    try {
+      await handleSubmitHoursFlowStep("+1", "chat", "no", session() as never);
+    } finally { vi.mocked(isBackOutRequest).mockResolvedValue(false); }
+    expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("sh_confirm");
+    expect(hoisted.sent.at(-1)).not.toContain("I didn't submit anything");
+  });
   it("Submit hours: a later charge turn and the SUBMIT confirm carry the summary so far, the payment note and the money rules", async () => {
     shift("s1");
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });

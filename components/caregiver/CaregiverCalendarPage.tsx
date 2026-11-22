@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { interviewIsOver } from '../../utils/interviewTime';
 import { askConfirm } from '../../utils/confirmDialog';
 import { swallow } from '../../utils/reportError';
 import { recordActedForPerson } from '../../services/api';
@@ -1182,7 +1183,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
           )}
 
           {/* Join the Google Meet link (server-generated; meet.google.com only) */}
-          {interview.callUrl?.startsWith('https://meet.google.com/') &&
+          {!interviewIsOver(interview.scheduledTime) && interview.callUrl?.startsWith('https://meet.google.com/') &&
             ['accepted', 'scheduled', 'confirmed', 'in-progress'].includes(interview.status) && (
             <button onClick={() => window.open(interview.callUrl, '_blank', 'noopener')}
               className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">

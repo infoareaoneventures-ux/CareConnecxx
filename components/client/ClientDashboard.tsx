@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { interviewIsOver } from '../../utils/interviewTime';
+import { formatDay } from '../../utils/dateFormat';
 import { swallow } from '../../utils/reportError';
 import { ZoneTag } from '../ui/ZoneTag';
 import { recordActedForPerson } from '../../services/api';
@@ -759,7 +761,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                   {post.startDate && (
                                     <div className="flex items-center gap-1.5 text-xs text-slate-500">
                                       <Calendar className="w-3 h-3 flex-shrink-0" />
-                                      <span>{post.startDate}</span>
+                                      <span>{formatDay(post.startDate)}</span>
                                     </div>
                                   )}
                                   {(post.city || post.location) && (
@@ -866,7 +868,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                     <span>{isVideo ? 'Video' : 'Phone'}</span>
                                   </div>
                                 )}
-                                {iv.callUrl?.startsWith('https://meet.google.com/') && ['accepted', 'scheduled', 'confirmed'].includes(iv.status) && (
+                                {!interviewIsOver(iv.scheduledAt) && iv.callUrl?.startsWith('https://meet.google.com/') && ['accepted', 'scheduled', 'confirmed'].includes(iv.status) && (
                                   <a href={iv.callUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 hover:underline">
                                     <Video className="w-3 h-3 flex-shrink-0" />
                                     Join video call
@@ -1575,7 +1577,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                   {post.startDate && (
                                     <div className="flex items-center gap-1.5 text-xs text-slate-500">
                                       <Calendar className="w-3 h-3 flex-shrink-0" />
-                                      <span>{post.startDate}</span>
+                                      <span>{formatDay(post.startDate)}</span>
                                     </div>
                                   )}
                                   {(post.city || post.location) && (
@@ -1885,7 +1887,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                     <Calendar className="w-5 h-5 text-[var(--color-primary-600)]" />
                     <h3 className="font-bold text-[var(--color-neutral-900)]">Start Date</h3>
                   </div>
-                  <p className="text-[var(--color-neutral-700)]">{intakeData.startDate}</p>
+                  <p className="text-[var(--color-neutral-700)]">{formatDay(intakeData.startDate)}</p>
                 </div>
                 <div className="bg-white rounded-xl p-5 border border-[var(--color-neutral-200)]">
                   <div className="flex items-center gap-2 mb-3">

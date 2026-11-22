@@ -1062,3 +1062,11 @@ From the Notion "UI & product" list, one batch (merge + hosting deploy together)
 - Family and care provider test accounts walked: dashboards, Settings, calendars, posts, payments, inbox, jobs. No sideways scroll at 390px; calendars open at 7 AM, phones on list; confirm box and Escape work.
 - Found and fixed: Escape did nothing on pop-ups whose close button is a text "×"/Cancel (utils/dialogA11y.ts now finds buttons by visible text too; test added).
 - Open: raw dates (2026-11-23) on the family dashboard post cards; the /start sign-up screen shows the raw auth code on error.
+
+### 2026-11-23 — Remaining fixes, batch 3 (built locally, not deployed)
+- Sign-in/sign-up errors: one shared `utils/authMessages.ts friendlyAuthMessage` (login + /start); the robot-check failure (`auth/invalid-app-credential`) now says to reload; only unknown failures keep the code.
+- One day format: `utils/dateFormat.ts formatDay` replaces raw `2026-11-23` on the family dashboard cards and the care provider job views.
+- Past interviews: `utils/interviewTime.ts interviewIsOver` (an hour after start) hides Join / Accept / Reschedule / Cancel everywhere (job board, both calendars, dashboard, posts); the job board says "This interview time has passed."
+- Payouts page: the fee/timing sentence is no longer shown twice.
+- Ending a visit confirms ("Visit ended") and offers "Submit hours" (opens Payments).
+- Left open: Start/End still wait on a cold-started Firestore-trigger function (processVisitActionQueue); `minInstances: 1` would fix it but costs a warm instance; family dashboard speed; unpaid visits in History (unclear intent); the "Contact" first name was a data record, no code default exists.

@@ -765,7 +765,14 @@ const BookingGroupCard: React.FC<{
     try {
       const r = await submitVisitAction('end_visit', { caregiverId: shift.caregiverId, shiftId, closingNote: notes?.trim() || undefined });
       if (!r.ok) addToast(r.message, 'error');
-      else void recordActedForPerson('visit_ended', 'ended a visit');
+      else {
+        void recordActedForPerson('visit_ended', 'ended a visit');
+        // The visit is over: say so, and offer the next step (hours are what the family pays from).
+        addToast('Visit ended.', 'success');
+        if (await askConfirm({ title: 'Visit ended', message: 'Submit your hours now so the family can approve and pay you.', confirmLabel: 'Submit hours', cancelLabel: 'Later' })) {
+          navigate('/care-provider/payments');
+        }
+      }
     } catch {
       addToast('Could not end this shift. Please try again.', 'error');
     } finally {

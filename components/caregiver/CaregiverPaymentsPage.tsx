@@ -1968,7 +1968,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                 )}
 
                 <p className="text-xs text-slate-400 mt-3">
-                  💡 Earnings pay out automatically every day (free) · Instant cash-out: Stripe's 1% fee (min $0.50), ~30 min
+                  💡 Earnings pay out automatically every day, for free.
                 </p>
               </div>
             </div>

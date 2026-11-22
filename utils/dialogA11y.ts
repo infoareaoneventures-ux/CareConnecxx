@@ -6,6 +6,9 @@
 //   • icon-only buttons (close, previous/next, edit…) get a spoken name from their icon
 // New code should still label its own buttons; utils/dialogA11y.test.ts documents the net.
 const OVERLAY = '.fixed.inset-0';
+// A close button drawn as a text glyph (×) instead of an icon.
+const CLOSE_GLYPH = /^[×✕✖xX]$/;
+const CLOSE_WORDS = /^(close|cancel|not now|dismiss|done)$/i;
 const ICON_LABELS: Record<string, string> = {
   x: 'Close',
   'x-circle': 'Close',
@@ -52,7 +55,9 @@ function isModalOverlay(el: Element): el is HTMLElement {
 
 export function labelIconButtons(root: ParentNode): void {
   root.querySelectorAll('button:not([aria-label]):not([aria-labelledby]):not([title])').forEach((btn) => {
-    if ((btn.textContent ?? '').trim().length > 0) return;
+    const text = (btn.textContent ?? '').trim();
+    if (CLOSE_GLYPH.test(text)) { btn.setAttribute('aria-label', 'Close'); return; }
+    if (text.length > 0) return;
     const svg = btn.querySelector('svg');
     if (!svg) return;
     const cls = (svg.getAttribute('class') ?? '').split(/\s+/);
@@ -82,7 +87,10 @@ export function closeTopOverlay(root: ParentNode = document): boolean {
   const overlays = openOverlays(root);
   const top = overlays[overlays.length - 1];
   if (!top) return false;
-  const close = top.querySelector<HTMLElement>('button[aria-label="Close"], button[aria-label="Cancel"], button[aria-label="Close dialog"]');
+  const buttons = Array.from(top.querySelectorAll<HTMLElement>('button'));
+  const close =
+    buttons.find((b) => /^(close|cancel|close dialog)$/i.test(b.getAttribute('aria-label') ?? '')) ??
+    buttons.find((b) => CLOSE_WORDS.test((b.textContent ?? '').trim()) || CLOSE_GLYPH.test((b.textContent ?? '').trim()));
   (close ?? top).click();
   return true;
 }

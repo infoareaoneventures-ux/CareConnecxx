@@ -1056,3 +1056,9 @@ From the Notion "UI & product" list, one batch (merge + hosting deploy together)
 - Tests: 473 files pass (site + functions); `tsc` clean; lint 0 errors; site and functions build.
 - **Deploy needs:** hosting + functions (new callable `v1-createCardSetupSession`). Re-check live after: Add a card → Stripe form → back with toast; Send Booking with no card; Evia booking with no card; a failed payment's caregiver text; Escape closes a pop-up; the confirm box on a cancel.
 - Not done from this round: look/theme unification (waiting on screenshot review), shared EmptyState/Modal components, slow Start/End + end-of-visit confirmation, family dashboard speed, unpaid visits in History.
+
+
+### 2026-11-22 — Local walk-through (signed in, desktop + 390px)
+- Family and care provider test accounts walked: dashboards, Settings, calendars, posts, payments, inbox, jobs. No sideways scroll at 390px; calendars open at 7 AM, phones on list; confirm box and Escape work.
+- Found and fixed: Escape did nothing on pop-ups whose close button is a text "×"/Cancel (utils/dialogA11y.ts now finds buttons by visible text too; test added).
+- Open: raw dates (2026-11-23) on the family dashboard post cards; the /start sign-up screen shows the raw auth code on error.

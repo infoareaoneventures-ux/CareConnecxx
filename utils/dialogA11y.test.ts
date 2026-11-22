@@ -32,6 +32,24 @@ describe('dialog accessibility net', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('Escape finds a close button drawn as a glyph, and one labelled Cancel', async () => {
+    off = installDialogA11y(document);
+    document.body.innerHTML = '<div class="fixed inset-0 bg-black/50"><div><button id="x">\u00d7</button><button>Send</button></div></div>';
+    await tick();
+    expect(document.getElementById('x')!.getAttribute('aria-label')).toBe('Close');
+    const onX = vi.fn();
+    document.getElementById('x')!.addEventListener('click', onX);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onX).toHaveBeenCalledTimes(1);
+
+    document.body.innerHTML = '<div class="fixed inset-0 bg-black/50"><div><button>Send</button><button id="c">Cancel</button></div></div>';
+    await tick();
+    const onCancel = vi.fn();
+    document.getElementById('c')!.addEventListener('click', onCancel);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it('Escape clicks the backdrop when the pop-up has no close button', async () => {
     off = installDialogA11y(document);
     document.body.innerHTML = '<div id="b" class="fixed inset-0 bg-black/50"><div>hello</div></div>';

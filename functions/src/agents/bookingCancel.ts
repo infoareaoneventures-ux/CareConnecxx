@@ -106,7 +106,7 @@ export async function listCancellables(clientId: string): Promise<CancelOption[]
       out.push({
         kind: "booking", id: d.id, caregiverName: cg,
         label: `Whole booking with ${cg}${sched ? ` (${sched})` : ""} — ${remaining} upcoming visit${remaining === 1 ? "" : "s"}`,
-        confirmText: `Cancel the whole booking with ${cg} and all ${remaining} upcoming visit${remaining === 1 ? "" : "s"}?`,
+        confirmText: `Cancel the whole booking with ${cg}${remaining === 1 ? " and its 1 upcoming visit" : remaining > 1 ? ` and all ${remaining} upcoming visits` : ""}?`,
         sortKey: `1_${cg}`,
       });
     } else if (b.status === "pending") {

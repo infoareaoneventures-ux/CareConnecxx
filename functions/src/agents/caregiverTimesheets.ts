@@ -487,7 +487,7 @@ async function parseFinishTime(text: string): Promise<string | null> {
   return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
 }
 
-export async function startSubmitHoursFlow(phone: string, chatId: string, _session: AgentSession, args: { caregiverId: string; shiftId: string }): Promise<{ started: boolean; reason?: string }> {
+export async function startSubmitHoursFlow(phone: string, chatId: string, _session: AgentSession, args: { caregiverId: string; shiftId: string; charges?: string[] }): Promise<{ started: boolean; reason?: string }> {
   const snap = await db.collection("shifts").doc(args.shiftId).get();
   const shift = snap.data() as Doc | undefined;
   if (!snap.exists || !shift || shift.caregiverId !== args.caregiverId) { await sendMessage(chatId, "That visit isn't on your Timesheets tab."); return { started: false, reason: "not_found" }; }
@@ -512,8 +512,14 @@ export async function startSubmitHoursFlow(phone: string, chatId: string, _sessi
     await sendMessage(chatId, ENDTIME_Q(data));
     return { started: true };
   }
+  // Charges already named in the message that started the flow ("submit my hours, I spent $12.50 on groceries") are
+  // kept — only "anything else?" is asked, never the question they already answered.
+  for (const c of args.charges ?? []) {
+    const p = await parseCharge(c);
+    if (p && p.kind === "item") data.items.push({ type: "custom" as const, label: p.label, amount: p.amount, ...(p.note ? { note: p.note } : {}) });
+  }
   await db.collection("agent_sessions").doc(phone).update({ submitHoursFlowStep: "sh_items", submitHoursFlowData: data, stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() });
-  await sendMessage(chatId, ITEMS_Q(data));
+  await sendMessage(chatId, data.items.length ? `${ITEMS_Q(data).split("\n").slice(0, -2).join("\n")}\n\n${ANOTHER_Q(data.items[data.items.length - 1])}` : ITEMS_Q(data));
   return { started: true };
 }
 
@@ -549,7 +555,11 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
   }
   if (step === "sh_items") {
     const q = data.items.length === 0 ? ITEMS_Q(data) : ANOTHER_Q(data.items[data.items.length - 1]);
-    if (text.trim().toUpperCase() === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
+    // The question itself says "just say no" — a bare no is the answer (no more charges), never a back-out
+    // (live 2026-11-21: "no" after "Anything else to add?" cancelled the whole submission).
+    const bare = text.trim().toUpperCase().replace(/[.!]+$/g, "");
+    if (["NO", "N", "NOPE", "NAH", "NONE", "NO THANKS", "NOTHING"].includes(bare)) return next({}, "sh_confirm", SUBMIT_CONFIRM_Q(data));
+    if (bare === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
     const parsed = await parseCharge(text);
     if (parsed === null || parsed.kind === "no_amount" || parsed.kind === "no_label") {
       if (parsed === null && await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: SUBMIT_FACTS(data) })); return; }
@@ -763,10 +773,15 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     return next({ counterItems }, "rc_note", C_NOTE_Q);
   }
   if (step === "rc_note") {
+    if (norm === "SKIP" || norm === "NONE" || norm === "NO") return next({}, "rc_confirm", C_CONFIRM_Q(data)); // the question says "just say no"
     if (norm === "CANCEL" || await isBackOutRequest(text, C_NOTE_Q)) return cancelled();
-    if (norm === "SKIP" || norm === "NONE" || norm === "NO") return next({}, "rc_confirm", C_CONFIRM_Q(data));
     // A question here is answered and the note re-asked — it never becomes the note the family reads (2026-10-11).
-    if (await isQuestionOrOther(text, C_NOTE_Q)) { await sendMessage(chatId, await answerMidFlow(text, C_NOTE_Q, { facts: `${REVIEW_FACTS(data)} The note goes to the family with the counter, in the care provider's own words.` })); return; }
+    // The note IS an objection ("I stayed to settle her for her nap"), so the generic isQuestionOrOther — which treats any
+    // objection as "not an answer" — echoed it back and the next text became the note (live 2026-11-22). Classify the
+    // reply as the note itself, a question to Evia, or a decline, like the log-hours note step does.
+    const kind = await parse(`A care provider disagreed with the family's proposed hours and was asked: "${C_NOTE_Q}" Classify their reply: NOTE if the message is the note itself (their reason or explanation, even if it pushes back), QUESTION if they are asking Evia something or it is unrelated, NONE if they are declining to add one ("nothing", "nope", "I'm good"). Reply with ONE word.`, text);
+    if (kind.toUpperCase().startsWith("NONE")) return next({}, "rc_confirm", C_CONFIRM_Q(data));
+    if (kind.toUpperCase().startsWith("Q")) { await sendMessage(chatId, await answerMidFlow(text, C_NOTE_Q, { facts: `${REVIEW_FACTS(data)} The note goes to the family with the counter, in the care provider's own words.` })); return; }
     return next({ note: text.trim().slice(0, 500) }, "rc_confirm", C_CONFIRM_Q({ ...data, note: text.trim() }));
   }
   if (step === "rc_confirm") {

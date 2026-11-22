@@ -890,11 +890,26 @@ export async function settleShiftTransfer(
     } catch { /* a failed lookup falls through to the keyed create below */ }
   }
   if (!transferId) {
+    // Fund the payout FROM the family's charge. A charge's money is "pending" in Stripe for days, and a transfer that is not
+    // tied to its charge is paid from the platform's AVAILABLE balance — so a timesheet approved today failed with
+    // "insufficient available funds" until the charge settled (live-style failure seen again 2026-11-22). With
+    // source_transaction the transfer is allowed against the pending charge. Falls back to the plain transfer if the charge
+    // can't be looked up.
+    let sourceCharge: string | undefined;
+    try {
+      const chargeRef = String(shift.stripeChargeId ?? '');
+      if (chargeRef.startsWith('ch_')) sourceCharge = chargeRef;
+      else if (chargeRef.startsWith('pi_')) {
+        const pi = await stripe.paymentIntents.retrieve(chargeRef);
+        sourceCharge = typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id;
+      }
+    } catch { /* plain transfer below */ }
     const transfer = await stripe.transfers.create({
       amount: grossCents,
       currency: shift.currency || 'usd',
       destination: caregiverStripeAccountId,
       transfer_group: appointmentId,
+      ...(sourceCharge ? { source_transaction: sourceCharge } : {}),
       metadata: { appointmentId, shiftHoursId: appointmentId },
     }, {
       // One key per attempt: Stripe replays a key's stored result (errors too), so a fixed key would repeat a transient

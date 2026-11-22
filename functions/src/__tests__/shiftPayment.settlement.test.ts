@@ -117,6 +117,13 @@ describe("U1 — charge-before-transfer settlement", () => {
     expect(hoisted.docState.get("shiftHours/a1")?.status).toBe("paid");
   });
 
+  it("funds the payout from the family's charge (source_transaction) so pending money is enough", async () => {
+    hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_sync", status: "succeeded" } as any);
+    hoisted.stripeApi.paymentIntents.retrieve.mockResolvedValue({ id: "pi_sync", status: "succeeded", latest_charge: "ch_sync" } as any);
+    await processSeededShift("a1", { ...baseShift });
+    expect((hoisted.stripeApi.transfers.create.mock.calls.at(-1) as any)[0]).toMatchObject({ source_transaction: "ch_sync" });
+  });
+
   it("does NOT transfer when the charge is still processing — holds charge_pending", async () => {
     hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_proc", status: "processing" } as any);
     const r = await processSeededShift("a2", { ...baseShift });

@@ -350,12 +350,15 @@ async function handlePickBooking(phone: string, chatId: string, text: string, se
 
 // ── Steps: days + times ───────────────────────────────────────────────────────
 
-interface ParsedDaysTimes { days: DayAbbr[]; dayTimes: Record<string, TimeBlock[]> }
+interface ParsedDaysTimes { days: DayAbbr[]; dayTimes: Record<string, TimeBlock[]>; date?: string; oneTime?: boolean }
+const WEEKDAY_ABBRS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 async function parseDaysAndTimes(text: string, data: VisitRequestFlowData): Promise<ParsedDaysTimes | null> {
   const raw = await parseWithClaude(
-    `The family is adding a visit for ${data.caregiverName}. Extract the day(s) of the week and any time block(s) they stated. ` +
-    'Return ONLY a JSON object: {"days": ["Tue", ...] 3-letter abbreviations or [] if no day stated, ' +
+    `Today is ${formatDateWithWeekday(businessTodayStr())} (${businessTodayStr()}). The family is adding a visit for ${data.caregiverName}. Extract the day(s) of the week and any time block(s) they stated. ` +
+    'Also "date": "YYYY-MM-DD" when they named ONE specific date (today, tonight, tomorrow, "Friday the 27th") — resolved from today — else null; ' +
+    '"oneTime": true when it is a single visit on that date (one-time / just this once / tonight / tomorrow), else false. ' +
+    'Return ONLY a JSON object: {"days": ["Tue", ...] 3-letter abbreviations or [] if no day stated, "date": ..., "oneTime": ..., ' +
     '"dayTimes": {"Tue": [{"start": "HH:MM", "end": "HH:MM"}], ...} 24-hour, only for days whose times they actually stated, ' +
     '"allDays": {"start": "HH:MM", "end": "HH:MM"} or null if they gave one time meant for every day}. ' +
     '"weekdays" = Mon-Fri, "weekends" = Sat+Sun. A day can have more than one block ("9-11 and 2-4"). Never invent a day or a time.',
@@ -372,20 +375,26 @@ async function parseDaysAndTimes(text: string, data: VisitRequestFlowData): Prom
     const valid = blocks.map((b) => ({ start: String(b?.start ?? ""), end: String(b?.end ?? "") })).filter((b) => blockToRange(b));
     if (valid.length) { dayTimes[abbr] = valid; if (!days.includes(abbr)) days.push(abbr); }
   }
+  const date = typeof parsed.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) && parsed.date >= businessTodayStr() ? parsed.date : undefined;
+  if (date && !days.length) days.push(WEEKDAY_ABBRS[new Date(`${date}T12:00:00Z`).getUTCDay()] as DayAbbr);
   const all = parsed.allDays as { start?: unknown; end?: unknown } | null;
   if (all && days.length) {
     const b = { start: String(all.start ?? ""), end: String(all.end ?? "") };
     if (blockToRange(b)) for (const d of days) if (!dayTimes[d]) dayTimes[d] = [b];
   }
   if (!days.length) return null;
-  return { days, dayTimes };
+  return { days, dayTimes, ...(date ? { date, oneTime: parsed.oneTime === true } : {}) };
 }
 
 // Runs the modal's checks on the given blocks. Hard problems are returned as
 // messages (nothing stored); soft ones are stored as warnings for the recap.
 async function applyDaysAndTimes(phone: string, chatId: string, p: ParsedDaysTimes, data: VisitRequestFlowData): Promise<boolean> {
   const missing = p.days.filter((d) => !p.dayTimes[d]?.length);
-  await mergeFlowData(phone, { days: p.days, dayTimes: p.dayTimes });
+  await mergeFlowData(phone, {
+    days: p.days, dayTimes: p.dayTimes,
+    // A date given in the same message is kept (a one-time visit also settles the end).
+    ...(p.date ? { startDate: p.date, ...(p.oneTime ? { ongoing: false, endDate: p.date } : {}) } : {}),
+  });
   if (missing.length) {
     await updateStep(phone, "vr_ask_times");
     await sendMessage(chatId, `${fullDays(p.days)}, got it. ${TIMES_QUESTION({ ...data, days: p.days })}`);
@@ -397,9 +406,17 @@ async function applyDaysAndTimes(phone: string, chatId: string, p: ParsedDaysTim
     await sendMessage(chatId, `${problems.join(" ")} ${TIMES_QUESTION({ ...data, days: p.days })}`);
     return true;
   }
-  await updateStep(phone, "vr_ask_start");
-  await sendMessage(chatId, `${fullDays(p.days)}, got it. ${START_QUESTION}`);
+  await continueAfterTimes(phone, chatId, `${fullDays(p.days)}, got it.`);
   return true;
+}
+
+// After the times are settled: ask only what is still missing (start date, then end), else the notes.
+async function continueAfterTimes(phone: string, chatId: string, lead: string): Promise<void> {
+  const d = await getFlowData(phone);
+  if (!d.startDate) { await updateStep(phone, "vr_ask_start"); await sendMessage(chatId, `${lead} ${START_QUESTION}`.trim()); return; }
+  if (d.ongoing === true || d.endDate) { await updateStep(phone, "vr_ask_notes"); await sendMessage(chatId, `${lead} ${NOTES_QUESTION(d)}`.trim()); return; }
+  await updateStep(phone, "vr_ask_end");
+  await sendMessage(chatId, `${lead} Starting ${formatDateWithWeekday(d.startDate)}. ${END_QUESTION}`.trim());
 }
 
 async function checkAllBlocks(phone: string, data: VisitRequestFlowData, days: DayAbbr[], dayTimes: Record<string, TimeBlock[]>): Promise<string[]> {
@@ -472,8 +489,7 @@ async function handleAskTimes(phone: string, chatId: string, text: string, sessi
   }
   const problems = await checkAllBlocks(phone, data, days, dayTimes);
   if (problems.length) { await sendMessage(chatId, `${problems.join(" ")} ${question}`); return; }
-  await updateStep(phone, "vr_ask_start");
-  await sendMessage(chatId, START_QUESTION);
+  await continueAfterTimes(phone, chatId, "");
 }
 
 // ── Steps: start / end / notes ────────────────────────────────────────────────

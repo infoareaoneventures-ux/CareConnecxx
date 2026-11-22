@@ -33,26 +33,38 @@ beforeEach(() => { hoisted.caregiver = { weeklyAvailability: { monday: [{ start:
 
 describe("start", () => {
   it("days + blocks in one message → straight to the grid confirmation", async () => {
-    hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"add","days":["tuesday","thursday"],"blocks":["afternoon"]}');
+    hoisted.parse.mockResolvedValueOnce('{"action":"add","days":["tuesday","thursday"],"blocks":["afternoon"]}');
     await handleAvailabilityUpdate("cg1", "+1", "add Tuesday and Thursday afternoons", {}, send);
     expect(hoisted.sent.at(-1)).toBe(`Your availability would be:\nSun: —\nMon: Morning\nTue: Afternoon\nWed: —\nThu: Afternoon\nFri: —\nSat: —\n\n${CONFIRM_LINE}`);
     expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "confirm" });
     expect(JSON.parse(hoisted.sessionUpdates.at(-1).pendingAvailability)).toEqual({ add: { tuesday: ["afternoon"], thursday: ["afternoon"] } }); // the taps, not the grid
   });
   it("days only → asks the modal's four blocks; remove → confirmation with the day cleared; nothing named → asks which day", async () => {
-    hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"replace","days":["monday"]}');
+    hoisted.parse.mockResolvedValueOnce('{"action":"replace","days":["monday"]}');
     await handleAvailabilityUpdate("cg1", "+1", "change my Monday", {}, send);
     expect(hoisted.sent.at(-1)).toMatch(/^Which time blocks are you available on Monday\? The choices are Morning \(6am – 12pm\), Afternoon \(12pm – 6pm\), Evening \(6pm – 12am\), Overnight \(12am – 6am\)\. Tell me the names, or say all, or none to clear that day\.$/);
     expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "awaiting_blocks", pendingDays: '["monday"]', pendingAction: "replace" });
-    hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"remove","days":["monday"]}');
+    hoisted.parse.mockResolvedValueOnce('{"action":"remove","days":["monday"]}');
     await handleAvailabilityUpdate("cg1", "+1", "take Mondays off", {}, send);
     expect(hoisted.sent.at(-1)).toMatch(/^Your availability would be:\nSun: —\nMon: —\n/);
-    hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"unclear","days":[]}');
+    hoisted.parse.mockResolvedValueOnce('{"action":"unclear","days":[]}').mockResolvedValueOnce("ANSWER");
     await handleAvailabilityUpdate("cg1", "+1", "update my availability", {}, send);
     expect(hoisted.sent.at(-1)).toBe(WHICH_DAYS_Q);
   });
+  it("a question that also names a day is an answer: the day is used, nothing is re-asked", async () => {
+    hoisted.parse.mockResolvedValueOnce('{"action":"add","days":["saturday"],"blocks":["morning"]}');
+    await handleAvailabilityUpdate("cg1", "+1", "what's my availability right now? I want to add Saturday mornings", {}, send);
+    expect(hoisted.sent.at(-1)).toMatch(/^Your availability would be:\nSun: —\nMon: Morning\n[\s\S]*Sat: Morning/);
+    expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "confirm" });
+  });
+  it("a plain question with no day shows the current grid and then asks which days", async () => {
+    hoisted.parse.mockResolvedValueOnce('{"action":"unclear","days":[]}').mockResolvedValueOnce("QUESTION");
+    await handleAvailabilityUpdate("cg1", "+1", "what's my availability right now?", {}, send);
+    expect(hoisted.sent.at(-1)).toContain("Your availability right now:\nSun: —\nMon: Morning");
+    expect(hoisted.sent.at(-1)).toContain(WHICH_DAYS_Q);
+  });
   it("a change that matches what is already set is said, not re-asked", async () => {
-    hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"replace","days":["monday"],"blocks":["morning"]}');
+    hoisted.parse.mockResolvedValueOnce('{"action":"replace","days":["monday"],"blocks":["morning"]}');
     await handleAvailabilityUpdate("cg1", "+1", "Monday mornings", {}, send);
     expect(hoisted.sent.at(-1)).toMatch(/^That's already how your availability is set:/);
     expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "__delete__" });
@@ -82,7 +94,7 @@ describe("back-out (2026-10-17): \"never mind\" closes the modal at the days ste
     expect(hoisted.sent.at(-1)).toMatch(/^Your availability would be:/);
   });
   it("a genuine answer is not a back-out — the flow proceeds as before", async () => {
-    hoisted.parse.mockResolvedValueOnce("ANSWER").mockResolvedValueOnce('{"action":"replace","days":["monday"]}');
+    hoisted.parse.mockResolvedValueOnce('{"action":"replace","days":["monday"]}');
     await handleAvailabilityUpdate("cg1", "+1", "change my Monday", { availabilityStep: "start" }, send);
     expect(hoisted.backOut).toHaveBeenCalledTimes(1);
     expect(hoisted.sessionUpdates.at(-1)).toMatchObject({ availabilityStep: "awaiting_blocks" });

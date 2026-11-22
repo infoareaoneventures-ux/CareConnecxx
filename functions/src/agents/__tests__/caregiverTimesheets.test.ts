@@ -199,6 +199,16 @@ describe("Submit hours worked — the modal as a flow", () => {
     await handleSubmitHoursFlowStep("+1", "chat", "CANCEL", session() as never);
     expect(hoisted.sent.at(-1)).toMatch(/didn't submit anything/);
   });
+  it("a charge named in the message that starts the flow is kept — only 'anything else?' is asked", async () => {
+    shift("s1");
+    hoisted.quick.mockResolvedValueOnce('{"label":"Supplies","amount":12.5,"note":"groceries"}');
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1", charges: ["supplies 12.50 - groceries"] });
+    const w = hoisted.sessionWrites.at(-1);
+    expect(w.submitHoursFlowStep).toBe("sh_items");
+    expect(w.submitHoursFlowData.items).toEqual([{ type: "custom", label: "Supplies", amount: 12.5, note: "groceries" }]);
+    expect(hoisted.sent.at(-1)).toContain("Added Supplies · $12.50. Anything else to add?");
+    expect(hoisted.sent.at(-1)).not.toContain("Any additional charges, like overtime");
+  });
   it("starts with the modal (clock in/out from the visit, duration, base pay) and asks for additional charges", async () => {
     shift("s1");
     const r = await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
@@ -345,6 +355,7 @@ describe("Review correction — the modal as a flow", () => {
     hoisted.quick.mockResolvedValueOnce('{"1": 10}');
     await handleReviewCorrectionFlowStep("+1", "chat", "mileage 10", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Want to add a note for the family on why you disagree? If not, just say no.");
+    hoisted.quick.mockResolvedValueOnce("NOTE");
     await handleReviewCorrectionFlowStep("+1", "chat", "I stayed until she was settled", session() as never);
     expect(hoisted.sent.at(-1)).toBe([
       "Your counter — Basra Yousuf",
@@ -418,6 +429,19 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     proposedLineItems: [{ type: "custom", label: "Mileage", note: "", amount: 12.5 }], proposedGrossPay: 75, proposalReason: "She left early",
   });
   const lastFacts = () => String(vi.mocked(answerMidFlow).mock.calls.at(-1)![2]?.facts ?? "");
+  it('a bare "no" to "Anything else to add? If not, just say no" moves to the confirm — it is never read as a back-out', async () => {
+    shift("s1");
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    hoisted.quick.mockResolvedValueOnce('{"label":"Supplies","amount":12.5}');
+    await handleSubmitHoursFlowStep("+1", "chat", "supplies 12.50", session() as never);
+    const { isBackOutRequest } = await import("../stepHandler");
+    vi.mocked(isBackOutRequest).mockResolvedValue(true); // a back-out classifier that misreads the "no"
+    try {
+      await handleSubmitHoursFlowStep("+1", "chat", "no", session() as never);
+    } finally { vi.mocked(isBackOutRequest).mockResolvedValue(false); }
+    expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("sh_confirm");
+    expect(hoisted.sent.at(-1)).not.toContain("I didn't submit anything");
+  });
   it("Submit hours: a later charge turn and the SUBMIT confirm carry the summary so far, the payment note and the money rules", async () => {
     shift("s1");
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
@@ -484,13 +508,15 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
     await handleReviewCorrectionFlowStep("+1", "chat", "KEEP", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Want to add a note for the family on why you disagree? If not, just say no.");
-    vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
+    hoisted.quick.mockResolvedValueOnce("QUESTION");
     await handleReviewCorrectionFlowStep("+1", "chat", "does the family see this note?", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Answer. Want to add a note for the family on why you disagree? If not, just say no.");
     expect(lastFacts()).toContain("The note goes to the family with the counter, in the care provider's own words.");
     expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowStep).toBe("rc_note");
     expect(hoisted.docs.get("agent_sessions/+1").reviewCorrectionFlowData.note).toBeUndefined();
-    // the real note still lands
+    // the real note still lands — even when it pushes back on the family's correction (live 2026-11-22: it was echoed back
+    // as "you can add: …" and the NEXT text became the note)
+    hoisted.quick.mockResolvedValueOnce("NOTE");
     await handleReviewCorrectionFlowStep("+1", "chat", "I stayed until she was settled", session() as never);
     expect(hoisted.sent.at(-1)).toContain("Note: \"I stayed until she was settled\"");
   });

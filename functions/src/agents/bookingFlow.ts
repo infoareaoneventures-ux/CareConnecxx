@@ -494,7 +494,11 @@ async function seedResendAndRecap(
     ...(typeof r.rate === "number" ? { hourlyRate: r.rate } : {}),
     days,
     dayTimes,
-    ...(typeof schedule.startDate === "string" ? { startDate: schedule.startDate } : {}),
+    ...(typeof schedule.startDate === "string"
+      ? { startDate: schedule.startDate >= businessTodayStr()
+            ? schedule.startDate
+            : (nextScheduleDate(businessTodayStr(), days) ?? undefined) }
+      : {}),
     ongoing: schedule.ongoing === true,
     ...(typeof schedule.endDate === "string" ? { scheduleEndDate: schedule.endDate } : {}),
     ...(typeof r.address === "string" && r.address ? { careLocation: r.address } : {}),
@@ -892,6 +896,62 @@ async function advanceToDays(phone: string, chatId: string, data: BookingFlowDat
   await sendMessage(chatId, `Got it — $${data.hourlyRate}/hr! ${DAYS_QUESTION(data.jobPostDays)}`);
 }
 
+// ── Schedule answers given early ─────────────────────────────────────────────
+// A family often answers more than the question asks ("every Wednesday, 6 to 8
+// AM, starting next Wednesday"). The extra pieces are kept, so the flow only
+// asks for what is still missing, and a one-detail edit from the recap changes
+// only that detail.
+
+const EARLY_SCHEDULE_PROMPT = (today: string) =>
+  `Today is ${today}. Also include, ONLY if this message states them: "startDate": "YYYY-MM-DD" (resolved to an ` +
+  'absolute date from today) and "time": {"start":"HH:MM","end":"HH:MM"} in 24-hour format (one time for all days). ' +
+  "Use null for anything not stated.";
+
+function validEarlyStart(v: unknown): string | null {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+}
+function validEarlyTime(v: any): { start: string; end: string } | null {
+  const a = bookingTimeToMinutes(v?.start);
+  const b = bookingTimeToMinutes(v?.end);
+  return a !== null && b !== null && b > a ? { start: String(v.start), end: String(v.end) } : null;
+}
+function timeForDays(days: string[], t: { start: string; end: string }): Record<string, { start: string; end: string }> {
+  return Object.fromEntries(days.map((d) => [d, { ...t }]));
+}
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// The first date on or after `fromStr` that falls on one of `days` (a resend
+// of an old request must not start in the past).
+export function nextScheduleDate(fromStr: string, days: string[]): string | null {
+  const wanted = new Set(days.map((d) => WEEKDAY_NAMES.indexOf(d)).filter((i) => i >= 0));
+  if (!wanted.size) return null;
+  const d = new Date(`${fromStr}T12:00:00Z`);
+  for (let i = 0; i < 7; i++) {
+    if (wanted.has(d.getUTCDay())) return d.toISOString().slice(0, 10);
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return null;
+}
+
+// Continue the schedule from whatever is still missing (start date, then times).
+async function continueSchedule(phone: string, chatId: string, session: AgentSession, lead: string): Promise<void> {
+  const data = await getFlowData(phone);
+  if (!data.startDate) {
+    await updateStep(phone, "bk_ask_start_date");
+    await sendMessage(chatId, `${lead} ${START_DATE_QUESTION}`.trim());
+    return;
+  }
+  const days = data.days ?? [];
+  const haveTimes = days.length > 0 && days.every((d) => bookingTimeToMinutes(data.dayTimes?.[d]?.start) !== null && bookingTimeToMinutes(data.dayTimes?.[d]?.end) !== null);
+  if (!haveTimes) {
+    await updateStep(phone, "bk_ask_times");
+    await sendMessage(chatId, `${lead ? `${lead} ` : ""}Starting ${formatDateForDisplay(data.startDate)} — got it! ${TIMES_QUESTION(days)}`.trim());
+    return;
+  }
+  await advanceFromTimes(phone, chatId, session);
+}
+
 // ── Step: days of the week ───────────────────────────────────────────────────
 
 const DAYS_QUESTION = (jobPostDays?: string[]) =>
@@ -916,7 +976,8 @@ async function handleBkAskDays(
     '{"days": ["Monday", ...], "noSchedule": false}. "noSchedule": true ONLY when they say there is no set schedule yet / ' +
     "it's ongoing and they'll figure out days later / no fixed days (then days is []). \"weekdays\" = Monday-Friday. " +
     '"every day"/"all week" = all 7. "weekends" = Saturday+Sunday. "every Tue and Thu" = [Tuesday,Thursday]. A single day name = just that one day. Never ' +
-    "invent a day the message doesn't name or clearly imply — an empty array is correct if none is stated.",
+    "invent a day the message doesn't name or clearly imply — an empty array is correct if none is stated. " +
+    EARLY_SCHEDULE_PROMPT(businessTodayStr()),
     text
   );
   const parsed = parseJsonLoose(raw, "handleBkAskDays");
@@ -933,10 +994,15 @@ async function handleBkAskDays(
     await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
     return;
   }
-  if (data.noSchedule) await mergeFlowData(phone, { noSchedule: false });
-  await mergeFlowData(phone, { days });
-  await updateStep(phone, "bk_ask_start_date");
-  await sendMessage(chatId, `${days.join(", ")} — got it! ${START_DATE_QUESTION}`);
+  const early = validEarlyStart(parsed?.startDate);
+  const earlyTime = validEarlyTime(parsed?.time);
+  // New days start the schedule over: only what this message states is kept.
+  await mergeFlowData(phone, {
+    days, noSchedule: false,
+    startDate: early ?? undefined,
+    dayTimes: earlyTime ? timeForDays(days, earlyTime) : {},
+  });
+  await continueSchedule(phone, chatId, session, `${days.join(", ")} — got it!`);
 }
 
 // ── Step: start date (matches the site's own separate Start date field) ────
@@ -958,7 +1024,8 @@ async function handleBkAskStartDate(
   const today = businessTodayStr();
   const raw = await parseWithClaude(
     `Today is ${today}. Extract the date the family wants this to start, resolved to an absolute date relative ` +
-    'to today. Return ONLY a JSON object: {"date": "YYYY-MM-DD" or null}. Never invent a date the message ' +
+    'to today. Return ONLY a JSON object: {"date": "YYYY-MM-DD" or null, "time": {"start":"HH:MM","end":"HH:MM"} or null}. ' +
+    '"time" ONLY if the message also states the hours (24-hour, one time for all days). Never invent a date the message ' +
     "doesn't state or clearly imply.",
     text
   );
@@ -968,9 +1035,9 @@ async function handleBkAskStartDate(
     await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
     return;
   }
-  await mergeFlowData(phone, { startDate });
-  await updateStep(phone, "bk_ask_times");
-  await sendMessage(chatId, `Starting ${formatDateForDisplay(startDate)} — got it! ${TIMES_QUESTION(data.days ?? [])}`);
+  const earlyTime = validEarlyTime(parsed?.time);
+  await mergeFlowData(phone, { startDate, ...(earlyTime ? { dayTimes: timeForDays(data.days ?? [], earlyTime) } : {}) });
+  await continueSchedule(phone, chatId, session, "");
 }
 
 // ── Step: times (every day needs its own start/end) ─────────────────────────
@@ -1546,10 +1613,48 @@ async function handleBkConfirm(
   }
 
   if (action === "edit_schedule") {
-    // Full redo (matches the site's Edit button revealing the whole
-    // Schedule section at once) — the next real answer at each step simply
-    // overwrites days/times/ongoing/scheduleEndDate the same way it does
-    // during initial collection, so nothing needs clearing here.
+    // Change only what the message states (a new start date, new hours, new
+    // days); anything not stated stays. Nothing stated → redo the schedule.
+    const today = businessTodayStr();
+    const raw = await parseWithClaude(
+      `Today is ${today}. The family wants to change their booking's schedule. Return ONLY a JSON object: ` +
+      '{"days": full weekday names or null, "startDate": "YYYY-MM-DD" or null, "time": {"start":"HH:MM","end":"HH:MM"} or null, ' +
+      '"ongoing": true | false | null, "endDate": "YYYY-MM-DD" or null}. Fill ONLY what this message states; ' +
+      '"time" is one time for all days (24-hour). Never invent anything.',
+      text
+    );
+    const e = parseJsonLoose(raw, "handleBkConfirm.schedule") as any;
+    const days: string[] | null = Array.isArray(e?.days) && e.days.length ? e.days.filter((d: unknown) => WEEKDAY_NAMES.includes(String(d))) : null;
+    const startDate = validEarlyStart(e?.startDate);
+    const time = validEarlyTime(e?.time);
+    const endDate = validEarlyStart(e?.endDate);
+    const ongoing = typeof e?.ongoing === "boolean" ? e.ongoing : null;
+    if (days?.length || startDate || time || endDate || ongoing !== null) {
+      const nextDays = days?.length ? days : (data.days ?? []);
+      const patch: Partial<BookingFlowData> = { editingFromConfirm: true };
+      if (days?.length) { patch.days = days; patch.noSchedule = false; if (!time) patch.dayTimes = {}; }
+      if (startDate) patch.startDate = startDate;
+      if (time) patch.dayTimes = timeForDays(nextDays, time);
+      if (endDate) { patch.ongoing = false; patch.scheduleEndDate = endDate; }
+      else if (ongoing !== null) { patch.ongoing = ongoing; if (ongoing) patch.scheduleEndDate = undefined; }
+      await mergeFlowData(phone, patch);
+      const now = await getFlowData(phone);
+      const nd = now.days ?? [];
+      const complete = nd.length > 0 && Boolean(now.startDate) && nd.every((d) => bookingTimeToMinutes(now.dayTimes?.[d]?.start) !== null);
+      if (complete) {
+        await mergeFlowData(phone, { editingFromConfirm: false });
+        await updateStep(phone, "bk_confirm");
+        await sendMessage(chatId, buildBookingRecap(await getFlowData(phone)));
+        return;
+      }
+      if (!nd.length) {
+        await updateStep(phone, "bk_ask_days");
+        await sendMessage(chatId, DAYS_QUESTION(data.jobPostDays));
+        return;
+      }
+      await continueSchedule(phone, chatId, session, "Got it.");
+      return;
+    }
     await mergeFlowData(phone, { editingFromConfirm: true });
     await updateStep(phone, "bk_ask_days");
     await sendMessage(chatId, "No problem, let's redo the schedule.");

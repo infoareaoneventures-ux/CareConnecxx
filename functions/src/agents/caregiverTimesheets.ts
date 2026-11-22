@@ -299,11 +299,12 @@ export function timesheetDetailText(r: TimesheetRow, n?: number): string {
     lines.push(`Auto-approves ${auto !== null ? stampShort(auto) : r.status === "pending_client_review" ? "No — needs the family's approval" : "—"}`);
   }
   if (!PENDING_STATUSES.includes(r.status)) { const sub = tsMs(r.submittedAt); if (sub !== null) lines.push(`Submitted ${longDate(sub)}`); }
-  if (r.status === "payment_failed" && typeof r.stripeFailureReason === "string" && r.stripeFailureReason) lines.push(`⚠ ${r.stripeFailureReason}`);
+  // Plain words (never Stripe's own error text): the payment hasn't gone through, the family is told, and it retries.
+  if (r.status === "payment_failed") lines.push("⚠ This payment didn't go through yet, so you haven't been paid for this visit. The family has been told and it retries automatically — nothing for you to do.");
   const hist = items(r.correctionHistory) as Array<{ action?: string; at?: string; startTime?: string; endTime?: string; hours?: number; basePay?: number; grossPay?: number; note?: string; lineItems?: unknown }>;
   // The page: a counter / correction row shows the timeline whenever it has entries; every other row only once
   // something beyond the submission happened — and then it lists ALL entries, the submission included.
-  const showTimeline = hist.length > 0 && ((r.status === "caregiver_counter_proposed" || r.status === "correction_proposed") || hist.some((h) => h.action !== "submitted"));
+  const showTimeline = hist.length > 0 && ((r.status === "caregiver_counter_proposed" || r.status === "correction_proposed") || hist.some((h) => h.action !== "submitted" && h.action !== "accepted"));
   if (showTimeline) {
     lines.push("", "History");
     for (const h of hist) {

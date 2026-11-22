@@ -553,7 +553,7 @@ export const Step2WhoWhere: React.FC<StepProps> = ({ data, onChange, onContinue,
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-900 text-sm">
-                        {person.isSelf ? `Myself${person.firstName && person.firstName !== 'Me' ? ` (${person.firstName} ${person.lastName})`.trim() : ''}` : `${person.firstName} ${person.lastName}`.trim()}
+                        {person.isSelf ? `Myself${person.firstName && person.firstName !== 'Me' ? ` (${`${person.firstName} ${person.lastName}`.trim()})` : ''}` : `${person.firstName} ${person.lastName}`.trim()}
                       </p>
                       <p className="text-xs text-slate-500 capitalize">{person.isSelf ? "I'm the one receiving care" : person.relationship || ''}</p>
                     </div>

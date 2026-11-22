@@ -122,7 +122,7 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
           : null;
         const schedule: Record<string, Array<{ start: string; end: string }>> = selectedBooking?.schedule || {};
         const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        const VISIT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const VISIT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
         // ── Availability helpers ──────────────────────────────────────────
         const DAY_NAME_TO_IDX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };

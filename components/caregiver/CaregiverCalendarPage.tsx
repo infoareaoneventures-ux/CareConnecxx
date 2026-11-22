@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { askConfirm } from '../../utils/confirmDialog';
 import { swallow } from '../../utils/reportError';
 import { recordActedForPerson } from '../../services/api';
 import React, { useState, useEffect, useCallback } from 'react';
@@ -95,6 +96,12 @@ const H_START = 0;
 const H_END   = 24;
 const CELL_H  = 56;
 const TOTAL_H = (H_END - H_START) * CELL_H;
+// The day opens at 7 AM, not midnight (the useful hours were below the fold). Runs once per grid.
+const openAtWorkday = (el: HTMLDivElement | null) => {
+  if (el && !el.dataset.opened) { el.dataset.opened = '1'; el.scrollTop = 7 * CELL_H - 8; }
+};
+// Phones start on the list (seven day columns don't fit); wider screens start on the week.
+const initialCalendarView = (): 'week' | 'list' => (typeof window !== 'undefined' && window.innerWidth < 640 ? 'list' : 'week');
 const HOURS   = Array.from({ length: H_END - H_START }, (_, i) => i + H_START);
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -155,7 +162,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   const navigate = useNavigate();
   const { blockReason, gateFresh, GateModal } = useCaregiverGate();
   const { setMembershipModalOpen, addToast: pageToast } = useCareConnex();
-  const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>('week');
+  const [view,       setView]       = useState<'week' | 'month' | 'day' | 'list'>(initialCalendarView);
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'this-week' | 'this-month' | 'last-30' | 'all'>('upcoming');
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthDate,  setMonthDate]  = useState(new Date());
@@ -264,7 +271,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     // Same dialog and server write as the Bookings page's per-visit ✕ (cancelVisit):
     // within 24h of the start the family gets the fast replacement picker
     // (needs_replacement); further out it is a plain cancellation.
-    if (!user || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
+    if (!user || !await askConfirm('Cancel this shift only? The rest of your booking stays active.')) return;
     const shift = shifts.find(s => s.id === shiftId);
     if (!shift) return;
     try {
@@ -958,7 +965,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     };
 
     const handleDecline = async () => {
-      if (!window.confirm('Decline this interview request?')) return;
+      if (!await askConfirm('Decline this interview request?')) return;
       const fdb = db;
       if (!fdb) return;
       setDeclining(true);
@@ -1007,7 +1014,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
     };
 
     const handleCancel = async () => {
-      if (!window.confirm('Cancel this interview?')) return;
+      if (!await askConfirm('Cancel this interview?')) return;
       const fdb = db;
       if (!fdb) return;
       setCancelling(true);
@@ -1275,7 +1282,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                         </div>
                       ))}
                     </div>
-                    <div className="overflow-y-auto" style={{ maxHeight: 560 }}>
+                    <div className="overflow-y-auto" ref={openAtWorkday} style={{ maxHeight: 560 }}>
                       <div className="relative" style={{ height: TOTAL_H }}>
                         <div className="absolute inset-0 pointer-events-none" style={{ display: 'grid', gridTemplateColumns: '52px repeat(7, 1fr)' }}>
                           <div className="border-r border-slate-200">
@@ -1371,7 +1378,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                         <div className={`mx-auto mt-1 w-8 h-8 flex items-center justify-center rounded-full text-base font-bold ${isToday(dayDate) ? 'bg-primary-600 text-white' : 'text-slate-700'}`}>{dayDate.getDate()}</div>
                       </div>
                     </div>
-                    <div className="overflow-y-auto" style={{ maxHeight: 560 }}>
+                    <div className="overflow-y-auto" ref={openAtWorkday} style={{ maxHeight: 560 }}>
                       <div className="relative" style={{ height: TOTAL_H }}>
                         <div className="absolute inset-0 pointer-events-none" style={{ display: 'grid', gridTemplateColumns: '52px 1fr' }}>
                           <div className="border-r border-slate-200">

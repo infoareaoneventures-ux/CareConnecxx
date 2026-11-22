@@ -1,4 +1,6 @@
 import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
+import { askConfirm } from '../../utils/confirmDialog';
+import { notify } from '../../utils/reportError';
 import { swallow } from '../../utils/reportError';
 import { ZoneTag } from '../ui/ZoneTag';
 import { recordActedForPerson } from '../../services/api';
@@ -238,7 +240,7 @@ function fmtTime(t?: string): string {
   });
 }
 
-const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // "HH:MM" (or "~HH:MM" for a next-day block) → minutes since midnight —
 // mirrors CaregiverBookingsPage.tsx's own parseMinutes exactly.
@@ -339,7 +341,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const handleCancel = async () => {
-    if (!window.confirm('Cancel this booking request?')) return;
+    if (!await askConfirm('Cancel this booking request?')) return;
     setCancelling(true);
     try { await onCancel(booking.id); }
     finally { setCancelling(false); }
@@ -892,7 +894,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
   };
 
   const handleCancelShift = async (shiftId: string) => {
-    if (!db || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
+    if (!db || !await askConfirm('Cancel this shift only? The rest of your booking stays active.')) return;
     setCancellingShift(shiftId);
     try {
       // onShiftCancelled Cloud Function fires and notifies the caregiver.
@@ -944,7 +946,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
     if (!db || !rescheduleDate || !rescheduleStart || !rescheduleEnd) return;
     const conflict = rangeConflicts(rescheduleStart, rescheduleEnd, dateConflicts);
     if (conflict) {
-      window.alert(`That overlaps another visit you have at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
+      notify(`That overlaps another visit you have at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
       return;
     }
     setReschedulingId(shift.id);
@@ -980,7 +982,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
       const ownShifts = await fetchOwnShiftsForDate(db, shift.clientId, shift.caregiverId, shift.reschedulePendingDate, shift.id);
       const conflict = rangeConflicts(shift.reschedulePendingStartTime!, shift.reschedulePendingEndTime || shift.reschedulePendingStartTime!, ownShifts);
       if (conflict) {
-        window.alert(`You already have another visit booked at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
+        notify(`You already have another visit booked at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
         return;
       }
       await db.collection('shifts').doc(shift.id).update({
@@ -1798,7 +1800,7 @@ export const ClientVisitsPage: React.FC = () => {
   }, [user?.uid]);
 
   const handleCancelBooking = async (shiftId: string) => {
-    if (!confirm('Cancel this booking and all upcoming scheduled visits?')) return;
+    if (!await askConfirm('Cancel this booking and all upcoming scheduled visits?')) return;
     if (!db) return;
     const shiftSnap = await db.collection('shifts').doc(shiftId).get();
     const shiftData = shiftSnap.data() as any;
@@ -1839,7 +1841,7 @@ export const ClientVisitsPage: React.FC = () => {
   };
 
   const handleSkipReplacement = async (shiftId: string) => {
-    if (!db || !window.confirm('Skip this shift? No replacement care provider will be arranged and it will be marked cancelled.')) return;
+    if (!db || !await askConfirm('Skip this shift? No replacement care provider will be arranged and it will be marked cancelled.')) return;
     await db.collection('shifts').doc(shiftId).update({
       status: 'cancelled',
       cancelledBy: 'client',
@@ -1901,7 +1903,7 @@ export const ClientVisitsPage: React.FC = () => {
   };
 
   const handleWithdrawReplacement = async (replacementRequestId: string) => {
-    if (!db || !window.confirm('Cancel this request and choose a different care provider?')) return;
+    if (!db || !await askConfirm('Cancel this request and choose a different care provider?')) return;
     await db.collection('booking_requests').doc(replacementRequestId).update({
       status: 'cancelled',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),

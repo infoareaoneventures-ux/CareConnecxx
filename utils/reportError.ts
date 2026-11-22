@@ -17,6 +17,11 @@ let toastSink: ToastFn | null = null;
 /** The app registers its toast function once (the CareConnex provider), so any module can tell the person without a hook. */
 export function registerErrorToast(fn: ToastFn | null): void { toastSink = fn; }
 
+/** Tell the person something in a toast (replaces window.alert). */
+export function notify(message: string, type: 'success' | 'error' | 'info' = 'info'): void {
+  if (toastSink) toastSink(message, type);
+}
+
 const BENIGN: RegExp[] = [/AbortError/i, /\babort(ed)?\b/i, /cancell?ed/i, /ResizeObserver loop/i];
 const lastSent = new Map<string, number>();
 const REPEAT_MS = 60_000;

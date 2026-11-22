@@ -310,11 +310,28 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
                   </button>
                 </div>
 
+                {/* Named charge types: one tap fills the label (the hint always named these; only "Custom" was offered) */}
+                {li.type === 'custom' && (
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Charge type">
+                    {['Overtime', 'Mileage', 'Supplies'].map(name => (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => updateLineItem(i, { label: name })}
+                        aria-pressed={li.label === name}
+                        className={`px-2.5 py-1 rounded-full border text-xs font-medium ${li.label === name ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {/* Custom label */}
                 {li.type === 'custom' && (
                   <input
                     type="text"
-                    placeholder="Label (e.g. Overtime or Mileage) *"
+                    placeholder="Label (pick one above or type your own) *"
                     value={li.label}
                     onChange={e => updateLineItem(i, { label: e.target.value })}
                     className={`w-full px-3 py-1.5 border rounded-lg text-sm ${

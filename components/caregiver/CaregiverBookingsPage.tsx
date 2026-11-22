@@ -1,4 +1,6 @@
 import { serviceLabel, ageRangeLabel } from './signup/constants';
+import { askConfirm } from '../../utils/confirmDialog';
+import { notify } from '../../utils/reportError';
 import { addressWithoutStreet } from '../../utils/addressPrivacy';
 import { swallow } from '../../utils/reportError';
 import { ZoneTag } from '../ui/ZoneTag';
@@ -786,7 +788,7 @@ const BookingGroupCard: React.FC<{
   };
 
   const handleCancelShift = async (shift: Shift) => {
-    if (!window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
+    if (!await askConfirm('Cancel this shift only? The rest of your booking stays active.')) return;
     setSubmitting(shift.id);
     // Within 24h of the shift starting, the family gets a fast replacement
     // picker instead of a plain cancellation — anything further out, they
@@ -834,7 +836,7 @@ const BookingGroupCard: React.FC<{
     if (!db || !rescheduleDate || !rescheduleStart || !rescheduleEnd) return;
     const conflict = rangeConflicts(rescheduleStart, rescheduleEnd, dateConflicts);
     if (conflict) {
-      window.alert(`That overlaps another shift you have at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
+      notify(`That overlaps another shift you have at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
       return;
     }
     setReschedulingId(shift.id);
@@ -871,7 +873,7 @@ const BookingGroupCard: React.FC<{
       const ownShifts = await fetchOwnShiftsForDate(db, shift.caregiverId, shift.reschedulePendingDate, shift.id);
       const conflict = rangeConflicts(shift.reschedulePendingStartTime!, shift.reschedulePendingEndTime || shift.reschedulePendingStartTime!, ownShifts);
       if (conflict) {
-        window.alert(`You already have another shift at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
+        notify(`You already have another shift at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
         return;
       }
       await db.collection('shifts').doc(shift.id).update({
@@ -1993,7 +1995,7 @@ export const CaregiverBookingsPage: React.FC = () => {
   const handleAccept = async (id: string) => {
     if (!db) return;
     // Accepting adds the visits to the schedule and tells the family; it used to apply on the first click (2026-11-15 test).
-    if (!window.confirm('Accept this booking request? The visits will be added to your schedule and the family will be told.')) return;
+    if (!await askConfirm('Accept this booking request? The visits will be added to your schedule and the family will be told.')) return;
     setSubmitting(true);
     try {
       await db.collection('booking_requests').doc(id).update({
@@ -2013,7 +2015,7 @@ export const CaregiverBookingsPage: React.FC = () => {
   };
 
   const handleDecline = async (id: string) => {
-    if (!db || !window.confirm('Decline this booking request?')) return;
+    if (!db || !await askConfirm('Decline this booking request?')) return;
     setSubmitting(true);
     try {
       const snap = await db.collection('booking_requests').doc(id).get();
@@ -2033,7 +2035,7 @@ export const CaregiverBookingsPage: React.FC = () => {
   };
 
   const handleCancelShift = async (id: string) => {
-    if (!uid || !window.confirm('Cancel this shift and all future scheduled shifts for this booking?')) return;
+    if (!uid || !await askConfirm('Cancel this shift and all future scheduled shifts for this booking?')) return;
     try {
       // The server's cancelBooking: this shift + every future scheduled shift of
       // the booking, each needs_replacement (starts within 24h) or cancelled,
@@ -2052,7 +2054,7 @@ export const CaregiverBookingsPage: React.FC = () => {
     const fdb = db;
     if (!fdb) return;
     // Accepting adds visits to the schedule and tells the family; it used to apply on the first click (2026-11-14 test).
-    if (!window.confirm('Accept this request? The visits will be added to your schedule and the family will be told.')) return;
+    if (!await askConfirm('Accept this request? The visits will be added to your schedule and the family will be told.')) return;
     try {
       // ONE write: the acceptance. The visits (28-day window from the start
       // date, an ongoing change merged into the booking's schedule, the

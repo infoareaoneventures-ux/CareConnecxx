@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from '../caregiver/signup/constants';
+import { realCorrection } from '../../utils/correctionHistory';
 import React, { useState, useEffect, useMemo } from 'react';
 import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { useNavigate } from 'react-router-dom';
@@ -12,7 +13,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftHoursService } from '../../services/api';
-import { getClientBillingPortalUrl, getClientPaymentMethodStatus } from '../../services/stripeService';
+import { getClientBillingPortalUrl, getClientPaymentMethodStatus, getCardSetupUrl } from '../../services/stripeService';
 import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 import { serviceFeeDollars, totalChargedDollars, serviceFeeLabel, SERVICE_FEE_PERCENT_LABEL } from '../../utils/pricing';
 
@@ -625,7 +626,7 @@ const ShiftRow: React.FC<{
           )}
 
           {/* Correction history */}
-          {row.correctionHistory && row.correctionHistory.some((e: any) => e.action !== 'submitted') && (
+          {row.correctionHistory && row.correctionHistory.some((e: any) => realCorrection(e.action)) && (
             <CorrectionTimeline history={row.correctionHistory} payRate={row.payRate} submittedLineItems={row.lineItems} submittedBasePay={row.basePay} submittedGrossPay={row.grossPay} />
           )}
 
@@ -667,6 +668,16 @@ export const Payments: React.FC = () => {
   // charge-able card is actually attached, and is what the UI displays.
   const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
   const [hasValidCard, setHasValidCard] = useState<boolean | null>(null);
+  // Back from Stripe's card form (?card=added): say so once and tidy the address.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('card') !== 'added') return;
+    addToast('Card added. It can take a few seconds to show here.', 'success');
+    params.delete('card');
+    const q = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${q ? `?${q}` : ''}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [loadingCard, setLoadingCard] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
 
@@ -781,9 +792,15 @@ export const Payments: React.FC = () => {
     }`;
 
   const handleOpenPortal = async () => {
-    // No card yet → send to membership/checkout to add one
-    if (!stripeCustomerId) {
-      navigate('/client/membership');
+    // No card yet → Stripe's card form (setup mode, nothing is charged); the card becomes the default for visit payments.
+    if (hasValidCard === false || !stripeCustomerId) {
+      setPortalLoading(true);
+      try {
+        window.location.assign(await getCardSetupUrl('/client/payments'));
+      } catch (e) {
+        addToast("We couldn't open the card form. Please try again.", 'error');
+        setPortalLoading(false);
+      }
       return;
     }
     // Card exists → open Stripe Billing Portal to manage/update it
@@ -843,7 +860,7 @@ export const Payments: React.FC = () => {
                     {pendingCount} shift{pendingCount > 1 ? 's' : ''} to review
                   </p>
                   <p className="text-xs text-amber-600 mt-0.5">
-                    Approve or propose a correction. Shifts auto-approve after 24 hours.
+                    Approve or propose a correction. A timesheet with extra charges or times outside the booking waits for you; the others approve on their own after 24 hours.
                   </p>
                 </div>
               </div>

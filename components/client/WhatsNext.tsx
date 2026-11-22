@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { notify } from '../../utils/reportError';
 import {
   Check,
   Heart,
@@ -236,7 +237,7 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
       const returnUrl = `${window.location.origin}/client/identity-callback?next=${encodeURIComponent(next)}`;
       startIdentityVerification(returnUrl).catch((e) => {
         console.error('Failed to start identity verification', e);
-        alert('Could not start identity verification. Please try again.');
+        notify('Could not start identity verification. Please try again.');
       });
       return;
     }

@@ -78,6 +78,9 @@ import { pushNotificationService } from './services/pushNotificationService';
 
 // PWA Components
 import { PWAInstallPrompt, registerServiceWorker } from './utils/pwa';
+import { promptsAllowedOn } from './utils/promptRoutes';
+import { ConfirmDialogHost } from './components/ui/ConfirmDialogHost';
+import { installDialogA11y } from './utils/dialogA11y';
 import { ActingBanner } from './components/admin/ActingBanner';
 import { preloadCriticalResources } from './utils/performance';
 
@@ -220,6 +223,9 @@ const AppContent: React.FC = () => {
     registerServiceWorker();
     preloadCriticalResources();
   }, []);
+
+  // Pop-ups get dialog roles, Escape and no background scroll; icon-only buttons get spoken names (utils/dialogA11y.ts).
+  useEffect(() => installDialogA11y(document), []);
 
 
   const handleNavigation = (view: ViewType, data?: any) => {
@@ -448,14 +454,17 @@ const AppContent: React.FC = () => {
       </Suspense>
 
       {/* Push Notification Permission Prompt */}
-      {currentUser?.uid && (
+      {currentUser?.uid && promptsAllowedOn(location.pathname) && (
         <PushNotificationPrompt
           userId={currentUser.uid}
         />
       )}
 
+      {/* One branded confirmation box for every "are you sure?" (replaces the browser's) */}
+      <ConfirmDialogHost />
+
       {/* PWA Install Prompt */}
-      <PWAInstallPrompt />
+      {currentUser?.uid && promptsAllowedOn(location.pathname) && <PWAInstallPrompt />}
 
       {/* Caregiver Membership Modal */}
       {membershipModalOpen && (

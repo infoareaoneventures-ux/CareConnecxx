@@ -1,4 +1,5 @@
 
+import { samePhone } from '../utils/samePhone';
 import { swallow } from '../utils/reportError';
 import { isMedicationInstruction, MEDICATION_INSTRUCTION_MESSAGE } from '../utils/medicationInstruction';
 import { recordActedForPerson } from '../services/api';
@@ -233,6 +234,8 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const [editingSetupContact, setEditingSetupContact] = useState(false);
   const [setupDraft, setSetupDraft] = useState({ firstName: '', lastName: '', phone: '', relationship: '' });
+  // The reason a save was refused, shown under the field (a toast at the top of the page was far from it).
+  const [setupErrors, setSetupErrors] = useState<{ firstName?: string; phone?: string }>({});
   const [savingSetup, setSavingSetup] = useState(false);
 
   const [showAddRecipient, setShowAddRecipient] = useState(false);
@@ -904,10 +907,12 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
   const saveSetupContact = async () => {
     if (!currentPlanId || !db) return;
-    if (setupDraft.phone.replace(/\D/g, '').length < 10) {
-      onShowToast('Phone number must be at least 10 digits', 'error');
-      return;
-    }
+    const errs: { firstName?: string; phone?: string } = {};
+    if (!setupDraft.firstName.trim()) errs.firstName = "Add the contact's first name.";
+    if (setupDraft.phone.replace(/\D/g, '').length < 10) errs.phone = 'Phone number must be at least 10 digits.';
+    else if (samePhone(setupDraft.phone, currentUser?.phoneNumber)) errs.phone = "That's your own number. Add someone else we can call in an emergency.";
+    setSetupErrors(errs);
+    if (errs.firstName || errs.phone) return;
     setSavingSetup(true);
     try {
       const normalizedContact = {
@@ -1333,16 +1338,10 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Care Needs & Tasks</p>
                             {rPlan.careNeeds.length > 0 ? (
-                              <div className="space-y-2">
-                                {rPlan.careNeeds.map(need => {
-                                  return (
-                                    <div key={need} className="rounded-xl border-2 border-primary-300 overflow-hidden">
-                                      <div className="px-4 py-3" style={{ backgroundColor: '#dbeafe' }}>
-                                        <p className="text-sm font-bold text-primary-700">{serviceLabel(displayName(need))}</p>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
+                              <div className="flex flex-wrap gap-1.5">
+                                {rPlan.careNeeds.map(need => (
+                                  <span key={need} className="text-xs font-medium bg-primary-50 text-primary-700 border border-primary-100 px-2.5 py-1 rounded-full">{serviceLabel(displayName(need))}</span>
+                                ))}
                               </div>
                             ) : <p className="text-sm text-slate-400 italic">No care needs specified</p>}
                             {rPlan.ageRange && (
@@ -1793,12 +1792,18 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
                     <>
                       <div className="space-y-2 mb-3">
                         <div className="grid grid-cols-2 gap-2">
-                          <input className={inputCls} placeholder="First name" value={setupDraft.firstName} onChange={e => setSetupDraft(p => ({ ...p, firstName: e.target.value }))} />
+                          <div>
+                            <input className={inputCls} placeholder="First name" aria-invalid={!!setupErrors.firstName} value={setupDraft.firstName} onChange={e => { setSetupDraft(p => ({ ...p, firstName: e.target.value })); setSetupErrors(p => ({ ...p, firstName: undefined })); }} />
+                            {setupErrors.firstName && <p className="text-xs text-red-600 mt-1" role="alert">{setupErrors.firstName}</p>}
+                          </div>
                           <input className={inputCls} placeholder="Last name" value={setupDraft.lastName} onChange={e => setSetupDraft(p => ({ ...p, lastName: e.target.value }))} />
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <input className={inputCls} placeholder="Relationship" value={setupDraft.relationship} onChange={e => setSetupDraft(p => ({ ...p, relationship: e.target.value }))} />
-                          <input type="tel" className={inputCls} placeholder="Phone number" value={setupDraft.phone} onChange={e => setSetupDraft(p => ({ ...p, phone: e.target.value.replace(/[^\d+\-() ]/g, '').slice(0, 16) }))} />
+                          <div>
+                            <input type="tel" className={inputCls} placeholder="Phone number" aria-invalid={!!setupErrors.phone} value={setupDraft.phone} onChange={e => { setSetupDraft(p => ({ ...p, phone: e.target.value.replace(/[^\d+\-() ]/g, '').slice(0, 16) })); setSetupErrors(p => ({ ...p, phone: undefined })); }} />
+                            {setupErrors.phone && <p className="text-xs text-red-600 mt-1" role="alert">{setupErrors.phone}</p>}
+                          </div>
                         </div>
                       </div>
                       <div className="flex gap-2">

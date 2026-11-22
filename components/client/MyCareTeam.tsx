@@ -13,7 +13,7 @@ import { useAccessGates } from '../../hooks/useAccessGates';
 import { billedHourlyRate } from '../../utils/pricing';
 
 // Day chips in week order, not the order the booking happened to list them (2026-09-20).
-const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const WEEK = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const sortWeekdays = (days: string[]) => [...days].sort((a, b) => WEEK.indexOf(a.slice(0, 3).toLowerCase()) - WEEK.indexOf(b.slice(0, 3).toLowerCase()));
 
 interface TeamCaregiver {
@@ -454,7 +454,7 @@ export const MyCareTeam: React.FC = () => {
                   Your care team will appear here once a care provider accepts your booking.
                 </p>
                 <Button onClick={() => navigate('/client/find-care-providers')}>
-                  Find a Care Provider
+                  Find a care provider
                 </Button>
               </>
             ) : (

@@ -93,6 +93,12 @@ vi.mock("../flowModelCall", () => {
   return { flowParseCall: call, flowAnswerCall: call };
 });
 const sendBookingRequest = vi.fn(async (_input: any, _opts: any): Promise<any> => ({ ok: true, bookingRequestId: "br-new" }));
+// A card is on file unless a test says otherwise (holdForCard reads Stripe).
+const cardState = vi.hoisted(() => ({ hasCard: true }));
+vi.mock("../../stripe", () => ({
+  getPaymentMethodStatusFor: async () => ({ hasCard: cardState.hasCard }),
+  createCardSetupUrlFor: async () => "https://pay.example/setup",
+}));
 vi.mock("../bookingSend", () => ({ sendBookingRequest: (input: unknown, opts: unknown) => sendBookingRequest(input, opts) }));
 vi.mock("../onboardingConversation", () => ({ sendOnboardingLink: vi.fn(async () => ({ success: true })) }));
 // A name given as caregiverId resolves among the family's own care providers (the interview resolver does the lookup).
@@ -972,6 +978,25 @@ describe("bk_confirm", () => {
 
     expect(String(sendMessage.mock.calls.at(-1)![1])).toMatch(/problem|wrong|sorry/i);
     expect(String(sendMessage.mock.calls.at(-1)![1])).not.toContain("Sent —");
+  });
+
+  it("holds the request and sends a card link when no card is on file, keeping the flow so YES sends it later", async () => {
+    cardState.hasCard = false;
+    try {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+      modelReplies(JSON.stringify({ action: "confirm" }));
+
+      await handleBookingFlowStep(PHONE, CHAT, "yes send it", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+      expect(sendBookingRequest).not.toHaveBeenCalled();
+      const last = String(sendMessage.mock.calls.at(-1)![1]);
+      expect(last).toContain("card on file");
+      expect(last).toContain("https://pay.example/setup");
+      expect(last).toContain("text me YES");
+      expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.bookingFlowStep).toBe("bk_confirm");
+    } finally {
+      cardState.hasCard = true;
+    }
   });
 
   it("NO cancels without ever sending the booking", async () => {

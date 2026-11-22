@@ -12,7 +12,7 @@ import { JobPost } from '../../types';
 // The senior eight — ONE source (caregiver/signup/constants.ts). The modal shows the list(s) for the post's own kinds (2026-10-18).
 const CARE_TYPES: string[] = [...PRIMARY_SERVICES];
 
-const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const TIME_OPTIONS = [
   { value: 'morning',   label: 'Morning',   sub: '6am–12pm' },

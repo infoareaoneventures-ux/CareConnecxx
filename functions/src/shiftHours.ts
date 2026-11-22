@@ -1207,6 +1207,23 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
       }
     }
 
+    // The care provider hears too, once, on the first failure (they used to see only "Awaiting Payment" with no word
+    // that the payment had failed, or that it is being handled). A payout-side problem is ours, not the family's.
+    if (attempt === 1 && !terminal && shift.caregiverId) {
+      const family = shift.clientName ?? 'the family';
+      const day = fmtDay(shift.finalStartTime ?? shift.submittedStartTime);
+      const visit = `your visit${day ? ` on ${day}` : ''} with ${family}`;
+      const ours = classifyPaymentFailure(errorMessage) === 'payout';
+      await tellCaregiver(shift.caregiverId, 'shift_hours_payment_failed',
+        'Payment delayed',
+        ours ? `The payment for ${visit} is delayed on our side. We'll retry automatically.` : `${family}'s payment for ${visit} didn't go through. We've told them and will retry.`,
+        ours
+          ? `The payment for ${visit} is delayed on our side, not because of anything you did. I'll retry it automatically and text you as soon as it's on its way.`
+          : `${family}'s payment for ${visit} didn't go through. I've told them, and I'll retry automatically once it's fixed. You don't need to do anything.`,
+        { appointmentId },
+      ).catch((err) => console.warn('caregiver payment-failed notice failed (non-fatal)', err instanceof Error ? err.message : err));
+    }
+
     if (attempt >= MAX_PAYMENT_ATTEMPTS) {
       await notifyAdmins(
         'shift_hours_payment_failed_escalated',

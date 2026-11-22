@@ -3,12 +3,21 @@ import { ArrowLeft, Home, Search } from 'lucide-react';
 import { ViewType } from '../types';
 import { Button } from './ui/Button';
 import { SEO } from './SEO';
+import { useCareConnex } from '../context/CareConnexContext';
 
 interface NotFoundProps {
   onNavigate: (view: ViewType) => void;
 }
 
 export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
+  const { currentUser } = useCareConnex();
+  // Where a signed-in visitor's dashboard is; a visitor who isn't signed in gets the home page instead.
+  const dashboardPath =
+    currentUser?.userType === 'client' ? '/client/dashboard'
+    : currentUser?.userType === 'admin' ? '/admin'
+    : currentUser ? '/care-provider/dashboard'
+    : null;
+  const signedIn = dashboardPath !== null;
   return (
     <div className="min-h-screen bg-paper-50 flex items-center justify-center px-4">
       <SEO
@@ -19,7 +28,7 @@ export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
       
       <div className="max-w-md w-full text-center">
         <div className="mb-8">
-          <div className="text-9xl font-display font-semibold text-paper-200 mb-4">404</div>
+          <div className="text-9xl font-display font-semibold text-ink-400 mb-4">404</div>
           <h1 className="text-3xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-4">
             Page Not Found
           </h1>
@@ -30,15 +39,16 @@ export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
 
         <div className="space-y-4">
           <Button
-            onClick={() => onNavigate('landing')}
+            onClick={() => (dashboardPath ? window.location.assign(dashboardPath) : onNavigate('landing'))}
             fullWidth
             size="lg"
             className="flex items-center justify-center"
           >
             <Home className="w-5 h-5 mr-2" />
-            Go Back Home
+            {signedIn ? 'Go to my dashboard' : 'Go to the home page'}
           </Button>
 
+          {!signedIn && (
           <Button
             variant="secondary"
             onClick={() => onNavigate('client-signup')}
@@ -47,8 +57,9 @@ export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
             className="flex items-center justify-center"
           >
             <Search className="w-5 h-5 mr-2" />
-            Find a Care Provider
+            Find a care provider
           </Button>
+          )}
 
           <button
             onClick={() => window.history.back()}
@@ -59,17 +70,6 @@ export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
           </button>
         </div>
 
-        <div className="mt-12 pt-8 border-t hairline">
-          <p className="text-sm text-ink-600">
-            Need help?{' '}
-            <button
-              onClick={() => onNavigate('landing')}
-              className="text-ink-600 hover:text-ink-900 font-medium underline"
-            >
-              Go to Dashboard
-            </button>
-          </p>
-        </div>
       </div>
     </div>
   );

@@ -36,7 +36,7 @@ html {
 }
 
 @theme {
-  --font-family-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
 
   /* Landing — warm paper surfaces (Poke-style calm cream) */
   --color-paper-50: #FCFAF6;
@@ -407,4 +407,10 @@ body {
 }
 .btn-depth-secondary:active {
   transform: scale(0.98);
+}
+
+/* A visible keyboard focus ring everywhere (it was barely visible). Mouse clicks don't show it. */
+:focus-visible {
+  outline: 2px solid var(--color-ink-900);
+  outline-offset: 2px;
 }

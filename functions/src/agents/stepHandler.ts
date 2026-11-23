@@ -69,6 +69,18 @@ export const TRIVIAL_CONFIRM_WORDS = new Set([
   "GO AHEAD", "DO IT", "GO", "PROCEED", "APPROVED",
 ]);
 
+// A bare "no" / "skip" to a question that itself says "just say no" IS the answer (no note, no extra) — the system
+// offered the word, so this is the strict binary protocol, not intent parsing. It must never reach the back-out
+// classifier: live 2026-11-23 a bare "No" to "Want to include a note…? …or just say no." was read as STOP and the whole
+// booking request was dropped ("no booking request went through").
+const BARE_DECLINE_WORDS = new Set([
+  "NO", "N", "NOPE", "NAH", "NONE", "SKIP", "NOTHING", "NO THANKS", "NO THANK YOU", "NOT NEEDED", "NO NEED", "NO NOTE", "NO NOTES",
+]);
+export function isBareDecline(text: string): boolean {
+  const norm = text.trim().toUpperCase().replace(/[.!?,]+$/g, "").replace(/\s+/g, " ");
+  return BARE_DECLINE_WORDS.has(norm);
+}
+
 export async function isBackOutRequest(text: string, currentQuestion: string): Promise<boolean> {
   // A 3-way label, not YES/NO: asked "is this a back-out?" the small model flagged "yes send it" as one (live 2026-11-18: a
   // family's "yes send it" to a correction recap was read as a cancel and the correction was dropped). With an explicit

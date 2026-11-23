@@ -869,12 +869,12 @@ const ServicesStep: React.FC<{
           {list.services.map(service => {
             const isOn = selectedServices.includes(service);
             return (
-              <button key={`${list.kind}-${service}`} onClick={() => toggleService(service)}
+              <button key={`${list.kind}-${service}`} onClick={() => toggleService(service)} aria-pressed={isOn}
                 className={`w-full text-left px-4 py-2.5 rounded-xl border-2 transition-all flex items-center justify-between ${
                   isOn ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'
                 }`}>
                 <span className={`text-sm font-medium ${isOn ? 'text-indigo-700' : 'text-slate-600'}`}>
-                  {isOn && '✓ '}{serviceLabel(service)}
+                  {isOn && <span aria-hidden="true">✓ </span>}{serviceLabel(service)}
                 </span>
                 <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
                   isOn ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300'

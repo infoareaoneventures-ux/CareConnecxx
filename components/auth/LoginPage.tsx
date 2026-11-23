@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { friendlyAuthMessage } from '../../utils/authMessages';
 import { auth, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../../lib/firebase';
-import { reportAuthError, withAuthCode } from '../../utils/authErrorDetail';
 import { dbService } from '../../services/api';
 import type firebase from 'firebase/compat/app';
 import { TaskPageBar } from './TaskPageBar';
@@ -17,29 +17,6 @@ function formatDisplay(val: string): string {
   if (d.length <= 3) return d;
   if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
-}
-
-// Raw Firebase codes leak implementation detail ("auth/too-many-requests");
-// map the ones users actually hit to plain language.
-function friendlyAuthError(err: any, where: string): string {
-  const code = reportAuthError(where, err);
-  switch (err?.code) {
-    case 'auth/too-many-requests':        return 'Too many attempts — wait a few minutes and try again.';
-    case 'auth/invalid-phone-number':     return "That phone number doesn't look right. Check it and try again.";
-    case 'auth/network-request-failed':   return 'Network hiccup — check your connection and try again.';
-    case 'auth/code-expired':             return 'That code expired. Tap "Resend code" to get a new one.';
-    case 'auth/invalid-verification-code': return 'Incorrect code. Please try again.';
-    case 'auth/quota-exceeded':           return "We can't send more codes right now. Please try again in a little while, or call us.";
-    case 'auth/captcha-check-failed':
-    case 'auth/missing-recaptcha-token':
-    case 'auth/web-storage-unsupported':  return "We couldn't confirm you're not a robot. Reload the page and try again.";
-    case 'auth/user-disabled':            return 'This account is turned off. Please call us and we will sort it out.';
-    case 'auth/operation-not-allowed':
-    case 'auth/app-not-authorized':       return "Signing in isn't available on this device right now. Please call us.";
-    case 'auth/session-expired':          return 'That code expired. Tap "Resend code" to get a new one.';
-    case 'auth/missing-phone-number':     return 'Enter your mobile number to get a code.';
-    default: return withAuthCode('We couldn\'t sign you in. Try again, or call us if it keeps happening.', code);
-  }
 }
 
 export const AuthLoginPage: React.FC = () => {
@@ -88,7 +65,7 @@ export const AuthLoginPage: React.FC = () => {
       setResendCountdown(60);
       otpRefs.current[0]?.focus();
     } catch (err: any) {
-      setError(friendlyAuthError(err, 'login.sendCode'));
+      setError(friendlyAuthMessage(err, 'login.sendCode'));
     } finally {
       // Fresh verifier next time either way — the token is single-use.
       clearRecaptchaVerifier(RECAPTCHA_CONTAINER);
@@ -129,7 +106,7 @@ export const AuthLoginPage: React.FC = () => {
       }
       navigate(dest, { replace: true });
     } catch (err: any) {
-      setError(friendlyAuthError(err, 'login.confirmOtp'));
+      setError(friendlyAuthMessage(err, 'login.confirmOtp'));
       setOtp(['', '', '', '', '', '']);
       otpRefs.current[0]?.focus();
     } finally {
@@ -205,7 +182,7 @@ export const AuthLoginPage: React.FC = () => {
               <p className="text-ink-600 text-sm">Sent to {countryCode} {phone}</p>
             </div>
 
-            <div className="flex gap-2 justify-center">
+            <div className="flex gap-2 justify-center" role="group" aria-label="6-digit code">
               {otp.map((digit, idx) => (
                 <input
                   key={idx}
@@ -217,6 +194,19 @@ export const AuthLoginPage: React.FC = () => {
                   onChange={e => handleOtpChange(idx, e.target.value)}
                   onKeyDown={e => handleOtpKeyDown(idx, e)}
                   autoFocus={idx === 0}
+                  aria-label={`Code digit ${idx + 1} of 6`}
+                  autoComplete={idx === 0 ? 'one-time-code' : 'off'}
+                  onPaste={e => {
+                    // A pasted (or autofilled) code fills all six boxes instead of one digit.
+                    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                    if (pasted.length < 2) return;
+                    e.preventDefault();
+                    const next = ['', '', '', '', '', ''];
+                    pasted.split('').forEach((d, i) => { next[i] = d; });
+                    setOtp(next);
+                    otpRefs.current[Math.min(pasted.length, 5)]?.focus();
+                    if (pasted.length === 6) confirmOtp(pasted);
+                  }}
                   className="w-12 h-14 text-center text-xl font-semibold bg-white border hairline rounded-xl text-ink-900 focus:outline-none focus:border-ink-400"
                 />
               ))}

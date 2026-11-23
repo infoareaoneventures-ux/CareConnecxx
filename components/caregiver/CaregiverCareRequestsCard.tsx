@@ -95,7 +95,7 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
                 return (
                   <div key={a.id} className="border border-slate-200 rounded-xl p-3">
                     <p className="text-sm font-bold text-slate-900 leading-snug mb-1.5">{a.jobTitle || 'Care Job'}</p>
-                    {appliedDate && <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1"><Calendar className="w-3 h-3 flex-shrink-0 text-slate-400" /><span>{appliedDate}</span></div>}
+                    {appliedDate && <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1"><Calendar className="w-3 h-3 flex-shrink-0 text-slate-400" /><span>Applied {appliedDate}</span></div>}
                     {location && <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1.5"><MapPin className="w-3 h-3 flex-shrink-0 text-slate-400" /><span className="truncate">{location}</span></div>}
                     {/* Flexible jobs snapshot jobRate: 0 — never render that as "$0/hr" */}
                     {rate != null && <p className="text-sm font-bold text-primary-600 mb-1.5">{rate > 0 ? `$${rate}/hr` : 'Flexible'}</p>}

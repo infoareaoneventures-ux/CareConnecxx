@@ -9,6 +9,7 @@ import { useOnboardingSession } from '../../../hooks/useOnboardingSession';
 import { QRHandoff } from './QRHandoff';
 import { MobileHandoff } from './MobileHandoff';
 import { sanitizeName } from '../../../utils/sanitize';
+import { friendlyAuthMessage } from '../../../utils/authMessages';
 import { reportAuthError, withAuthCode } from '../../../utils/authErrorDetail';
 import { TaskPageBar } from '../TaskPageBar';
 import { Footer } from '../../landing/Footer';
@@ -120,12 +121,7 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       setResendIn(RESEND_COOLDOWN_SECONDS);
       if (resending) setCode('');
     } catch (err: any) {
-      const code = reportAuthError('signup.sendCode', err);
-      const msg = err?.code === 'auth/invalid-phone-number'
-        ? "That number doesn't look right — double-check the area code."
-        : err?.code === 'auth/too-many-requests'
-        ? "Too many tries. Wait a few minutes and try again."
-        : withAuthCode("We couldn't send the code. Please try again.", code);
+      const msg = friendlyAuthMessage(err, 'signup.sendCode', "We couldn't send the code. Please try again.");
       setError(msg);
       // Reset recaptcha so a retry doesn't fail with "captcha already solved"
       clearRecaptchaVerifier(RECAPTCHA_CONTAINER);

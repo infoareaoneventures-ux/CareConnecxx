@@ -42,9 +42,9 @@ import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay, parseScheduledTimeMs, formatInterviewTimeShort } from "../utils/scheduledTime";
 import { logAudit } from "../observability/auditLog";
-import { normalizeCareNeeds } from "../utils/careNeedCategories";
-import { normDay } from "../scheduled/shiftGenerator";
-import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
+import { normalizeCareNeeds, CANONICAL_CARE_CATEGORIES } from "../utils/careNeedCategories";
+import { normDay, nextOccurrenceOnOrAfter } from "../scheduled/shiftGenerator";
+import { isBackOutRequest, isBareDecline, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
 import {
   bookingTimeToMinutes, resolveInterviewLinkage, resolveBookingCaregiverName,
   resolveCareLocation, formatCareLocationOptions, listCareLocationOptions, resolveRecipientAttribution,
@@ -1306,13 +1306,14 @@ async function handleBkAskMessage(
 ): Promise<void> {
   const data = await getFlowData(phone);
   const QUESTION = MESSAGE_QUESTION(data.caregiverName);
-  if (await isBackOutRequest(text, QUESTION)) return handleBookingBackOut(phone, chatId, session);
-  if (await isQuestionOrOther(text, QUESTION)) {
+  const declined = isBareDecline(text); // the question says "just say no": that is the answer, never a back-out
+  if (!declined && await isBackOutRequest(text, QUESTION)) return handleBookingBackOut(phone, chatId, session);
+  if (!declined && await isQuestionOrOther(text, QUESTION)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, QUESTION);
     return;
   }
-  const decision = await parseWithClaude(
+  const decision = declined ? "SKIP" : await parseWithClaude(
     'Is the family declining/skipping a note ("no", "skip", "nothing", "nope", "no thanks", "not needed"), or is ' +
     "this message itself the note they want sent to the care provider? Reply with exactly SKIP or NOTE.",
     text
@@ -1456,6 +1457,14 @@ function formatRecipientLifestyle(lifestyle: unknown): string {
   return parts.join("; ");
 }
 
+// The date to SHOW as the start: the first day the visits actually happen. A start date that is not one of the booked
+// weekdays (live 2026-11-23: "Tuesday 11:00 AM–1:00 PM, starting November 23" — a Monday) reads as a mistake, so the
+// recap names the first booked day on or after it. The stored start date is unchanged (the shift generator already does this).
+export function firstVisitDate(startDate: string, days: string[]): string {
+  const dates = days.map((d) => nextOccurrenceOnOrAfter(startDate, d)).sort();
+  return dates.length ? dates[0] : startDate;
+}
+
 export function buildBookingRecap(data: BookingFlowData): string {
   const spanLine = data.ongoing ? "(ongoing)" : data.scheduleEndDate ? `(through ${formatDateForDisplay(data.scheduleEndDate)})` : "";
   const noSchedule = !(data.days ?? []).length && !Object.keys(data.dayTimes ?? {}).length;
@@ -1465,7 +1474,7 @@ export function buildBookingRecap(data: BookingFlowData): string {
       const t = data.dayTimes?.[d];
       return t ? `${d} ${formatTimeForDisplay(t.start)}–${formatTimeForDisplay(t.end)}` : d;
     }).join(", ")}` +
-    `${data.startDate ? `, starting ${formatDateForDisplay(data.startDate)}` : ""} ${spanLine}`;
+    `${data.startDate ? `, starting ${formatDateForDisplay(firstVisitDate(data.startDate, data.days ?? []))}` : ""} ${spanLine}`;
 
   const recipientLines: string[] = [];
   if (data.careRecipients?.length) {
@@ -1571,6 +1580,10 @@ async function classifyBkConfirmReply(text: string): Promise<any | null> {
 // correction ("actually make it $28/hr") is classified here as its own
 // action, distinct from YES/NO/a genuine question, so it never gets
 // mis-routed into the mid-flow question answerer or silently ignored.
+const BK_CONFIRM_HELP =
+  "I'm not sure what to change there. Say yes to send it, or tell me what to change: the rate, the schedule, the address, who it's for, " +
+  "the care needs (for example \"add light housekeeping\"), or the note.";
+
 async function handleBkConfirm(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
@@ -1700,6 +1713,18 @@ async function handleBkConfirm(
     }
     const addNeeds    = addRaw.length ? normalizeCareNeeds(addRaw) : [];
     const removeNeeds = removeRaw.length ? normalizeCareNeeds(removeRaw) : [];
+    // Something was asked for but none of it matched a care need: say so and list what can be added. Re-showing the same
+    // recap unchanged read as "nothing happened" (live 2026-11-23: "add light house keeping" got the identical recap back).
+    if (!addNeeds.length && !removeNeeds.length) {
+      const have = new Set<string>(recipients.length ? (recipients[targetIndex]?.careNeeds as string[] | undefined) ?? [] : data.topLevelCareNeeds ?? []);
+      const options = CANONICAL_CARE_CATEGORIES.slice(0, 8).filter((c) => !have.has(c));
+      await sendMessage(chatId, `I couldn't match that to a care need. ${options.length ? `You can add: ${options.join(", ")}. ` : ""}Which would you like to add or remove?`);
+      return;
+    }
+    const careChange = [
+      addNeeds.length ? `Added ${addNeeds.join(", ")}.` : "",
+      removeNeeds.length ? `Removed ${removeNeeds.join(", ")}.` : "",
+    ].filter(Boolean).join(" ");
 
     // Single-household fallback shape (no per-recipient careRecipients array
     // at all) — edit the flat topLevelCareNeeds list directly.
@@ -1709,6 +1734,7 @@ async function handleBkConfirm(
       for (const n of removeNeeds) merged.delete(n);
       await mergeFlowData(phone, { topLevelCareNeeds: Array.from(merged) });
       const updated = await getFlowData(phone);
+      await sendMessage(chatId, careChange);
       await sendMessage(chatId, buildBookingRecap(updated));
       return;
     }
@@ -1729,6 +1755,7 @@ async function handleBkConfirm(
     ));
     await mergeFlowData(phone, { careRecipients: updatedRecipients, topLevelCareNeeds });
     const updated = await getFlowData(phone);
+    await sendMessage(chatId, careChange);
     await sendMessage(chatId, buildBookingRecap(updated));
     return;
   }
@@ -1853,7 +1880,9 @@ async function handleBkConfirm(
       await sendMessage(chatId, CONFIRM_QUESTION_FALLBACK);
       return;
     }
-    await sendMessage(chatId, buildBookingRecap(data));
+    // Nothing matched: say what can be changed instead of silently repeating the whole recap (live 2026-11-23: "I want to add
+    // additional care. What are my other options", "Can you change care needs" each got the same recap back, unchanged).
+    await sendMessage(chatId, BK_CONFIRM_HELP);
     return;
   }
 

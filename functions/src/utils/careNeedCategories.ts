@@ -93,8 +93,11 @@ export function toCanonicalCareCategory(raw: string): CanonicalCareCategory | nu
   const exact = CANONICAL_CARE_CATEGORIES.find((c) => c.toLowerCase() === lower);
   if (exact) return exact;
 
+  // "light house keeping" / "house-keeping" is the same thing as "housekeeping": also compare with spaces and hyphens removed,
+  // but only for the longer keywords (a short one like "nap" could appear across a word break by accident).
+  const squashed = lower.replace(/[\s\-_]+/g, "");
   for (const { keywords, category } of SYNONYM_MAP) {
-    if (keywords.some((kw) => lower.includes(kw))) return category;
+    if (keywords.some((kw) => lower.includes(kw) || (kw.length >= 6 && squashed.includes(kw.replace(/[\s\-_]+/g, ""))))) return category;
   }
   return null;
 }

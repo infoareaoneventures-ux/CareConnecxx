@@ -40,7 +40,7 @@ import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
-import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay, parseScheduledTimeMs, formatInterviewTimeShort } from "../utils/scheduledTime";
+import { todayForModel, businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay, parseScheduledTimeMs, formatInterviewTimeShort } from "../utils/scheduledTime";
 import { logAudit } from "../observability/auditLog";
 import { normalizeCareNeeds, CANONICAL_CARE_CATEGORIES } from "../utils/careNeedCategories";
 import { normDay, nextOccurrenceOnOrAfter } from "../scheduled/shiftGenerator";
@@ -903,7 +903,7 @@ async function advanceToDays(phone: string, chatId: string, data: BookingFlowDat
 // only that detail.
 
 const EARLY_SCHEDULE_PROMPT = (today: string) =>
-  `Today is ${today}. Also include, ONLY if this message states them: "startDate": "YYYY-MM-DD" (resolved to an ` +
+  `Today is ${todayForModel()}. Also include, ONLY if this message states them: "startDate": "YYYY-MM-DD" (resolved to an ` +
   'absolute date from today) and "time": {"start":"HH:MM","end":"HH:MM"} in 24-hour format (one time for all days). ' +
   "Use null for anything not stated.";
 
@@ -1021,9 +1021,8 @@ async function handleBkAskStartDate(
     return;
   }
 
-  const today = businessTodayStr();
   const raw = await parseWithClaude(
-    `Today is ${today}. Extract the date the family wants this to start, resolved to an absolute date relative ` +
+    `Today is ${todayForModel()}. Extract the date the family wants this to start, resolved to an absolute date relative ` +
     'to today. Return ONLY a JSON object: {"date": "YYYY-MM-DD" or null, "time": {"start":"HH:MM","end":"HH:MM"} or null}. ' +
     '"time" ONLY if the message also states the hours (24-hour, one time for all days). Never invent a date the message ' +
     "doesn't state or clearly imply.",
@@ -1122,9 +1121,8 @@ async function handleBkAskOngoing(
     await sendMessage(chatId, ONGOING_QUESTION);
     return;
   }
-  const today = businessTodayStr();
   const raw = await parseWithClaude(
-    `Today is ${today}. This booking starts ${data.startDate ?? "an unspecified date"}. Does the family want this ` +
+    `Today is ${todayForModel()}. This booking starts ${data.startDate ?? "an unspecified date"}. Does the family want this ` +
     "arrangement to be ongoing (no end date), or does it have a specific end date? Return ONLY a JSON object: " +
     '{"ongoing": true or false, "endDate": "YYYY-MM-DD" or null — required when ongoing is false, resolved ' +
     'relative to today}. A reply like "just once", "just this one time", or "one-time only" means NOT ongoing ' +
@@ -1628,9 +1626,8 @@ async function handleBkConfirm(
   if (action === "edit_schedule") {
     // Change only what the message states (a new start date, new hours, new
     // days); anything not stated stays. Nothing stated → redo the schedule.
-    const today = businessTodayStr();
     const raw = await parseWithClaude(
-      `Today is ${today}. The family wants to change their booking's schedule. Return ONLY a JSON object: ` +
+      `Today is ${todayForModel()}. The family wants to change their booking's schedule. Return ONLY a JSON object: ` +
       '{"days": full weekday names or null, "startDate": "YYYY-MM-DD" or null, "time": {"start":"HH:MM","end":"HH:MM"} or null, ' +
       '"ongoing": true | false | null, "endDate": "YYYY-MM-DD" or null}. Fill ONLY what this message states; ' +
       '"time" is one time for all days (24-hour). Never invent anything.',

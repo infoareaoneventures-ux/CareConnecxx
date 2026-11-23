@@ -32,7 +32,7 @@ import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput } from "../safety/outputGuard";
-import { businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay } from "../utils/scheduledTime";
+import { todayForModel, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay } from "../utils/scheduledTime";
 import { isBackOutRequest, isBareDecline, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
 import {
   resolveCaregiverForInterview, requestVideoInterview, VideoInterviewRequestError,
@@ -278,7 +278,7 @@ function nextInterviewQuestion(data: InterviewFlowData): { step: string; questio
 async function readStatedInterviewTime(text: string): Promise<{ date?: string; time?: string }> {
   const today = businessTodayStr();
   const raw = await parseWithClaude(
-    `Today is ${today}. Extract the interview day and time the family stated, if any. Resolve the day relative to today. ` +
+    `Today is ${todayForModel()}. Extract the interview day and time the family stated, if any. Resolve the day relative to today. ` +
     'Return ONLY a JSON object: {"date": "YYYY-MM-DD" or null, "time": "HH:MM" in 24-hour format or null}. ' +
     'Never invent a day or time the message does not state.',
     text,
@@ -370,7 +370,7 @@ async function handleIvAskDate(
   }
   const today = businessTodayStr();
   const raw = await parseWithClaude(
-    `Today is ${today}. Extract the date the family wants for this interview, resolved relative to today. ` +
+    `Today is ${todayForModel()}. Extract the date the family wants for this interview, resolved relative to today. ` +
     'Return ONLY a JSON object: {"date": "YYYY-MM-DD" or null}. Never invent a date the message doesn\'t support.',
     text
   );

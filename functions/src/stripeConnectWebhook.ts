@@ -211,11 +211,11 @@ export const stripeConnectWebhook = functions
                         const paidBody = `Your ${isInstant ? "instant" : ""} payout of $${amountDollars} has been deposited to your bank account.`.replace("  ", " ");
                         // Same words over text — the Payouts page shows it as a bell; the caregiver hears it as it happens (2026-10-01).
                         await payoutNotice(caregiverId, event.id, payout.id, "payout_paid", "Payout Arrived", paidBody,
-                            `Evia: ${paidBody} It's under Payout history on your Payments page.`);
+                            `${paidBody} It's under Payout history on your Payments page.`);
                     } else {
                         const failedBody = `Your payout of $${amountDollars} could not be deposited. Please check your bank account details.`;
                         await payoutNotice(caregiverId, event.id, payout.id, "payout_failed", "Payout Failed", failedBody,
-                            `Evia: ${failedBody} Say setup and I'll send your Stripe link to update them.`);
+                            `${failedBody} Say setup and I'll send your Stripe link to update them.`);
                     }
                 }
             } else {

@@ -3745,6 +3745,8 @@ export async function runQaAgent(params: {
         handedOff = true;
         metrics.humanHandoffTriggered = true;
         console.warn("qaAgent: low-confidence handoff to human", {
+          toolObservationChars: toolObservations.length,
+          contextChars: systemPrompt.length,
           userId,
           turnHash: turnTextHash,
           draftHash,
@@ -3812,6 +3814,10 @@ export async function runQaAgent(params: {
         console.warn("qaAgent: unbacked non-risky claim — re-ask sent, no hold", {
           userId, turnHash: turnTextHash, draftHash,
           claimCategories: metrics.groundingClaimCategories,
+          // Sizes only (no content): lets us see when the checker was handed a sliced-off evidence block.
+          toolNames: metrics.toolNames,
+          toolObservationChars: toolObservations.length,
+          contextChars: systemPrompt.length,
         });
         db.collection("agent_uncertainty_log").add({
           userId,
@@ -3944,7 +3950,9 @@ export async function runQaAgent(params: {
               "identical to one you JUST sent — that reads as a broken record. Rewrite it so it keeps the same " +
               "intent but uses different wording AND moves the conversation forward: if you already asked this, " +
               "either accept what the person likely meant or offer a concrete next step instead of re-asking the " +
-              "same way. Keep it short, warm, no markdown, no greeting. Output only the rewritten message.\n\n" +
+              "same way. If the message is an ANSWER to the person's question (facts, times, counts, names), keep every fact " +
+              "exactly as it is and only change the wording — never add a new offer, a new question, or any fact that is not " +
+              "already in the message. Keep it short, warm, no markdown, no greeting. Output only the rewritten message.\n\n" +
               `MESSAGE YOU JUST SENT: ${(selfRepeat.matchedPrior ?? "").slice(0, 400)}`,
             reply,
             { maxTokens: 200, signal: varyController.signal },
@@ -3953,7 +3961,11 @@ export async function runQaAgent(params: {
           const trimmed = varied.trim();
           // Only accept the rewrite if it's non-empty AND not itself a repeat of
           // the prior message — otherwise keep the original (fail-open).
-          if (trimmed && !detectAgentSelfRepeat(trimmed, history).repeated) {
+          // A rewrite must not invent: if the original asked nothing, the rewrite may not start asking (live 2026-11-23: a
+          // repeated answer about completed tasks came back with "Next, I can help coordinate the remaining tasks; which
+          // one would you like to tackle next?" — an offer and a question nobody made).
+          const addsQuestion = !reply.includes("?") && trimmed.includes("?");
+          if (trimmed && !addsQuestion && !detectAgentSelfRepeat(trimmed, history).repeated) {
             reply = trimmed;
             metrics.agentSelfRepeatRewritten = true;
           }

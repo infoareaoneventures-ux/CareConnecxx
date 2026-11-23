@@ -208,6 +208,15 @@ export function weekdayForDate(value: string): string | null {
 
 // "Wednesday, September 16, 2026" — formatDateForDisplay with the weekday in
 // front, for any family/caregiver-facing mention of a specific visit date.
+// "Monday, 2026-11-23" — today for a model prompt. A bare ISO date makes the model work out the weekday itself, and it often
+// gets it wrong (live 2026-11-23: "Wednesday" for an interview resolved to a PAST Wednesday and was refused as "not sure I
+// followed"). Naming the weekday removes the guess.
+export function todayForModel(now: Date = new Date(), timeZone: string = DEFAULT_TZ): string {
+  const iso = businessTodayStr(timeZone, now);
+  const weekday = weekdayForDate(iso);
+  return weekday ? `${weekday}, ${iso}` : iso;
+}
+
 export function formatDateWithWeekday(value: string): string {
   const weekday = weekdayForDate(value);
   return weekday ? `${weekday}, ${formatDateForDisplay(value)}` : formatDateForDisplay(value);

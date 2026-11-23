@@ -28,6 +28,7 @@ import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
@@ -340,7 +341,7 @@ async function handleIvAskJob(
   const parsed = parseJsonLoose(raw, "handleIvAskJob");
   const idx = typeof parsed?.index === "number" ? parsed.index : null;
   if (idx === null || idx < 1 || idx > options.length + 1) {
-    await sendMessage(chatId, `${IV_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, IV_DIDNT_CATCH, question);
     return;
   }
   if (idx <= options.length) {
@@ -377,7 +378,7 @@ async function handleIvAskDate(
   const parsed = parseJsonLoose(raw, "handleIvAskDate");
   const date = typeof parsed?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) ? parsed.date : null;
   if (!date || date < today) {
-    await sendMessage(chatId, `${IV_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, IV_DIDNT_CATCH, question);
     return;
   }
   await mergeFlowData(phone, { date });
@@ -410,7 +411,7 @@ async function handleIvAskTime(
   const parsed = parseJsonLoose(raw, "handleIvAskTime");
   const time = typeof parsed?.time === "string" && /^\d{2}:\d{2}$/.test(parsed.time) ? parsed.time : null;
   if (!time) {
-    await sendMessage(chatId, `${IV_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, IV_DIDNT_CATCH, question);
     return;
   }
   await mergeFlowData(phone, { time });
@@ -449,7 +450,7 @@ async function handleIvAskNotes(
   }
   const trimmed = text.trim().slice(0, 2000);
   if (!trimmed) {
-    await sendMessage(chatId, `${IV_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, IV_DIDNT_CATCH, question);
     return;
   }
   await mergeFlowData(phone, { notes: trimmed });

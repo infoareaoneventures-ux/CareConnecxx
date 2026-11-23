@@ -24,6 +24,7 @@
 // VISIT n (a completed visit's detail), LOG n (log hours for a missed visit).
 import * as admin from "firebase-admin";
 import { sendMessage, type AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { quickComplete } from "../utils/openaiClient";
 import { isBackOutRequest, isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 // Every mid-flow question here is a CAREGIVER's (2026-10-11): the shared answerer is briefed with what is on their screen.
@@ -295,7 +296,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     if (await isBackOutRequest(text, q)) return cancelled();
     if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: VISIT_FACTS(data) })); return; }
     const w = await parseWhen(text, data.startTime, data.date);
-    if (!w) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
+    if (!w) { await reaskOnce(chatId, DIDNT_CATCH, q); return; }
     return next({ startDate: w.date, startAt: w.time }, "lh_end", END_Q(data));
   }
   if (step === "lh_end") {
@@ -306,7 +307,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     const crosses = (data.endTime || "") < (data.startTime || "");
     const defaultEndDate = crosses ? addDays(data.startDate ?? data.date, 1) : (data.startDate ?? data.date);
     const w = await parseWhen(text, data.endTime, defaultEndDate);
-    if (!w) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
+    if (!w) { await reaskOnce(chatId, DIDNT_CATCH, q); return; }
     // Like the modal: the end date is the start date (next day when the scheduled visit crosses midnight) unless they name one; an earlier clock is refused, not guessed.
     const endDate = w.date;
     if (parseScheduledTimeMs(`${endDate}T${w.time}:00`) <= parseScheduledTimeMs(`${data.startDate}T${data.startAt}:00`)) {
@@ -347,7 +348,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
         await sendMessage(chatId, await answerMidFlow(text, q, { facts: `${screen === q ? "" : `The task list on their screen:\n${screen}\n\n`}${VISIT_FACTS(data)}` }));
         return;
       }
-      await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return;
+      await reaskOnce(chatId, DIDNT_CATCH, q); return;
     }
     return next({ tasks: keys }, "lh_note", NOTE_Q);
   }
@@ -381,7 +382,7 @@ export async function handleLogHoursFlowStep(phone: string, chatId: string, text
     if (action === "cancel") return cancelled();
     if (action === "other") {
       if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: VISIT_FACTS(data) }));
-      else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
+      else await reaskOnce(chatId, DIDNT_CATCH, q);
       return;
     }
     const startMs = parseScheduledTimeMs(`${data.startDate}T${data.startAt}:00`);

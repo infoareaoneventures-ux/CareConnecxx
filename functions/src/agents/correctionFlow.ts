@@ -23,6 +23,7 @@ import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
@@ -471,7 +472,7 @@ async function handlePick(phone: string, chatId: string, text: string, session: 
   );
   const k = parseInt(raw.trim(), 10);
   if (k >= 1 && k <= data.rows.length) return selectRow(phone, chatId, data.rows[k - 1]);
-  await sendMessage(chatId, `${CF_DIDNT_CATCH} ${question}`);
+  await reaskOnce(chatId, CF_DIDNT_CATCH, question);
 }
 
 async function handleAskStart(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -488,7 +489,7 @@ async function handleAskStart(phone: string, chatId: string, text: string, sessi
     await sendMessage(chatId, question);
     return;
   }
-  await sendMessage(chatId, `${CF_DIDNT_CATCH} ${question}`);
+  await reaskOnce(chatId, CF_DIDNT_CATCH, question);
 }
 
 async function askEnd(phone: string, chatId: string, r: CorrectionRow, lead: string): Promise<void> {
@@ -518,7 +519,7 @@ async function handleAskEnd(phone: string, chatId: string, text: string, session
     await sendMessage(chatId, question);
     return;
   }
-  await sendMessage(chatId, `${CF_DIDNT_CATCH} ${question}`);
+  await reaskOnce(chatId, CF_DIDNT_CATCH, question);
 }
 
 async function handleAskCharges(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
@@ -545,7 +546,7 @@ async function handleAskCharges(phone: string, chatId: string, text: string, ses
     await sendMessage(chatId, `${await answerQuestionMidFlow(text)}\n\n${question}`);
     return;
   }
-  await sendMessage(chatId, `${CF_DIDNT_CATCH} ${question}`);
+  await reaskOnce(chatId, CF_DIDNT_CATCH, question);
 }
 
 async function handleAskReason(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {

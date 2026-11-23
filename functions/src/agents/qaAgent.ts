@@ -69,7 +69,6 @@ import {
   parseGroundingVerdictTyped,
   isRiskTierGroundingEnabled,
   neutralCopyForClaims,
-  GROUNDING_REASK_COPY,
   resolveGroundingGateAction,
   type GroundingVerdict,
   shouldHandOffToHuman,
@@ -78,6 +77,7 @@ import {
   groundingOverrideForTurn,
   neutralizeHandoffTurns,
 } from "./humanHandoff";
+import { repairUnsupportedDraft } from "./groundingRepair";
 import {
   classifyGroundingClaims,
   claimCategories,
@@ -811,7 +811,7 @@ export function buildClientSystemPrompt(
     `Never invent a city, neighborhood, address, or zip code. If you need a location, use what's in the cached context above. If it isn't there, ASK — never substitute a plausible-sounding city (e.g. don't say "Santa Clara" when the context shows "Gilroy", and don't pick a city out of thin air just because one is geographically nearby).`,
     `Never invent a person's name, a care provider, or a relationship. If a name or relationship isn't in the sources above, say you don't have it and ASK — never guess a name or attach a made-up person to this family's care.`,
     `Never compute a weekday yourself from a date. The context above and tool results give each visit's weekday (dayOfWeek / "Wednesday, September 16, 2026") — repeat that exactly; if no weekday is given, state only the date.`,
-    `Never say a visit exists, doesn't exist, is on a certain day/time, or has a certain status from memory, earlier turns, or the cached snapshot — the family can change bookings on the website at any moment. Call get_upcoming_appointments in THIS turn first and answer only from that result, matching each visit by its id and its exact date. Never claim you cancelled, skipped, moved, or sent anything unless a tool in this turn returned success for it.`,
+    `Never say a visit exists, doesn't exist, is on a certain day/time, or has a certain status from memory, earlier turns, or the cached snapshot — the family can change bookings on the website at any moment. Call get_upcoming_appointments in THIS turn first and answer only from that result, matching each visit by its id and its exact date. EXCEPTION — a question about the visit happening RIGHT NOW ("do I have a visit/shift in progress", "when does it end", "is <care provider> there", "how many tasks are done / what's left", "notes so far"): call get_current_visit instead and answer from its "sentence" field, adding no time, count or name it does not contain. Never claim you cancelled, skipped, moved, or sent anything unless a tool in this turn returned success for it.`,
     `INTERVIEWS ARE NOT VISITS. An interview is the video call a family has with a care provider BEFORE booking; a visit (shift) is paid care at the home. When the family says "reschedule / move / change the interview", never use the visit tools (start_reschedule_flow, get_upcoming_appointments): call list_interviews, then reschedule_interview with the new date and time (ask for the day and time first if they have not given them). If they correct you ("not a visit, the interview"), switch tools at once. Never say an interview was scheduled, moved or confirmed unless schedule_interview or reschedule_interview returned success in this turn, and never ask for contact details the family already has on file.`,
     `An empty or null tool result means none exist — say so plainly ("nothing on file"), never invent entries.`,
     `If a tool result contains "_toolError": true, tell the user you can't access that right now and offer to try again.`,
@@ -3831,7 +3831,17 @@ export async function runQaAgent(params: {
           detectedAt:  new Date().toISOString(),
           groundingReask: true,
         }).catch(() => {});
-        reply = GROUNDING_REASK_COPY;
+        // Repair, don't just block: rewrite the draft ONCE from the evidence (keep what is backed, say what couldn't be
+        // found), re-check the rewrite, and only fall back to the neutral line when it is still not backed.
+        const repairController = new AbortController();
+        const repairTimer = setTimeout(() => repairController.abort(), 10_000);
+        const repaired = await repairUnsupportedDraft(
+          { draft: reply, userText: text, systemContext: systemPrompt, history, toolObservations },
+          { complete: (system, user, o) => quickComplete(system, user, { maxTokens: o.maxTokens, signal: repairController.signal }) },
+        ).finally(() => clearTimeout(repairTimer));
+        metrics.groundingRepair = repaired.outcome;
+        console.warn("qaAgent: unbacked draft repaired?", { userId, turnHash: turnTextHash, outcome: repaired.outcome });
+        reply = repaired.reply;
       } else if (gateAction === "neutralize") {
         // High-risk claim + indeterminate verification → FAIL CLOSED (R19).
         // Deterministic category-specific neutral copy: honest, invents

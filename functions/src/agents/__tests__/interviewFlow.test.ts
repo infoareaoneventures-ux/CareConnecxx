@@ -379,3 +379,55 @@ describe("buildInterviewRecap", () => {
     expect(recap).toContain("Related job post: No specific post");
   });
 });
+
+// ── Transcript replays (live 2026-11-23): the conversations that went wrong, run through the real step code ─────────────────
+describe("replay — never the same question twice, and the model is told today's weekday", () => {
+  const seedDateStep = () => hoisted.docState.set(`agent_sessions/${PHONE}`, {
+    interviewFlowStep: "iv_ask_date",
+    interviewFlowData: { caregiverId: CG_ID, caregiverName: "Riya Careprovider" },
+  });
+  const outbound = () => sendMessage.mock.calls.map((c: any[]) => String(c[1]));
+
+  it("a reply the date step can't read is re-asked once, then a simpler way, then Evia stops asking", async () => {
+    seedDateStep();
+    for (const text of ["hmm", "I dunno", "whenever"]) {
+      modelReplies("NO", '{"date": null}');
+      await handleInterviewFlowStep(PHONE, CHAT, text, session({ interviewFlowStep: "iv_ask_date" }));
+    }
+    const said = outbound();
+    expect(said).toHaveLength(3);
+    expect(said[0]).toMatch(/^Sorry, I'm not sure I followed\. What day/);
+    expect(said[1]).toMatch(/simpler way/);
+    expect(said[1]).toContain("cancel");
+    expect(said[2]).toMatch(/pause this one/);
+    expect(said[2]).not.toMatch(/What day/);
+    expect(new Set(said).size).toBe(3); // no two identical messages in a row — the founders' complaint
+  });
+
+  it("a different question starts the count again", async () => {
+    seedDateStep();
+    modelReplies("NO", '{"date": null}');
+    await handleInterviewFlowStep(PHONE, CHAT, "hmm", session({ interviewFlowStep: "iv_ask_date" }));
+    modelReplies("NO", '{"date": "2099-09-20"}');
+    await handleInterviewFlowStep(PHONE, CHAT, "Sunday", session({ interviewFlowStep: "iv_ask_date" }));
+    // now at the time step, which has not been asked before
+    modelReplies("NO", '{"time": null}');
+    await handleInterviewFlowStep(PHONE, CHAT, "later", session({ interviewFlowStep: "iv_ask_time" }));
+    expect(outbound().at(-1)).toMatch(/^Sorry, I'm not sure I followed\. What time/);
+  });
+
+  it("the date question tells the model today's weekday, so 'Wednesday' can't resolve to a past Wednesday", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-23T20:00:00Z")); // a Monday
+    try {
+      seedDateStep();
+      modelReplies("NO", '{"date": "2026-11-25"}');
+      await handleInterviewFlowStep(PHONE, CHAT, "Wednesday", session({ interviewFlowStep: "iv_ask_date" }));
+      const systems = messagesCreate.mock.calls.map((c) => String((c[0] as { system?: unknown }).system ?? ""));
+      expect(systems.some((s) => s.includes("Today is Monday, 2026-11-23"))).toBe(true);
+      expect(hoisted.docState.get(`agent_sessions/${PHONE}`).interviewFlowData.date).toBe("2026-11-25");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

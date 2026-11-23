@@ -21,6 +21,7 @@ import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
@@ -341,7 +342,7 @@ async function handleRsPick(phone: string, chatId: string, text: string, session
   const parsed = parseJsonLoose(raw, "handleRsPick");
   const chosen = parsed ? resolveVisit(data, parsed.pickIndex, parsed.pickDate) : undefined;
   if (!chosen) {
-    await sendMessage(chatId, `${RS_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, RS_DIDNT_CATCH, question);
     return;
   }
   await selectVisit(phone, chosen);
@@ -382,7 +383,7 @@ async function handleRsAskTime(phone: string, chatId: string, text: string, sess
   );
   const parsed = parseJsonLoose(raw, "handleRsAskTime");
   if (!parsed) {
-    await sendMessage(chatId, `${RS_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, RS_DIDNT_CATCH, question);
     return;
   }
   const date = typeof parsed.date === "string" ? parsed.date : data.visitDate;

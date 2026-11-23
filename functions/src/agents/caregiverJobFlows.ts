@@ -20,6 +20,7 @@
 // unclear, 1h expiry via stateExpiresAt.
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { quickComplete } from "../utils/openaiClient";
 import { isBackOutRequest, isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 // Every mid-flow question here is a CAREGIVER's (2026-10-11): the shared answerer is briefed with what is on their screen.
@@ -150,7 +151,7 @@ export async function handleApplyFlowStep(phone: string, chatId: string, text: s
     if (action === "cancel") return cancelled();
     if (action === "other") {
       if (await isQuestionOrOther(text, APPLY_CONFIRM(data))) await sendMessage(chatId, await answerMidFlow(text, APPLY_CONFIRM(data), { facts: APPLY_FACTS(data) }));
-      else await sendMessage(chatId, `${DIDNT_CATCH} ${APPLY_CONFIRM_SHORT}`);
+      else await reaskOnce(chatId, DIDNT_CATCH, APPLY_CONFIRM_SHORT);
       return;
     }
     const caregiverId = (session.caregiverId ?? session.userId) as string;
@@ -249,7 +250,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
       `Today is ${today} (Pacific time). The care provider is naming the DATE for an interview. Reply with that date as YYYY-MM-DD ` +
       "(resolve relative words like tomorrow / next Monday / 9/28 against today, never a past date), or NONE if no date is given.", text);
     const m = /(\d{4}-\d{2}-\d{2})/.exec(raw);
-    if (!m || m[1] < today) { await sendMessage(chatId, `${DIDNT_CATCH} ${DATE_QUESTION}`); return; }
+    if (!m || m[1] < today) { await reaskOnce(chatId, DIDNT_CATCH, DATE_QUESTION); return; }
     // The caregiver may have given date AND time in one message.
     const t = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i.exec(text);
     let time: string | undefined;
@@ -274,7 +275,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
     const raw = await parse("The care provider is naming a TIME of day. Reply with it as 24-hour HH:MM (e.g. 10:30, 14:00), or NONE if no time is given.", text);
     const m = /(\d{1,2}):(\d{2})/.exec(raw);
     const time = m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
-    if (!time || !isSiteInterviewSlot(time)) { await sendMessage(chatId, `${DIDNT_CATCH} ${TIME_QUESTION}`); return; }
+    if (!time || !isSiteInterviewSlot(time)) { await reaskOnce(chatId, DIDNT_CATCH, TIME_QUESTION); return; }
     const next: RescheduleFlowData = { ...data, time };
     await ref.update({ interviewRescheduleFlowStep: "rs_confirm", interviewRescheduleFlowData: next });
     await sendMessage(chatId, RS_CONFIRM(next, formatInterviewTime(parseScheduledTimeMs(`${next.date}T${time}:00`))));
@@ -296,7 +297,7 @@ export async function handleInterviewRescheduleFlowStep(phone: string, chatId: s
     if (action === "cancel") return cancelled();
     if (action === "other") {
       if (await isQuestionOrOther(text, question)) await sendMessage(chatId, await answerMidFlow(text, question, { facts: RS_FACTS(data) }));
-      else await sendMessage(chatId, `${DIDNT_CATCH} ${RS_CONFIRM_SHORT(data)}`);
+      else await reaskOnce(chatId, DIDNT_CATCH, RS_CONFIRM_SHORT(data));
       return;
     }
     const startMs = parseScheduledTimeMs(`${data.date}T${data.time}:00`);

@@ -64,6 +64,8 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Agent session / runtime state
     // (agent_conversations moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
     'agent_sessions', 'agent_turn_checkpoints',
+    // 2026-11-23: per-chat counter of re-asked flow questions (agents/reask.ts) so a question is never sent the same way twice.
+    'flow_reask',
     'agent_prefetch', 'agent_dnd_queue', 'agent_permissions', 'agent_reactions',
     'agent_read_receipts', 'agent_group_events', 'agent_imessage_retry',
     // U2 (2026-07-20): scoped hashed provider-message → canonical-message map.

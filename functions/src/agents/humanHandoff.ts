@@ -137,10 +137,12 @@ export const HANDOFF_GROUNDING_SYSTEM_PROMPT =
   "Reply with exactly one word: SUPPORTED or UNSUPPORTED.";
 
 // Bound the payload so a huge system prompt can't blow up quick-tier cost.
-const GROUNDING_CONTEXT_MAX_CHARS = 12_000;
+const GROUNDING_CONTEXT_MAX_CHARS = 16_000;
 // Tool observations from this turn are the freshest grounding source, but can be
 // verbose (full care plans, message lists) — bound them separately.
-const GROUNDING_TOOL_MAX_CHARS = 8_000;
+// 24k (was 8k): a family with an ongoing booking has dozens of shifts, and a long memory file in the same turn ate the room — the
+// 8k slice then cut the very visit the draft was citing and the checker called a true answer UNSUPPORTED (2026-11-23).
+const GROUNDING_TOOL_MAX_CHARS = 24_000;
 // The current inbound is one SMS/web message; bound defensively anyway.
 const GROUNDING_INBOUND_MAX_CHARS = 2_000;
 
@@ -271,9 +273,13 @@ export function claimsNeedHumanHold(claims: ReadonlyArray<GroundingClaim>): bool
   return claims.some((c) => c.risk === "high" && HUMAN_HOLD_CATEGORIES.has(c.category));
 }
 
-/** The reply for an unbacked, non-risky claim: honest, holds nothing, asks once for the request again. */
+/**
+ * The reply for an unbacked, non-risky claim: honest, holds nothing, asks once. It must read right for a QUESTION as well as an
+ * edit — live 2026-11-23 the founders asked "when does the shift end?" / "do I have a shift in progress?" and got "tell me once
+ * more what you'd like me to change" three times in a row. It names no fact, so it can never be graded as a claim itself.
+ */
 export const GROUNDING_REASK_COPY =
-  "I want to get this exactly right. Could you tell me once more what you'd like me to change, in a few words?";
+  "I couldn't confirm that from your account just now, and I don't want to guess. Could you ask it another way, or tell me who or which day you mean?";
 
 export function neutralCopyForClaims(claims: ReadonlyArray<GroundingClaim>): string | null {
   const families = new Set<NeutralCopyCategory>();

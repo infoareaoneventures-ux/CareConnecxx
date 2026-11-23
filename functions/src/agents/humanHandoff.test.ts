@@ -122,7 +122,7 @@ describe("grounding-check FP guard", () => {
 
   it("bounds an oversized system context AND tool results (quick-tier cost cap)", () => {
     const payload = buildHandoffGroundingPayload("x".repeat(50_000), [], "draft", "y".repeat(50_000));
-    expect(payload.length).toBeLessThan(21_000); // 12k context + 8k tools + labels + elision markers
+    expect(payload.length).toBeLessThan(41_000); // 16k context + 24k tools + labels + elision markers
   });
 
   it("keeps BOTH ends of oversized material — facts appended late (care plan, last tool result) still ground the claim", () => {

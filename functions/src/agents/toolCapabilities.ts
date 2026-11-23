@@ -34,6 +34,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   find_nearby_caregivers:       ["booking"],
   get_caregiver_info:           ["booking"],
   get_upcoming_appointments:    ["booking", "scheduling"],
+  get_current_visit:            ["booking", "scheduling"],
   show_active_bookings:         ["booking", "scheduling"],  // Active Bookings tab, texted whole (2026-09-28)
   show_past_bookings:           ["booking", "scheduling"],  // Past Bookings tab, texted whole (2026-09-29)
   show_calendar:                ["booking", "scheduling"],  // My Calendar page, texted whole (2026-09-30)

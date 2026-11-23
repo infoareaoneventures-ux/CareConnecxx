@@ -15,6 +15,7 @@ import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
@@ -184,7 +185,7 @@ async function handlePick(phone: string, chatId: string, text: string, session: 
       return;
     }
     idx = await resolveByText(text, data);
-    if (idx === null) { await sendMessage(chatId, `${CX_DIDNT_CATCH} ${question}`); return; }
+    if (idx === null) { await reaskOnce(chatId, CX_DIDNT_CATCH, question); return; }
   }
   // The pick from the list IS the confirmation (founder 2026-11-18: asking "just checking" after a numbered pick was a
   // second yes for one decision). The "just checking" question remains only where the family's own words named the

@@ -20,6 +20,7 @@ import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
@@ -336,7 +337,7 @@ async function handlePickCaregiver(phone: string, chatId: string, text: string, 
       text,
     );
     idx = parseInt(raw.trim(), 10);
-    if (isNaN(idx) || idx < 1 || idx > data.caregivers.length) { await sendMessage(chatId, `${VR_DIDNT_CATCH} ${question}`); return; }
+    if (isNaN(idx) || idx < 1 || idx > data.caregivers.length) { await reaskOnce(chatId, VR_DIDNT_CATCH, question); return; }
   }
   await selectCaregiver(phone, chatId, data.caregivers[idx - 1], text);
 }
@@ -353,7 +354,7 @@ async function handlePickBooking(phone: string, chatId: string, text: string, se
       text,
     );
     idx = parseInt(raw.trim(), 10);
-    if (isNaN(idx) || idx < 1 || idx > bookings.length) { await sendMessage(chatId, `${VR_DIDNT_CATCH} ${question}`); return; }
+    if (isNaN(idx) || idx < 1 || idx > bookings.length) { await reaskOnce(chatId, VR_DIDNT_CATCH, question); return; }
   }
   await selectBooking(phone, chatId, bookings[idx - 1]);
 }
@@ -459,7 +460,7 @@ async function handleAskDays(phone: string, chatId: string, text: string, sessio
   const question = DAYS_QUESTION(data);
   if (await guarded(phone, chatId, text, session, question)) return;
   const parsed = await parseDaysAndTimes(text, data);
-  if (!parsed) { await sendMessage(chatId, `${VR_DIDNT_CATCH} ${question}`); return; }
+  if (!parsed) { await reaskOnce(chatId, VR_DIDNT_CATCH, question); return; }
   await applyDaysAndTimes(phone, chatId, parsed, data);
 }
 
@@ -476,7 +477,7 @@ async function handleAskTimes(phone: string, chatId: string, text: string, sessi
     text,
   );
   const parsed = parseJsonLoose(raw, "handleAskTimes");
-  if (!parsed) { await sendMessage(chatId, `${VR_DIDNT_CATCH} ${question}`); return; }
+  if (!parsed) { await reaskOnce(chatId, VR_DIDNT_CATCH, question); return; }
   const dayTimes: Record<string, TimeBlock[]> = { ...(data.dayTimes ?? {}) };
   const rawDT = (parsed.dayTimes ?? {}) as Record<string, Array<{ start?: unknown; end?: unknown }>>;
   for (const [k, blocks] of Object.entries(rawDT)) {
@@ -491,7 +492,7 @@ async function handleAskTimes(phone: string, chatId: string, text: string, sessi
     if (blockToRange(b)) for (const d of days) if (!rawDT[d]) dayTimes[d] = [b];
   }
   const missing = days.filter((d) => !dayTimes[d]?.length);
-  if (missing.length === days.length) { await sendMessage(chatId, `${VR_DIDNT_CATCH} ${question}`); return; }
+  if (missing.length === days.length) { await reaskOnce(chatId, VR_DIDNT_CATCH, question); return; }
   await mergeFlowData(phone, { dayTimes });
   if (missing.length) {
     await sendMessage(chatId, `Got it. And what time on ${fullDays(missing)}?`);
@@ -515,7 +516,7 @@ async function handleAskStart(phone: string, chatId: string, text: string, sessi
   );
   const parsed = parseJsonLoose(raw, "handleAskStart");
   const date = typeof parsed?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) ? parsed.date : null;
-  if (!date) { await sendMessage(chatId, `${VR_DIDNT_CATCH} ${START_QUESTION}`); return; }
+  if (!date) { await reaskOnce(chatId, VR_DIDNT_CATCH, START_QUESTION); return; }
   if (date < today) { await sendMessage(chatId, `${formatDateWithWeekday(date)} has already passed — ${START_QUESTION}`); return; }
   await mergeFlowData(phone, { startDate: date });
   await updateStep(phone, "vr_ask_end");
@@ -537,7 +538,7 @@ async function handleAskEnd(phone: string, chatId: string, text: string, session
     await mergeFlowData(phone, { ongoing: true, endDate: undefined });
   } else {
     const end = typeof parsed?.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.endDate) ? parsed.endDate : null;
-    if (!end) { await sendMessage(chatId, `${VR_DIDNT_CATCH} ${END_QUESTION}`); return; }
+    if (!end) { await reaskOnce(chatId, VR_DIDNT_CATCH, END_QUESTION); return; }
     if (end < (data.startDate ?? today)) { await sendMessage(chatId, `The end date needs to be on or after the start date. ${END_QUESTION}`); return; }
     await mergeFlowData(phone, { ongoing: false, endDate: end });
   }

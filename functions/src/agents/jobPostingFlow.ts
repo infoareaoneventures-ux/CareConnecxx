@@ -3,6 +3,7 @@ import { billedHourly } from "./caregiverProfilePage";
 import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { enforceClientGate } from "./clientAccessGate";
 import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
 import { defaultJobTitle } from "./jobPostContract";
@@ -589,7 +590,7 @@ async function handleJpAskRecipients(
       await sendMessage(chatId, "Sure — what's their name?");
       return;
     }
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
     return;
   }
 
@@ -676,7 +677,7 @@ async function handleJpAskRecipientRelationship(
       text
     );
     const kind = /^child$/i.test(raw.trim()) ? "child" : /^senior$/i.test(raw.trim()) ? "senior" : null;
-    if (!kind) { await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`); return; }
+    if (!kind) { await reaskOnce(chatId, JP_DIDNT_CATCH, REASK); return; }
     await mergeJobData(phone, { awaitingRecipientKind: admin.firestore.FieldValue.delete(), pendingNewRecipientRelationship: admin.firestore.FieldValue.delete() });
     await finishRecipientSelection(phone, chatId, session, [...existing, { firstName: first, lastName: last, relationship: "Other", isSelf: false, careKind: kind }]);
     return;
@@ -691,7 +692,7 @@ async function handleJpAskRecipientRelationship(
   );
   const relationship = matchEnum(raw, chips);
   if (!relationship) {
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
     return;
   }
   await addNewRecipientOrAskKind(phone, chatId, session, existing, first, last, relationship);
@@ -716,7 +717,7 @@ async function handleJpAskCaregiversNeeded(
     );
     n = parseInt(raw, 10);
     if (isNaN(n) || n < 1 || n > 4) {
-      await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+      await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
       return;
     }
   }
@@ -804,7 +805,7 @@ async function handleJpAskLocation(
     return;
   }
 
-  await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+  await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
 }
 
 async function handleJpAskLocationEnvironment(
@@ -831,7 +832,7 @@ async function handleJpAskLocationEnvironment(
     text
   );
   if (rawPets === "__parse_error__" || rawSmoke === "__parse_error__") {
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
     return;
   }
   const petsInHome       = rawPets.toUpperCase().startsWith("Y");
@@ -972,7 +973,7 @@ async function handleJpAskFrequency(
     // value so the next occurrence has real diagnostic evidence instead of
     // silently re-asking with zero trace of what the model actually returned.
     console.warn("[jobPostingFlow] handleJpAskFrequency: no enum match", { raw, textLength: text.length });
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
     return;
   }
   const label: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
@@ -1048,7 +1049,7 @@ async function handleJpAskDays(
   const parsedDays = parseJsonLoose(raw, "handleJpAskDays");
   if (Array.isArray(parsedDays) && parsedDays.length > 0) days = parsedDays;
   if (days.length === 0) {
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
     return;
   }
   await mergeJobData(phone, { jobDays: days });
@@ -1080,7 +1081,7 @@ async function handleJpAskTime(
   }
   const times: string[] = await readJobTimesOfDay(text);
   if (times.length === 0) {
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
     return;
   }
   await finishJobTimeStep(phone, chatId, session, times);
@@ -1154,7 +1155,7 @@ async function handleJpAskCareNeeds(
     const id = ageRangeFromWords(raw);
     if (!id) {
       if (await notAnAnswer()) return;
-      await sendMessage(chatId, `${JP_DIDNT_CATCH} ${pendingStage.question}`);
+      await reaskOnce(chatId, JP_DIDNT_CATCH, pendingStage.question);
       return;
     }
     const key = recipientPlanKey(pendingStage.child.firstName, pendingStage.child.lastName);
@@ -1219,7 +1220,7 @@ async function handleJpAskRate(
   );
   const rate = /^\s*NONE/i.test(raw) ? NaN : parseFloat(raw);
   if (isNaN(rate)) {
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+    await reaskOnce(chatId, JP_DIDNT_CATCH, REASK);
     return;
   }
   const jobHourlyRate = rate;

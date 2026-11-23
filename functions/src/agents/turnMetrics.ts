@@ -159,6 +159,7 @@ export interface TurnMetrics {
   groundingVerifierIndeterminate?: boolean;      // verifier timeout/garbage — could not verify
   // Why the LLM grounding verifier was skipped this turn (tool results outrank it).
   groundingOverride?: "action_completed" | "tool_error_reported";
+  groundingRepair?: "repaired" | "fallback";    // unbacked draft: rewritten from the evidence and re-checked, or the neutral line
   groundingNeutralized?: boolean;                // high-risk unverifiable claim → deterministic neutral copy
   groundingVerifierLatencyMs?: number;           // wall-clock of the verifier call (incl. timeout cap)
 

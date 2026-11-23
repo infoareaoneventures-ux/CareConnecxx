@@ -19,6 +19,7 @@ import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
@@ -338,7 +339,7 @@ async function handleRpPick(phone: string, chatId: string, text: string, session
   if (parsed?.skip === true) return goToSkipConfirm(phone, chatId);
   const chosen = parsed ? resolveCandidate(data, parsed.pickIndex, parsed.pickName) : undefined;
   if (!chosen) {
-    await sendMessage(chatId, `${RP_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, RP_DIDNT_CATCH, question);
     return;
   }
   const patch: Partial<ReplacementFlowData> = { caregiverId: chosen.id, caregiverName: chosen.name, caregiverRate: chosen.rate };
@@ -388,7 +389,7 @@ async function handleRpAskTime(phone: string, chatId: string, text: string, sess
     await mergeFlowData(phone, patch);
     return goToRecap(phone, chatId);
   }
-  await sendMessage(chatId, `${RP_DIDNT_CATCH} ${question}`);
+  await reaskOnce(chatId, RP_DIDNT_CATCH, question);
 }
 
 // ── Step: recap → YES sends the request ───────────────────────────────────────
@@ -477,7 +478,7 @@ async function handleRpSkipConfirm(phone: string, chatId: string, text: string, 
   const verdict = raw.toUpperCase();
   if (verdict.startsWith("YES")) return commitSkip(phone, chatId, session, data);
   if (verdict.startsWith("NO")) return declineSkip(phone, chatId, session, data);
-  await sendMessage(chatId, `${RP_DIDNT_CATCH} ${question}`);
+  await reaskOnce(chatId, RP_DIDNT_CATCH, question);
 }
 
 // NO to skipping: back to the candidates if there are any, otherwise the

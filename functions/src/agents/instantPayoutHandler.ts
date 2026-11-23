@@ -15,6 +15,7 @@
 // problem).
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { quickComplete } from "../utils/openaiClient";
 import { isBackOutRequest, isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 // Every mid-flow question here is a CAREGIVER's (2026-10-11): the shared answerer is briefed with what is on their screen.
@@ -112,7 +113,7 @@ export async function handleInstantPayoutConfirm(caregiverId: string, phone: str
     const v = await quickComplete("Evia showed the care provider their instant payout amount and asked \"Want me to send it now?\". Classify: SEND (yes / go ahead / send it / cash out), CANCEL (no / hold off / not yet / wait), or OTHER.\nReply with ONLY the word.", text, { maxTokens: 5 }).catch(() => "OTHER");
     action = v.toUpperCase().startsWith("SEND") ? "send" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";
   }
-  if (action === "other") { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
+  if (action === "other") { await reaskOnce(chatId, DIDNT_CATCH, q); return; }
 
   // Decision made — clear the parked confirmation either way.
   await ref.update({ pendingInstantPayoutConfirm: admin.firestore.FieldValue.delete(), pendingInstantPayoutAmount: admin.firestore.FieldValue.delete() } as Record<string, unknown>);

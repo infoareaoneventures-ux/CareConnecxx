@@ -36,6 +36,7 @@ import { flowParseCall, flowAnswerCall } from "./flowModelCall";
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
@@ -298,7 +299,7 @@ async function handleBkAskInterview(
     );
     idx = parseInt(raw.trim(), 10);
     if (isNaN(idx) || idx < 1 || idx > options.length) {
-      await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+      await reaskOnce(chatId, BK_DIDNT_CATCH, question);
       return;
     }
   }
@@ -579,7 +580,7 @@ async function handleBkAskResend(
     );
     idx = parseInt(raw.trim(), 10);
     if (isNaN(idx) || idx < 1 || idx > options.length) {
-      await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+      await reaskOnce(chatId, BK_DIDNT_CATCH, question);
       return;
     }
   }
@@ -805,7 +806,7 @@ async function handleBkConfirmRecipients(
     const updated = await getFlowData(phone);
     return advanceToRate(phone, chatId, updated);
   }
-  await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+  await reaskOnce(chatId, BK_DIDNT_CATCH, question);
 }
 
 async function advanceToRate(phone: string, chatId: string, data: BookingFlowData): Promise<void> {
@@ -866,7 +867,7 @@ async function handleBkAskRate(
   );
   const rate = parseFloat(raw);
   if (isNaN(rate) || rate <= 0) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, question);
     return;
   }
   await mergeFlowData(phone, { hourlyRate: rate });
@@ -991,7 +992,7 @@ async function handleBkAskDays(
     return;
   }
   if (!days.length) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, question);
     return;
   }
   const early = validEarlyStart(parsed?.startDate);
@@ -1031,7 +1032,7 @@ async function handleBkAskStartDate(
   const parsed = parseJsonLoose(raw, "handleBkAskStartDate");
   const startDate = typeof parsed?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) ? parsed.date : null;
   if (!startDate) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, question);
     return;
   }
   const earlyTime = validEarlyTime(parsed?.time);
@@ -1084,7 +1085,7 @@ async function handleBkAskTimes(
     dayTimes[d] = { start: entry.start, end: entry.end };
   }
   if (!allValid) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, question);
     return;
   }
   await mergeFlowData(phone, { dayTimes });
@@ -1139,7 +1140,7 @@ async function handleBkAskOngoing(
     await mergeFlowData(phone, { ongoing: false, scheduleEndDate: parsed.endDate });
     return advanceToLocation(phone, chatId, session);
   }
-  await sendMessage(chatId, `${BK_DIDNT_CATCH} ${ONGOING_QUESTION}`);
+  await reaskOnce(chatId, BK_DIDNT_CATCH, ONGOING_QUESTION);
 }
 
 // ── Step: location (only asked when ambiguous) ───────────────────────────────
@@ -1268,7 +1269,7 @@ async function handleBkAskRecipients(
     return;
   }
   if (!options.length) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${QUESTION}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, QUESTION);
     return;
   }
   const raw = await parseWithClaude(
@@ -1282,7 +1283,7 @@ async function handleBkAskRecipients(
     ? parsed.filter((n: unknown): n is number => typeof n === "number" && n >= 1 && n <= options.length)
     : [];
   if (!selected.length) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${QUESTION}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, QUESTION);
     return;
   }
   await applyRecipientSelection(phone, chatId, session, selected.map((i) => options[i - 1].name));
@@ -1324,7 +1325,7 @@ async function handleBkAskMessage(
   }
   const trimmed = text.trim().slice(0, 500);
   if (!trimmed) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${QUESTION}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, QUESTION);
     return;
   }
   if (isMedicationInstruction(trimmed)) {
@@ -1378,14 +1379,14 @@ async function handleBkAskLocation(
       await mergeFlowData(phone, { careLocation: parsed.newAddress.trim() });
       return advanceToConfirm(phone, chatId, session);
     }
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${QUESTION}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, QUESTION);
     return;
   }
 
   // Free-typed address (no saved options at all).
   const trimmed = text.trim();
   if (trimmed.length < 5) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${QUESTION}`);
+    await reaskOnce(chatId, BK_DIDNT_CATCH, QUESTION);
     return;
   }
   await mergeFlowData(phone, { careLocation: trimmed });

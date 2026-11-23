@@ -22,6 +22,7 @@
 import { careZoneOf, wallToInstantMs } from "../utils/careTime";
 import * as admin from "firebase-admin";
 import { sendMessage, type AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { quickComplete } from "../utils/openaiClient";
 import { isBackOutRequest, isQuestionOrOther, answerMidFlow as answerMidFlowShared } from "./stepHandler";
 // Every mid-flow question here is a CAREGIVER's (2026-10-11): the shared answerer is briefed with what is on their screen.
@@ -541,7 +542,7 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     const hhmm = await parseFinishTime(text);
     if (!hhmm) {
       if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: SUBMIT_FACTS(data) })); return; }
-      await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return;
+      await reaskOnce(chatId, DIDNT_CATCH, q); return;
     }
     const tz = data.tz || DEFAULT_TZ;
     const startMs = Date.parse(data.startIso);
@@ -586,7 +587,7 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     if (action === "cancel") return cancelled();
     if (action === "other") {
       if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: SUBMIT_FACTS(data) }));
-      else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
+      else await reaskOnce(chatId, DIDNT_CATCH, q);
       return;
     }
     await clear();
@@ -744,7 +745,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     if (action === "cancel") return cancelled();
     if (action === "other") {
       if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) }));
-      else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
+      else await reaskOnce(chatId, DIDNT_CATCH, q);
       return;
     }
     if (action === "counter") {
@@ -771,7 +772,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     if (norm === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
     if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) })); return; }
     const iso = await parseCounterTime(text, data.proposedStart);
-    if (!iso) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
+    if (!iso) { await reaskOnce(chatId, DIDNT_CATCH, q); return; }
     if (data.counterEnd) { // the end was already given with the counter — don't ask for it again
       if (Date.parse(data.counterEnd) <= Date.parse(iso)) { await sendMessage(chatId, `The start has to be before your end (${clockShort(Date.parse(data.counterEnd))}). ${q}`); return; }
       return data.proposedItems.length > 0 ? next({ counterStart: iso }, "rc_items", C_ITEMS_Q(data)) : next({ counterStart: iso, counterItems: [] }, "rc_note", C_NOTE_Q);
@@ -783,7 +784,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     if (norm === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
     if (await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: `${REVIEW_FACTS(data)} Counter start chosen so far: ${clockShort(Date.parse(data.counterStart ?? ""))}.` })); return; }
     const iso = await parseCounterTime(text, data.proposedEnd);
-    if (!iso) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
+    if (!iso) { await reaskOnce(chatId, DIDNT_CATCH, q); return; }
     if (Date.parse(iso) <= Date.parse(data.counterStart ?? "")) { await sendMessage(chatId, `The end has to be after the start (${clockShort(Date.parse(data.counterStart ?? ""))}). ${q}`); return; }
     if (data.proposedItems.length > 0) return next({ counterEnd: iso }, "rc_items", C_ITEMS_Q(data));
     return next({ counterEnd: iso, counterItems: [] }, "rc_note", C_NOTE_Q);
@@ -798,7 +799,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     let patch: Record<string, number> = {};
     try { patch = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); } catch { patch = {}; }
     const entries = Object.entries(patch).filter(([k, v]) => Number(k) >= 1 && Number(k) <= data.proposedItems.length && Number(v) >= 0);
-    if (entries.length === 0) { await sendMessage(chatId, `${DIDNT_CATCH} ${q}`); return; }
+    if (entries.length === 0) { await reaskOnce(chatId, DIDNT_CATCH, q); return; }
     const counterItems = data.proposedItems.map((li, i) => { const hit = entries.find(([k]) => Number(k) === i + 1); return hit ? { ...li, amount: round2(Number(hit[1])) } : li; });
     return next({ counterItems }, "rc_note", C_NOTE_Q);
   }
@@ -827,7 +828,7 @@ export async function handleReviewCorrectionFlowStep(phone: string, chatId: stri
     if (action === "cancel") return cancelled();
     if (action === "other") {
       if (await isQuestionOrOther(text, q)) await sendMessage(chatId, await answerMidFlow(text, q, { facts: REVIEW_FACTS(data) }));
-      else await sendMessage(chatId, `${DIDNT_CATCH} ${q}`);
+      else await reaskOnce(chatId, DIDNT_CATCH, q);
       return;
     }
     await clear();

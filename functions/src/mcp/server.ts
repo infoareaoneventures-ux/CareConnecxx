@@ -137,6 +137,21 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_current_visit",
+    description:
+      "The visit happening RIGHT NOW (and the next one), already worked out — use this, not get_upcoming_appointments, for 'do I have a visit/shift in progress', " +
+      "'when does the shift end', 'is <care provider> there/started', 'how long has it been', 'how many tasks are done / what's left', 'what are the notes so far'. " +
+      "Returns `sentence` — a finished, correct answer built from the visit record. Send it (reworded warmly if you like) and add NOTHING that is not in this result: " +
+      "no times, task counts or names beyond what it says. A family passes clientId; a care provider passes caregiverId.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string", description: "The family's user ID (family asking)" },
+        caregiverId: { type: "string", description: "The care provider's user ID (care provider asking)" },
+      },
+    },
+  },
+  {
     name: "get_upcoming_appointments",
     description: "Get a client's upcoming visits — the same list the website's My Bookings > Active Bookings shows under UPCOMING SHIFTS: scheduled and in-progress visits AND any visit marked 'needs_replacement' (the care provider cancelled it). Each result carries its id (the shiftId) and status — use that id for manage_booking (cancel_visit/propose_reschedule) and, for a needs_replacement visit, for get_callout_backups.",
     input_schema: {
@@ -2398,6 +2413,7 @@ export const MCP_TOOLS: McpTool[] = [
 
 // Tools available to caregivers — scoped to what's relevant to their role
 const CAREGIVER_TOOL_NAMES = new Set([
+  "get_current_visit",
   "show_active_bookings",
   "show_calendar",
   "show_families",
@@ -2907,7 +2923,7 @@ async function recordMcpToolStatus(params: {
 const READ_ONLY_TOOLS = new Set<string>([
   "get_senior_profile", "list_household_seniors", "get_pending_tasks",
   "get_care_team", "cara_knows",
-  "get_upcoming_appointments", "get_caregiver_info",
+  "get_upcoming_appointments", "get_current_visit", "get_caregiver_info",
   "get_pending_booking_requests",
   "get_pending_schedule_amendments", "get_past_visits", "get_calendar", "get_resendable_booking_requests",
   // find_nearby_caregivers is NOT here (2026-09-14): it took over the removed
@@ -3258,6 +3274,34 @@ async function executeToolCall(
           relationships: page.options.relationships,
           results: page.recipients.map((r) => ({ key: r.key, name: r.name, firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, kind: CARE_KIND_LABEL[r.kind], stage: r.stageLabel, isPrimary: r.isPrimary })),
           hasMore: false,
+        };
+      }
+
+      case "get_current_visit": {
+        // A care provider (caregiverId, and userId absent or equal) sees only HER visits — optionally narrowed to one family;
+        // otherwise the caller is the family asking about their own.
+        const asCaregiver = isCaregiverCaller(input) ? (input.caregiverId as string) : null;
+        const ownerId = asCaregiver ?? (input.clientId as string | undefined);
+        if (!ownerId) return toolError("INVALID_INPUT", "clientId (family) or caregiverId (care provider) is required");
+        const ownerField = asCaregiver ? "caregiverId" : "clientId";
+        const { buildCurrentVisitFacts } = await import("../agents/currentVisit");
+        // In progress: no date filter — an overnight visit started yesterday is still the one happening now.
+        const liveSnap = await db.collection("shifts").where(ownerField, "==", ownerId).where("status", "==", "in-progress").limit(3).get();
+        const today = businessTodayStr();
+        const nextSnap = await db.collection("shifts").where(ownerField, "==", ownerId).where("status", "==", "scheduled")
+          .where("date", ">=", today).orderBy("date", "asc").limit(3).get();
+        const next = nextSnap.docs
+          .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
+          .sort((a, b) => `${a.data.date}${a.data.startTime ?? ""}`.localeCompare(`${b.data.date}${b.data.startTime ?? ""}`))[0] ?? null;
+        const onlyFamily = asCaregiver && typeof input.clientId === "string" ? input.clientId : null;
+        const facts = buildCurrentVisitFacts(
+          liveSnap.docs.filter((d) => !onlyFamily || d.data().clientId === onlyFamily).map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> })),
+          next && (!onlyFamily || next.data.clientId === onlyFamily) ? next : null,
+          asCaregiver ? "caregiver" : "family",
+        );
+        return {
+          success: true, ...facts,
+          instruction: "Answer from `sentence`. It is complete and correct: do not add a time, a count, a name or an offer that is not in it.",
         };
       }
 

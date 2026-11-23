@@ -17,6 +17,7 @@
 // and wrote a thinner Evia-only document.
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
+import { reaskOnce } from "./reask";
 import { quickComplete } from "../utils/openaiClient";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput } from "../safety/outputGuard";
@@ -253,7 +254,7 @@ async function handleRvAskRating(phone: string, chatId: string, text: string): P
   const question = RATING_QUESTION(data.caregiverName);
   if (await guard(phone, chatId, text, question, data)) return;
   const rating = await extractRating(text);
-  if (rating === null) { await sendMessage(chatId, `${RV_DIDNT_CATCH} ${question}`); return; }
+  if (rating === null) { await reaskOnce(chatId, RV_DIDNT_CATCH, question); return; }
   await mergeFlowData(phone, { rating });
   await updateStep(phone, "rv_ask_categories");
   await sendMessage(chatId, `${stars(rating)} — got it. ${CATEGORIES_QUESTION()}`);
@@ -270,12 +271,12 @@ async function handleRvAskCategories(phone: string, chatId: string, text: string
     text,
   );
   const parsed = parseJsonLoose(raw);
-  if (!parsed) { await sendMessage(chatId, `${RV_DIDNT_CATCH} ${question}`); return; }
+  if (!parsed) { await reaskOnce(chatId, RV_DIDNT_CATCH, question); return; }
   const categories: ReviewCategories = { ...EMPTY_CATEGORIES };
   if (parsed.skip !== true) {
     let any = false;
     for (const k of REVIEW_CATEGORY_KEYS) if (isValidRating(parsed[k])) { categories[k] = parsed[k]; any = true; }
-    if (!any) { await sendMessage(chatId, `${RV_DIDNT_CATCH} ${question}`); return; }
+    if (!any) { await reaskOnce(chatId, RV_DIDNT_CATCH, question); return; }
   }
   await mergeFlowData(phone, { categories });
   await updateStep(phone, "rv_ask_comment");
@@ -314,7 +315,7 @@ async function handleRvAskRecommend(phone: string, chatId: string, text: string)
     const raw = (await ask('The family was asked "Would you recommend this care provider? Reply YES or NO." Reply with exactly YES, NO, or UNCLEAR.', text)).toUpperCase();
     verdict = raw.startsWith("YES") ? "YES" : raw.startsWith("NO") ? "NO" : null;
   }
-  if (!verdict) { await sendMessage(chatId, `${RV_DIDNT_CATCH} ${question}`); return; }
+  if (!verdict) { await reaskOnce(chatId, RV_DIDNT_CATCH, question); return; }
   await mergeFlowData(phone, { wouldRecommend: verdict === "YES" });
   await updateStep(phone, "rv_confirm");
   const updated = await getFlowData(phone);

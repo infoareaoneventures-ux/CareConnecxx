@@ -1,4 +1,6 @@
 import { serviceLabel, ageRangeLabel, kindsOfPost, serviceListsForKinds, CARE_KINDS, CARE_KIND_LABEL, CareKind } from './signup/constants';
+import { interviewIsOver } from '../../utils/interviewTime';
+import { formatDay } from '../../utils/dateFormat';
 import { askConfirm } from '../../utils/confirmDialog';
 import { swallow } from '../../utils/reportError';
 import { JOB_PAYMENT_TEXT, isPastJob } from '../../utils/jobDisplay';
@@ -920,7 +922,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                             <div className="bg-[var(--color-neutral-50)] p-3 rounded-xl mb-4 text-sm text-[var(--color-neutral-600)]">
                                                 <div className="flex items-center mb-1">
                                                     <Calendar className="w-4 h-4 mr-2 text-[var(--color-neutral-400)]" />
-                                                    {job.date === 'Tomorrow' || job.date === 'Today' ? job.date : (() => { const d = new Date(job.date + 'T12:00:00'); return isNaN(d.getTime()) ? job.date : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })()}
+                                                    {formatDay(job.date)}
                                                 </div>
                                                 <div className="flex items-center">
                                                     <Clock className="w-4 h-4 mr-2 text-[var(--color-neutral-400)]" />
@@ -1151,6 +1153,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                         <div className="space-y-3">
                             {visibleInterviews.filter(iv => ivFilter === 'all' || iv.status === ivFilter).map(iv => {
                                 const date = new Date(iv.scheduledAt);
+                                // An hour after the start the interview is over: no Join, Reschedule, Accept or Cancel on it.
+                                const interviewOver = interviewIsOver(iv.scheduledAt);
                                 const app = iv.jobId ? applications.find(a => a.jobId === iv.jobId) : undefined;
                                 const ivStatusColor = iv.status === 'pending' ? 'bg-yellow-50 text-yellow-700' : iv.status === 'accepted' || iv.status === 'confirmed' ? 'bg-green-50 text-green-700' : iv.status === 'completed' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600';
                                 const typeIcon = iv.interviewType === 'phone' ? <Phone className="w-4 h-4 text-[var(--color-neutral-400)]" /> : iv.interviewType === 'in-person' ? <Home className="w-4 h-4 text-[var(--color-neutral-400)]" /> : <Video className="w-4 h-4 text-[var(--color-neutral-400)]" />;
@@ -1204,7 +1208,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
                                             <div className="flex items-center gap-2">
                                                 {typeIcon}{typeLabel}
                                             </div>
-                                            {iv.callUrl?.startsWith('https://meet.google.com/') && (iv.status === 'accepted' || iv.status === 'confirmed' || iv.status === 'pending') && (
+                                            {!interviewOver && iv.callUrl?.startsWith('https://meet.google.com/') && (iv.status === 'accepted' || iv.status === 'confirmed' || iv.status === 'pending') && (
                                                 <button onClick={() => window.open(iv.callUrl, '_blank', 'noopener')}
                                                     className="flex items-center gap-2 text-sm font-semibold text-primary-600 hover:underline">
                                                     <Video className="w-4 h-4" /> Join video call
@@ -1269,6 +1273,18 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, hideAp
 
                                         {/* Footer: Details + Accept/Decline */}
                                         {(() => {
+                                            if (interviewOver && (iv.status === 'pending' || iv.status === 'accepted')) {
+                                                return (
+                                                    <div className="mt-3 flex items-center justify-between gap-2">
+                                                        <p className="text-xs text-slate-500">This interview time has passed.</p>
+                                                        {iv.jobId && (
+                                                            <button onClick={() => handleViewJobDetails(iv.jobId!)} className="text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] font-medium text-sm">
+                                                                Details
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                );
+                                            }
                                             return (
                                                 <div className="mt-3">
                                                     {/* Gated (membership / background check): Accept, Accept new time,

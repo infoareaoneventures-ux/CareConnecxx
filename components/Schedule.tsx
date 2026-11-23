@@ -1,4 +1,5 @@
 import { serviceLabel, ageRangeLabel } from './caregiver/signup/constants';
+import { interviewIsOver } from '../utils/interviewTime';
 import { askConfirm } from '../utils/confirmDialog';
 import { recordActedForPerson } from '../services/api';
 import { useState, useEffect } from 'react';
@@ -617,7 +618,7 @@ export default function Schedule() {
         {/* Actions */}
         <div className="mt-4 flex flex-col gap-2">
           {/* Join the Google Meet link (server-generated; meet.google.com only) */}
-          {interview.callUrl?.startsWith('https://meet.google.com/') &&
+          {!interviewIsOver(interview.scheduledTime) && interview.callUrl?.startsWith('https://meet.google.com/') &&
             ['accepted', 'scheduled', 'confirmed', 'in-progress'].includes(interview.status) && (
             <button onClick={() => window.open(interview.callUrl, '_blank', 'noopener')}
               className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">

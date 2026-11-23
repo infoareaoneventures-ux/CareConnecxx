@@ -1,4 +1,5 @@
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { formatDay } from '../../utils/dateFormat';
 import { isPastJob, jobRateText, JOB_PAYMENT_TEXT } from '../../utils/jobDisplay';
 import { localDateStr } from '../../utils/shiftUtils';
 import { serviceLabel, ageRangeLabel, kindsOfPost } from './signup/constants';
@@ -588,7 +589,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
               {(viewingJob.startDate || (viewingJob as any).date) && (
                 <div className="flex justify-between">
                   <span className="text-slate-500">Starting Date</span>
-                  <span className="font-medium">{(() => { const d = new Date(((viewingJob.startDate || (viewingJob as any).date) as string) + 'T12:00:00'); return isNaN(d.getTime()) ? (viewingJob.startDate || (viewingJob as any).date) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })()}</span>
+                  <span className="font-medium">{formatDay((viewingJob.startDate || (viewingJob as any).date) as string)}</span>
                 </div>
               )}
               {Array.isArray(viewingJob.daysOfWeek) && viewingJob.daysOfWeek.length > 0 && (

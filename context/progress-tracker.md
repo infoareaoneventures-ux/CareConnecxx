@@ -1062,3 +1062,33 @@ From the Notion "UI & product" list, one batch (merge + hosting deploy together)
 - Family and care provider test accounts walked: dashboards, Settings, calendars, posts, payments, inbox, jobs. No sideways scroll at 390px; calendars open at 7 AM, phones on list; confirm box and Escape work.
 - Found and fixed: Escape did nothing on pop-ups whose close button is a text "×"/Cancel (utils/dialogA11y.ts now finds buttons by visible text too; test added).
 - Open: raw dates (2026-11-23) on the family dashboard post cards; the /start sign-up screen shows the raw auth code on error.
+
+### 2026-11-23 — Remaining fixes, batch 3 (built locally, not deployed)
+- Sign-in/sign-up errors: one shared `utils/authMessages.ts friendlyAuthMessage` (login + /start); the robot-check failure (`auth/invalid-app-credential`) now says to reload; only unknown failures keep the code.
+- One day format: `utils/dateFormat.ts formatDay` replaces raw `2026-11-23` on the family dashboard cards and the care provider job views.
+- Past interviews: `utils/interviewTime.ts interviewIsOver` (an hour after start) hides Join / Accept / Reschedule / Cancel everywhere (job board, both calendars, dashboard, posts); the job board says "This interview time has passed."
+- Payouts page: the fee/timing sentence is no longer shown twice.
+- Ending a visit confirms ("Visit ended") and offers "Submit hours" (opens Payments).
+- Left open: Start/End still wait on a cold-started Firestore-trigger function (processVisitActionQueue); `minInstances: 1` would fix it but costs a warm instance; family dashboard speed; unpaid visits in History (unclear intent); the "Contact" first name was a data record, no code default exists.
+
+### 2026-11-23 — Small finishes on the open UI items (built locally, not deployed)
+- Login code boxes: group + per-box labels (`Code digit n of 6`), `autocomplete=one-time-code`, and a pasted/autofilled code fills all six boxes (test added).
+- Care provider wizard: service options expose their selected state (`aria-pressed`); the ✓ glyph is hidden from screen readers.
+- Family dashboard: an upcoming shift card shows its date when it isn't today.
+- Settings: the address row is named "Care location" (one address; saving replaces it everywhere).
+- Care provider dashboard: the application row says "Applied <date>" so it isn't read as the job's date.
+- Checked, no code change needed: the Ongoing checkbox is already a labelled control; family "Membership: None" is test data without a subscription; post-a-job drafts were already built (Nov 11).
+- Still open and why: Start/End and interview-request waits are Firestore-trigger cold starts (needs minInstances decision); look and theme (needs screenshot review); Terms (founder); time zones (own batch); weekly availability in the Find Care profile window; pending reschedules under Requests; listing jobs only with a location (decision).
+
+### 2026-11-23 — Time zones: remaining Pacific-fixed notices (built locally, not deployed)
+- Interview "new time proposed" notices now show the time in the READER's own zone (it was Pacific for both people); "time change declined / staying at …" names the zone and uses the proposer's zone (tests: Eastern recipient added; existing expectations now read "10:00 AM PT").
+- Timesheet/payment texts (`shiftHours.ts`, `billing/reviewShiftHours.ts fmtDay`) name the visit's day in the visit's own zone (`careZoneOf(shift)`); `fmtDay(iso, zone?)` defaults to Pacific; test added.
+- Still Pacific-fixed (works for the Santa Clara service area, wrong for other zones): the care provider's timesheet/submit-hours flow in `agents/caregiverTimesheets.ts` (`clock`, `shortDate`, … ~30 call sites with no zone argument), in-shift confirmations (`agents/inShift.ts clock` default), the calendar views' own "today", and the zone name on ~50 site time strings.
+
+### 2026-11-23 — Booking by text: live screenshots (built locally, not deployed)
+Found in a live booking by text (family texting Evia):
+- A bare "No" to "Want to include a note…? …or just say no." was read as a back-out and DROPPED the whole booking ("no booking request went through"). `stepHandler.ts isBareDecline` now treats a bare no/skip/nope/no thanks as the answer at that question (booking and interview note steps) before any back-out check.
+- "add light house keeping" matched nothing and the identical recap came back. `careNeedCategories` now reads spaced/hyphenated words ("house keeping"); an edit that matches nothing says so and lists the care needs; a successful edit says "Added X." before the recap.
+- Replies the recap step couldn't place ("I want to add additional care. What are my other options", "Can you change care needs") got the whole recap again. They now get a short "what I can change" line.
+- The recap said "Tuesday 11:00 AM–1:00 PM, starting November 23" (a Monday). It now names the first day the visits happen (`firstVisitDate`).
+- Not changed (data, not code): "Henry x" as a recipient name and an emergency contact saved as "My son (Friend)" come from the family's care plan; the "note" "Always update your notes please" is an instruction, not a message to the provider (no way to tell them apart without asking).

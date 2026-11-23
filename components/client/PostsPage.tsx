@@ -1,4 +1,5 @@
 import { safeErrorMessage } from '../../utils/safeErrorMessage';
+import { interviewIsOver } from '../../utils/interviewTime';
 import { ensureCardOnFile } from '../../services/cardOnFile';
 import { askConfirm } from '../../utils/confirmDialog';
 import { addressForPost } from './bookingPrefill';
@@ -1559,7 +1560,7 @@ export const PostsPage: React.FC = () => {
                           if (!showBar) return null;
                           return (
                             <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-100 flex-wrap">
-                              {interview.callUrl?.startsWith('https://meet.google.com/') &&
+                              {!interviewIsOver(`${interview.date}T23:59:59`) && interview.callUrl?.startsWith('https://meet.google.com/') &&
                                 (interview.status === 'pending' || interview.status === 'accepted') && (
                                 <button
                                   onClick={() => window.open(interview.callUrl, '_blank', 'noopener')}

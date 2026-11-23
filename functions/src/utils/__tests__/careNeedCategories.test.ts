@@ -70,5 +70,10 @@ describe("normalizeCareNeeds", () => {
     expect(normalizeCareNeeds([])).toEqual([]);
     expect(normalizeCareNeeds(["gibberish"])).toEqual([]);
   });
-});
 
+  it('reads "light house keeping" / "house-keeping" as Light Housekeeping, without false matches', () => {
+    expect(normalizeCareNeeds(["light house keeping"])).toEqual(["Light Housekeeping"]);
+    expect(normalizeCareNeeds(["house-keeping"])).toEqual(["Light Housekeeping"]);
+    expect(normalizeCareNeeds(["help with pet grooming"]).includes("Light Housekeeping")).toBe(false);
+  });
+});

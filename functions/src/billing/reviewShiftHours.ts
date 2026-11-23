@@ -9,16 +9,17 @@ import * as admin from "firebase-admin";
 import { resolveShiftBillableAmount } from "./shiftBillingAmounts";
 import { ShiftBillingPolicyError } from "./shiftBillingPolicy";
 
+import { DEFAULT_CARE_TZ, careZoneOf } from "../utils/careTime";
 const db = admin.firestore();
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 export type ReviewShiftHoursAction = "approve" | "propose_correction" | "accept_counter" | "escalate";
 export const REVIEW_SHIFT_HOURS_ACTIONS: ReviewShiftHoursAction[] = ["approve", "propose_correction", "accept_counter", "escalate"];
 
-/** "Sep 18" for a stored ISO instant, business timezone. */
-export function fmtDay(iso: unknown): string {
+/** "Sep 18" for a stored ISO instant, in the visit's own time zone (Pacific when none is given). */
+export function fmtDay(iso: unknown, timeZone: string = DEFAULT_CARE_TZ): string {
   const ms = typeof iso === "string" ? Date.parse(iso) : NaN;
-  return Number.isFinite(ms) ? new Date(ms).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }) : "";
+  return Number.isFinite(ms) ? new Date(ms).toLocaleDateString("en-US", { timeZone, month: "short", day: "numeric" }) : "";
 }
 
 export function fmtHours(hours: number): string {
@@ -296,7 +297,7 @@ export async function reviewShiftHoursAs(uid: string, data: ReviewShiftHoursInpu
     { appointmentId },
   );
   // The caregiver's Timesheets row now reads "Admin reviewing" — tell them (bell + text), same information as the row.
-  const day = fmtDay(shift.submittedStartTime);
+  const day = fmtDay(shift.submittedStartTime, careZoneOf(shift));
   await pushNotification(
     shift.caregiverId,
     "shift_hours_escalated",

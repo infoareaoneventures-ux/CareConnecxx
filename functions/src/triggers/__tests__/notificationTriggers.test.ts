@@ -448,7 +448,7 @@ describe("onVideoInterviewWrite — SMS parity", () => {
       it("the family keeps the time against the care provider's proposal → the care provider's bell + text, nothing to the family", async () => {
         const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z", rescheduledViaAgent: true };
         await (onVideoInterviewWrite as any)(change(before, "iv1", keep(before)), { params: { interviewId: "iv1" } });
-        const line = "A Family isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM.";
+        const line = "A Family isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM PT.";
         expect(sendViaInteractionAgent).toHaveBeenCalledTimes(1);
         expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: line }));
         expect(writeUserNotification).toHaveBeenCalledTimes(1);
@@ -456,10 +456,17 @@ describe("onVideoInterviewWrite — SMS parity", () => {
         expect(sendToPhone).not.toHaveBeenCalled();
       });
 
+      it("the care provider who proposed it is told the kept time in THEIR zone (Eastern), not Pacific", async () => {
+        hoisted.docState.set(`caregivers/${CAREGIVER}`, { phone: "+15550001111", zipCode: "10001" });
+        const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-11T17:00:00.000Z" };
+        await (onVideoInterviewWrite as any)(change(before, "iv1", keep(before)), { params: { interviewId: "iv1" } });
+        expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: "A Family isn't able to move the interview — it's staying at Thu, Sep 10, 1:00 PM ET." }));
+      });
+
       it("the care provider keeps the time against the family's proposal → the family's bell + text, nothing to the care provider", async () => {
         const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
         await (onVideoInterviewWrite as any)(change(before, "iv1", keep(before)), { params: { interviewId: "iv1" } });
-        const line = "Alice isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM.";
+        const line = "Alice isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM PT.";
         expect(sendViaInteractionAgent).toHaveBeenCalledTimes(1);
         expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: line }));
         expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CLIENT, type: "interview_rescheduled", title: "Time Change Declined", body: line }));
@@ -555,7 +562,7 @@ describe("B5 — an interview proposal declined/withdrawn outright (same status,
     const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "The Nguyen Family", scheduledTime: kept };
     await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" }, eventId: "e1" });
     const call = sendViaInteractionAgent.mock.calls.find((c) => c[0] === "+15550001111");
-    expect(call?.[1].content).toMatch(/^The Nguyen Family isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM\.$/);
+    expect(call?.[1].content).toMatch(/^The Nguyen Family isn't able to move the interview — it's staying at Thu, Sep 10, 10:00 AM PT\.$/);
     expect(writeUserNotification).toHaveBeenCalledWith(expect.objectContaining({ recipientId: CAREGIVER, type: "interview_rescheduled", title: "Time Change Declined", body: call?.[1].content, transitionType: "interview_time_declined:2099-09-14T18:00:00.000Z" }));
     expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
   });

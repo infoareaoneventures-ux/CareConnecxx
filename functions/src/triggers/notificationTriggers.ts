@@ -231,7 +231,13 @@ export const onVideoInterviewWrite = functions.firestore
       ) {
         const { parseScheduledTimeMs, formatInterviewTimeShort } = await import('../utils/scheduledTime');
         // With the zone's name ("Mon, Nov 16, 1:00 AM PT"): the person reading it may be on another clock (2026-11-15).
-        const displayTime = formatInterviewTimeShort(parseScheduledTimeMs(String(after.reschedulePendingTime ?? '')));
+        // Each reader sees the time in THEIR own zone (the proposal goes to the other party, not the proposer).
+        const { zoneForUser: zoneOfReader } = await import('../utils/personZone');
+        const pendingMs = parseScheduledTimeMs(String(after.reschedulePendingTime ?? ''));
+        const displayTime = formatInterviewTimeShort(
+          pendingMs,
+          await zoneOfReader(after.rescheduledBy === 'caregiver' ? after.clientId : after.caregiverId),
+        );
         if (after.rescheduledBy === 'caregiver' && after.clientId) {
           // reschedule_interview (mcp/server.ts) already texts this direction
           // itself and stamps rescheduledViaAgent — skip to avoid a double text.
@@ -319,8 +325,11 @@ export const onVideoInterviewWrite = functions.firestore
       ) {
         const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
         const keptMs = parseScheduledTimeMs(String(after.scheduledTime ?? ''));
+        // The notice goes to whoever proposed the time: show it in their zone, with the zone's name.
+        const { formatInterviewTimeShort: fmtKept } = await import('../utils/scheduledTime');
+        const { zoneForUser: zoneOfProposer } = await import('../utils/personZone');
         const kept = Number.isFinite(keptMs) && keptMs > 0
-          ? new Date(keptMs).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          ? fmtKept(keptMs, await zoneOfProposer(before.rescheduledBy === 'caregiver' ? after.caregiverId : after.clientId))
           : '';
         const declinedKey = { ...iv, transitionType: `interview_time_declined:${before.reschedulePendingTime}` };
         if (before.rescheduledBy === 'caregiver' && after.caregiverId) {

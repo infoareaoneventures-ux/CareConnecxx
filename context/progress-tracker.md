@@ -1079,3 +1079,8 @@ From the Notion "UI & product" list, one batch (merge + hosting deploy together)
 - Care provider dashboard: the application row says "Applied <date>" so it isn't read as the job's date.
 - Checked, no code change needed: the Ongoing checkbox is already a labelled control; family "Membership: None" is test data without a subscription; post-a-job drafts were already built (Nov 11).
 - Still open and why: Start/End and interview-request waits are Firestore-trigger cold starts (needs minInstances decision); look and theme (needs screenshot review); Terms (founder); time zones (own batch); weekly availability in the Find Care profile window; pending reschedules under Requests; listing jobs only with a location (decision).
+
+### 2026-11-23 — Time zones: remaining Pacific-fixed notices (built locally, not deployed)
+- Interview "new time proposed" notices now show the time in the READER's own zone (it was Pacific for both people); "time change declined / staying at …" names the zone and uses the proposer's zone (tests: Eastern recipient added; existing expectations now read "10:00 AM PT").
+- Timesheet/payment texts (`shiftHours.ts`, `billing/reviewShiftHours.ts fmtDay`) name the visit's day in the visit's own zone (`careZoneOf(shift)`); `fmtDay(iso, zone?)` defaults to Pacific; test added.
+- Still Pacific-fixed (works for the Santa Clara service area, wrong for other zones): the care provider's timesheet/submit-hours flow in `agents/caregiverTimesheets.ts` (`clock`, `shortDate`, … ~30 call sites with no zone argument), in-shift confirmations (`agents/inShift.ts clock` default), the calendar views' own "today", and the zone name on ~50 site time strings.

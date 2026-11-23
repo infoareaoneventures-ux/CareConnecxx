@@ -469,7 +469,7 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
   });
 
   await tellCaregiver(shift.caregiverId, 'shift_hours_approved', 'Admin resolved your dispute', `Final: ${fmtHours(finalAmount.totalHours)}.`,
-    `Our team resolved the dispute over your hours${fmtDay(shift.submittedStartTime) ? ` for ${fmtDay(shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'}. Final: ${fmtHours(finalAmount.totalHours)} — $${finalAmount.grossPay.toFixed(2)}. Payment is being processed.`,
+    `Our team resolved the dispute over your hours${fmtDay(shift.submittedStartTime, careZoneOf(shift)) ? ` for ${fmtDay(shift.submittedStartTime, careZoneOf(shift))}` : ''} with ${shift.clientName ?? 'the family'}. Final: ${fmtHours(finalAmount.totalHours)} — $${finalAmount.grossPay.toFixed(2)}. Payment is being processed.`,
     { appointmentId });
   await pushNotification(
     shift.clientId,
@@ -680,7 +680,7 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
       );
       // Both Timesheets rows now read "Admin reviewing" — tell both sides (bell + text), 2026-10-01.
       {
-        const day = fmtDay(shift.submittedStartTime);
+        const day = fmtDay(shift.submittedStartTime, careZoneOf(shift));
         await tellCaregiver(shift.caregiverId, 'shift_hours_admin_review', "Correction needs our team's review", `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized.`,
           `${shift.clientName ?? 'The family'}'s correction on your hours${day ? ` for ${day}` : ''} needs our team's review before it can be finalized. Nothing is paid until they decide; we'll text you the outcome.`,
           { appointmentId: doc.id });
@@ -1211,7 +1211,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
     // that the payment had failed, or that it is being handled). A payout-side problem is ours, not the family's.
     if (attempt === 1 && !terminal && shift.caregiverId) {
       const family = shift.clientName ?? 'the family';
-      const day = fmtDay(shift.finalStartTime ?? shift.submittedStartTime);
+      const day = fmtDay(shift.finalStartTime ?? shift.submittedStartTime, careZoneOf(shift));
       const visit = `your visit${day ? ` on ${day}` : ''} with ${family}`;
       const ours = classifyPaymentFailure(errorMessage) === 'payout';
       await tellCaregiver(shift.caregiverId, 'shift_hours_payment_failed',
@@ -1238,7 +1238,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
           ? `We couldn't finish the payment for ${shift.caregiverName ?? 'your care provider'}'s visit, and it's on our side, not your card. Our team is on it and you don't need to do anything.`
           : `We couldn't complete the payment for ${shift.caregiverName ?? 'your care provider'}'s visit. Please check the card on file (say "update my card" and I'll send the link), then tell me to retry the payment.`),
         tellCaregiver(shift.caregiverId, 'shift_hours_payment_failed', 'Payment needs review', 'This visit payment could not be completed automatically. Evia support is reviewing it.',
-          `The payment for your visit${fmtDay(shift.finalStartTime ?? shift.submittedStartTime) ? ` on ${fmtDay(shift.finalStartTime ?? shift.submittedStartTime)}` : ''} with ${shift.clientName ?? 'the family'} couldn't be completed automatically. Our team is reviewing it; we'll text you when it's resolved.`,
+          `The payment for your visit${fmtDay(shift.finalStartTime ?? shift.submittedStartTime, careZoneOf(shift)) ? ` on ${fmtDay(shift.finalStartTime ?? shift.submittedStartTime, careZoneOf(shift))}` : ''} with ${shift.clientName ?? 'the family'} couldn't be completed automatically. Our team is reviewing it; we'll text you when it's resolved.`,
           { appointmentId }),
       ]);
     }

@@ -29,10 +29,25 @@ describe("current visit — the answer comes from the record, not from a model r
 
   it("says plainly when nothing is in progress, and names the next visit", () => {
     const next = { id: "s2", data: { status: "scheduled", date: "2026-11-24", startTime: "11:00", endTime: "13:00", caregiverName: "Imran Mohammed", timeZone: "America/Los_Angeles" } };
-    const f = buildCurrentVisitFacts([], next, "family");
-    expect(f.sentence).toMatch(/^No visit is in progress right now\. Imran Mohammed's visit is on Tuesday, /);
-    expect(f.sentence).toContain("11:00 AM–1:00 PM");
-    expect(f.inProgress).toEqual([]);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-10T20:00:00Z")); // far enough that the 24th is neither today nor tomorrow
+    try {
+      const f = buildCurrentVisitFacts([], next, "family");
+      expect(f.sentence).toMatch(/^No visit is in progress right now\. Imran Mohammed's visit is on Tuesday, /);
+      expect(f.sentence).toContain("11:00 AM–1:00 PM");
+      expect(f.inProgress).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("says today / tomorrow instead of a full date", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-23T20:00:00Z"));
+    try {
+      const mk = (date: string) => buildCurrentVisitFacts([], { id: "x", data: { status: "scheduled", date, startTime: "09:00", endTime: "13:00", caregiverName: "Imran Mohammed", timeZone: "America/Los_Angeles" } }, "family").sentence;
+      expect(mk("2026-11-23")).toContain("Imran Mohammed's visit is today, 9:00 AM–1:00 PM");
+      expect(mk("2026-11-24")).toContain("visit is tomorrow, 9:00 AM–1:00 PM");
+      expect(mk("2026-11-27")).toContain("visit is on Friday, ");
+    } finally { vi.useRealTimers(); }
   });
 
   it("never invents an end time the visit doesn't have", () => {

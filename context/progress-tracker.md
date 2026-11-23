@@ -1084,3 +1084,11 @@ From the Notion "UI & product" list, one batch (merge + hosting deploy together)
 - Interview "new time proposed" notices now show the time in the READER's own zone (it was Pacific for both people); "time change declined / staying at …" names the zone and uses the proposer's zone (tests: Eastern recipient added; existing expectations now read "10:00 AM PT").
 - Timesheet/payment texts (`shiftHours.ts`, `billing/reviewShiftHours.ts fmtDay`) name the visit's day in the visit's own zone (`careZoneOf(shift)`); `fmtDay(iso, zone?)` defaults to Pacific; test added.
 - Still Pacific-fixed (works for the Santa Clara service area, wrong for other zones): the care provider's timesheet/submit-hours flow in `agents/caregiverTimesheets.ts` (`clock`, `shortDate`, … ~30 call sites with no zone argument), in-shift confirmations (`agents/inShift.ts clock` default), the calendar views' own "today", and the zone name on ~50 site time strings.
+
+### 2026-11-23 — Booking by text: live screenshots (built locally, not deployed)
+Found in a live booking by text (family texting Evia):
+- A bare "No" to "Want to include a note…? …or just say no." was read as a back-out and DROPPED the whole booking ("no booking request went through"). `stepHandler.ts isBareDecline` now treats a bare no/skip/nope/no thanks as the answer at that question (booking and interview note steps) before any back-out check.
+- "add light house keeping" matched nothing and the identical recap came back. `careNeedCategories` now reads spaced/hyphenated words ("house keeping"); an edit that matches nothing says so and lists the care needs; a successful edit says "Added X." before the recap.
+- Replies the recap step couldn't place ("I want to add additional care. What are my other options", "Can you change care needs") got the whole recap again. They now get a short "what I can change" line.
+- The recap said "Tuesday 11:00 AM–1:00 PM, starting November 23" (a Monday). It now names the first day the visits happen (`firstVisitDate`).
+- Not changed (data, not code): "Henry x" as a recipient name and an emergency contact saved as "My son (Friend)" come from the family's care plan; the "note" "Always update your notes please" is an instruction, not a message to the provider (no way to tell them apart without asking).

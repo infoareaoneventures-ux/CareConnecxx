@@ -33,7 +33,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput } from "../safety/outputGuard";
 import { businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay } from "../utils/scheduledTime";
-import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
+import { isBackOutRequest, isBareDecline, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
 import {
   resolveCaregiverForInterview, requestVideoInterview, VideoInterviewRequestError,
 } from "./videoInterviewRequest";
@@ -429,13 +429,14 @@ async function handleIvAskNotes(
 ): Promise<void> {
   const data = await getFlowData(phone);
   const question = NOTES_QUESTION(data.caregiverName);
-  if (await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
-  if (await isQuestionOrOther(text, question)) {
+  const declined = isBareDecline(text); // the question says "just say no": that is the answer, never a back-out
+  if (!declined && await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
+  if (!declined && await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, question);
     return;
   }
-  const decision = await parseWithClaude(
+  const decision = declined ? "SKIP" : await parseWithClaude(
     'Is the family declining/skipping a note ("no", "skip", "nothing", "nope", "no thanks", "not needed"), or is ' +
     "this message itself the note they want flagged for the interview? Reply with exactly SKIP or NOTE.",
     text

@@ -669,6 +669,32 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Say yes and I'll send it");
   });
 
+  it('a bare "No" to "…or just say no" skips the note — it is the answer, never a back-out (live 2026-11-23)', async () => {
+    const data = { caregiverId: CG_ID, caregiverName: "Imran Mohammed", hourlyRate: 22, days: ["Tuesday"], dayTimes: { Tuesday: { start: "11:00", end: "13:00" } }, startDate: "2026-11-24", ongoing: true, careLocation: "1 Elm St, Springfield, CA, 90000" };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_message", bookingFlowData: data });
+    // Even if the model WOULD have called it a STOP, it is never asked.
+    modelReplies("STOP", "STOP", "STOP");
+    for (const reply of ["No", "no.", "Nope", "No thanks"]) {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_message", bookingFlowData: data });
+      sendMessage.mockClear();
+      await handleBookingFlowStep(PHONE, CHAT, reply, session({ bookingFlowStep: "bk_ask_message", bookingFlowData: data }));
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.bookingFlowStep).toBe("bk_confirm");
+      expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Say yes and I'll send it");
+      expect(sendMessage.mock.calls.some((c) => /no booking request went through/i.test(String(c[1])))).toBe(false);
+    }
+  });
+
+  it("the recap names the first day the visits actually happen, not a start date that isn't one of the booked weekdays", () => {
+    // 2026-11-23 is a Monday; the only booked day is Tuesday → the first visit is Tuesday Nov 24.
+    const recap = buildBookingRecap({ caregiverId: CG_ID, caregiverName: "Imran Mohammed", hourlyRate: 22, days: ["Tuesday"], dayTimes: { Tuesday: { start: "11:00", end: "13:00" } }, startDate: "2026-11-23", ongoing: true } as any);
+    expect(recap).toContain("starting November 24, 2026");
+    expect(recap).not.toContain("starting November 23, 2026");
+    // A start date that IS a booked weekday is shown as given.
+    const same = buildBookingRecap({ caregiverId: CG_ID, caregiverName: "Imran Mohammed", hourlyRate: 22, days: ["Tuesday"], dayTimes: { Tuesday: { start: "11:00", end: "13:00" } }, startDate: "2026-11-24", ongoing: true } as any);
+    expect(same).toContain("starting November 24, 2026");
+  });
+
   it("\"no set schedule yet\" sends the site's Ongoing / No schedule set state — skips days, start, times and ongoing", async () => {
     const daysData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26 };
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_days", bookingFlowData: daysData });
@@ -1263,6 +1289,40 @@ describe("bk_confirm", () => {
     await handleBookingFlowStep(PHONE, CHAT, "add mobility assistance", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
 
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Whose care needs");
+  });
+
+  it("an edit_care_needs request that matches nothing says so and lists the options — never the same recap back", async () => {
+    const data = { ...CONFIRM_DATA, careRecipients: undefined, topLevelCareNeeds: ["Meal Preparation"] };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(JSON.stringify({ action: "edit_care_needs", addCareNeeds: ["xylophone lessons"], removeCareNeeds: null }));
+    sendMessage.mockClear();
+    await handleBookingFlowStep(PHONE, CHAT, "add xylophone lessons", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+    const said = sendMessage.mock.calls.map((c) => String(c[1])).join("\n");
+    expect(said).toContain("couldn't match that to a care need");
+    expect(said).toContain("Light Housekeeping");
+    expect(said).not.toContain("Say yes and I'll send it"); // not the recap
+  });
+
+  it("an edit that adds a need says what was added, then shows the recap", async () => {
+    const data = { ...CONFIRM_DATA, careRecipients: undefined, topLevelCareNeeds: ["Meal Preparation"] };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(JSON.stringify({ action: "edit_care_needs", addCareNeeds: ["light house keeping"], removeCareNeeds: null }));
+    sendMessage.mockClear();
+    await handleBookingFlowStep(PHONE, CHAT, "I want to add light house keeping", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+    const texts = sendMessage.mock.calls.map((c) => String(c[1]));
+    expect(texts.some((t) => t.includes("Added Light Housekeeping."))).toBe(true);
+    expect(texts.at(-1)).toContain("Light Housekeeping");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).bookingFlowData.topLevelCareNeeds).toContain("Light Housekeeping");
+  });
+
+  it("a reply the recap step can't place says what can be changed instead of repeating the recap", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies("NO", JSON.stringify({ action: "other" }), "NO");
+    sendMessage.mockClear();
+    await handleBookingFlowStep(PHONE, CHAT, "hmm what are my other options", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+    const last = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(last).toContain("tell me what to change");
+    expect(last).not.toContain("Does that look right");
   });
 
   it("an edit_care_needs request removes a need in a single-recipient booking", async () => {

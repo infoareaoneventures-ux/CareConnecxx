@@ -35,14 +35,16 @@ export interface RepairResult {
   reply: string;
   /** "repaired" = a rewrite that passed the same check; "fallback" = the neutral line. */
   outcome: "repaired" | "fallback";
+  /** Why it fell back (no content, just the cause): the model gave nothing, the re-check rejected the rewrite, or a call failed. */
+  reason?: "empty" | "rejected" | "error";
 }
 
 export async function repairUnsupportedDraft(input: RepairInput, deps: RepairDeps): Promise<RepairResult> {
-  const fallback: RepairResult = { reply: GROUNDING_REASK_COPY, outcome: "fallback" };
+  const fallback = (reason: "empty" | "rejected" | "error"): RepairResult => ({ reply: GROUNDING_REASK_COPY, outcome: "fallback", reason });
   try {
     const payload = buildHandoffGroundingPayload(input.systemContext, input.history, input.draft, input.toolObservations, input.userText);
     const rewritten = (await deps.complete(GROUNDING_REPAIR_SYSTEM_PROMPT, payload, { maxTokens: 220 })).trim();
-    if (!rewritten) return fallback;
+    if (!rewritten) return fallback("empty");
     // A rewrite that keeps no facts needs no check; one that still states facts is checked by the same gate that rejected the draft.
     // (A digit means a time, date, count or amount: those are always re-checked, whether or not the claim detector flags them.)
     if (!/\d/.test(rewritten) && classifyGroundingClaims(rewritten).length === 0) return { reply: rewritten, outcome: "repaired" };
@@ -53,8 +55,8 @@ export async function repairUnsupportedDraft(input: RepairInput, deps: RepairDep
         { maxTokens: 8 },
       ),
     );
-    return verdict === "supported" ? { reply: rewritten, outcome: "repaired" } : fallback;
+    return verdict === "supported" ? { reply: rewritten, outcome: "repaired" } : fallback("rejected");
   } catch {
-    return fallback;
+    return fallback("error");
   }
 }

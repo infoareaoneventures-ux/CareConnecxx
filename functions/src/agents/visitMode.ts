@@ -28,7 +28,7 @@ import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { quickComplete } from "../utils/openaiClient";
 import { fmtTime } from "./caregiverBookingRequests";
-import { END_PROMPT, taskItems, checkTasks, addVisitNote, parkShiftEnd, visitLine, clock, type TaskItem } from "./inShift";
+import { END_PROMPT, endVisit, taskItems, checkTasks, addVisitNote, parkShiftEnd, visitLine, clock, type TaskItem } from "./inShift";
 // The one-visit read and the Start window are the shared server rule's (shifts/visitActions.ts, 2026-10-11) — the
 // same functions the site's queue and inShift's START run; nothing here re-derives them.
 import { CARE_PROVIDER_TERM_RULE } from "./terminology";
@@ -73,7 +73,7 @@ export async function classifyVisitMessage(text: string, shift: Doc, items: Task
     `- "task_done": they say they completed one or more of the listed tasks (match by meaning, e.g. "fed him" → Meal Preparation). "tasks" = the numbers. If the message also contains an observation for the family, put it in "note".\n` +
     `- "task_undo": they say a task was NOT actually done / undo it. "tasks" = the numbers.\n` +
     `- "note": an observation or update about the person or the visit that the family should see (what they ate, mood, bathroom, anything that happened). "note" = the text in their words, cleaned of filler but not softened or rewritten.\n` +
-    `- "finish": they say the visit is over / they are done with the visit / leaving / wrapping up. (Being done with a TASK is task_done, not finish.)\n` +
+    `- "finish": they say the visit is over / they are done with the visit / the shift / leaving / wrapping up, including a bare "done", "all done", "finished" or "done with shift", and a message that says they finished AND adds something for the family (then "note" = that something, in their words). (Being done with a named TASK is task_done, not finish.)\n` +
     `- "question": they are asking something. "scope" = "visit" if the visit's own record can answer it (emergency contact, address, the person's notes/care needs, tasks left, start/end time), else "outside" (pay, other days, jobs, account).\n` +
     `- "ambiguous": it could reasonably be either a completed task or a note and you cannot tell. "tasks" = the candidate numbers.\n` +
     `- "other": none of the above (greetings, chatter, a request for something not on this list).\n` +
@@ -113,7 +113,7 @@ export function visitRecordText(shift: Doc, items: TaskItem[], bookingNote: stri
   return lines.join("\n");
 }
 
-const DURING_VISIT_HELP = "During a visit I can check off a task (DONE 1), save a note for the family (NOTE followed by the note), or end the visit (FINISH).";
+const DURING_VISIT_HELP = "During a visit I can check off a task (just tell me which one), save a note for the family, or end the visit when you say you're done.";
 
 /**
  * Free text while a visit is in progress. "handled" when this module answered;
@@ -156,6 +156,12 @@ export async function handleVisitModeMessage(
       return "handled";
     }
     case "finish":
+      // "Finished, had to stay 15 minutes over": the message IS the closing note, so end the visit with it instead of asking for it again.
+      if (c.note) {
+        const r = await endVisit(caregiverId, shiftId, prefixed(c.note), nowMs);
+        await say(r.ok ? r.text : r.message);
+        return "handled";
+      }
       // The same parked END question the FINISH keyword asks (inShift.ts), for THIS visit by id, with the same
       // 30-minute expiry — the reply (the closing note, or SKIP) is then handled by handleInShiftKeyword's pendingShiftEnd branch.
       await parkShiftEnd(phone, shiftId, nowMs);

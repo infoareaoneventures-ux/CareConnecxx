@@ -160,6 +160,8 @@ export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminde
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 // 15 min after a visit's scheduled end: still in progress → FINISH; never started → LOG (founder 2026-09-29)
 export { sendShiftEndReminders } from './scheduled/shiftEndReminder';
+// One minute after a visit's start, still not clocked in → one text + bell (founders 2026-11-25)
+export { sendMissedClockInReminders } from './scheduled/missedClockInReminder';
 // Caregiver Timesheets reminders (2026-10-01): unsubmitted hours a day after the visit, a correction 3h before it auto-accepts — bell + text, once each
 export { sendCaregiverTimesheetReminders } from './scheduled/caregiverTimesheetReminders';
 // (processDndQueue — the agent_dnd_queue drainer — was deleted 2026-10-11: nothing in production ever wrote that queue (its only writer, utils/dndGuard.sendIfNotDND, has no callers). Deploy must delete v1-processDndQueue.)

@@ -6,7 +6,7 @@
 // common should not depend on a model re-reading a pile of JSON: this module reads the in-progress visit (and the next one) and
 // returns finished, formatted facts plus ONE sentence the agent can send as is. The sentence is made from the data, so it is
 // backed by construction.
-import { formatHHMMForDisplay, formatClockTime, weekdayForDate, formatDateForDisplay } from "../utils/scheduledTime";
+import { formatHHMMForDisplay, formatClockTime, weekdayForDate, formatDateForDisplay, businessTodayStr, businessTomorrowStr } from "../utils/scheduledTime";
 import { careZoneOf, zoneSuffix } from "../utils/careTime";
 import { taskItems } from "./inShift";
 
@@ -72,9 +72,11 @@ export function visitFacts(shiftId: string, shift: Doc, perspective: "family" | 
       if (tasksOpen.length && tasksOpen.length <= 4) sentence += ` Still to do: ${tasksOpen.join(", ")}.`;
     }
   } else {
-    const day = date ? `${weekdayForDate(date) ?? ""}${weekdayForDate(date) ? ", " : ""}${formatDateForDisplay(date)}` : "";
+    // "today" / "tomorrow" read like a person; anything further out names the weekday and date.
+    const day = !date ? "" : date === businessTodayStr() ? "today" : date === businessTomorrowStr() ? "tomorrow"
+      : `${weekdayForDate(date) ?? ""}${weekdayForDate(date) ? ", " : ""}${formatDateForDisplay(date)}`;
     const window = scheduledStart && scheduledEnd ? `${scheduledStart}–${scheduledEnd}${tz}` : scheduledStart ? `${scheduledStart}${tz}` : "";
-    sentence = `${lead} is ${day ? `on ${day}` : "scheduled"}${window ? `, ${window}` : ""}.`;
+    sentence = `${lead} is ${day ? (day === "today" || day === "tomorrow" ? day : `on ${day}`) : "scheduled"}${window ? `, ${window}` : ""}.`;
   }
   return { shiftId, who, date, scheduledStart, scheduledEnd, startedAt, tasksDone, tasksOpen, notes, sentence };
 }

@@ -351,8 +351,8 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
     <div className="bg-white border border-amber-200 rounded-2xl shadow-sm overflow-hidden">
 
       {/* Header */}
-      <div className="px-5 pt-5 pb-4 flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="px-5 pt-5 pb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1 basis-48">
           <div className="w-12 h-12 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
             {(booking.caregiverPhoto || booking.caregiverPhotoURL)
               ? <img src={booking.caregiverPhoto || booking.caregiverPhotoURL} alt={booking.caregiverName} className="w-full h-full object-cover" />
@@ -853,8 +853,6 @@ interface ActiveVisitGroupCardProps {
   onCancelBooking: (shiftId: string) => Promise<void>;
   navigate: ReturnType<typeof useNavigate>;
   onMessage: () => void;
-  /** The Calendar's "+ Request Visit" for THIS booking (preselected); undefined when the booking has no scheduled visit left (2026-10-07). */
-  onRequestVisit?: () => void;
   onSkipReplacement: (shiftId: string) => Promise<void>;
   onFindReplacement: (shift: Shift) => void;
   onWithdrawReplacement: (replacementRequestId: string) => Promise<void>;
@@ -864,7 +862,7 @@ interface ActiveVisitGroupCardProps {
   bookingNote?: string | null;
 }
 
-const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onRequestVisit, onSkipReplacement, onFindReplacement, onWithdrawReplacement, schedulePaused, bookingNote }) => {
+const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onSkipReplacement, onFindReplacement, onWithdrawReplacement, schedulePaused, bookingNote }) => {
   const base = shifts[0];
   // The header note is the note the family typed when SENDING the booking
   // (booking_requests.notes) — not whichever note the newest visit carries.
@@ -1074,14 +1072,6 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
           >
             <MessageSquare className="w-4 h-4" /> Message
           </button>
-          {onRequestVisit && (
-            <button
-              onClick={onRequestVisit}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors shrink-0"
-            >
-              <Plus className="w-4 h-4" /> Request Visit
-            </button>
-          )}
         </div>
       </div>
 
@@ -2054,12 +2044,6 @@ export const ClientVisitsPage: React.FC = () => {
                 onCancelBooking={handleCancelBooking}
                 navigate={navigate}
                 onMessage={() => gate('message', groupShifts[0]?.caregiverName, () => navigate(`/client/inbox?caregiver=${groupShifts[0]?.caregiverId}`))}
-                onRequestVisit={(() => {
-                  const cgId = String(groupShifts[0]?.caregiverId ?? '');
-                  const bookingId = String(groupShifts[0]?.bookingRequestId ?? '');
-                  const inList = !!bookingId && (visitTargets.caregiverBookings[cgId] || []).some(b => b.bookingId === bookingId);
-                  return inList ? () => gate('booking', groupShifts[0]?.caregiverName, () => setRequestVisitFor({ caregiverId: cgId, bookingId })) : undefined;
-                })()}
                 onSkipReplacement={handleSkipReplacement}
                 onFindReplacement={setReplacementShift}
                 onWithdrawReplacement={handleWithdrawReplacement}

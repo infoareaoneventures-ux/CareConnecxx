@@ -345,7 +345,7 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Schedule</p>
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <label className="text-xs text-slate-500 block mb-1">Start date</label>
                       <input
                         type="date"
@@ -360,10 +360,10 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
                         }}
                         onBlur={() => { const _n = new Date(); const _min = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; if (visitStartDate && visitStartDate < _min) setVisitStartDate(_min); }}
                         min={(() => { const _n = new Date(); return `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; })()}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
+                        className="block w-full min-w-0 max-w-full appearance-none min-h-[38px] px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white"
                       />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <label className="text-xs text-slate-500 block mb-1">End date</label>
                       <input
                         type="date"
@@ -374,7 +374,7 @@ export function RequestVisitModal({ targets, preselect, gate, onClose, onSent }:
                         }}
                         min={visitStartDate || (() => { const _n = new Date(); return `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`; })()}
                         disabled={visitEndOption === 'ongoing'}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                        className="block w-full min-w-0 max-w-full appearance-none min-h-[38px] px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 bg-white disabled:bg-slate-50 disabled:text-slate-400"
                       />
                       <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer select-none">
                         <input

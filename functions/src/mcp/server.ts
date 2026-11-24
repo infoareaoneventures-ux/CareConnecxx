@@ -2176,7 +2176,7 @@ export const MCP_TOOLS: McpTool[] = [
         number:      { type: "number", description: "The visit number from the last texted Timesheets list" },
         shiftId:     { type: "string", description: "The shifts document ID (instead of number)" },
         charges:     { type: "array", items: { type: "string" }, description: "Additional charges the care provider ALREADY named in their message, one string each in their own words with the amount (e.g. \"supplies 12.50 - groceries for her dinner\"). Leave out when they named none — never invent one." },
-        times:       { type: "string", description: "The care provider's own words when they ALREADY said the real time they started or finished in the same message (\"submit but I finished 10:15am\"). Leave out otherwise — never invent one." },
+        times:       { type: "string", description: "REQUIRED whenever the care provider's message contains ANY clock time or says a time is wrong (\"submit but I finished 10:15am\", \"submit, I left at 4\", typos like \"10;15\" too): their words, copied. Without it the recorded clock-out is used and their real time is lost. Leave out only when the message has no time." },
       },
       required: ["caregiverId"],
     },

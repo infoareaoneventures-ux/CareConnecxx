@@ -26,12 +26,12 @@ describe("repairing an unbacked draft instead of sending a canned line (live 202
 
     const notBacked = vi.fn().mockResolvedValueOnce("Imran's visit ends at 4:00 PM.").mockResolvedValueOnce("UNSUPPORTED");
     const r = await repairUnsupportedDraft(input, { complete: notBacked });
-    expect(r).toEqual({ reply: GROUNDING_REASK_COPY, outcome: "fallback" });
+    expect(r).toEqual({ reply: GROUNDING_REASK_COPY, outcome: "fallback", reason: "rejected" });
   });
 
   it("falls back to the neutral line when the model fails, times out or returns nothing", async () => {
-    expect((await repairUnsupportedDraft(input, { complete: vi.fn().mockRejectedValue(new Error("down")) })).outcome).toBe("fallback");
-    expect((await repairUnsupportedDraft(input, { complete: vi.fn().mockResolvedValue("   ") })).outcome).toBe("fallback");
+    expect(await repairUnsupportedDraft(input, { complete: vi.fn().mockRejectedValue(new Error("down")) })).toMatchObject({ outcome: "fallback", reason: "error" });
+    expect(await repairUnsupportedDraft(input, { complete: vi.fn().mockResolvedValue("   ") })).toMatchObject({ outcome: "fallback", reason: "empty" });
     // an unreadable verdict is not "supported"
     const garbled = vi.fn().mockResolvedValueOnce("Visit ends at 4:00 PM.").mockResolvedValueOnce("hmm");
     expect((await repairUnsupportedDraft(input, { complete: garbled })).outcome).toBe("fallback");

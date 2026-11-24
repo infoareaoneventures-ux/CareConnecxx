@@ -164,8 +164,9 @@ describe("handleInShiftKeyword — START · DONE n · NOTE … · END · SKIP", 
     expect(hoisted.sent.at(-1)).toBe("Checked off: Mobility Assistance — Transfer Assist (1/3 done).");
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "Note: she walked twice", {})).toBe("handled");
     expect(hoisted.sent.at(-1)).toBe("Noted. The family can see it on the visit.");
-    expect(await handleInShiftKeyword("+1", "chat", "cg1", "done", {})).toBe("handled");
-    expect(hoisted.sent.at(-1)).toMatch(/^Done with a task\?/);
+    // Bare "done" is free text, not DONE n: visit mode reads it (live 2026-11-23: "Done" / "Done with shift" got a canned task prompt).
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "done", {})).toBe("passthrough");
+    expect(await handleInShiftKeyword("+1", "chat", "cg1", "Done with shift", {})).toBe("passthrough");
     expect(await handleInShiftKeyword("+1", "chat", "cg1", "FINISH", {})).toBe("handled");
     expect(hoisted.sent.at(-1)).toBe(END_PROMPT);
     const parked = hoisted.sessionWrites.at(-1);

@@ -60,6 +60,14 @@ describe("visit mode — free text while a visit is in progress", () => {
     expect(hoisted.sent).toEqual([]);
   });
 
+  it("'Finished, had to stay 15 mins over' ends the visit with that as the closing note — no second question (founders 2026-11-23)", async () => {
+    open();
+    reply({ kind: "finish", note: "Had to stay 15 mins over, he soiled himself again" });
+    expect(await handleVisitModeMessage("+1", "chat", "cg1", "Finished had to stay 15mins over he soiled himself again", session())).toBe("handled");
+    expect(hoisted.sent.at(-1)).not.toBe(END_PROMPT);
+    expect(hoisted.sent.at(-1)).toMatch(/^Ended /);
+  });
+
   it("'I'm done with the visit' → the FINISH question, not the cancel flow (live 2026-10-07)", async () => {
     open();
     reply({ kind: "finish" });

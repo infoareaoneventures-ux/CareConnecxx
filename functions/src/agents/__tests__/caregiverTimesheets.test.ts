@@ -274,12 +274,15 @@ describe("Submit hours worked — the modal as a flow", () => {
   it("a charge is parsed, confirmed, and listed with base + total and the extra-charges note; validation uses the modal's words", async () => {
     shift("s1");
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    hoisted.quick.mockResolvedValueOnce('{"fix":false}'); // the time-correction check runs first
     hoisted.quick.mockResolvedValueOnce('{"label": "Mileage", "amount": 12.5, "note": "20 miles"}');
     await handleSubmitHoursFlowStep("+1", "chat", "mileage 12.50 - 20 miles", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Added Mileage · $12.50. Anything else to add? If not, just say no.");
+    hoisted.quick.mockResolvedValueOnce('{"fix":false}'); // the time-correction check runs first
     hoisted.quick.mockResolvedValueOnce('{"label": "Supplies", "amount": null, "note": null}');
     await handleSubmitHoursFlowStep("+1", "chat", "supplies", session() as never);
     expect(hoisted.sent.at(-1)).toContain("Please enter an amount for each additional charge.");
+    hoisted.quick.mockResolvedValueOnce('{"fix":false}'); // the time-correction check runs first
     hoisted.quick.mockResolvedValueOnce('{"label": null, "amount": 5, "note": null}');
     await handleSubmitHoursFlowStep("+1", "chat", "5 dollars", session() as never);
     expect(hoisted.sent.at(-1)).toContain("Please enter a label for each Custom charge.");
@@ -306,6 +309,45 @@ describe("Submit hours worked — the modal as a flow", () => {
     hoisted.submit.mockRejectedValueOnce(new Error("Different hours were already submitted for this shift"));
     await handleSubmitHoursFlowStep("+1", "chat", "SUBMIT", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Different hours were already submitted for this shift");
+  });
+});
+
+describe("a real clock time said during Submit hours (live 2026-11-23, founders)", () => {
+  const fix = (start: string | null, end: string | null) => hoisted.quick.mockResolvedValueOnce(JSON.stringify({ fix: true, start, end }));
+  it("'submit but I finished 10;15am' starts the flow with that clock-out instead of the recorded one", async () => {
+    shift("s1");
+    fix(null, "17:30");
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1", times: "I finished 5;30pm" });
+    const w = hoisted.sessionWrites.at(-1);
+    expect(w.submitHoursFlowData.endIso).toBe("2026-09-19T00:30:00.000Z");
+    expect(hoisted.sent.at(-1)).toMatch(/^Using the times you gave me\./);
+    expect(hoisted.sent.at(-1)).toContain("Clock out 5:30:00 PM, Sep 18");
+  });
+  it("'my end time is wrong' on the charges question asks which time, instead of 'Please enter an amount'; the answer updates the hours and returns to the charges question", async () => {
+    shift("s1");
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    fix(null, null);
+    await handleSubmitHoursFlowStep("+1", "chat", "Not but my end time is wrong", session() as never);
+    expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("sh_fixtime");
+    expect(hoisted.sent.at(-1)).toMatch(/^What time did you actually start and finish\?/);
+    expect(hoisted.sent.at(-1)).not.toContain("Please enter an amount");
+    fix(null, "16:15");
+    await handleSubmitHoursFlowStep("+1", "chat", "finished 4:15", session() as never);
+    const w = hoisted.docs.get("agent_sessions/+1");
+    expect(w.submitHoursFlowStep).toBe("sh_items");
+    expect(hoisted.sent.at(-1)).toMatch(/^Updated\./);
+    expect(hoisted.sent.at(-1)).toContain("Clock out 4:15:00 PM, Sep 18");
+  });
+  it("a time said on the final confirm updates the summary and keeps asking to submit", async () => {
+    shift("s1");
+    await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    await handleSubmitHoursFlowStep("+1", "chat", "no", session() as never);
+    expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("sh_confirm");
+    fix("14:30", "16:00");
+    await handleSubmitHoursFlowStep("+1", "chat", "actually I worked 2:30 to 4", session() as never);
+    expect(hoisted.docs.get("agent_sessions/+1").submitHoursFlowStep).toBe("sh_confirm");
+    expect(hoisted.sent.at(-1)).toMatch(/^Updated\./);
+    expect(hoisted.sent.at(-1)).toContain("Want me to submit this?");
   });
 });
 
@@ -444,6 +486,7 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
   it('a bare "no" to "Anything else to add? If not, just say no" moves to the confirm — it is never read as a back-out', async () => {
     shift("s1");
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    hoisted.quick.mockResolvedValueOnce('{"fix":false}'); // the time-correction check runs first
     hoisted.quick.mockResolvedValueOnce('{"label":"Supplies","amount":12.5}');
     await handleSubmitHoursFlowStep("+1", "chat", "supplies 12.50", session() as never);
     const { isBackOutRequest } = await import("../stepHandler");
@@ -457,10 +500,12 @@ describe("mid-flow questions are briefed with the modal and the money facts", ()
   it("Submit hours: a later charge turn and the SUBMIT confirm carry the summary so far, the payment note and the money rules", async () => {
     shift("s1");
     await startSubmitHoursFlow("+1", "chat", session() as never, { caregiverId: "cg1", shiftId: "s1" });
+    hoisted.quick.mockResolvedValueOnce('{"fix":false}'); // the time-correction check runs first
     hoisted.quick.mockResolvedValueOnce('{"label":"Mileage","amount":12.5,"note":"20 miles"}');
     await handleSubmitHoursFlowStep("+1", "chat", "Mileage 12.50 - 20 miles", session() as never);
     expect(hoisted.sent.at(-1)).toBe("Added Mileage · $12.50. Anything else to add? If not, just say no.");
     // a question on the "Another charge?" turn: the parser fails, the question check says yes
+    hoisted.quick.mockResolvedValueOnce('{"fix":false}'); // the time-correction check runs first
     hoisted.quick.mockResolvedValueOnce("not json");
     vi.mocked(isQuestionOrOther).mockResolvedValueOnce(true);
     await handleSubmitHoursFlowStep("+1", "chat", "is the mileage taxed?", session() as never);

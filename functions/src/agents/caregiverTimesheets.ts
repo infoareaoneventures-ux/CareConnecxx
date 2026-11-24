@@ -405,6 +405,8 @@ export interface SubmitHoursFlowData {
   scheduledStartMs: number | null; scheduledEndMs: number | null;
   /** the visit's care-location zone — the real finish time she texts is read in it */
   tz?: string;
+  /** where the "which time is wrong" question came from, so the flow returns there */
+  afterFix?: "sh_items" | "sh_confirm";
   items: Array<{ type: "custom"; label: string; amount: number; note?: string }>;
 }
 // How every figure on the Timesheets page is worked out — briefed with any mid-flow question (live 2026-10-11:
@@ -489,7 +491,38 @@ async function parseFinishTime(text: string): Promise<string | null> {
   return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
 }
 
-export async function startSubmitHoursFlow(phone: string, chatId: string, _session: AgentSession, args: { caregiverId: string; shiftId: string; charges?: string[] }): Promise<{ started: boolean; reason?: string }> {
+/**
+ * The care provider saying the recorded clock-in / clock-out is wrong, or giving the real one ("I finished 10:15am",
+ * "my end time is wrong"). Live 2026-11-23 (founders): "Submit but I finished 10;15am" and "my end time is wrong" were
+ * read as a charge with no amount, and the recorded 11:12 clock-out went through. `unspecified` = they say a time is
+ * wrong without giving it.
+ */
+export async function parseTimeFix(text: string): Promise<{ start: string | null; end: string | null; unspecified: boolean } | null> {
+  const raw = await parse('The care provider is submitting hours for a visit that already happened. Decide whether the message says the recorded clock-in or clock-out time (or the hours) is wrong, or gives the time they really started or finished (typos like "10;15am" count). Reply ONLY JSON {"fix": true|false, "start": "HH:MM"|null, "end": "HH:MM"|null} with 24-hour times they actually STATED (a finish time is "end", an arrival or start time is "start"). "fix" is true when they say a time is wrong even if they gave no time. A charge, a plain no, a yes or a question is fix false. Never invent a time.', text);
+  try {
+    const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)) as { fix?: unknown; start?: unknown; end?: unknown };
+    if (j.fix !== true) return null;
+    const hhmm = (v: unknown) => { const m = typeof v === "string" ? v.trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/) : null; return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null; };
+    const start = hhmm(j.start), end = hhmm(j.end);
+    return { start, end, unspecified: !start && !end };
+  } catch { return null; }
+}
+/** The stated times applied to the flow's clock-in / clock-out (read on the visit's own day, in its zone), or null when they cannot work. */
+export function applyTimeFix(d: SubmitHoursFlowData, fix: { start: string | null; end: string | null }): SubmitHoursFlowData | null {
+  const tz = d.tz || DEFAULT_TZ;
+  const dayOf = (iso: string) => new Date(Date.parse(iso)).toLocaleDateString("en-CA", { timeZone: tz });
+  let startMs = Date.parse(d.startIso), endMs = Date.parse(d.endIso);
+  if (fix.start) startMs = wallToInstantMs(dayOf(d.startIso), fix.start, tz);
+  if (fix.end) {
+    endMs = wallToInstantMs(dayOf(d.startIso), fix.end, tz);
+    if (Number.isFinite(endMs) && endMs <= startMs) endMs += 24 * 3_600_000; // finished after midnight
+  }
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs || endMs - startMs > 24 * 3_600_000) return null;
+  return { ...d, startIso: new Date(startMs).toISOString(), endIso: new Date(endMs).toISOString(), totalHours: (endMs - startMs) / 3_600_000 };
+}
+const FIXTIME_Q = "What time did you actually start and finish? For example finished 10:15 AM. (Say cancel to leave it under Unsubmitted.)";
+
+export async function startSubmitHoursFlow(phone: string, chatId: string, _session: AgentSession, args: { caregiverId: string; shiftId: string; charges?: string[]; times?: string }): Promise<{ started: boolean; reason?: string }> {
   const snap = await db.collection("shifts").doc(args.shiftId).get();
   const shift = snap.data() as Doc | undefined;
   if (!snap.exists || !shift || shift.caregiverId !== args.caregiverId) { await sendMessage(chatId, "That visit isn't on your Timesheets tab."); return { started: false, reason: "not_found" }; }
@@ -514,6 +547,16 @@ export async function startSubmitHoursFlow(phone: string, chatId: string, _sessi
     await sendMessage(chatId, ENDTIME_Q(data));
     return { started: true };
   }
+  // A real time named in the message that started the flow ("submit, but I finished at 10:15") replaces the recorded one.
+  let fixNote = "";
+  if (args.times) {
+    const fix = await parseTimeFix(args.times);
+    if (fix && !fix.unspecified) {
+      const fixed = applyTimeFix(data, fix);
+      if (fixed) { Object.assign(data, fixed); fixNote = "Using the times you gave me.\n\n"; }
+      else fixNote = "Those times don't work with this visit, so I kept the recorded ones. Tell me the real times if they're different.\n\n";
+    }
+  }
   // Charges already named in the message that started the flow ("submit my hours, I spent $12.50 on groceries") are
   // kept — only "anything else?" is asked, never the question they already answered.
   for (const c of args.charges ?? []) {
@@ -521,7 +564,7 @@ export async function startSubmitHoursFlow(phone: string, chatId: string, _sessi
     if (p && p.kind === "item") data.items.push({ type: "custom" as const, label: p.label, amount: p.amount, ...(p.note ? { note: p.note } : {}) });
   }
   await db.collection("agent_sessions").doc(phone).update({ submitHoursFlowStep: "sh_items", submitHoursFlowData: data, stateExpiresAt: new Date(Date.now() + FLOW_TTL_MS).toISOString() });
-  await sendMessage(chatId, data.items.length ? `${ITEMS_Q(data).split("\n").slice(0, -2).join("\n")}\n\n${ANOTHER_Q(data.items[data.items.length - 1])}` : ITEMS_Q(data));
+  await sendMessage(chatId, fixNote + (data.items.length ? `${ITEMS_Q(data).split("\n").slice(0, -2).join("\n")}\n\n${ANOTHER_Q(data.items[data.items.length - 1])}` : ITEMS_Q(data)));
   return { started: true };
 }
 
@@ -555,6 +598,18 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     await sendMessage(chatId, ITEMS_Q(fixed));
     return;
   }
+  if (step === "sh_fixtime") {
+    if (text.trim().toUpperCase() === "CANCEL" || await isBackOutRequest(text, FIXTIME_Q)) return cancelled();
+    const fix = await parseTimeFix(text);
+    const fixed = fix && !fix.unspecified ? applyTimeFix(data, fix) : null;
+    if (!fixed) {
+      if (!fix && await isQuestionOrOther(text, FIXTIME_Q)) { await sendMessage(chatId, await answerMidFlow(text, FIXTIME_Q, { facts: SUBMIT_FACTS(data) })); return; }
+      await reaskOnce(chatId, fix && !fix.unspecified ? "That doesn't work with this visit's start." : DIDNT_CATCH, FIXTIME_Q); return;
+    }
+    const back = data.afterFix === "sh_confirm" ? "sh_confirm" : "sh_items";
+    const clean = { ...fixed, afterFix: undefined };
+    return next(clean, back, `Updated.\n\n${back === "sh_confirm" ? SUBMIT_CONFIRM_Q(clean) : ITEMS_Q(clean)}`);
+  }
   if (step === "sh_items") {
     const q = data.items.length === 0 ? ITEMS_Q(data) : ANOTHER_Q(data.items[data.items.length - 1]);
     // The question itself says "just say no" — a bare no is the answer (no more charges), never a back-out
@@ -562,6 +617,13 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     const bare = text.trim().toUpperCase().replace(/[.!]+$/g, "");
     if (["NO", "N", "NOPE", "NAH", "NONE", "NO THANKS", "NOTHING"].includes(bare)) return next({}, "sh_confirm", SUBMIT_CONFIRM_Q(data));
     if (bare === "CANCEL" || await isBackOutRequest(text, q)) return cancelled();
+    const fix = await parseTimeFix(text);
+    if (fix) {
+      if (fix.unspecified) return next({ afterFix: "sh_items" }, "sh_fixtime", FIXTIME_Q);
+      const fixed = applyTimeFix(data, fix);
+      if (fixed) return next(fixed, "sh_items", `Updated.\n\n${ITEMS_Q(fixed)}`);
+      await sendMessage(chatId, `That doesn't work with your clock-in (${clock(Date.parse(data.startIso))}). ${FIXTIME_Q}`); return;
+    }
     const parsed = await parseCharge(text);
     if (parsed === null || parsed.kind === "no_amount" || parsed.kind === "no_label") {
       if (parsed === null && await isQuestionOrOther(text, q)) { await sendMessage(chatId, await answerMidFlow(text, q, { facts: SUBMIT_FACTS(data) })); return; }
@@ -580,6 +642,14 @@ export async function handleSubmitHoursFlowStep(phone: string, chatId: string, t
     if (norm === "SUBMIT" || norm === "SUBMIT HOURS" || norm === "CONFIRM" || norm === "YES" || norm === "SEND") action = "submit";
     else if (norm === "CANCEL" || norm === "NO") action = "cancel";
     else if (await isBackOutRequest(text, q)) action = "cancel";
+    else if (await parseTimeFix(text).then(async (fix) => {
+      if (!fix) return false;
+      if (fix.unspecified) { await next({ afterFix: "sh_confirm" }, "sh_fixtime", FIXTIME_Q); return true; }
+      const fixed = applyTimeFix(data, fix);
+      if (fixed) await next(fixed, "sh_confirm", `Updated.\n\n${SUBMIT_CONFIRM_Q(fixed)}`);
+      else await sendMessage(chatId, `That doesn't work with your clock-in (${clock(Date.parse(data.startIso))}). ${FIXTIME_Q}`);
+      return true;
+    })) return;
     else {
       const v = await parse("Evia showed the care provider the hours summary and asked \"Want me to submit this?\". Classify: SUBMIT (yes / go ahead / send it / submit), CANCEL (no / hold off / never mind / cancel), or OTHER (a question / a change).", text);
       action = v.toUpperCase().startsWith("SUBMIT") ? "submit" : v.toUpperCase().startsWith("CANCEL") ? "cancel" : "other";

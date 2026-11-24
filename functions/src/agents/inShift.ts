@@ -388,7 +388,9 @@ export async function handleInShiftKeyword(phone: string, chatId: string, caregi
   const done = /^DONE\b\s*(.*)$/i.exec(raw);
   if (done) {
     const numbers = (done[1].match(/\d+/g) ?? []).map(Number);
-    if (numbers.length === 0) { await say("Done with a task? Tell me its number. Done with the whole visit? Say finish."); return "handled"; }
+    // No number: "Done", "Done with shift", "done with the bathing" are free text, not the DONE n shortcut. They go to visit mode,
+    // which reads them against the visit (live 2026-11-23: "Done" and "Done with shift" got a canned task prompt twice).
+    if (numbers.length === 0) return "passthrough";
     const r = await checkTasks(caregiverId, undefined, { numbers });
     if (!r.ok && r.reason === "ambiguous" && r.candidates) { await parkVisitChoice(phone, r.candidates, raw); await say(whichVisitPrompt(r.candidates)); return "handled"; }
     await say(r.ok ? r.text : r.message);
@@ -437,7 +439,7 @@ async function runKeywordOnShift(phone: string, chatId: string, caregiverId: str
   const undo = /^UNDO\b\s*(.*)$/i.exec(keyword);
   if (undo) { const r = await checkTasks(caregiverId, shiftId, { numbers: (undo[1].match(/\d+/g) ?? []).map(Number), completed: false }); await say(r.ok ? r.text : r.message); return; }
   const done = /^DONE\b\s*(.*)$/i.exec(keyword);
-  if (done) { const r = await checkTasks(caregiverId, shiftId, { numbers: (done[1].match(/\d+/g) ?? []).map(Number) }); await say(r.ok ? r.text : r.message); return; }
+  if (done) { const nums = (done[1].match(/\d+/g) ?? []).map(Number); if (nums.length === 0) { await parkShiftEnd(phone, shiftId); await say(END_PROMPT); return; } const r = await checkTasks(caregiverId, shiftId, { numbers: nums }); await say(r.ok ? r.text : r.message); return; }
   const note = /^NOTE\b[:\s-]*([\s\S]*)$/i.exec(keyword);
   if (note) { const r = await addVisitNote(caregiverId, shiftId, note[1]); await say(r.ok ? r.text : r.message); return; }
   await say("Okay.");

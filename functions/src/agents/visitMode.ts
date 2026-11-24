@@ -113,7 +113,7 @@ export function visitRecordText(shift: Doc, items: TaskItem[], bookingNote: stri
   return lines.join("\n");
 }
 
-const DURING_VISIT_HELP = "During a visit I can check off a task (DONE 1), save a note for the family (NOTE followed by the note), or end the visit (FINISH).";
+const DURING_VISIT_HELP = "During a visit I can check off a task (just tell me which one), save a note for the family, or end the visit when you say you're done.";
 
 /**
  * Free text while a visit is in progress. "handled" when this module answered;

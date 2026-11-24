@@ -111,8 +111,21 @@ export function enforceCareProviderTerm(text: string): string {
     .join("");
 }
 
+/**
+ * A model reply as a person would text it: no markdown emphasis (live 2026-11-24: "**2:07:40**" showed with its asterisks)
+ * and no ALL-CAPS command words ("You can ACCEPT … or DECLINE" read like a bot; founders 2026-11-25). The keywords still
+ * work when typed — only the wording the model writes is softened. Fixed scripted copy does not go through this.
+ */
+const COMMAND_WORDS = /\b(ACCEPT|DECLINE|REJECT|PROPOSE|COUNTER|SUBMIT|FINISH|DETAILS)\b/g;
+export function plainSmsText(text: string): string {
+  return text
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/__([^_\n]+)__/g, "$1")
+    .replace(COMMAND_WORDS, (w) => w.toLowerCase());
+}
+
 export function lintMessage(text: string): string {
-  let result = applyBans(text);
+  let result = plainSmsText(applyBans(text));
 
   // Clean up double spaces and leading/trailing whitespace left by replacements
   result = result.replace(/  +/g, " ").trim();

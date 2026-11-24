@@ -137,6 +137,9 @@ export interface CaregiverRouteContext {
 // ── Caregiver inbound routing — extracted verbatim from webhooks.ts handleInbound ──
 // Returns "handled" when the message was fully handled (handleInbound must return),
 // or "fallthrough" when no caregiver path matched (handleInbound continues).
+/** Words a form flow reads itself — never taken by a waiting decision notice. */
+const FLOW_OWN_WORDS = new Set(["YES", "NO", "Y", "N", "CANCEL", "SUBMIT", "SEND", "CONFIRM", "SKIP", "NONE", "STOP", "BACK"]);
+
 export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise<"handled" | "fallthrough"> {
   const { phone, chatId, text, norm, session } = ctx;
 
@@ -160,6 +163,14 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         }).catch(() => {});
         await sendMessage(chatId, "That timed out — nothing was sent. Text me anytime to start again.");
         return "handled";
+      }
+      // A decision notice that is waiting (a schedule change, a booking, a proposed time) is not locked out by a form flow that
+      // happens to be open (live 2026-11-24: "Was there a new shift?" and "Accept" went to the Submit hours flow, which could
+      // not answer or accept). A clear accept / decline / question about the notice is handled first; everything else — and the
+      // flow's own yes / no / cancel / submit — stays with the flow. The Review correction flow owns ACCEPT itself.
+      if (flow !== "reviewCorrectionFlowStep" && (session as any).pendingDecision && !FLOW_OWN_WORDS.has(norm)) {
+        const { handlePendingDecisionReply } = await import("../agents/decisionNotices");
+        if ((await handlePendingDecisionReply(phone, chatId, text, session as any)) === "handled") return "handled";
       }
       if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
       try {

@@ -53,6 +53,10 @@ export async function handleWebChatTurn(args: {
   const db = admin.firestore();
   const withId = clientMessageId ? { clientMessageId } : {};
 
+  // ── Emergency check (2026-11-26) — first, before rate limits, setup gates or a held thread ──
+  const emergency = await answerWebEmergency({ uid, tokenPhone, message, clientMessageId });
+  if (emergency) return { ...emergency, ...withId };
+
   // Per-user sliding window. Runs before any thread write so a rate-limited
   // send never shows an unanswered bubble.
   const rateRef  = db.collection("rate_limits").doc(`web_${uid}`);
@@ -423,4 +427,26 @@ export async function handleWebChatTurn(args: {
   } finally {
     await releaseInboundProcessing(phone, db);
   }
+}
+
+/** The same emergency path as a text: fixed reply into the web thread, team paged, contacts texted. Null → not an emergency. */
+async function answerWebEmergency(args: { uid: string; tokenPhone?: string; message: string; clientMessageId?: string }): Promise<WebChatResult | null> {
+  const { assessEmergency, escalateEmergency } = await import("../safety/emergency");
+  const assessment = await assessEmergency(args.message).catch((err) => { console.error("webChat: emergency check failed", err); return null; });
+  if (!assessment) return null;
+  const db = admin.firestore();
+  const phone = args.tokenPhone
+    || ((await db.collection("users").doc(args.uid).get().catch(() => null))?.data()?.phone as string | undefined)
+    || "";
+  const stored = phone ? (await db.collection("agent_sessions").doc(phone).get().catch(() => null))?.data() : undefined;
+  const session = { ...(stored && (!stored.userId || stored.userId === args.uid) ? stored : {}), userId: args.uid };
+  const { t: tr, languageFromSession } = await import("../utils/language");
+  const lang = languageFromSession(session as Record<string, unknown>);
+  let reply = assessment.kind === "medical" ? tr.crisis_medical(lang) : assessment.kind === "emotional" ? tr.crisis_emotional(lang) : tr.crisis_help(lang);
+  const { notified, teamAlerted } = await escalateEmergency({ phone, text: args.message, assessment, session, channel: "web" });
+  if (assessment.kind !== "help" && teamAlerted) reply += `\n\n${tr.crisis_followup(lang, notified)}`;
+  const { mirrorToWebThread } = await import("./threadMirror");
+  await mirrorToWebThread({ userId: args.uid, direction: "inbound", text: args.message, source: "cara_web", ...(args.clientMessageId ? { clientMessageId: args.clientMessageId } : {}) });
+  await mirrorToWebThread({ userId: args.uid, direction: "outbound", text: reply, source: "cara_web" });
+  return { available: true, status: "ok", reply, showMatches: false, toolsCalled: [] };
 }

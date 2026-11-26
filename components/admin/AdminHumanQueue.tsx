@@ -51,7 +51,7 @@ export const AdminHumanQueue: React.FC<Props> = ({ onOpen }) => {
                   <span className="text-xs text-slate-500 inline-flex items-center gap-1 ml-auto"><Clock className="w-3 h-3" /> waiting {waiting(r.lastAt || r.since)}</span>
                 </div>
                 <p className="text-sm text-slate-700 truncate mt-1 inline-flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5 text-slate-400 shrink-0" />{r.lastText || 'No text yet since the handoff'}</p>
-                <p className="text-xs text-slate-400 mt-0.5">{r.byName ? `Handed off by ${r.byName}` : 'Handed off'}{r.reason === 'low_confidence' ? " — Evia wasn't sure enough to answer" : r.reason === 'asked_for_human' ? ' — they asked for a person' : ''}{r.phone ? ` · ${r.phone}` : ''}</p>
+                <p className="text-xs text-slate-400 mt-0.5">{r.byName ? `Handed off by ${r.byName}` : 'Handed off'}{r.reason === 'emergency' ? ' — EMERGENCY' : r.reason === 'low_confidence' ? " — Evia wasn't sure enough to answer" : r.reason === 'asked_for_human' ? ' — they asked for a person' : ''}{r.phone ? ` · ${r.phone}` : ''}</p>
               </div>
             </button>
           </li>

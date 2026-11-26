@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BellRing, Check, AlertTriangle } from 'lucide-react';
-import { dbService } from '../../services/api';
+import { dbService, EMERGENCY_ALERT_TYPES } from '../../services/api';
 import { Badge } from '../ui/Badge';
 
 /**
@@ -66,7 +66,8 @@ export const AdminAlertsPanel: React.FC<AdminAlertsPanelProps> = ({ onShowToast 
   useEffect(() => {
     const unsubscribe = dbService.subscribeAdminAlerts(
       (data) => {
-        setAlerts(data as AdminAlert[]);
+        // Emergencies live on their own tab (Admin › Emergencies).
+        setAlerts((data as AdminAlert[]).filter(a => !EMERGENCY_ALERT_TYPES.includes(String(a.type))));
         setLoading(false);
       },
       () => {

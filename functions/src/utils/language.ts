@@ -101,18 +101,24 @@ export const t = {
 
   crisis_medical: (lang: Language): string =>
     lang === "es"
-      ? "🚨 Esto suena a una emergencia. Por favor llama al 911 o ve a la sala de emergencias más cercana de inmediato.\n\nSi necesitas que avise a nuestro equipo de soporte, responde NOTIFICAR."
-      : "🚨 This sounds like an emergency. Please call 911 or go to your nearest ER immediately.\n\nIf you need me to notify our support team, reply NOTIFY.",
-
-  crisis_notify_sent: (lang: Language): string =>
-    lang === "es"
-      ? "Listo — avisé a nuestro equipo de soporte. Por favor llama al 911 si es una emergencia que pone en peligro la vida."
-      : "Done — I've alerted our support team. Please still call 911 if this is life-threatening.",
+      ? "🚨 Esto suena a una emergencia. Llama al 911 ahora. No puedo dar consejos médicos, así que sigue lo que te diga el operador del 911."
+      : "🚨 This sounds like an emergency. Call 911 now. I can't give medical advice, so please follow what the 911 operator tells you.",
 
   crisis_emotional: (lang: Language): string =>
     lang === "es"
-      ? "Te escucho, y me alegra mucho que me escribieras. 💙\n\nPor favor llama o envía un mensaje al 988 (Línea de Prevención del Suicidio y Crisis) — están disponibles 24/7 y les importas.\n\nYo también estoy aquí. ¿Quieres hablar?"
-      : "I hear you, and I'm really glad you reached out. 💙\n\nPlease call or text 988 (Suicide & Crisis Lifeline) — they're available 24/7 and they care.\n\nI'm here too. Do you want to talk?",
+      ? "Me alegra que me lo hayas contado. 💙 Si tú o alguien contigo está en peligro inmediato, llama al 911 ahora. También puedes llamar o enviar un mensaje al 988 (Línea de Prevención del Suicidio y Crisis), a cualquier hora."
+      : "I'm really glad you told me. 💙 If you or someone with you is in immediate danger, call 911 now. You can also call or text 988 (Suicide & Crisis Lifeline), any time, day or night.",
+
+  crisis_help: (lang: Language): string =>
+    lang === "es"
+      ? "¿Es una emergencia? Si alguien está en peligro, llama al 911 ahora. Cuéntame qué pasa y nuestro equipo lo verá."
+      : "Is this an emergency? If anyone is in danger, call 911 now. Tell me what's happening and our team will see it.",
+
+  crisis_followup: (lang: Language, names: string[]): string => {
+    const who = names.length > 1 ? `${names.slice(0, -1).join(", ")} ${lang === "es" ? "y" : "and"} ${names[names.length - 1]}` : names[0];
+    if (lang === "es") return who ? `También le escribí a ${who}. Nuestro equipo ya fue avisado.` : "Nuestro equipo ya fue avisado.";
+    return who ? `I've also texted ${who}. Our team has been alerted.` : "Our team has been alerted.";
+  },
 
   welcome_back: (lang: Language): string =>
     lang === "es"

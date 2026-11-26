@@ -4,7 +4,7 @@ vi.mock("../utils/openaiClient", () => ({
   quickComplete: vi.fn(),
 }));
 
-import { detectCrisis, classifyCrisisMultilingual } from "./crisisDetector";
+import { detectCrisis, classifyEmergency } from "./crisisDetector";
 import { quickComplete } from "../utils/openaiClient";
 
 const mockQuickComplete = quickComplete as unknown as ReturnType<typeof vi.fn>;
@@ -35,26 +35,23 @@ describe("detectCrisis — Spanish keywords (accent-insensitive)", () => {
   });
 });
 
-describe("classifyCrisisMultilingual — no-keyword LLM gate", () => {
-  beforeEach(() => mockQuickComplete.mockReset());
+describe("classifyEmergency — the reader for everything the keywords miss (any language)", () => {
+  beforeEach(() => { mockQuickComplete.mockReset(); });
 
-  it("maps MEDICAL → medical", async () => {
-    mockQuickComplete.mockResolvedValue("MEDICAL");
-    expect(await classifyCrisisMultilingual("se está poniendo morado")).toBe("medical");
+  it.each([
+    ["MEDICAL", { kind: "medical", aboutSelf: false }],
+    ["SELF_HARM_ME", { kind: "emotional", aboutSelf: true }],
+    ["SELF_HARM_OTHER", { kind: "emotional", aboutSelf: false }],
+    ["HELP", { kind: "help", aboutSelf: true }],
+    ["NONE", null],
+    ["not sure", null],
+  ])("maps %s", async (verdict, expected) => {
+    mockQuickComplete.mockResolvedValue(verdict);
+    expect(await classifyEmergency("some message")).toEqual(expected);
   });
 
-  it("maps EMOTIONAL → emotional", async () => {
-    mockQuickComplete.mockResolvedValue("EMOTIONAL");
-    expect(await classifyCrisisMultilingual("siento que ya no vale la pena")).toBe("emotional");
-  });
-
-  it("maps NONE → null", async () => {
-    mockQuickComplete.mockResolvedValue("NONE");
-    expect(await classifyCrisisMultilingual("¿cómo cancelo mi cita?")).toBeNull();
-  });
-
-  it("returns null (not a crisis) when the classifier errors — keyword net stays primary", async () => {
-    mockQuickComplete.mockRejectedValueOnce(new Error("llm down"));
-    expect(await classifyCrisisMultilingual("cualquier cosa")).toBeNull();
+  it("a model outage is not an emergency (the keyword scan is the safety net)", async () => {
+    mockQuickComplete.mockRejectedValue(new Error("down"));
+    expect(await classifyEmergency("some message")).toBeNull();
   });
 });

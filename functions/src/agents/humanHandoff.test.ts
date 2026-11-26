@@ -319,7 +319,7 @@ describe("U7: crisis handling stays AHEAD of the grounding gate", () => {
     // held by this gate. Source-order characterization: if someone moves agent
     // dispatch above crisis detection, this fails loudly.
     const src = fs.readFileSync(path.resolve(__dirname, "../linq/webhooks.ts"), "utf8");
-    const crisisIdx = src.indexOf("detectCrisis(text)");
+    const crisisIdx = src.indexOf("await respondToCrisisIfAny(phone, chatId, text, session)");
     const qaIdx = src.indexOf("await runQaAgent(");
     expect(crisisIdx).toBeGreaterThan(-1);
     expect(qaIdx).toBeGreaterThan(-1);

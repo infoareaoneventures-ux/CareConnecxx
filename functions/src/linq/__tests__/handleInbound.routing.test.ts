@@ -207,16 +207,23 @@ vi.mock("../../agents/caregiverFieldAbsorber", () => ({
 
 const detectCrisis      = vi.fn((..._a: any[]): string | null => null);
 const isLikelyRealCrisis = vi.fn(async (..._a: any[]) => true);
-const classifyCrisisMultilingual = vi.fn(async (..._a: any[]): Promise<string | null> => null);
+const classifyEmergency = vi.fn(async (..._a: any[]): Promise<{ kind: string; aboutSelf: boolean } | null> => null);
 vi.mock("../../safety/crisisDetector", () => ({
   detectCrisis:       (...a: any[]) => detectCrisis(...a),
   isLikelyRealCrisis: (...a: any[]) => isLikelyRealCrisis(...a),
-  classifyCrisisMultilingual: (...a: any[]) => classifyCrisisMultilingual(...a),
+  classifyEmergency: (...a: any[]) => classifyEmergency(...a),
 }));
 
 const quickComplete = vi.fn(async (..._a: any[]) => "NONE");
 vi.mock("../../utils/openaiClient", () => ({
   quickComplete: (...a: any[]) => quickComplete(...a),
+}));
+
+// The real assessment (over the crisisDetector mocks above); the paging / texting side is its own suite (safety/emergency.test.ts).
+const escalateEmergency = vi.fn(async (..._a: any[]) => ({ notified: [] as string[], teamAlerted: true }));
+vi.mock("../../safety/emergency", async (orig) => ({
+  ...(await (orig as any)()),
+  escalateEmergency: (...a: any[]) => escalateEmergency(...a),
 }));
 
 const parseWithClaude = vi.fn(async (..._a: any[]) => "none");
@@ -359,7 +366,7 @@ beforeEach(() => {
   handlePendingApprovals.mockResolvedValue({ outcome: "fallthrough" });
   detectCrisis.mockReturnValue(null);
   isLikelyRealCrisis.mockResolvedValue(true);
-  classifyCrisisMultilingual.mockResolvedValue(null);
+  classifyEmergency.mockResolvedValue(null);
   quickComplete.mockResolvedValue("NONE");
   parseWithClaude.mockResolvedValue("none");
   handleToolCall.mockResolvedValue({ success: true, notification: { sent: true } });
@@ -655,25 +662,48 @@ describe("cold inbound (no prior session) — consent gate", () => {
 });
 
 describe("safety + account gates", () => {
-  it("verified crisis is terminal: crisis message sent, NOTIFY armed, QA never runs", async () => {
+  it("verified crisis is terminal: fixed 911 reply, escalation, QA never runs", async () => {
     seedSession();
     detectCrisis.mockReturnValue("medical");
     isLikelyRealCrisis.mockResolvedValue(true);
     await handleInbound(makeEvent("he fell and is not breathing"));
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify).toBeTruthy();
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
+    expect(escalateEmergency.mock.calls[0][0]).toMatchObject({ assessment: { kind: "medical" }, channel: "text" });
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
-  it("verified medical crisis creates an admin-visible safety alert and runs no healthcare action (R7)", async () => {
-    seedSession();
-    detectCrisis.mockReturnValue("medical");
+  // Founders' screenshot, 2026-11-26: after "I need help" the team held the thread, and "I feel suicidal" got no reply.
+  it("a thread the team holds still answers an emergency", async () => {
+    seedSession({ humanMode: { on: true, reason: "asked_for_human" } });
+    detectCrisis.mockReturnValue("emotional");
     isLikelyRealCrisis.mockResolvedValue(true);
-    await handleInbound(makeEvent("he's having chest pain right now"));
-    // Admin_alerts safety alert is created (Control-Room-visible), critical severity.
-    expect(hoisted.docState.get("admin_alerts/auto-add"))
-      .toMatchObject({ type: "cara_medical_emergency", severity: "critical" });
-    // Never attempts a healthcare action / QA tool loop on the emergency path.
+    await handleInbound(makeEvent("I feel suicidal"));
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_emotional");
+    expect(escalateEmergency).toHaveBeenCalledTimes(1);
     expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("an English message with no keyword is read by the model: 'The client fell' → 911", async () => {
+    seedSession();
+    classifyEmergency.mockResolvedValue({ kind: "medical", aboutSelf: false });
+    await handleInbound(makeEvent("The client fell"));
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("an unexplained 'I need help' asks whether it is an emergency — no follow-up claim, no model turn", async () => {
+    seedSession();
+    classifyEmergency.mockResolvedValue({ kind: "help", aboutSelf: true });
+    await handleInbound(makeEvent("I need help"));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_help");
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("a bare protocol reply costs no emergency model call", async () => {
+    seedSession();
+    await handleInbound(makeEvent("yes"));
+    expect(classifyEmergency).not.toHaveBeenCalled();
   });
 
   // 2026-11-09 (Wave 1): the crisis check used to sit AFTER the branches that return on their own
@@ -685,7 +715,7 @@ describe("safety + account gates", () => {
     await handleInbound(makeEvent("my mom fell and she is not breathing"));
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
-    expect(hoisted.docState.get("admin_alerts/auto-add")).toMatchObject({ type: "cara_medical_emergency", severity: "critical" });
+    expect(escalateEmergency.mock.calls[0][0]).toMatchObject({ session: null }); // no account: team only
     // No session record is created (it would turn the person's next hello into a returning-user turn).
     expect(hoisted.docState.has(`agent_sessions/${PHONE}`)).toBe(false);
     expect(runQaAgent).not.toHaveBeenCalled();
@@ -699,7 +729,6 @@ describe("safety + account gates", () => {
     expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_medical");
     expect(parseWithClaude).not.toHaveBeenCalled(); // never classified as a consent answer
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).optedIn).toBe(false); // consent untouched
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify).toBeTruthy(); // NOTIFY armed
   });
 
   it("an emergency sent while the web-signup consent question is pending is answered first", async () => {
@@ -727,55 +756,14 @@ describe("safety + account gates", () => {
     expect(runQaAgent).toHaveBeenCalledTimes(1);
   });
 
-  it("verified emotional crisis sends the 988 message only — no NOTIFY offer, nothing armed (U3; care-circle fan-out removed 2026-09-23)", async () => {
+  it("verified emotional crisis sends the fixed 911 / 988 reply and escalates", async () => {
     seedSession();
     detectCrisis.mockReturnValue("emotional");
     isLikelyRealCrisis.mockResolvedValue(true);
     await handleInbound(makeEvent("I don't want to be here anymore"));
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify).toBeUndefined();
+    expect(String(sendMessage.mock.calls[0][1])).toContain("crisis_emotional");
+    expect(escalateEmergency.mock.calls[0][0]).toMatchObject({ assessment: { kind: "emotional", aboutSelf: true } });
     expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("a legacy armed emotional NOTIFY reply still pages our support team with an emotional alert (U3)", async () => {
-    seedSession({ pendingCrisisNotify: { text: "struggling", detectedAt: "now", kind: "emotional" } });
-    await handleInbound(makeEvent("NOTIFY"));
-    expect(hoisted.docState.get("admin_alerts/auto-add"))
-      .toMatchObject({ type: "crisis_notify_requested", severity: "critical", crisisKind: "emotional" });
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("NOTIFY keyword (armed) pages our support team (U11)", async () => {
-    seedSession({ pendingCrisisNotify: { text: "x", detectedAt: "now", kind: "medical" } });
-    await handleInbound(makeEvent("NOTIFY please"));
-    expect(hoisted.docState.get("admin_alerts/auto-add"))
-      .toMatchObject({ type: "crisis_notify_requested" });
-  });
-
-  it("'do not notify anyone' does NOT page our support team — no substring misfire (U11)", async () => {
-    seedSession({ pendingCrisisNotify: { text: "x", detectedAt: "now", kind: "medical" } });
-    await handleInbound(makeEvent("do not notify anyone"));
-    expect(hoisted.docState.get("admin_alerts/auto-add")?.type).not.toBe("crisis_notify_requested");
-  });
-
-  it("non-English no-keyword message runs the multilingual classifier; emotional → escalation (U2/U3)", async () => {
-    seedSession({ preferredLanguage: "es" });
-    detectCrisis.mockReturnValue(null);
-    classifyCrisisMultilingual.mockResolvedValue("emotional");
-    // Accented chars make the non-English gate fire deterministically.
-    await handleInbound(makeEvent("siento que ya no puedo más"));
-    expect(classifyCrisisMultilingual).toHaveBeenCalledTimes(1);
-    // Emotional path: 988 message sent, nothing armed (no care-circle NOTIFY offer any more).
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).pendingCrisisNotify).toBeUndefined();
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("English no-keyword message does NOT invoke the multilingual classifier (cost gate)", async () => {
-    seedSession();
-    detectCrisis.mockReturnValue(null);
-    await handleInbound(makeEvent("can you book someone for next tuesday"));
-    expect(classifyCrisisMultilingual).not.toHaveBeenCalled();
   });
 
 });

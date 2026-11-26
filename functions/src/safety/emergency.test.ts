@@ -37,7 +37,7 @@ beforeEach(() => {
 });
 
 describe("care provider reports a medical emergency during a visit", () => {
-  it("texts the family and their emergency contact with what was said, pages the team and holds the thread", async () => {
+  it("texts the family and their emergency contact with what was said, pages the team and pauses nothing", async () => {
     h.visits.push(visit());
     const r = await run(CG, medical, { userId: "cg", userType: "caregiver" });
     expect(h.sends.map((s) => s.phone).sort()).toEqual([FAMILY, SON]);
@@ -45,7 +45,7 @@ describe("care provider reports a medical emergency during a visit", () => {
     expect(h.sends[0].text).toContain("call 911");
     expect(r.notified.sort()).toEqual(["Sam", "Usman"]);
     expect(h.alerts[0]).toMatchObject({ type: "emergency", severity: "critical", kind: "medical", said: "The client fell" });
-    expect(h.held[0]).toMatchObject({ uid: "cg", on: true, reason: "emergency" });
+    expect(h.held).toHaveLength(0); // the visit keywords and the conversation carry on
     // The contact was not a user: no session is left behind for them.
     expect(h.docs.has(`agent_sessions/${SON}`)).toBe(false);
   });
@@ -74,7 +74,7 @@ describe("self-harm", () => {
 });
 
 describe("limits", () => {
-  it("an unexplained plea pages the team only and does not hold the thread", async () => {
+  it("an unexplained plea pages the team only", async () => {
     h.visits.push(visit());
     await run(CG, { kind: "help", aboutSelf: true }, { userId: "cg", userType: "caregiver" }, "I need help");
     expect(h.sends).toHaveLength(0);
@@ -88,7 +88,7 @@ describe("limits", () => {
   });
   it("does not text the same people again within 30 minutes", async () => {
     h.visits.push(visit());
-    await run(CG, medical, { userId: "cg", userType: "caregiver", emergencyNotified: { at: new Date().toISOString(), kind: "medical" }, humanMode: { on: true } });
+    await run(CG, medical, { userId: "cg", userType: "caregiver", emergencyNotified: { at: new Date().toISOString(), kind: "medical" } });
     expect(h.sends).toHaveLength(0);
     expect(h.held).toHaveLength(0);
     expect(h.alerts).toHaveLength(1);

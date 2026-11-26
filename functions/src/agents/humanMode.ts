@@ -21,7 +21,7 @@ import { sendToPhone, type AgentSession } from "../linq/client";
 
 const db = admin.firestore();
 
-export type HumanModeReason = "admin" | "low_confidence" | "asked_for_human" | "emergency";
+export type HumanModeReason = "admin" | "low_confidence" | "asked_for_human";
 export interface HumanModeFlag {
   on: boolean;
   since: string;

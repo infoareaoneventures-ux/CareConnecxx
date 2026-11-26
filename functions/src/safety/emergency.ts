@@ -3,7 +3,8 @@
 // ONE place for the whole path, used by every text entry point and the web chat:
 //   assessEmergency  — keyword fast path (with the quote/joke filter), else the LLM reader, in any language
 //   the reply        — fixed text only (utils/language.ts): 911, never medical advice, never model-written
-//   escalateEmergency — a signed-up person's emergency pages the team, texts the right people and holds the thread
+//   escalateEmergency — pages the team and, for a signed-up person, texts the right people. Nothing is paused: after
+//                       the reply, the conversation and any open flow carry on as they were (founder, 2026-11-26)
 //
 // Who is texted (founder: "go with your recommendations"):
 //   • a family: their emergency contacts + the care provider on a visit now or today
@@ -143,7 +144,7 @@ const RENOTIFY_MS = 30 * 60 * 1000;
 const RANK: Record<EmergencyKind, number> = { help: 0, emotional: 1, medical: 2 };
 
 /**
- * Page the team, text the right people and hold the thread. Returns the names actually texted so the reply claims
+ * Page the team and text the right people. Never pauses the thread. Returns the names actually texted so the reply claims
  * only what happened. Never throws: the 911 reply has already gone out and nothing here may undo that.
  */
 export async function escalateEmergency(input: {
@@ -187,11 +188,6 @@ export async function escalateEmergency(input: {
     if (assessment.kind !== "help") {
       if (sent.length) {
         await db().collection("agent_sessions").doc(phone).set({ emergencyNotified: { at: new Date().toISOString(), kind: assessment.kind } }, { merge: true }).catch(() => {});
-      }
-      // Evia stays quiet until someone on the team hands the thread back; another emergency message is still answered.
-      if ((session?.humanMode as { on?: boolean } | undefined)?.on !== true) {
-        const { setHumanMode } = await import("../agents/humanMode");
-        await setHumanMode({ uid, phone, on: true, reason: "emergency", by: "evia" });
       }
     }
   } catch (err) {

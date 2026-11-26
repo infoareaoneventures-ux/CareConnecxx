@@ -16,7 +16,7 @@ interface Props {
 }
 
 const fmt = (iso?: string) => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-const REASONS: Record<string, string> = { admin: 'by the team', low_confidence: "Evia wasn't sure enough to answer", asked_for_human: 'they asked for a person', emergency: 'emergency message' };
+const REASONS: Record<string, string> = { admin: 'by the team', low_confidence: "Evia wasn't sure enough to answer", asked_for_human: 'they asked for a person' };
 
 export const HumanModeSwitch: React.FC<Props> = ({ uid, role, personName, onToast }) => {
   const { currentUser: ctxUser, adminUser } = useCareConnex();

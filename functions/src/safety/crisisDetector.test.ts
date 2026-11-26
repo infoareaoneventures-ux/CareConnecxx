@@ -82,13 +82,13 @@ describe("isLikelyRealCrisis (LLM verification)", () => {
     expect(await isLikelyRealCrisis("stroke", "medical")).toBe(true);
   });
 
-  it("fails safe to crisis on timeout (race with 1.2s budget)", async () => {
+  it("fails safe to crisis on timeout (race with 2.5s budget)", async () => {
     // Never resolves — timeout should win
     quickComplete.mockImplementation(() => new Promise(() => {}));
     const start = Date.now();
     const result = await isLikelyRealCrisis("stroke", "medical");
     const elapsed = Date.now() - start;
     expect(result).toBe(true);
-    expect(elapsed).toBeLessThan(1_600); // timeout fires at 1.2s
-  }, 3_000);
+    expect(elapsed).toBeLessThan(2_900); // timeout fires at 2.5s
+  }, 4_000);
 });

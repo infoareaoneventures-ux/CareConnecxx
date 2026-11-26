@@ -33,6 +33,9 @@ export function setActingContext(ctx: ActingContext | null): void {
 }
 /** True while an admin is only LOOKING at a person's pages (no YES): nothing is saved, nothing is texted. */
 export function isViewingOnly(): boolean { return actingContext?.mode === 'view'; }
+/** admin_alerts types that are emergencies: shown on Admin › Emergencies, not the Alerts list. */
+export const EMERGENCY_ALERT_TYPES = ['emergency', 'cara_medical_emergency', 'crisis_notify_requested'];
+
 export const VIEW_ONLY_MESSAGE = "You're viewing this person's pages. To make a change, ask them for a YES from their admin page first.";
 /** The message a link-only step shows when an admin is acting (payment, identity, payouts stay with the person). */
 export const ACTING_LINK_ONLY_MESSAGE = "This step stays with the person. Send them the link from their admin page instead.";
@@ -1720,6 +1723,22 @@ export const dbService = {
                     onError?.(err as unknown as Error);
                     cb([]);
                 }
+            );
+    },
+
+    // Emergencies have their own query so a busy alert feed can never push one out of the newest-200 window.
+    subscribeEmergencyAlerts: (
+        cb: (alerts: Array<Record<string, any>>) => void,
+        onError?: (err: Error) => void
+    ): (() => void) => {
+        if (!isConfigured || !db) { cb([]); return () => {}; }
+        return db.collection('admin_alerts')
+            .where('type', 'in', EMERGENCY_ALERT_TYPES)
+            .onSnapshot(
+                (snap) => cb(snap.docs
+                    .map((d): Record<string, any> => ({ id: d.id, ...d.data() }))
+                    .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))),
+                (err) => { console.error('subscribeEmergencyAlerts:', err); onError?.(err as unknown as Error); cb([]); }
             );
     },
 

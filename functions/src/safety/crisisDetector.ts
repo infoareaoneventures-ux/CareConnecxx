@@ -20,6 +20,7 @@ const MEDICAL_KEYWORDS = [
   "bleeding a lot", "bleeding heavily", "won't stop bleeding",
   "fell in the", "fell on the", "fell off", "had a fall", "took a fall",
   "has fallen", "is on the floor", "overdosed", "od'd",
+  "client fell", "mom fell", "dad fell", "took all the pills", "took all my pills",
   // Spanish (accent-free)
   "no puedo respirar", "no puede respirar", "no respira", "dolor en el pecho",
   "ataque al corazon", "ataque cardiaco", "infarto", "derrame cerebral",
@@ -76,13 +77,11 @@ const MEDICAL_PATTERNS = compileKeywords(MEDICAL_KEYWORDS);
 const EMOTIONAL_PATTERNS = compileKeywords(EMOTIONAL_KEYWORDS);
 
 export const MEDICAL_RESPONSE =
-  "🚨 This sounds like an emergency. Please call 911 or go to your nearest ER immediately.\n\n" +
-  "If you need me to notify the care team, reply NOTIFY.";
+  "🚨 This sounds like an emergency. Call 911 now. I can't give medical advice, so please follow what the 911 operator tells you.";
 
 export const EMOTIONAL_RESPONSE =
-  "I hear you, and I'm really glad you reached out. 💙\n\n" +
-  "Please call or text 988 (Suicide & Crisis Lifeline) — they're available 24/7 and they care.\n\n" +
-  "I'm here too. Do you want to talk?";
+  "I'm really glad you told me. 💙 If you or someone with you is in immediate danger, call 911 now. " +
+  "You can also call or text 988 (Suicide & Crisis Lifeline), any time, day or night.";
 
 export function detectCrisis(text: string): CrisisType {
   const normalized = normalizeForMatch(text);
@@ -94,39 +93,40 @@ export function detectCrisis(text: string): CrisisType {
   return null;
 }
 
+export type EmergencyKind = "medical" | "emotional" | "help";
+export interface EmergencyAssessment {
+  kind: EmergencyKind;
+  /** Emotional only: false when the message is about SOMEONE ELSE (a care provider reporting the person in their care). */
+  aboutSelf: boolean;
+}
+
 /**
- * LLM crisis classifier for the no-keyword path. The keyword scan above can
- * only catch enumerated phrases; this catches paraphrased or code-switched
- * crisis text the list can't anticipate — in ANY language. It returns a type
- * only when the message is a genuine, current crisis, so a positive result can
- * route straight to the crisis response without a second verification call.
+ * LLM reader for every message the keyword list did not catch, in ANY language (founders 2026-11-26: "The client
+ * fell", "I need help" and "I took all the pills" were all missed — it used to run only on non-English text).
  *
- * Fail behavior: on error/timeout it returns null (NOT a crisis). Unlike
- * `isLikelyRealCrisis` — which fails safe to crisis because a keyword already
- * matched (high prior) — this runs on messages with no crisis signal at all
- * (low prior), so failing to crisis would mass-escalate benign traffic during
- * an LLM outage. The keyword scan remains the always-on safety net.
+ * Fail behavior: on error/timeout it returns null (NOT a crisis). It runs on messages with no crisis signal at all
+ * (low prior), so failing to crisis would mass-escalate benign traffic during an LLM outage. The keyword scan
+ * remains the always-on safety net.
  */
-export async function classifyCrisisMultilingual(text: string): Promise<CrisisType> {
-  // Bound the call to ~1.5s on the inbound path. An outage/timeout degrades to
-  // "no crisis" (null) rather than escalating benign traffic — the keyword scan
-  // remains the always-on safety net.
+export async function classifyEmergency(text: string): Promise<EmergencyAssessment | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1_500);
+  const timer = setTimeout(() => controller.abort(), 2_500);
   try {
     const raw = await quickComplete(
-      "You are a crisis classifier for a caregiving assistant. The message may be in any language. " +
-        "Reply MEDICAL if it describes a medical emergency happening right now (the user or someone present: " +
-        "not breathing, chest pain, stroke, unconscious, severe bleeding, overdose, etc.). " +
-        "Reply EMOTIONAL if it expresses genuine suicidal thoughts, self-harm intent, or hopelessness right now. " +
-        "Reply NONE for anything else — questions, scheduling, past events, hypotheticals, jokes, general topics. " +
-        "When unsure, reply NONE. Reply with only one word: MEDICAL, EMOTIONAL, or NONE.",
+      "You are the emergency reader for a home-care texting service (families and care providers). The message may be in any language. Reply with ONE word:\n" +
+        "MEDICAL — a medical emergency or injury happening now or just now to the sender or someone with them (a fall, not breathing, chest pain, stroke, unconscious, severe bleeding, overdose or taking all their pills, fire, violence).\n" +
+        "SELF_HARM_ME — the SENDER expresses suicidal thoughts, self-harm intent or real hopelessness right now.\n" +
+        "SELF_HARM_OTHER — the sender reports that SOMEONE ELSE is suicidal or hurting themselves now.\n" +
+        "HELP — an urgent plea for help that does not say what is wrong (\"I need help\", \"help me please\", \"please someone help\").\n" +
+        "NONE — everything else, including: asking why there was no reply or chasing an answer; help with scheduling, the app, forms, payments or finding care; past events; hypotheticals; jokes and exaggerations; ordinary care notes and questions; care needs such as \"mom needs help bathing\".",
       text,
-      { maxTokens: 5, signal: controller.signal },
+      { maxTokens: 8, signal: controller.signal },
     );
     const v = raw.trim().toUpperCase();
-    if (v.startsWith("MED")) return "medical";
-    if (v.startsWith("EMO")) return "emotional";
+    if (v.startsWith("MED")) return { kind: "medical", aboutSelf: false };
+    if (v.startsWith("SELF_HARM_OTHER")) return { kind: "emotional", aboutSelf: false };
+    if (v.startsWith("SELF") || v.startsWith("EMO")) return { kind: "emotional", aboutSelf: true };
+    if (v.startsWith("HELP")) return { kind: "help", aboutSelf: true };
     return null;
   } catch {
     return null;
@@ -138,23 +138,25 @@ export async function classifyCrisisMultilingual(text: string): Promise<CrisisTy
 // Verify a keyword hit is a real crisis rather than a quote, hypothetical, or
 // historical reference. Fail-safe: on timeout, error, or "unclear" we treat as
 // a real crisis (return true). Over-responding to safety is the lower-cost
-// failure mode; under-responding is not. Tight 1.2s budget keeps the path
+// failure mode; under-responding is not. A 2.5s budget (1.2s was hit by ordinary calls) keeps the path
 // fast enough for life-critical use.
 export async function isLikelyRealCrisis(text: string, kind: "medical" | "emotional"): Promise<boolean> {
   try {
     const verdict = await Promise.race([
       quickComplete(
         kind === "medical"
-          ? "Reply YES if the user is describing a medical emergency happening NOW (themselves or someone present). " +
-            "Reply NO if it is a quote, joke, fictional reference, past event, hypothetical (\"what if\"), or a " +
-            "question about symptoms in general. When in doubt, reply YES. Reply with only YES or NO."
+          ? "Reply YES if the user is describing a medical emergency happening NOW or moments ago (themselves or someone present). " +
+            "Reply NO if it is a quote, joke, fictional reference, hypothetical (\"what if\"), a question about symptoms in general, " +
+            "or medical HISTORY and care background: something that happened before today (a year, \"last month\", \"has had\", " +
+            "\"history of\") told to describe the care someone needs (\"he had a stroke in 2024 and needs mobility help\" is NO). " +
+            "A bare report like \"he had a stroke\" or \"mom fell\" with no sign it is old is YES. When in doubt, reply YES. Reply with only YES or NO."
           : "Reply YES if the user is expressing genuine suicidal thoughts, self-harm intent, or hopelessness right now. " +
             "Reply NO if it is a quote, joke, fictional reference, exaggeration about a non-life situation, or a question " +
             "about the topic in general. When in doubt, reply YES. Reply with only YES or NO.",
         text,
         { maxTokens: 5 },
       ),
-      new Promise<string>((r) => setTimeout(() => r("YES"), 1_200)),
+      new Promise<string>((r) => setTimeout(() => r("YES"), 2_500)),
     ]);
     const v = verdict.trim().toUpperCase();
     if (v.startsWith("N")) return false;

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { BloomMark } from './ui/BloomMark';
 import { AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
-import { dbService } from '../services/api';
+import { dbService, EMERGENCY_ALERT_TYPES } from '../services/api';
 import { AdminShiftHoursMediation } from './payroll/AdminShiftHoursMediation';
 import { InvoicingTab } from './admin/InvoicingTab';
 import { AdminMessages } from './admin/AdminMessages';
@@ -22,6 +22,7 @@ import { CoordinatorManagement } from './admin/CoordinatorManagement';
 import { AdminBlogManager } from './admin/AdminBlogManager';
 import { AuditTrail } from './admin/AuditTrail';
 import { AdminAlertsPanel } from './admin/AdminAlertsPanel';
+import { AdminEmergencies } from './admin/AdminEmergencies';
 import { WaitlistPanel } from './admin/WaitlistPanel';
 import { AdminCaraControlRoom } from './admin/AdminCaraControlRoom';
 import { AdminReports } from './admin/AdminReports';
@@ -37,7 +38,7 @@ type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'team' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes'
   | 'finance' | 'disputes' | 'messages' | 'blog' | 'audit'
-  | 'cara_control' | 'alerts' | 'reports' | 'waitlist' | 'human_queue' | 'sessions';
+  | 'cara_control' | 'alerts' | 'reports' | 'waitlist' | 'human_queue' | 'sessions' | 'emergencies';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -122,11 +123,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   // Open sessions (2026-10-22): accounts the team is acting for or viewing right now.
   const [openSessionsCount, setOpenSessionsCount] = useState(0);
   useEffect(() => adminService.watchOpenSessions((rows) => setOpenSessionsCount(rows.length)), []);
+  const [openEmergencyCount, setOpenEmergencyCount] = useState(0);
+  useEffect(() => dbService.subscribeEmergencyAlerts((rows) => setOpenEmergencyCount(rows.filter(r => !r.resolved).length)), []);
   const [caraFailedCount, setCaraFailedCount] = useState(0);
   const [caraPendingCount, setCaraPendingCount] = useState(0);
   useEffect(() => {
     const unsub = dbService.subscribeAdminAlerts((alerts) =>
-      setOpenAlertsCount(alerts.filter(a => !a.resolved).length)
+      setOpenAlertsCount(alerts.filter(a => !a.resolved && !EMERGENCY_ALERT_TYPES.includes(a.type)).length)
     );
     return () => unsub();
   }, []);
@@ -206,6 +209,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     {
       label: 'Finance & Support',
       items: [
+        { id: 'emergencies' as TabId, label: 'Emergencies', icon: AlertCircle, badge: openEmergencyCount },
         { id: 'finance' as TabId, label: 'Invoicing', icon: DollarSign },
         { id: 'disputes' as TabId, label: 'Shift Disputes', icon: AlertCircle },
         { id: 'alerts' as TabId, label: 'Alerts', icon: BellRing, badge: openAlertsCount },
@@ -324,6 +328,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'clients'      && <AdminClientManager initialUid={openPerson?.role === 'client' ? openPerson.uid : undefined} initialPanel={openPerson?.role === 'client' ? 'messages' : undefined} />}
             {activeTab === 'caregivers'   && <AdminCaregiverManager initialUid={openPerson?.role === 'caregiver' ? openPerson.uid : undefined} initialPanel={openPerson?.role === 'caregiver' ? 'messages' : undefined} />}
             {activeTab === 'human_queue'  && <AdminHumanQueue onOpen={(uid, role) => { setOpenPerson({ uid, role }); setActiveTab(role === 'caregiver' ? 'caregivers' : 'clients'); }} />}
+            {activeTab === 'emergencies'  && <AdminEmergencies onShowToast={showToast} onOpen={(uid, role) => { setOpenPerson({ uid, role }); setActiveTab(role === 'caregiver' ? 'caregivers' : 'clients'); }} />}
             {activeTab === 'sessions'     && <AdminOpenSessions onOpen={(uid, role) => { setOpenPerson({ uid, role }); setActiveTab(role === 'caregiver' ? 'caregivers' : 'clients'); }} onToast={(msg) => showToast(msg)} />}
             {activeTab === 'verification' && <CaregiverVerificationDashboard onShowToast={(msg, type) => showToast(msg)} />}
             {activeTab === 'team'         && <AdminTeamManager />}

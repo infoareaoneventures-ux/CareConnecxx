@@ -35,7 +35,7 @@ import {
   collectionStepsForRole,
   type OnboardingRole,
 } from "../agents/onboardingContract";
-import { detectCrisis, isLikelyRealCrisis, classifyCrisisMultilingual } from "../safety/crisisDetector";
+import { assessEmergency, escalateEmergency } from "../safety/emergency";
 import { isPhoneAllowed } from "../config/phoneAllowlist";
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
@@ -280,16 +280,11 @@ async function handleTypingStarted(event: unknown): Promise<void> {
   });
 }
 
-// ── Crisis check for ANY inbound text (2026-11-09, fix plan Wave 1) ─────────────
-// The check used to sit in the middle of handleInboundTurn, AFTER the branches that return on
-// their own — a first-ever text, the cold consent reply, the web-signup consent reply, the
-// admin-assist consent reply — so "my mom isn't breathing" sent to a number with no session (or
-// answering a consent question) was never looked at. It now runs from every one of those entry
-// points. Returns true when a crisis reply went out (the caller stops there).
-//   • keyword fast-path → 1.2s LLM check that filters quotes / jokes / hypotheticals (fail-safe: crisis);
-//   • no keyword + non-English → the multilingual LLM classifier (paraphrase / code-switching).
-// A number with no session yet has nowhere to store the NOTIFY follow-up, so support is paged
-// directly (raiseMedicalCrisisAlert) and no session record is created.
+// ── Emergency check for ANY inbound text (2026-11-09; rebuilt 2026-11-26) ──────
+// Runs from every text entry point, BEFORE any branch that returns on its own, including a thread the team holds
+// (founders 2026-11-26: "I feel suicidal" got no reply because the check was skipped in human mode). Returns true
+// when the fixed emergency reply went out — the caller stops there. The 911 reply goes first; paging the team and
+// texting contacts (safety/emergency.ts) follows and never delays it.
 async function respondToCrisisIfAny(
   phone:   string,
   chatId:  string,
@@ -297,114 +292,23 @@ async function respondToCrisisIfAny(
   session: AgentSession | null,
 ): Promise<boolean> {
   if (!text) return false;
+  const assessment = await assessEmergency(text);
+  if (!assessment) return false;
   const lang: Language = session
     ? languageFromSession(session as unknown as Record<string, unknown>)
     : ((await detectLanguage(text).catch(() => null)) ?? "en");
 
-  const respondMedical = async (): Promise<void> => {
-    await sendMessage(chatId, tr.crisis_medical(lang));
-    logCrisisDetected(phone, "medical", text).catch(() => {});
-    raiseMedicalCrisisAlert(phone, text); // R7: admin-visible safety alert
-    if (session) {
-      // Arm the NOTIFY follow-up so the family's "NOTIFY" reply reaches the care team.
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingCrisisNotify: { text: text.slice(0, 500), detectedAt: new Date().toISOString(), kind: "medical" },
-      }).catch(() => {});
-    }
-  };
+  await sendMessage(chatId, assessment.kind === "medical" ? tr.crisis_medical(lang) : assessment.kind === "emotional" ? tr.crisis_emotional(lang) : tr.crisis_help(lang));
+  if (assessment.kind !== "help") logCrisisDetected(phone, assessment.kind, text).catch(() => {});
 
-  const crisis = detectCrisis(text);
-  if (crisis === "medical") {
-    if (await isLikelyRealCrisis(text, "medical")) { await respondMedical(); return true; }
-    console.info("crisisDetector: medical keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
+  const { notified, teamAlerted } = await escalateEmergency({
+    phone, text, assessment, session: session as unknown as Record<string, unknown> | null, channel: "text",
+  });
+  // Only claim what happened; a number with no account just gets the 911 reply.
+  if (session?.userId && assessment.kind !== "help" && teamAlerted) {
+    await sendMessage(chatId, tr.crisis_followup(lang, notified)).catch(() => {});
   }
-  if (crisis === "emotional") {
-    if (await isLikelyRealCrisis(text, "emotional")) { await sendEmotionalCrisisResponse(phone, chatId, lang, text); return true; }
-    console.info("crisisDetector: emotional keyword matched but LLM judged as non-crisis — proceeding normally", { phone });
-  }
-
-  // No keyword fired. For messages that look non-English (Spanish is supported), run the
-  // multilingual LLM classifier — gated to likely-non-English to avoid an LLM call on every
-  // English message. The classifier already judges genuineness, so a hit goes straight to the reply.
-  if (crisis === null) {
-    const looksNonEnglish = lang === "es" || /[ñ¿¡áéíóúü]/i.test(text);
-    if (looksNonEnglish) {
-      const llmCrisis = await classifyCrisisMultilingual(text);
-      if (llmCrisis === "medical") { await respondMedical(); return true; }
-      if (llmCrisis === "emotional") { await sendEmotionalCrisisResponse(phone, chatId, lang, text); return true; }
-    }
-  }
-  return false;
-}
-
-// User replied "NOTIFY" after a crisis message. Page our support team with a
-// guaranteed critical admin alert (the Control Room surface), then confirm to
-// the user. Nothing else is texted: the family-group fan-out and the legacy
-// `appointments`-based caregiver alert were removed with the family-group
-// feature (2026-09-23), so the copy promises only what actually happens.
-async function handleCrisisNotify(
-  phone:   string,
-  chatId:  string,
-  session: AgentSession,
-  pending: { text?: string; detectedAt?: string; kind?: "medical" | "emotional" },
-): Promise<void> {
-  // Clear the armed flag first so a repeat NOTIFY doesn't double-fire.
-  await db.collection("agent_sessions").doc(phone).update({
-    pendingCrisisNotify: admin.firestore.FieldValue.delete(),
-  }).catch(() => {});
-
-  const lang       = languageFromSession(session as unknown as Record<string, unknown>);
-  const userId     = session.userId ?? phone;
-  const kind       = pending?.kind ?? "medical";
-  const seniorName = (session as any).seniorName
-    ?? (session as any).onboardingData?.seniorName
-    ?? "your loved one";
-
-  // GUARANTEED: critical admin alert so support staff is paged.
-  await db.collection("admin_alerts").add({
-    type:       "crisis_notify_requested",
-    severity:   "critical",
-    crisisKind: kind,
-    phone,
-    userId,
-    seniorName,
-    crisisText: pending?.text ?? "",
-    createdAt:  new Date().toISOString(),
-  }).catch((err) => console.error("[handleCrisisNotify] admin_alert write failed:", err));
-
-  // Confirm to the user.
-  await sendMessage(chatId, tr.crisis_notify_sent(lang));
-}
-
-// Respond to a confirmed emotional crisis: send the 988 message and log it.
-// Unlike medical, we never page anyone on this path — there is no NOTIFY offer
-// (the care-circle fan-out it used to arm was removed with the family-group
-// feature, 2026-09-23).
-async function sendEmotionalCrisisResponse(
-  phone:   string,
-  chatId:  string,
-  lang:    Language,
-  text:    string,
-): Promise<void> {
-  await sendMessage(chatId, tr.crisis_emotional(lang));
-  logCrisisDetected(phone, "emotional", text).catch(() => {});
-}
-
-// Raise an admin-visible safety alert for a confirmed MEDICAL emergency (R7).
-// This is the admin_alerts surface (Control Room) — distinct from the HIPAA
-// audit-log entry (logCrisisDetected → agent_audit_log). Best-effort and
-// non-blocking: a failed alert must never delay or replace the 911 guidance,
-// and we NEVER attempt a healthcare action on this path. PHI-minimized: only a
-// short, truncated text preview goes into the alert, like the audit log.
-function raiseMedicalCrisisAlert(phone: string, text: string): void {
-  void createCaraOpsAlert({
-    type:     "cara_medical_emergency",
-    severity: "critical",
-    phone,
-    source:   "crisisDetector",
-    message:  "Possible medical emergency reported over SMS — Evia directed the user to call 911.",
-    context:  { textPreview: text.slice(0, 200) },
-  }).catch(() => {});
+  return true;
 }
 
 // ── Pending TCPA consent reply (session seeded by onUserCreated) ─────────────
@@ -1237,11 +1141,8 @@ const handleInboundInner = traceable(
     return;
   }
 
-  // ── Crisis check (2026-11-09) — before the consent branches below, which return on their own ──
-  // A thread the team is holding (humanMode) is a person's to answer; everything else is looked at here.
-  if (!(session as unknown as Record<string, { on?: boolean } | undefined>).humanMode?.on) {
-    if (await respondToCrisisIfAny(phone, chatId, text, session)) { await stopTyping(chatId).catch(() => {}); return; }
-  }
+  // ── Emergency check — before the consent branches below, which return on their own, and before human mode ──
+  if (await respondToCrisisIfAny(phone, chatId, text, session)) { await stopTyping(chatId).catch(() => {}); return; }
 
   // ── Pending cold-inbound consent (this session's own consent gate) ─────────
   // Distinguished from the web-signup case below by onboardingStep — the
@@ -1509,34 +1410,11 @@ const handleInboundInner = traceable(
   // ── Twin-trigger cancel — user replied, cancel any pending proactive nudges ─
   cancelTriggerIfUserReplied(session.userId ?? phone, phone).catch(() => {});
 
-  // ── Crisis detection — checked before everything else ──────────────────────
-  // Keyword fast-path identifies POTENTIAL crisis (sub-millisecond). For real
-  // hits we then run a 1.2s LLM verification to filter out quotes/jokes/
-  // hypotheticals — fail-safe to crisis on timeout/error.
-  // ── Crisis "NOTIFY" follow-up ───────────────────────────────────────────────
-  // The medical-crisis message tells the family "reply NOTIFY" to alert the care
-  // team. Catch that reply here (strict keyword protocol — allowed without an LLM)
-  // before crisis re-detection, so it isn't routed to the generic QA agent.
-  {
-    const pendingNotify = (session as any).pendingCrisisNotify as { text?: string; detectedAt?: string; kind?: "medical" | "emotional" } | undefined;
-    const normNotify = text.trim().toUpperCase();
-    // Word-START match, not substring: the crisis message instructs "reply
-    // NOTIFY", so this matches "NOTIFY" / "NOTIFY THEM" but NOT "do not notify
-    // anyone" (which a substring .includes("NOTIFY") wrongly paged the team on).
-    const isNotifyKeyword =
-      normNotify === "NOTIFY" || normNotify.startsWith("NOTIFY ") ||
-      normNotify === "NOTIFICAR" || normNotify.startsWith("NOTIFICAR ");
-    if (pendingNotify && isNotifyKeyword) {
-      await handleCrisisNotify(phone, chatId, session, pendingNotify);
-      return;
-    }
-  }
-
   // (The caregiver "RENEW" keyword and its expiry nudge were removed 2026-09-27:
   // the yearly background-check refresh is the site's own renewal flow —
   // Stripe renewal → consent card on the dashboard — not an Evia-only path.)
 
-  // (The crisis check itself now runs EARLIER — respondToCrisisIfAny, before the new-contact and
+  // (The emergency check runs EARLIER — respondToCrisisIfAny, before the new-contact and
   // consent branches that return on their own — so no text skips it.)
 
   // ── Zep lazy-init / self-heal — ANY session without a thread ──────────────

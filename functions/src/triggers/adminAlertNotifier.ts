@@ -30,6 +30,8 @@ const SMS_NOTIFY_TYPES = new Set([
   // Resend. (The family-emergency button/tool was removed 2026-09-27.)
   "cara_medical_emergency",
   "crisis_notify_requested",
+  // Every emergency text (2026-11-26): medical, self-harm risk, or an unexplained plea for help.
+  "emergency",
   // Timesheets reaching the team (2026-10-01): a family escalated a counter, a
   // correction was blocked from auto-accept, a visit payment failed 5 times.
   "shift_hours_admin_review",
@@ -45,6 +47,8 @@ const SMS_NOTIFY_TYPES = new Set([
 
 function adminSmsText(type: string, alert: Record<string, any>): string {
   switch (type) {
+    case "emergency":
+      return `🚨 Evia EMERGENCY: ${String(alert.name ?? "someone").slice(0, 60)}${alert.phone ? ` (${alert.phone})` : ""} — ${alert.kind === "medical" ? "medical" : alert.kind === "emotional" ? "possible self-harm" : "asked for help"}: "${String(alert.said ?? "").slice(0, 120)}". Open Admin › Emergencies now.`;
     case "support_message":
       return `Evia: someone messaged the team — "${String(alert.message ?? "").slice(0, 160)}" Reply in Admin › Messages; your reply is texted to them.`;
     case "cara_medical_emergency":
@@ -219,7 +223,13 @@ export async function handleAdminAlertCreated(
       }
     }
 
+    // Emergencies page every number in ADMIN_EMERGENCY_PHONES (comma separated) as well as ADMIN_PHONE.
     const adminPhone = process.env.ADMIN_PHONE;
+    if (type === "emergency") {
+      const extra = String(process.env.ADMIN_EMERGENCY_PHONES ?? "").split(",").map((p) => p.trim()).filter((p) => p && p !== adminPhone);
+      await Promise.all(extra.map((p) => sendToPhone(p, adminSmsText(type, alert), { source: "admin_alert_notifier" })
+        .catch((err) => console.error(`[onAdminAlertCreated] emergency SMS failed for alert ${alertId}:`, errorMessage(err)))));
+    }
     if (adminPhone && typeof type === "string" && SMS_NOTIFY_TYPES.has(type)) {
       try {
         const outcome = await sendToPhone(adminPhone, adminSmsText(type, alert), { source: "admin_alert_notifier" });
